@@ -68,6 +68,29 @@ export class HeldChain {
       : (this.window[this.window.length - 1] ?? null);
   }
 
+  /**
+   * The suffix head of the client's chain: the first header of the window
+   * when the window holds `k` — the tip less `k − 1`, the lower end of the
+   * anchor a figures run proves against
+   * (WEB_INTERFACE → The extension → "The verified figures" → "The anchor").
+   * `null` otherwise — before the first settle, or while the window is still
+   * growing.
+   */
+  suffixHead(): BlockHeader | null {
+    if (this.window.length < this.k) return null;
+    return this.window[0] ?? null;
+  }
+
+  /**
+   * The lowercase hex `blockHash` of the block 1 the chain holds — the chain's
+   * name, non-null whenever the chain is seated
+   * (WEB_INTERFACE → The extension → "The chain's name"). `null` before `settle`.
+   */
+  block1Hash(): string | null {
+    if (this.block1 === null) return null;
+    return blockHash(this.block1);
+  }
+
   place(hash: string | null, height: number): Placement {
     if (hash === null) return 'unplaced';
     if (!this.block1 || this.window.length === 0) return 'unplaced';

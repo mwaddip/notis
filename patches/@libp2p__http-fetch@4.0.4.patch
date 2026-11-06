@@ -1,0 +1,49 @@
+diff --git a/dist/src/body/bytes.js b/dist/src/body/bytes.js
+index 7302d1b6fb8fef927bd77897742ada303f904594..040cd92fcd720e2bc5842a91992b672985124078 100644
+--- a/dist/src/body/bytes.js
++++ b/dist/src/body/bytes.js
+@@ -1,7 +1,9 @@
+ import { toUint8Array } from '@libp2p/http-utils';
+ export function bytesBody(bytes, headers) {
+     headers.set('Content-Length', `${bytes.byteLength}`);
+-    headers.set('Content-Type', 'application/octet-stream');
++    if (!headers.has('Content-Type')) {
++        headers.set('Content-Type', 'application/octet-stream');
++    }
+     return new ReadableStream({
+         start(controller) {
+             controller.enqueue(toUint8Array(bytes));
+diff --git a/dist/src/body/string.js b/dist/src/body/string.js
+index f33f2d70c362a7950ec777426d9c0899d6639529..5602a289c545c2ddaf33066b3f431f581f573eae 100644
+--- a/dist/src/body/string.js
++++ b/dist/src/body/string.js
+@@ -1,10 +1,13 @@
+ import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string';
+ export function stringBody(str, headers) {
+-    headers.set('Content-Length', `${str.length}`);
+-    headers.set('Content-Type', 'text/plain; charset="UTF-8"');
++    const bytes = uint8ArrayFromString(str);
++    headers.set('Content-Length', `${bytes.byteLength}`);
++    if (!headers.has('Content-Type')) {
++        headers.set('Content-Type', 'text/plain; charset="UTF-8"');
++    }
+     return new ReadableStream({
+         start(controller) {
+-            controller.enqueue(uint8ArrayFromString(str));
++            controller.enqueue(bytes);
+             controller.close();
+         }
+     });
+diff --git a/dist/src/send-request.js b/dist/src/send-request.js
+index 3ec5ba3469bd7184561dbb65bb1e744ec5a81238..f5cc3b275a682ffbacc97a497066333b712707be 100644
+--- a/dist/src/send-request.js
++++ b/dist/src/send-request.js
+@@ -10,7 +10,7 @@ export async function sendRequest(stream, url, init) {
+     }
+     const content = normalizeContent(init.body, headers);
+     const req = [
+-        `${init?.method?.toUpperCase() ?? 'GET'} ${url.pathname ?? '/'} HTTP/1.1`,
++        `${init?.method?.toUpperCase() ?? 'GET'} ${(url.pathname ?? '/') + (url.search ?? '')} HTTP/1.1`,
+         ...writeHeaders(headers),
+         '',
+         ''

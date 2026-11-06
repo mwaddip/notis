@@ -454,11 +454,7 @@ describe('the App status corner — a timer independent of the bounded poll', ()
 import type { Anchor, TipVerifier } from '../src/model/state';
 import type { TipVerdict } from '../src/model/tip-verdict';
 import type { BlockHeader } from '@dagsocial/types';
-import { prefs, setNode } from '../src/prefs';
-
-// PoPowHeader reaches the web through the tool's Anchor type — @dagsocial/nipopow
-// is not a direct web dep.
-type PoPowHeader = Anchor['suffixHead'];
+import { setNode } from '../src/prefs';
 
 interface TipRunLike {
   verdict: TipVerdict;
@@ -468,7 +464,6 @@ interface TipRunLike {
 
 interface VerifierRun {
   gen: number;
-  readingBase: string;
   resolve: (v: TipRunLike) => void;
   reject: (e: unknown) => void;
   promise: Promise<TipRunLike>;
@@ -524,11 +519,11 @@ function verifierHarness(): VerifierHarness {
 
   const runs: VerifierRun[] = [];
   const verifier: TipVerifier = {
-    run: (readingBase) => {
+    run: () => {
       let resolve!: (v: TipRunLike) => void;
       let reject!: (e: unknown) => void;
       const promise = new Promise<TipRunLike>((r, j) => { resolve = r; reject = j; });
-      runs.push({ gen: runs.length, readingBase, resolve, reject, promise });
+      runs.push({ gen: runs.length, resolve, reject, promise });
       return promise;
     },
   };
@@ -563,10 +558,9 @@ const fakeHeader = (height: number, tag: string): BlockHeader => ({
   interlinkRoot: '00'.repeat(32),
   adProofsRoot: '00'.repeat(32),
 });
-const fakePopow = (h: BlockHeader): PoPowHeader => ({ header: h, interlinks: [] });
 const anchorFor = (height: number, tag: string): Anchor => ({
   tip: fakeHeader(height, tag),
-  suffixHead: fakePopow(fakeHeader(height - 19, tag)),
+  suffixHead: fakeHeader(height - 19, tag),
 });
 const verifiedRun = (nodes: number, height: number, tag = 'aa'): TipRunLike => ({
   verdict: verified(nodes, height),
@@ -593,13 +587,10 @@ describe('the App verified tip — construction and the reading-base run', () =>
     expect(inner.verifyTimer).toBeNull();
   });
 
-  it('mounts and starts one run at once against the current prefs.node', async () => {
-    // Set prefs.node before the App mounts, so the first run reads it.
-    setNode('https://a.example');
+  it('mounts and starts one run at once', async () => {
     const h = verifierHarness();
     await Promise.resolve(); await Promise.resolve();
     expect(h.runs.length).toBe(1);
-    expect(h.runs[0]!.readingBase).toBe('https://a.example');
     expect(h.drive.verifyInFlight).toBe(true);
     expect(h.drive.verifyTimer).not.toBeNull();
     // The verdict is `null` until the run returns — the corner reads *checking*.
@@ -687,33 +678,6 @@ describe('the App verified tip — construction and the reading-base run', () =>
     expect(h.runs.length).toBe(2);
   });
 
-  it('changeNode drops the verdict at once, bumps the generation and starts a new run; the old run\'s late verdict never renders', async () => {
-    setNode('https://a.example');
-    const h = verifierHarness();
-    await Promise.resolve(); await Promise.resolve();
-    expect(h.runs[0]!.readingBase).toBe('https://a.example');
-
-    // Change the reading node while the first run is still in flight.
-    void (h.app as unknown as { changeNode(o: string): Promise<void> }).changeNode('https://b.example');
-    await Promise.resolve();
-    // The verdict returned to null at once, and a new run started against the
-    // new base.
-    expect(h.drive.tipVerdict).toBeNull();
-    expect(h.runs.length).toBe(2);
-    expect(h.runs[1]!.readingBase).toBe('https://b.example');
-
-    // The old run resolves late — under an older generation, the verdict is
-    // dropped.
-    h.runs[0]!.resolve(verifiedRun(9, 111));
-    await Promise.resolve(); await Promise.resolve();
-    expect(h.drive.tipVerdict).toBeNull();
-
-    // The new run resolves — its verdict lands.
-    h.runs[1]!.resolve(verifiedRun(2, 222));
-    await Promise.resolve(); await Promise.resolve();
-    expect(h.drive.tipVerdict).toEqual({ kind: 'verified', nodes: 2, height: 222 });
-  });
-
   it('changeNode drops the corner\'s tip too — the reset is not behind the verifier\'s early return (WEB_INTERFACE → The status corner)', async () => {
     setNode('https://a.example');
     const h = verifierHarness();
@@ -793,15 +757,6 @@ describe('the App verified tip — construction and the reading-base run', () =>
     } finally {
       console.error = origError;
     }
-  });
-
-  it('an empty prefs.node runs nothing — the empty base is not asked', async () => {
-    // The describe's beforeEach reset prefs.node to '' via setNode(''); the
-    // App is constructed while that empty base holds.
-    expect(prefs.node).toBe('');
-    const h = verifierHarness();
-    await Promise.resolve(); await Promise.resolve();
-    expect(h.runs.length).toBe(0);
   });
 
   // WEB_INTERFACE → The extension → "The verified figures" — the App holds

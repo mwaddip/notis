@@ -50,7 +50,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const client = (): NodeClient => new NodeClient(() => '');
+const client = (): NodeClient => new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) });
 
 describe('read client — the list reads under light=1 carry light=1 and no tx', () => {
   it('feed under light sends light=1 and no tx', async () => {

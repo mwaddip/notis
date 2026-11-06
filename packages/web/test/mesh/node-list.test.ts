@@ -9,12 +9,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   NodeList,
-  type Anchor,
+  type MeshAnchor,
   type FailureKind,
   type LieEvidence,
-} from '../src/client/node-list.js';
+} from '../../src/mesh/node-list.js';
 import { MeshKeyError } from '@dagsocial/net/browser';
-import { RETRY_BASE_MS, RETRY_CAP_MS } from '../src/protocols.js';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from '../../src/mesh/protocols.js';
 
 const idA = 'a'.repeat(64);
 const idB = 'b'.repeat(64);
@@ -228,7 +228,7 @@ describe('node-list', () => {
   });
 
   it("the client's own key is dropped and duplicate anchors are merged", () => {
-    const anchors: Anchor[] = [
+    const anchors: MeshAnchor[] = [
       { notisId: idA, addrs: [a1] },
       { notisId: idA, addrs: [a2] },
       { notisId: own, addrs: [a3] },
@@ -284,6 +284,39 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(true);
   });
 
+  it("an anchor's api is kept on its entry; duplicate anchors' first api stands", () => {
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — the anchor's `api` lands on the entry and `entries()`
+    // surfaces it; two anchors with the same key keep the first api
+    // (the pairing of a base with a key is the list's word).
+    const list = new NodeList(
+      [
+        { notisId: idA, addrs: [a1], api: 'https://node.example' },
+        { notisId: idA, addrs: [a2], api: 'https://other.example' },
+        { notisId: idB, addrs: [], api: 'https://b.example' },
+        { notisId: idC, addrs: [a3] },
+      ],
+      own,
+      () => 0,
+    );
+    expect(list.entry(idA)!.api).toBe('https://node.example');
+    expect(list.entry(idA)!.addrs).toEqual([a1, a2]);
+    expect(list.entry(idB)!.api).toBe('https://b.example');
+    expect(list.entry(idB)!.addrs).toEqual([]);
+    expect(list.entry(idC)!.api).toBeNull();
+  });
+
+  it('a non-anchor entry added through `add` or `addByHand` has api null', () => {
+    // MESH_INTERFACE → The client's node list — the api is the anchor's
+    // own; DHT- or hand-added entries carry none.
+    const list = new NodeList([], own, () => 0);
+    list.add(idA, [a1]);
+    expect(list.entry(idA)!.api).toBeNull();
+    const webrtc = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
+    list.addByHand(idB, [webrtc], true);
+    expect(list.entry(idB)!.api).toBeNull();
+  });
+
   it('candidates() keeps first-known order inside a status', () => {
     const list = new NodeList([], own, () => 0);
     list.add(idB, []);
@@ -305,6 +338,34 @@ describe('node-list', () => {
     expect(list.candidates()).not.toContain(idA);
     t = 6000;
     expect(list.candidates()).toContain(idA);
+  });
+
+  it('removeByHand drops a hand-added entry; a build anchor is left alone', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — the settings row's
+    // commit path. A build anchor (constructor's list) keeps its
+    // `fromAnchorList`, and `removeByHand` leaves it even when it was also
+    // hand-added. A pure hand-added entry is dropped.
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    list.addByHand(idB, [a2], true);
+    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
+    list.removeByHand(idB);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+    // `removeByHand` on a build anchor is a no-op, whether or not it was also
+    // added by hand after start.
+    list.addByHand(idA, [a2], true);
+    list.removeByHand(idA);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+  });
+
+  it('removeByHand on an id the list does not hold is a no-op', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    list.removeByHand(idC);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+  });
+
+  it('removeByHand refuses a non-64-hex id', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    expect(() => list.removeByHand('abc')).toThrow(MeshKeyError);
   });
 
   it('an event for an id the list does not hold throws', () => {

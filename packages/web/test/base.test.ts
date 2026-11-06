@@ -27,19 +27,19 @@ afterEach(() => {
 
 describe('a base and its trailing-slash twin build the same URL', () => {
   it('strips the one trailing `/` on a base that carries one', async () => {
-    const c = new NodeClient(() => 'http://a/');
+    const c = new NodeClient({ base: () => 'http://a/', fetch: (url, init) => fetch(url, init) });
     await c.feed({ limit: 30 });
     expect(calls[0]).toBe('http://a/posts?limit=30');
   });
 
   it('leaves a base that carries no trailing `/` as is', async () => {
-    const c = new NodeClient(() => 'http://a');
+    const c = new NodeClient({ base: () => 'http://a', fetch: (url, init) => fetch(url, init) });
     await c.feed({ limit: 30 });
     expect(calls[0]).toBe('http://a/posts?limit=30');
   });
 
   it('strips one `/` on a base that ends with `//` — one, not every trailing', async () => {
-    const c = new NodeClient(() => 'http://a//');
+    const c = new NodeClient({ base: () => 'http://a//', fetch: (url, init) => fetch(url, init) });
     await c.feed({ limit: 30 });
     expect(calls[0]).toBe('http://a//posts?limit=30');
   });

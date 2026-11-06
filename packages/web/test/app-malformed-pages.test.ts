@@ -244,7 +244,7 @@ function harness(entries: PendingEntry[] = []): Harness {
   const node = fakeNode();
   const ledger = new PendingLedger(ME);
   for (const e of entries) ledger.add(e);
-  const app = new App(new NodeClient(() => ''), {} as unknown as WriteClient, identity(), ledger, undefined, undefined, null, null);
+  const app = new App(new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }), {} as unknown as WriteClient, identity(), ledger, undefined, undefined, null, null);
   const appbar = document.createElement('header');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
@@ -448,7 +448,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
   it('the reads before a rep write (readBuildContext) — one request, then PageError', async () => {
     const h = fakeNode();
     h.on('karma', capped(() => without(karmaPage(ME, [B1], null), 'next'), karmaPage(ME, [], null)));
-    await expect(readBuildContext(new NodeClient(() => ''), ME)).rejects.toBeInstanceOf(PageError);
+    await expect(readBuildContext(new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }), ME)).rejects.toBeInstanceOf(PageError);
     expect(h.count('karma', ME)).toBe(1);
   });
 
@@ -467,7 +467,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
   it('the reads before a send (readCreditContext) — one request, then PageError', async () => {
     const h = fakeNode();
     h.on('credits', capped(() => without(creditsPage(ME, [B1], null), 'next'), creditsPage(ME, [], null)));
-    await expect(readCreditContext(new NodeClient(() => ''), ME)).rejects.toBeInstanceOf(PageError);
+    await expect(readCreditContext(new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }), ME)).rejects.toBeInstanceOf(PageError);
     expect(h.count('credits', ME)).toBe(1);
   });
 

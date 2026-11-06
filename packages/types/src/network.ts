@@ -125,8 +125,8 @@ export interface NetworkProfile {
    * transaction id over a box descending from one, and every `stateRoot`
    * covering such a box is bound to this chain's payload
    * (TYPES_INTERFACE → Mint identity → "A mint id opens with its chain's genesis proof").
-   * Testnet's payload names its release line
-   * (TYPES_INTERFACE → Network profiles → "Testnet's names its release line");
+   * Testnet's is the string the 2026-10-28 reset chose, naming no release
+   * (TYPES_INTERFACE → Network profiles → "Testnet's is the UTF-8 bytes of `dagsocial/testnet/genesis-proof/0.4`");
    * mainnet's and devnet's are mock content.
    *
    * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
@@ -315,10 +315,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCommitteeKeys: Object.freeze([] as string[]),
   // Overridden explicitly, and it must be: the spread above would otherwise
   // hand testnet mainnet's payload. The UTF-8 bytes of
-  // `dagsocial/testnet/genesis-proof/<major>.<minor>`, the two numbers the
-  // root `package.json` version opens with — so a reset moves the minor and
-  // the payload moves with it. `network.test.ts` holds the two together.
-  // TYPES_INTERFACE → Network profiles → "Testnet's names its release line"
+  // `dagsocial/testnet/genesis-proof/0.4`, the string the 2026-10-28 reset
+  // chose; it names no release, and the next reset replaces it.
+  // TYPES_INTERFACE → Network profiles → "Testnet's is the UTF-8 bytes of `dagsocial/testnet/genesis-proof/0.4`"
   // ARCHITECTURE → Deploy gate → "A reset mints a new genesis proof payload"
   // hex("dagsocial/testnet/genesis-proof/0.4")
   genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f302e34',

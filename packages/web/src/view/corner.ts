@@ -65,8 +65,8 @@ export function cornerState(input: CornerInput): CornerState {
 /** The state's words as the corner's `title` reads them
  *  (WEB_INTERFACE → The status corner). Where the state names a verdict — thin,
  *  refused, or a verified verdict as `fresh` — the verdict carries its own
- *  wording, in the house voice (HOUSE_STYLE → Voice). A node named by its
- *  host, never by a URL; an unparsable `by` reads *another node*. */
+ *  wording, in the house voice (HOUSE_STYLE → Voice). No title names a node or
+ *  carries a URL or an address. */
 export function cornerTitle(state: CornerState, tip: number | null, verdict?: TipVerdict | null): string {
   const t = tip ?? '—';
   if (state === 'fresh') {
@@ -81,31 +81,14 @@ export function cornerTitle(state: CornerState, tip: number | null, verdict?: Ti
     if (verdict && verdict.kind === 'thin') {
       if (verdict.reason === 'one-node') return `only one node could be checked · tip ${t}`;
       if (verdict.reason === 'too-short') return `the chain is too short to check yet · tip ${t}`;
-      if (verdict.reason === 'no-proof') return `this node served no proof · tip ${t}`;
-      if (verdict.reason === 'split') return `the nodes share no block to compare · tip ${t}`;
+      if (verdict.reason === 'no-proof') return `no node served a proof · tip ${t}`;
+      if (verdict.reason === 'split') return `a node names a tip off this chain · tip ${t}`;
+      if (verdict.reason === 'no-anchor') return `only nodes this build does not name could be checked · tip ${t}`;
     }
     return `the chain could not be checked · tip ${t}`;
   }
   // state === 'refused'
-  if (verdict && verdict.kind === 'refused') {
-    if (verdict.reason === 'invalid-proof') return `this node's proof did not verify · tip ${t}`;
-    if (verdict.reason === 'outworked') {
-      const host = hostOf(verdict.by);
-      return host === null
-        ? `another node holds more work than this node · tip ${t}`
-        : `${host} holds more work than this node · tip ${t}`;
-    }
-  }
-  return `this node's proof did not verify · tip ${t}`;
-}
-
-function hostOf(url: string | null): string | null {
-  if (url === null) return null;
-  try {
-    return new URL(url).host;
-  } catch {
-    return null;
-  }
+  return `no node's proof verified · tip ${t}`;
 }
 
 /** The corner is a `<button>` holding the dot and the height, rendered in place

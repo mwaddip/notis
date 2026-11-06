@@ -5,12 +5,16 @@
 // signal and every answer is read under the route's cap through
 // `@dagsocial/node-reads`' `readCappedJson` (WEB_INTERFACE → Reading a node's
 // answer → "Every answer is read under its route's cap, and every request runs
-// under one deadline"). Nothing retries: a rejection is handed back for the
-// caller to act on (WEB_INTERFACE → "Nothing retries").
+// under one deadline"). A rejection is never retried; a send with no answer
+// goes, the same bytes, to the next base in the client's order, and the first
+// response of any status is the send's (WEB_INTERFACE → The wallet → "Nothing
+// retries a rejection"). Every base failing reads as today's transport failure,
+// `timedOut` the last attempt's.
 
 import {
   readCappedJson, isRecord, isAuthorName,
   WRITE_ANSWER_READ_BYTES, REQUEST_TIMEOUT_MS,
+  type HttpFetch,
 } from '@dagsocial/node-reads';
 import { isHex64 } from '@dagsocial/types';
 import { trimBase } from '../base';
@@ -86,10 +90,14 @@ export interface SendSubmitResult {
 
 /** One shape for both of the node's rejection bodies: the HTTP status and the
  *  message, normalised from `{ error: <status>, reason }` and `{ error: <message> }`
- *  both (WEB_INTERFACE → Writes). */
+ *  both (WEB_INTERFACE → Writes). A transport failure — `status: 0` — carries
+ *  `timedOut: true` when the deadline ended it, as `fetchJson` carries it on a
+ *  read (WEB_INTERFACE → Reading a node's answer → "A failure the deadline
+ *  ended says so"). Every other result leaves it absent. */
 export interface Rejection {
   status: number;
   message: string;
+  timedOut?: true;
 }
 
 /** A success body carries no `message`; a rejection always does. */
@@ -163,9 +171,17 @@ function readClaimResult(data: unknown): ClaimSubmitResult | null {
 }
 
 export class WriteClient {
-  // The origin is read fresh on every call, like the read client's — the settings
-  // window can repoint it, and same-origin is the default (an empty base).
-  constructor(private origin: () => string) {}
+  // The bases are read fresh on every send, never captured — the extension
+  // hands the client's node order, the web build its one node's base
+  // (WEB_INTERFACE → The extension → "A write goes to one node and, with no
+  // answer, to the next"). The `fetch` the client runs every request through
+  // is the caller's, taken once.
+  private readonly bases: () => string[];
+  private readonly httpFetch: HttpFetch;
+  constructor(opts: { bases: () => string[]; fetch: HttpFetch }) {
+    this.bases = opts.bases;
+    this.httpFetch = opts.fetch;
+  }
 
   submitPost(tx: Record<string, unknown>, content: string): Promise<PostSubmitResult | Rejection> {
     return this.send('POST', '/posts', { tx, content }, readPostResult);
@@ -216,35 +232,64 @@ export class WriteClient {
     body: unknown,
     reader: (data: unknown) => T | null,
   ): Promise<T | Rejection> {
-    let res: Response;
-    try {
-      res = await fetch(trimBase(this.origin()) + path, {
-        method,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (e) {
-      return clientRefusal(e instanceof Error ? e.message : String(e));
-    }
-    const read = await readCappedJson<unknown>(res, WRITE_ANSWER_READ_BYTES);
-    if (!read.ok) {
-      if (res.status >= 200 && res.status < 300) {
-        // An over-cap 2xx or a 2xx that does not parse ends the flight as a
-        // transport failure does (WEB_INTERFACE → Reading a node's answer).
-        return clientRefusal(read.body);
+    // `bases()` is read once per send, and the same body bytes go to each base
+    // in turn (WEB_INTERFACE → The extension → "A write goes to one node and,
+    // with no answer, to the next"). An empty list answers the transport
+    // failure with no request, and every base failing answers today's transport
+    // failure carrying the last attempt's message and `timedOut` (WEB_INTERFACE
+    // → Reading a node's answer → "A failure the deadline ended says so").
+    const bases = this.bases();
+    const bodyBytes = JSON.stringify(body);
+    let last: Rejection = { status: 0, message: 'no node to send to' };
+    for (const base of bases) {
+      let res: Response;
+      try {
+        res = await this.httpFetch(trimBase(base) + path, {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: bodyBytes,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (e) {
+        last = transportFailureFrom(e);
+        continue;
       }
-      return normalizeRejection(res.status, res.statusText, read.body);
+      const read = await readCappedJson<unknown>(res, WRITE_ANSWER_READ_BYTES);
+      if (!read.ok && read.status === 0) {
+        // The deadline ended the body stream, or the body stream rejected
+        // mid-read — the attempt ended with no complete answer.
+        last = { status: 0, message: read.body, ...(read.timedOut ? { timedOut: true as const } : {}) };
+        continue;
+      }
+      // The first response of any status is the send's answer: read as today.
+      if (!read.ok) {
+        if (res.status >= 200 && res.status < 300) {
+          // An over-cap 2xx or a 2xx that does not parse ends the flight as a
+          // transport failure does (WEB_INTERFACE → Reading a node's answer).
+          return clientRefusal(read.body);
+        }
+        return normalizeRejection(res.status, res.statusText, read.body);
+      }
+      const rebuilt = reader(read.data);
+      if (rebuilt === null) {
+        // A 2xx whose fields the flow reads are not their types (WEB_INTERFACE →
+        // The wallet → "A pending entry's expiry is the client's, and a node's
+        // answer can only bring it sooner").
+        return clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
+      }
+      return rebuilt;
     }
-    const rebuilt = reader(read.data);
-    if (rebuilt === null) {
-      // A 2xx whose fields the flow reads are not their types (WEB_INTERFACE →
-      // The wallet → "A pending entry's expiry is the client's, and a node's
-      // answer can only bring it sooner").
-      return clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
-    }
-    return rebuilt;
+    return last;
   }
+}
+
+// The deadline fires with a `TimeoutError`, which `fetchJson` recognises off
+// the `.name` (WEB_INTERFACE → Reading a node's answer → "A failure the
+// deadline ended says so"); any other rejection is a plain transport failure.
+function transportFailureFrom(e: unknown): Rejection {
+  const message = e instanceof Error ? e.message : String(e);
+  const timedOut = typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError';
+  return timedOut ? { status: 0, message, timedOut: true } : { status: 0, message };
 }
 
 /**

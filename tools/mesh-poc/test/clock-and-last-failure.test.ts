@@ -15,13 +15,13 @@
 
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { tipEvent, type TipEvent } from '../src/client/tip-events.js';
+import { tipEvent, type TipEvent } from '@dagsocial/web/mesh';
 import { idOfMeshUrl } from '@dagsocial/net/browser';
-import { NodeList } from '../src/client/node-list.js';
-import type { NodeEntry } from '../src/client/node-list.js';
+import { NodeList } from '@dagsocial/web/mesh';
+import type { NodeEntry } from '@dagsocial/web/mesh';
 import { render } from '../page/render.js';
-import type { ClientState } from '../src/client/mesh-client.js';
-import { emptyTraffic } from '../src/client/mesh-client.js';
+import type { ClientState } from '@dagsocial/web/mesh';
+import { emptyTraffic } from '@dagsocial/web/mesh';
 import type { TipResult, NodeTipResult } from '@dagsocial/nipopow-client';
 
 function fakeTipResult(nodes: NodeTipResult[], winnerIndex = -1): TipResult {
@@ -54,6 +54,7 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     lastFailures: over.lastFailures ?? {},
     transport: over.transport ?? null,
     path: over.path ?? null,
+    api: over.api ?? null,
   };
 }
 function emptyState(over: Partial<ClientState> = {}): ClientState {
@@ -68,6 +69,10 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     checks: over.checks ?? 0,
     traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
+    seated: over.seated ?? false,
+    proofs: over.proofs ?? null,
+    anchor: over.anchor ?? null,
+    chain: over.chain ?? null,
   };
 }
 

@@ -8,20 +8,64 @@
 // composer, the like word, the profile and wallet windows' rows, and the prompt
 // window found by its `prompt.html?id=` URL. The verified-tip block runs
 // against a second stack the harness owns — node B (server, bootstrapped from
-// A), node C (used for the real-fork test in 19b), node D (isolated, 17a's
-// too-short and 19c's share-no-block) and the lying relay (19a). The
-// verified-figures block brings up a B of its own and, for its six lie arms,
-// the figures relay (22a · 22b · 22c · 22d · 22e · 23). The verified-names block
-// brings up a B of its own too, and the figures relay again for its lie arms,
-// in its name modes (27a–d · 28a–b). The light block (L1 … L14) covers how the
-// extension reads its lists light with ids and the node's word, draws cached
-// posts at once, shows slots for the rest and resolves those through
-// POST /posts/batch across every base of the seed list — WEB_INTERFACE → The
-// extension → "The light read", "The resolve", "The post check", "The post
-// cache", "The chain's name". It runs against two relays the harness owns —
-// RA on 19810 in front of node A, RB on 19815 in front of node B — each in one
-// of eight modes at a time (honest, text, drop, hold, hang, list-down,
-// list-replay, down); its own node D (L13) is spawned on 19820.
+// A), node D (isolated, its chain mined on demand for 19b heavier than A/B and
+// for 19c lighter than B), and two switchable relays RLA in front of A and RLB
+// in front of B on fixed ports (`RLA_PORT`, `RLB_PORT`), each with a mode the
+// harness sets between steps: `honest` (every request passed through),
+// `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
+// not verify), `proof-short` (the proof route answered 404 chain-too-short,
+// `NODE_INTERFACE → Nipopow`) and `upstream-D` (every request passed to D).
+// The build's seed list names the two relays as its two entries, each
+// `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
+// its api alone (`MESH_INTERFACE → The client's node list → "An entry may
+// carry an API base"`), so every read the extension makes passes through one
+// of them. A fresh page is a fresh client (`WEB_INTERFACE → The extension →
+// "The contexts, and what each may hold"`) — each tip-block step opens its
+// own after the relays' modes are set. The verified-figures block brings up
+// a B of its own and, for its six lie arms (22a · 22b · 22c · 22d · 22e · 23),
+// sets each figures mode on both tip relays and opens a fresh page per arm;
+// the verified-names block brings up a B of its own too, and each of its lie
+// arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
+// The light block
+// (L1 … L14) covers how the extension reads its lists light with ids and the
+// node's word, draws cached posts at once, shows slots for the rest and
+// resolves those through POST /posts/batch across the client's order for an
+// older read (the mesh nodes the need allows, then the API bases of the
+// rest) — WEB_INTERFACE → The extension → "The light read", "The resolve",
+// "The post check", "The post cache", "The chain's name". It runs against
+// two relays the harness owns — RA on 19810 in front of node A, RB on 19815
+// in front of node B — each in one of eight modes at a time (honest, text,
+// drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
+// spawned on 19820.
+// The mesh block (M1 · M2 · M3 · M4) proves the mesh path in the built
+// extension — WEB_INTERFACE → The extension → "The mesh is the extension's
+// first path", → "Nothing retries a rejection"'s **A send that ends with no
+// answer is no rejection**; MESH_INTERFACE → The client's node list → "A
+// routed read goes to a node its need allows", → "The client's order for a
+// need", → "A write goes to one node at a time". The block owns two nodes
+// A' and B' spawned from --node-dist with MESH_ROLE=public, MESH_LISTEN=
+// /ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off (two public
+// nodes on one loopback cannot share STUN_PORT), both bootstrapped off A
+// (--node-p2p) so they are peers on A's chain. The extension built for
+// --mesh names each node in its seed list as `{notisId, addrs:[<webrtc-
+// direct multiaddr with certhash and /p2p/>], api:<HTTP base>}`, and the
+// harness refuses to run unless the shell's `notis-nodes` carries exactly
+// that shape — printing the VITE_NODES to rebuild with. Chromium takes
+// `--allow-loopback-in-peer-connection` for a --mesh run (a harness switch
+// for a loopback stage, not a product setting): without it a browser
+// refuses the RTCPeerConnection to 127.0.0.1 and no mesh connection
+// opens.
+//
+// The seed list the extension is built with carries two node entries whose
+// addrs are empty and whose api names the harness's own base — RLA and RLB
+// for the verified blocks, RA and RB for --light. An entry with no addrs is
+// reached at its api alone (MESH_INTERFACE → The client's node list → "An
+// entry may carry an API base"); this run keeps every block on HTTP, and the
+// extension's mesh client does no WebRTC dial. Each relay stands in front of
+// one node and the harness switches its mode between steps — no second build
+// is needed, and no settings-row change, since the relay is already on the
+// path (WEB_INTERFACE → The extension → "The verified tip", "The contexts,
+// and what each may hold").
 //
 // Preconditions:
 //  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
@@ -33,10 +77,16 @@
 //     (`{ pubKeyHex, privKeyBase64 }`) lives in a scratch path outside the
 //     repo and never enters a commit, a log or the REPORT.
 //  4. The extension was built via build-extension.sh with devnet values
-//     — VITE_NODES points at [A, B] for --verified-{tip,figures,names}, and
-//     at [RA, RB] (the two relay origins the harness owns) for --light. The
-//     two builds differ and a run takes one; --light is refused together with
-//     any of the other three verified flags.
+//     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
+//     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
+//     at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
+//     api:RB}] for --light, and at [{notisId:<A'>, addrs:[<A' webrtc-
+//     direct>], api:<A' HTTP base>}, {notisId:<B'>, addrs:[<B' webrtc-
+//     direct>], api:<B' HTTP base>}] for --mesh. The builds differ and a
+//     run takes one; --light and --mesh each refuse combination with any
+//     other verified flag. Each `notisId` is read from its node's start
+//     line; the mesh build's addrs[0] is the webrtc-direct multiaddr that
+//     start line names in `multiaddrs`.
 //  5. For --verified-names: a second throwaway S promoted as R is, holding a
 //     name `claim-name.mjs` (beside this file) claimed; S's clear file lives
 //     in a scratch path as R's does, and the harness reads its public key
@@ -68,6 +118,16 @@
 //     build whose notis-nodes is exactly [RA, RB], not [A, B]; the harness
 //     refuses to run on anything else, and refuses combination with any
 //     --verified-{tip,figures,names} flag.
+//   --mesh: M1·M2·M3·M4. Reads over the mesh, reads at the API base when no
+//     mesh node serves, a write over the mesh, and a write with no answer
+//     going to the next node (WEB_INTERFACE → The extension → "The mesh is
+//     the extension's first path"; MESH_INTERFACE → The client's node list).
+//     Requires --r-key, --node-dist, --scratch and --node-p2p (A' bootstraps
+//     from --node-p2p so A'/B' are peers on A's chain and R's karma reaches
+//     them). Takes an extension build whose notis-nodes is exactly
+//     [{notisId:<A'>, addrs:[<A' webrtc-direct>], api:<A' HTTP base>},
+//     {notisId:<B'>, …}]; refuses otherwise, and refuses combination with
+//     --verified-{tip,figures,names} or --light.
 //   20, 25, 30 and L14 read the hosted web build, and read NOT RUN without
 //     --public and --web-dist.
 //   No --r-key and no --verified-tip: every step reads NOT RUN by name.
@@ -79,6 +139,7 @@
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--mesh --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -93,7 +154,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -129,8 +190,8 @@ let TIP_K = null;
 const VERIFIED_TIP = args.get('verified-tip') === true;
 // The verified-figures block — WEB_INTERFACE → The extension → "The verified
 // figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
-// states read A, and the six lie arms read the figures relay. Absent, every
-// step reads NOT RUN by name.
+// states read A, and the six lie arms read the two tip relays with their mode
+// set on both. Absent, every step reads NOT RUN by name.
 const VERIFIED_FIGURES = args.get('verified-figures') === true;
 // The verified-names block — WEB_INTERFACE → The extension → "The verified
 // names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
@@ -148,6 +209,22 @@ const VERIFIED_NAMES = args.get('verified-names') === true;
 // hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
 // Absent, every step reads NOT RUN by name.
 const LIGHT = args.get('light') === true;
+// The mesh block — WEB_INTERFACE → The extension → "The mesh is the
+// extension's first path", `→ "Nothing retries a rejection"`'s `**A send
+// that ends with no answer is no rejection**`;
+// MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows", "The client's order for a need", "A write goes to one
+// node at a time". Steps M1 · M2 · M3 · M4: reads over the mesh with zero
+// HTTP, reads at the API base when no mesh node serves, a write over the
+// mesh landing on both nodes, and a write with no answer going to the next
+// node. The block owns its own two mesh nodes A' and B' (spawned from
+// NODE_DIST with MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/
+// webrtc-direct, MESH_STUN=off; B' bootstrapped from A') and refuses to
+// run unless the extension under check was built with the seed list naming
+// each as `{notisId:<key>, addrs:[<webrtc-direct multiaddr with certhash>],
+// api:<HTTP base>}` — the harness prints the VITE_NODES to rebuild with
+// when the shape disagrees. Absent, every step reads NOT RUN by name.
+const MESH = args.get('mesh') === true;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -161,25 +238,46 @@ const B_HTTP_PORT = 19770;
 const B_ADMIN_PORT = 19771;
 const B_P2P_PORT = 19772;
 const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
-const RELAY_PORT = 19780;
-const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
-// The figures relay — the lie arms 22a · 22b · 22c · 22d · 22e · 23, and in its
-// name modes the lie arms 27a–d · 28a–b, on a port of its own beside 19a's
-// relay.
-const FIG_RELAY_PORT = 19785;
-const FIG_RELAY_ORIGIN = `http://127.0.0.1:${FIG_RELAY_PORT}`;
-const C_HTTP_PORT = 19790;
-const C_ADMIN_PORT = 19791;
-const C_P2P_PORT = 19792;
-// C's second life listens on a fresh port, cut off from A: A's peer store
-// carries C's first-life address, so a new port makes that stale and A cannot
-// reach C. With BOOTSTRAP_PEERS="" C dials nobody: the floor phase of the
-// outbound manager iterates an empty seed list, and the fill phase, the only
-// one that reads the peer store, needs MIN_PEERS outbound connections that C
-// never reaches. The three assertions of step 19b read peers_connected=0.
-const C_P2P_PORT_ISOLATED = 19793;
-const C_ORIGIN = `http://127.0.0.1:${C_HTTP_PORT}`;
-// Node D — the isolated helper for 17a (too-short) and 19c (no shared block).
+// The verified blocks' two relays — RLA in front of A, RLB in front of B.
+// The extension built for the verified-tip / figures / names runs names these
+// two bases in its seed list (`[{notisId, addrs: [], api: RLA}, {notisId,
+// addrs: [], api: RLB}]`), each entry reached at its api alone
+// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
+// base"`), so every read the extension makes passes through one of them. Each
+// relay carries a mode the harness sets between steps, on both relays at once
+// — the one hostile edit per mode is the one the run meets whichever relay
+// the client routes a read to (WEB_INTERFACE → The extension → "The verified
+// tip", "The verified figures", "The verified names"):
+//   `honest`         — none; everything passes to upstream verbatim.
+//   `proof-invalid`  — the `/nipopow/proof/<m>/<k>` answer altered so it does
+//                      not verify (one byte flipped ten from the end), every
+//                      other request passed through.
+//   `proof-short`    — the proof route answered as a node whose chain is
+//                      shorter than `m + k` answers it (`NODE_INTERFACE →
+//                      Nipopow`): 404 `{error:'chain too short'}`; every
+//                      other request passed through.
+//   `upstream-D`     — every request passed to D, an isolated node on another
+//                      chain, so the relay's base names D's tip and serves
+//                      D's proof.
+//   Figures modes (set on both relays with `rKey` named): `credits-fake`,
+//   `credits-foreign`, `credits-drop`, `credits-drop-tipplus1`, `karma-drop`,
+//   `avl-flip` (WEB_INTERFACE → The extension → "The verified figures").
+//   Names modes (set on both relays with `rKey` and `sName` named):
+//   `label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`
+//   (WEB_INTERFACE → The extension → "The verified names"). A figures or
+//   names arm opens on a fresh extension page whose tip run has returned
+//   `verified` (the arms prove against an anchor), reads the row through
+//   whichever relay the client routes to, and sets both relays back to
+//   `honest` on the way out.
+const RLA_PORT = 19780;
+const RLA_ORIGIN = `http://127.0.0.1:${RLA_PORT}`;
+const RLB_PORT = 19781;
+const RLB_ORIGIN = `http://127.0.0.1:${RLB_PORT}`;
+// Node D — isolated, mined on demand: for 19b the block mines D past A's tip
+// so D's chain is heavier than A/B's, and the client seats D's chain and B's
+// tip reads off it; for 19c the block mines D past m + k + 4 and keeps it
+// below A's height, so D's chain verifies but B's heavier chain seats and D's
+// tip reads off it (WEB_INTERFACE → The extension → "The verified tip").
 const D_HTTP_PORT = 19795;
 const D_ADMIN_PORT = 19796;
 const D_P2P_PORT = 19797;
@@ -188,8 +286,8 @@ const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
 // in one of eight modes at a time (honest, text, drop, hold, hang, list-down,
 // list-replay, down); the extension built for the block names them as its
 // seed list, and no other base (WEB_INTERFACE → The extension → "The light
-// read", "The resolve"). Ports clear of the lying relay (19780), the figures
-// relay (19785), D (19795/96/97) and C's isolated p2p (19793).
+// read", "The resolve"). Ports clear of the two tip relays (19780, 19781),
+// the figures relay (19785) and D (19795/96/97).
 const RA_PORT = 19810;
 const RA_ORIGIN = `http://127.0.0.1:${RA_PORT}`;
 const RB_PORT = 19815;
@@ -200,6 +298,38 @@ const DL_HTTP_PORT = 19820;
 const DL_ADMIN_PORT = 19821;
 const DL_P2P_PORT = 19822;
 const DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
+// The mesh block's two nodes A' and B' — each spawned with
+// MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<AP_MESH_PORT or
+// BP_MESH_PORT>/webrtc-direct, MESH_STUN=off (two public nodes on one
+// loopback cannot share STUN_PORT 3478, and the brief names off). Ports
+// clear of the tip block's (B on 19770-72), the tip relays (19780-81), D
+// (19795-97), the light relays (19810/15) and DL (19820-22). A' and B'
+// are reached by the extension at their HTTP origins directly (the api
+// field of each seed-list entry), and over the mesh at their webrtc-
+// direct addresses (the addrs field of each entry — one address a piece,
+// with certhash and /p2p/<peerId>, read from the start line the node
+// prints — NODE_INTERFACE → Configuration → "A mesh node prints its
+// identity line"). For M4 one node's HTTP is moved aside and a tip relay
+// (startTipRelay) stands in front of its api, in `hold-posts` mode — a
+// read passes through, a POST /posts is held past REQUEST_TIMEOUT_MS so
+// the client's write rule moves the same bytes to the next entry
+// (MESH_INTERFACE → The client's node list → "A write goes to one node
+// at a time").
+const AP_HTTP_PORT = 19830;
+const AP_ADMIN_PORT = 19831;
+const AP_P2P_PORT = 19832;
+const AP_MESH_PORT = 19833;
+const AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
+const BP_HTTP_PORT = 19835;
+const BP_ADMIN_PORT = 19836;
+const BP_P2P_PORT = 19837;
+const BP_MESH_PORT = 19838;
+const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
+// For M4's relay-in-front stage: the alternate HTTP port A' is restarted
+// on so the tip relay can take over AP_HTTP_PORT with A' as its upstream.
+// The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
+// on their own ports — only the HTTP listener is moved.
+const AP_ALT_HTTP_PORT = 19834;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
@@ -213,9 +343,10 @@ if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir')
 // file is still an argument error.
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
-// --verified-tip requires the four lifecycle arguments — the harness owns node
-// B, node C, node D, the lying relay and every miner it starts; A itself and
-// A's miner are the operator's (WEB_INTERFACE → The extension → "The verified tip").
+// --verified-tip requires the four lifecycle arguments — the harness owns
+// node B, node D (mined on demand for 19b heavier and 19c lighter), the two
+// tip relays RLA and RLB and every miner it starts; A itself and A's miner
+// are the operator's (WEB_INTERFACE → The extension → "The verified tip").
 if (VERIFIED_TIP) {
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
     console.error('--verified-tip requires --node-dist <packages/node/dist/index.js>');
@@ -243,38 +374,38 @@ if (VERIFIED_TIP) {
 // already imports (WEB_INTERFACE → The extension → "The verified tip";
 // CONSTANTS → Client defaults) — the tip block, the figures block and the
 // names block all read them, so the load runs whenever any of the three
-// flags is set. The comparison step 19b waits on is the tool's own
-// `resolveTip` from its built dist — the code the extension's tip verifier
-// runs — under the profile that verifier takes from the build's network,
-// devnet; a TipResult carries no score, so `compareProofs` of
-// `@dagsocial/nipopow` — the fold's own comparison — reads the two sides'
-// scores off the proofs it does carry. That package is the tool's dependency
-// and not this one's, so it is reached through the tool's own link to it,
-// under --verified-tip alone.
-let forkTools = null;
+// flags is set. The retired fork comparison (resolveTip + compareProofs,
+// driving 19b's old refused · outworked predicate) is gone — the mesh
+// client's own check settles the chain, and no tool-side comparison is
+// what the verdict reads any more.
 // --light cannot be combined with any of the verified-tip/figures/names blocks:
-// the two builds differ (seed list [RA, RB] versus [A, B]), and a run takes one
-// (WEB_INTERFACE → The extension → "The light read" — the extension's seed list
-// is the two relay origins; the harness refuses otherwise, and the two builds
-// differ, so a run takes one).
+// the two builds differ (seed list `[{api:RA,…},{api:RB,…}]` versus
+// `[{api:RLA,…},{api:RLB,…}]`), and a run takes one (WEB_INTERFACE → The
+// extension → "The light read", "The verified tip" — the extension's seed
+// list is the two relay origins; the harness refuses otherwise, and the two
+// builds differ, so a run takes one).
 if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [RA, RB] vs [A, B]) and a run takes one');
+  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [{api:RA,…},{api:RB,…}] vs [{api:RLA,…},{api:RLB,…}]) and a run takes one');
   process.exit(2);
 }
 
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
+// --mesh builds a seed list whose entries carry non-empty addrs (the
+// WebRTC-direct multiaddrs of A' and B') and HTTP api bases of A' and B'
+// (AP_ORIGIN, BP_ORIGIN) — every other block names addrs: [] with relay
+// apis in front. The builds differ and a run takes one.
+if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
+  console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
+  process.exit(2);
+}
+
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
-    const { DEFAULT_M, DEFAULT_K, resolveTip, verifierProfile } = await import(clientUrl);
+    const { DEFAULT_M, DEFAULT_K } = await import(clientUrl);
     TIP_M = DEFAULT_M;
     TIP_K = DEFAULT_K;
-    if (VERIFIED_TIP) {
-      const { compareProofs } = await import(new URL('../node_modules/@dagsocial/nipopow/dist/index.js', clientUrl).href);
-      const { profileFor } = await import('@dagsocial/types');
-      forkTools = { resolveTip, verifierProfile, compareProofs, profile: profileFor('devnet') };
-    }
   } catch (e) {
-    console.error(`--verified-{tip,figures,names} and --light require the built @dagsocial/nipopow-client (its DEFAULT_M, DEFAULT_K, resolveTip and verifierProfile), its @dagsocial/nipopow and @dagsocial/types (pnpm -r build): ${e.message}`);
+    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client (its DEFAULT_M and DEFAULT_K; pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
@@ -380,6 +511,37 @@ if (LIGHT) {
   }
 }
 
+// --mesh runs 1–16 against the extension's seed list — the two mesh nodes
+// A' and B' this block owns — and then M1–M4. A' bootstraps from the
+// operator's A over p2p (the --node-p2p multiaddr), so A' and B' are
+// peers on A's chain and R's karma (promoted by the operator on A) is
+// read through them like any other block. --r-key for R's identity,
+// --node-dist for the spawn's entry, --scratch for the two stores
+// (ap.db and bp.db), --node-p2p for A''s bootstrap peer — the same
+// lifecycle arguments the figures block reads, with the same shapes.
+if (MESH) {
+  if (!R_KEY) {
+    console.error('--mesh requires --r-key <path> — R\'s identity is what steps 2–12 import and M3 signs with');
+    process.exit(2);
+  }
+  if (!NODE_DIST || !existsSync(NODE_DIST)) {
+    console.error('--mesh requires --node-dist <packages/node/dist/index.js> — spawns the two mesh nodes A\' and B\'');
+    process.exit(2);
+  }
+  if (!SCRATCH) {
+    console.error('--mesh requires --scratch <dir> — the mesh block writes ap.db and bp.db there');
+    process.exit(2);
+  }
+  if (!existsSync(SCRATCH)) {
+    console.error(`--scratch not found: ${SCRATCH}`);
+    process.exit(2);
+  }
+  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
+    console.error('--mesh requires --node-p2p <multiaddr> — A\'s p2p bootstrap for A\', e.g. /ip4/127.0.0.1/tcp/19742 — so A\' syncs A\'s chain and R\'s karma is read through A\'/B\'');
+    process.exit(2);
+  }
+}
+
 // --public and --web-dist come together — pass both or neither. Without them
 // the twelve run as today and steps 13–16 are reported NOT RUN by name
 // (WEB_INTERFACE → The extension → "Links into the extension").
@@ -441,13 +603,20 @@ if (R_KEY) {
 // The extension → "The verified tip". Every block that reads a verified tip —
 // 17–20, the figures block, the names block, the light block — refuses to run
 // against a bundle whose profile disagrees: an extension built for testnet's
-// profile against a devnet chain would read *this node's proof did not verify*
-// for every reading node, and a green step would be a lie about the check.
-// The bundle's `notis-nodes` must be exactly the pair the run's build names,
-// in that order — [A, B] for --verified-{tip,figures,names}, [RA, RB] for
-// --light; the extension built one way is refused by the other, so a run takes
-// one (WEB_INTERFACE → The extension → "The light read").
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
+// profile against a devnet chain would read *no node's proof verified* and a
+// green step would be a lie about the check. The bundle's `notis-nodes` must
+// be exactly the pair the run's build names, in that order — the verified
+// blocks name RLA in front of A, then RLB in front of B; --light names RA,
+// then RB (WEB_INTERFACE → The extension → "The verified tip", "The light
+// read"). Each entry is a node object with `notisId` 64 hex, `addrs` empty,
+// and `api` the base this run serves (MESH_INTERFACE → The client's node
+// list → "An entry may carry an API base"); an entry with no addrs is
+// reached at its api alone, so the relays stay on the path and every read
+// the extension makes passes through one of them. The notisId the shell
+// carries is not checked against a live value here — the invoker baked the
+// key of each api's node into the build before this harness ran — only its
+// shape.
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
@@ -464,15 +633,70 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT) {
   const shellNodesRaw = nodesMetaMatch ? (nodesMetaMatch[1] ?? nodesMetaMatch[2]) : null;
   let shellNodes = null;
   try { shellNodes = JSON.parse(shellNodesRaw ?? ''); } catch {}
-  const expectedNodes = LIGHT ? [RA_ORIGIN, RB_ORIGIN] : [NODE.replace(/\/+$/, ''), B_ORIGIN];
-  const seen = Array.isArray(shellNodes) ? shellNodes.map((s) => String(s).replace(/\/+$/, '')) : null;
-  const nodesOk = Array.isArray(seen) && seen.length === expectedNodes.length && seen.every((v, i) => v === expectedNodes[i]);
+  // The two apis this run's build names, in order — the verified blocks name
+  // RLA in front of A and RLB in front of B (`startTipRelay`), the --light
+  // block names the two light relays RA and RB, and --mesh names A' and B'
+  // at their direct HTTP bases (the mesh block reaches each at its base and
+  // over the mesh at the address the seed-list entry names in `addrs`).
+  // The verified blocks' reads pass through RLA / RLB verbatim in `honest`
+  // mode, so steps that do not set another mode see the node's own answers
+  // (WEB_INTERFACE → The extension → "The verified tip"). Mainnet's [] and
+  // testnet's live JSON are not valid here — the run is for a devnet stack
+  // with the harness's own bases.
+  const expectedApis = MESH
+    ? [AP_ORIGIN, BP_ORIGIN]
+    : LIGHT
+      ? [RA_ORIGIN, RB_ORIGIN]
+      : [RLA_ORIGIN, RLB_ORIGIN];
+  const hex64 = /^[0-9a-f]{64}$/;
+  // For --mesh each entry's `addrs` carries exactly one WebRTC-direct
+  // multiaddr naming the node's own mesh listen port, with certhash and
+  // /p2p/<peerId> — the shape libp2p prints. MESH_INTERFACE → Discovery →
+  // "A node added by hand" holds the shape of an address the client dials;
+  // the shell check here reads the port, the webrtc-direct segment, a
+  // certhash and a /p2p/ segment, and leaves the specific certhash and
+  // peerId to the setup's identity-line read (setupMeshStack).
+  const expectedMeshPorts = MESH ? [AP_MESH_PORT, BP_MESH_PORT] : null;
+  const meshAddrOk = (addr, i) => {
+    if (typeof addr !== 'string') return false;
+    const re = new RegExp(
+      `^/ip4/127\\.0\\.0\\.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`,
+    );
+    return re.test(addr);
+  };
+  const entryOk = (e, i) => {
+    if (e === null || typeof e !== 'object') return false;
+    if (typeof e.notisId !== 'string' || !hex64.test(e.notisId)) return false;
+    if (typeof e.api !== 'string' || e.api.replace(/\/+$/, '') !== expectedApis[i]) return false;
+    if (!Array.isArray(e.addrs)) return false;
+    if (MESH) {
+      return e.addrs.length === 1 && meshAddrOk(e.addrs[0], i);
+    }
+    return e.addrs.length === 0;
+  };
+  const nodesOk = Array.isArray(shellNodes)
+    && shellNodes.length === expectedApis.length
+    && shellNodes.every(entryOk);
   if (!nodesOk) {
-    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} != ${JSON.stringify(expectedNodes)}`);
-    console.error(`      rebuild with VITE_NODES=${JSON.stringify(JSON.stringify(expectedNodes))} bash packages/web/scripts/build-extension.sh`);
+    const expectedShape = expectedApis.map((api, i) => ({
+      notisId: '<the api\'s node\'s 64-hex key, from its start line>',
+      addrs: MESH
+        ? [`/ip4/127.0.0.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/<multihash>/p2p/<the api\'s node\'s peerId, from its start line>`]
+        : [],
+      api,
+    }));
+    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} is not the two-node shape this run expects`);
+    console.error(`      rebuild with VITE_NODES set to a JSON array of two entries in this shape, each entry's api in order:`);
+    console.error(`      ${JSON.stringify(expectedShape)}`);
+    console.error(`      each notisId is the 64-hex key its api's node prints as the first JSON line of its start output${MESH ? ', and each addrs[0] is the WebRTC-direct multiaddr that line names in `multiaddrs`' : ''}`);
     process.exit(2);
   }
-  console.log(`shell notis-nodes=${shellNodesRaw} matches ${LIGHT ? '[RA, RB]' : '[A, B]'}`);
+  const shapeLabel = MESH
+    ? '[{api: A\', addrs: [A\' webrtc-direct], …}, {api: B\', addrs: [B\' webrtc-direct], …}]'
+    : LIGHT
+      ? '[{api: RA, …}, {api: RB, …}]'
+      : '[{api: A, …}, {api: B, …}]';
+  console.log(`shell notis-nodes=${shellNodesRaw} matches ${shapeLabel}`);
 }
 
 // The build's public base is the shell's `notis-public` — WEB_INTERFACE →
@@ -607,10 +831,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function launchChromium(extensionDir) {
   const chromePort = 19200 + Math.floor(Math.random() * 500);
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
+  // Chromium refuses WebRTC connections to 127.0.0.1 unless started with
+  // --allow-loopback-in-peer-connection. The flag is a harness switch for
+  // a loopback stage, not a product setting: the --mesh block's A' and B'
+  // listen on /ip4/127.0.0.1/udp/<port>/webrtc-direct and the extension
+  // dials them over RTCPeerConnection, which the browser blocks without
+  // this flag (WEB_INTERFACE → The extension → "The mesh is the extension's
+  // first path"). Added only for a --mesh run, so every other block runs
+  // on the same browser defaults a reader's browser carries
+  // (memory `runs-on-browser-defaults`).
+  const meshArgs = MESH ? ['--allow-loopback-in-peer-connection'] : [];
   const chromeProc = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     `--remote-debugging-port=${chromePort}`, `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionDir}`, `--disable-extensions-except=${extensionDir}`,
+    ...meshArgs,
     'about:blank',
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
@@ -845,11 +1080,12 @@ async function feedContains(id) {
 // The verified-tip block — helpers.
 //
 // WEB_INTERFACE → The extension → "The verified tip", steps 17–20. The
-// harness owns the lifecycle of node B, the lying relay, node C and node A's
-// miner; A itself is the operator's. Every child is a node:child_process
-// handle (`node`'s own), stopped by the handle at cleanup (SIGKILL) — never
-// by name, never by grepping /proc — so any dagsocial-miner unit running the
-// same miner.mjs against another network stays untouched.
+// harness owns the lifecycle of node B, node D and D's miner, and of the
+// two tip relays RLA / RLB in front of A and B. A itself and A's miner are
+// the operator's. Every child is a node:child_process handle (`node`'s own),
+// stopped by the handle at cleanup (SIGKILL) — never by name, never by
+// grepping /proc — so any dagsocial-miner unit running the same miner.mjs
+// against another network stays untouched.
 // ---------------------------------------------------------------------------
 
 // The live children — the cleanup path at the end of the run sends SIGKILL to
@@ -962,222 +1198,203 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
   return null;
 }
 
-// Step 19b's precondition, read as the extension's tip verifier reads it with
-// C as the reading node (WEB_INTERFACE → The extension → "The verified tip"):
-// `resolveTip` over [C, A] — C first, so a tie keeps C — at the verifier's
-// `TIP_M` and `TIP_K`, under devnet's profile. `outworked` is the verdict
-// table's row: C verified, A the winner, C's `behind` null. The scores are
-// `compareProofs`'s over the two proofs the result carries, in the fold's
-// order (C as `a`) and at the `m` and `k` the proofs were asked for — a
-// proof of another `m` or `k` is refused by the verifier, so `compareProofs`
-// answers `incomparable / invalid` (NIPOPOW_INTERFACE → compareProofs) —
-// and absent where either side did not verify.
-async function readForkComparison() {
-  const aOrigin = NODE.replace(/\/+$/, '');
-  const result = await forkTools.resolveTip([C_ORIGIN, aOrigin], TIP_M, TIP_K, forkTools.profile, Date.now, fetch);
-  const [c, a] = result.nodes;
-  const tipOf = (n) => (n.verifyResult?.ok === true ? n.verifyResult.tip.height : null);
-  const cmp = c.verified && a.verified
-    ? forkTools.compareProofs(c.proof, a.proof, { m: TIP_M, k: TIP_K }, forkTools.verifierProfile(forkTools.profile, Date.now()))
-    : null;
-  return {
-    c: { verified: c.verified, refuseCode: c.refuseCode, tip: tipOf(c), behind: c.behind },
-    a: { verified: a.verified, refuseCode: a.refuseCode, tip: tipOf(a) },
-    winner: result.winnerIndex === 0 ? 'C' : result.winnerIndex === 1 ? 'A' : 'none',
-    compare: cmp === null ? null
-      : cmp.verdict === 'incomparable' ? { verdict: 'incomparable', reason: cmp.reason }
-      : { verdict: cmp.verdict === 'a' ? 'C' : cmp.verdict === 'b' ? 'A' : 'tie', scoreC: String(cmp.scoreA), scoreA: String(cmp.scoreB), lca: cmp.lca.height },
-    outworked: c.verified && result.winnerIndex === 1 && c.behind === null,
-  };
-}
-
-function describeForkComparison(r) {
-  const side = (name, s) => (s.verified ? `${name} tip ${s.tip}` : `${name} not verified (${s.refuseCode})`);
-  const scores = r.compare === null ? 'no comparison'
-    : r.compare.verdict === 'incomparable' ? `incomparable (${r.compare.reason})`
-    : `scores above LCA ${r.compare.lca}: C ${r.compare.scoreC} · A ${r.compare.scoreA} (${r.compare.verdict})`;
-  return `${side('C', r.c)}, ${side('A', r.a)}, winner ${r.winner}, C behind ${r.c.behind}, ${scores}`;
-}
-
-// The lying relay — WEB_INTERFACE → The extension → "The verified tip". Every
-// GET is proxied to node A verbatim, `access-control-allow-origin: *` added so
-// the extension page can read it (as A does directly). The one hostile edit
-// is /nipopow/proof/<m>/<k>: one byte flipped ten bytes from the end — the
-// spike's technique. Two flips fall in `refuseCode: 'invalid'` — a verify
-// failure or a decode failure — and the REPORT names which.
-async function startLyingRelay(upstream) {
-  const flips = { total: 0 };
-  const server = createServer(async (req, res) => {
-    try {
-      const method = req.method ?? 'GET';
-      const url = req.url ?? '/';
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-        res.writeHead(405, { 'access-control-allow-origin': '*' });
-        res.end('lying relay serves reads only');
-        return;
-      }
-      if (method === 'OPTIONS') {
-        res.writeHead(204, {
-          'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
-          'access-control-allow-headers': '*',
-        });
-        res.end();
-        return;
-      }
-      const upstreamRes = await fetch(upstream + url, { method });
-      const buf = Buffer.from(await upstreamRes.arrayBuffer());
-      let body = buf;
-      const isProof = /^\/nipopow\/proof\/\d+\/\d+/.test(url);
-      if (isProof && upstreamRes.status === 200 && buf.length >= 11) {
-        body = Buffer.from(buf);
-        body[body.length - 10] = body[body.length - 10] ^ 0x01;
-        flips.total += 1;
-      }
-      const headers = {
-        'access-control-allow-origin': '*',
-        'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
-        'cache-control': 'no-store',
-      };
-      res.writeHead(upstreamRes.status, headers);
-      res.end(body);
-    } catch (e) {
-      res.writeHead(502, { 'access-control-allow-origin': '*' });
-      res.end(String(e));
-    }
-  });
-  await new Promise((res, rej) => {
-    server.on('error', rej);
-    server.listen(RELAY_PORT, '127.0.0.1', res);
-  });
-  return { server, flips, origin: RELAY_ORIGIN };
-}
-
-// The figures relay — WEB_INTERFACE → The extension → "The verified figures",
-// the lie arms 22a · 22b · 22c · 22d · 22e · 23. Every GET is proxied to `upstream` with
-// `access-control-allow-origin: *`, as 19a's relay does, and every
-// /nipopow/proof/ answer passes verbatim in every mode: the reading node's tip
-// proof is A's own, so the corner stays verified and the anchor stands. The
-// step sets `relay.mode` between arms, and the mode is the one hostile edit:
-//   honest          — none;
-//   credits-fake    — R's first /credits page lists one more box, a fresh
-//                     random id holding 12.5 $NOTIS: its proofs come from A,
-//                     which holds no such key;
-//   credits-foreign — R's first /credits page lists the devnet faucet's
-//                     largest credit box, read from upstream at the request —
-//                     a real box of another key;
-//   avl-flip        — every /api/v1/proof/ AND /api/v1/range/ answer carries
-//                     its proof with one byte flipped ten from the end, the
-//                     JSON otherwise as served: the flip is made in the decoded
-//                     proof, never in the JSON text, so what fails is the
-//                     proof's verification. For the range route this fires on
-//                     the first page's proof the ledger reads, which is enough
-//                     to make the whole range's status `unproven` — the walk
-//                     stops at the first failure.
-//   credits-drop    — R's first /credits page serves one fewer box, `boxCount`
-//                     and `total` consistent with the listing it serves. The
-//                     dropped box is held by the chain, so the figures run
-//                     reads it `unlisted` and the balance row reads
-//                     *the chain holds N $NOTIS the node does not list*.
-//   karma-drop      — the same on R's first /karma page.
-//   credits-drop-tipplus1 — the same `credits` drop as `credits-drop`, AND
-//                     `/blocks/current` answers one height above the node's
-//                     own: the figures run reads the dropped box `undecided`
-//                     (held at tip, named nowhere in the listing, and
-//                     `heightAfter` not `tip.height`), the balance row reads
-//                     muted *not checked yet* with the gold as the node
-//                     gave it — never clay, never silent.
-// With `names` — R's key and S's name — the name modes of WEB_INTERFACE → The
-// extension → "The verified names", the lie arms 27a–d · 28a–b, every
-// /api/v1/proof/ answer passing verbatim as well:
-//   label-rename    — every row of a /posts answer — the feed's, a thread's
-//                     post, ancestors, descendants and pending, one post's,
-//                     a light row (`WEB_INTERFACE → The extension → "The
-//                     light read"`: `authorName` and no `author`) — whose
-//                     `author` is R, or carrying no `author` whose
-//                     `authorName` is the name R holds, carries
-//                     `relay.renameTo` as its authorName;
-//   owner-404       — /usernames?owner=<R> answers 404 { error: 'Identity
-//                     holds no name' }, the node's own words for a key holding
-//                     none;
-//   owner-fakebox   — /usernames?owner=<R> answers `relay.fakeBoxId` as its
-//                     boxId, every other field as served;
-//   name-owner      — /usernames/<S's name>, in any case, answers the devnet
-//                     faucet's key as its owner, the boxId as served: another
-//                     key over S's real box;
-//   name-fakebox    — /usernames/<S's name>, in any case, answers
-//                     `relay.fakeBoxId` as its boxId.
-// `relay.edits` counts each mode's edited answers, `relay.renamed` the rows
-// label-rename renamed, and `relay.log` holds every request the relay served —
-// its arrival and answer times, status and edit, and for /blocks/current the
-// height it forwarded: the outside record the name arms read a check's heights
-// and a tip run's start from.
-async function startFiguresRelay(upstream, port, names = null) {
+// A tip-block relay — WEB_INTERFACE → The extension → "The verified tip". It
+// stands in front of one node (A for RLA, B for RLB) and passes every request
+// through to `relay.upstream`, with `access-control-allow-origin: *` added on
+// the answer so the extension page can read it (as the figures and light
+// relays do). Every method reaches the upstream with the request's body bytes
+// and content-type, and the upstream's status, content-type and body come
+// back: the extension's writes and its batch resolve go through the relay.
+// `relay.upstream` is reassignable: a step sets it to `D_ORIGIN` for the
+// `upstream-D` mode and back to its node origin after.
+//
+// The modes, one at a time, the one hostile edit each
+// (`WEB_INTERFACE → The extension → "The verified tip"`):
+//   `honest`         — none; everything passes to upstream verbatim.
+//   `proof-invalid`  — on /nipopow/proof/<m>/<k> alone, the upstream's answer
+//                      arrives with one byte flipped ten bytes from the end
+//                      (the spike's technique). Two flips fall in
+//                      `refuseCode: 'invalid'` — a verify failure or a decode
+//                      failure (`NODE_INTERFACE → Nipopow`).
+//   `proof-short`    — on /nipopow/proof/<m>/<k> alone, the relay answers
+//                      404 `{error:'chain too short'}` without asking
+//                      upstream — the shape a node whose chain is below
+//                      `m + k` answers with (`NODE_INTERFACE → Nipopow`); the
+//                      tool classifies it `refuseCode: 'too-short'`.
+//   `upstream-D`     — `relay.upstream` is set to `D_ORIGIN` for the whole
+//                      step, so every request lands on D's answers — D's tip
+//                      from /blocks/current, D's proof, D's blocks. The
+//                      relay's mode stays `honest` under upstream-D: the one
+//                      edit is the upstream swap, not a per-route lie.
+//   `hold-posts`     — the --mesh block's M4 mode: GET /HEAD /OPTIONS pass
+//                      through verbatim; POST /posts is held — the body
+//                      drained, no response — past the client's
+//                      REQUEST_TIMEOUT_MS, which lets the client's write
+//                      rule move the same bytes to the next entry
+//                      (`MESH_INTERFACE → The client's node list → "A
+//                      write goes to one node at a time"`). The relay
+//                      ends the hold on the response's close event with
+//                      no reply, which `WEB_INTERFACE → The extension →
+//                      "Nothing retries a rejection"`'s `**A send that
+//                      ends with no answer is no rejection**` reads as
+//                      no answer. One POST through the relay lands no
+//                      bytes upstream; the retry's bytes reach the next
+//                      node and land once there.
+// With `relay.rKey` and (for the names block) `relay.sName` set, the relay
+// also carries the figures and names modes — one relay type, named on both
+// tip relays so a lie on both is a lie the run meets whichever node answers
+// (WEB_INTERFACE → The extension → "The verified figures", "The verified
+// names"):
+//   `credits-fake`    — R's first /credits page lists one more box, a fresh
+//                       random id holding 12.5 $NOTIS; the chain holds no
+//                       such key.
+//   `credits-foreign` — R's first /credits page lists the devnet faucet's
+//                       largest credit box — a real box of another key; the
+//                       range R's boxes are read from does not hold it.
+//   `credits-drop`    — R's first /credits page serves one fewer box,
+//                       `boxCount` and `total` consistent with the listing.
+//   `karma-drop`      — the same on R's first /karma page.
+//   `credits-drop-tipplus1` — `credits-drop` AND `/blocks/current` one above
+//                       the node's own, so `heightAfter` slips past the
+//                       anchor's tip and the dropped box reads `undecided`.
+//   `avl-flip`        — every /api/v1/proof/ AND /api/v1/range/ answer
+//                       carries its proof with one byte flipped ten from the
+//                       end, the JSON otherwise as served.
+//   `label-rename`    — every row of a /posts answer whose `author` is R, or
+//                       (a light row) whose `authorName` is R's name, is
+//                       answered carrying `relay.renameTo` as its authorName.
+//   `owner-404`       — /usernames?owner=<R> answers 404 `{error:'Identity
+//                       holds no name'}`, the node's own words for a key
+//                       holding none.
+//   `owner-fakebox`   — /usernames?owner=<R> answers `relay.fakeBoxId` as its
+//                       boxId, every other field as served.
+//   `name-owner`      — /usernames/<S's name> answers the devnet faucet's key
+//                       as its owner, the boxId as served.
+//   `name-fakebox`    — /usernames/<S's name> answers `relay.fakeBoxId` as
+//                       its boxId.
+// `relay.flips` counts each flipped proof answer; `relay.shorts` counts each
+// 404 chain-too-short answered; `relay.edits[mode]` counts each figures or
+// names mode's edited answers; `relay.renamed` counts the rows label-rename
+// renamed; `relay.log` holds each request's url, method, mode-at-arrival,
+// upstream-at-arrival, status and, for /blocks/current, the height forwarded
+// — the outside record the name arms read a check's heights and a tip run's
+// start from. `relay.fakeBox`, `relay.foreignBox`, `relay.droppedCreditsBox`
+// and `relay.droppedKarmaBox` hold the box the figures mode last edited R's
+// listing with — the one the arm asserts the figures line names.
+async function startTipRelay(upstream, port) {
   const relay = {
     server: null,
     origin: `http://127.0.0.1:${port}`,
+    upstream,
     mode: 'honest',
-    edits: {
-      'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
-      'credits-drop': 0, 'karma-drop': 0, 'credits-drop-tipplus1': 0,
-      'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0, 'name-owner': 0, 'name-fakebox': 0,
-    },
-    renamed: 0,
+    flips: { total: 0 },
+    shorts: { total: 0 },
+    // Names context — mutable; the figures block sets `rKey` before its
+    // arms run, the names block sets `rKey` and `sName`.
+    rKey: null,
+    sName: null,
+    // `label-rename` state — set by each label arm.
     renameFrom: null,
     renameTo: null,
+    renamed: 0,
+    // The fake box id a name arm sets — owner-fakebox / name-fakebox.
     fakeBoxId: null,
-    // The box the credits-side lie points at — the arm asserts the line names
-    // this box's value scaled to $NOTIS, so a lie that moved to another
-    // amount is caught.
-    //   `fakeBox`           — the latest fabricated box served in credits-fake
-    //                         (its value is a constant 12.5 $NOTIS, but kept
-    //                         for symmetry with the other arms).
-    //   `foreignBox`        — the faucet's largest credit box, read from
-    //                         upstream the first time credits-foreign serves
-    //                         R's first page.
-    //   `droppedCreditsBox` — the latest box dropped from R's first /credits
-    //                         page under credits-drop.
-    //   `droppedKarmaBox`   — the latest box dropped from R's first /karma
-    //                         page under karma-drop.
+    // The box each figures-mode's edit points at, read by the arm's row
+    // assertion.
     fakeBox: null,
     foreignBox: null,
     droppedCreditsBox: null,
     droppedKarmaBox: null,
+    // Per-mode edit counters, shared across figures and names modes.
+    edits: {
+      'credits-fake': 0, 'credits-foreign': 0, 'avl-flip': 0,
+      'credits-drop': 0, 'karma-drop': 0, 'credits-drop-tipplus1': 0,
+      'label-rename': 0, 'owner-404': 0, 'owner-fakebox': 0,
+      'name-owner': 0, 'name-fakebox': 0,
+    },
     log: [],
   };
-  const ownCreditsPath = `/credits/${R_JSON.pubKeyHex.toLowerCase()}`;
-  const ownKarmaPath = `/karma/${R_JSON.pubKeyHex.toLowerCase()}`;
-  const rKey = names?.rKey ?? null;
-  const sName = names?.sName ?? null;
   relay.server = createServer(async (req, res) => {
     const at = Date.now();
     try {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
-      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-        res.writeHead(405, { 'access-control-allow-origin': '*' });
-        res.end('figures relay serves reads only');
+      const mode0 = relay.mode;
+      // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
+      // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
+      // to the next entry (MESH_INTERFACE → The client's node list → "A
+      // write goes to one node at a time"). Reads pass through verbatim;
+      // the mode acts on POST /posts alone.
+      const isPostsWrite = method === 'POST' && (url === '/posts' || url.startsWith('/posts?'));
+      if (mode0 === 'hold-posts' && isPostsWrite) {
+        // Drain the body so the client sees its send arrive; never write a
+        // response. A close on the response (writableEnded still false)
+        // ends the hold as "client closed", which is the same signal the
+        // light relay's hold uses for its hang mode.
+        const closed = new Promise((resolve) => {
+          res.on('close', () => { if (!res.writableEnded) resolve('client-closed'); });
+        });
+        try {
+          await new Promise((resolve) => {
+            req.on('data', () => {});
+            req.on('end', resolve);
+            req.on('error', resolve);
+          });
+        } catch { /* body left undrained */ }
+        await closed;
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: 'hold-posts', upstream: relay.upstream, status: 'client-closed', edit: 'hold-posts' });
         return;
       }
       if (method === 'OPTIONS') {
         res.writeHead(204, {
           'access-control-allow-origin': '*',
-          'access-control-allow-methods': 'GET, HEAD, OPTIONS',
-          'access-control-allow-headers': '*',
+          'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
         });
         res.end();
         return;
       }
+      // Every other method reaches the upstream with the request's body bytes
+      // and its content-type.
+      const upstreamInit = { method };
+      if (method !== 'GET' && method !== 'HEAD') {
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', resolve);
+          req.on('error', reject);
+        });
+        upstreamInit.body = Buffer.concat(chunks);
+        const ct = req.headers['content-type'];
+        if (ct) upstreamInit.headers = { 'content-type': ct };
+      }
       const mode = relay.mode;
-      const target = new URL(url, upstream);
-      const ownerLookup = rKey !== null && target.pathname === '/usernames'
-        && (target.searchParams.get('owner') ?? '').toLowerCase() === rKey;
+      const upstreamAtArrival = relay.upstream;
+      const target = new URL(url, upstreamAtArrival);
+      const isProof = /^\/nipopow\/proof\/\d+\/\d+/.test(url);
+      // `proof-short` — the 404 shape a node whose chain is shorter than
+      // m + k answers it with (`NODE_INTERFACE → Nipopow`): the tool classifies
+      // the body `{error:'chain too short'}` as `too-short`.
+      if (mode === 'proof-short' && isProof) {
+        relay.shorts.total += 1;
+        res.writeHead(404, {
+          'access-control-allow-origin': '*',
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(JSON.stringify({ error: 'chain too short' }));
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: 404 });
+        return;
+      }
+      // `owner-404` — /usernames?owner=<R> answers 404 before upstream.
+      const ownerLookup = relay.rKey !== null && target.pathname === '/usernames'
+        && (target.searchParams.get('owner') ?? '').toLowerCase() === relay.rKey;
       const looked = handleLookupName(target.pathname);
-      const sLookup = sName !== null && looked !== null && looked.toLowerCase() === sName.toLowerCase();
+      const sLookup = relay.sName !== null && looked !== null
+        && looked.toLowerCase() === relay.sName.toLowerCase();
       if (mode === 'owner-404' && method === 'GET' && ownerLookup) {
         relay.edits['owner-404'] += 1;
-        relay.log.push({ at, doneAt: Date.now(), path: url, status: 404, edit: 'owner-404' });
-        console.log(`[vn] relay owner-404 edit ${relay.edits['owner-404']}: ${url}`);
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: 404, edit: 'owner-404' });
         res.writeHead(404, {
           'access-control-allow-origin': '*',
           'content-type': 'application/json; charset=utf-8',
@@ -1186,17 +1403,30 @@ async function startFiguresRelay(upstream, port, names = null) {
         res.end(JSON.stringify({ error: 'Identity holds no name' }));
         return;
       }
-      const upstreamRes = await fetch(upstream + url, { method });
+      const upstreamRes = await fetch(upstreamAtArrival + url, upstreamInit);
       let body = Buffer.from(await upstreamRes.arrayBuffer());
-      const entry = { at, doneAt: null, path: url, status: upstreamRes.status, edit: null };
-      if (method === 'GET' && upstreamRes.status === 200) {
+      let edit = null;
+      // `proof-invalid` — one byte of the proof's bytes flipped so the
+      // tool reads `refuseCode: 'invalid'` (WEB_INTERFACE → The extension →
+      // "The verified tip"; the `applyEvent` route-at-API-base rule holds
+      // the entry at `retry`, never `blacklisted`).
+      if (mode === 'proof-invalid' && isProof && upstreamRes.status === 200 && body.length >= 11) {
+        body = Buffer.from(body);
+        body[body.length - 10] = body[body.length - 10] ^ 0x01;
+        relay.flips.total += 1;
+      }
+      // Figures and names modes act only when R's key is named on the relay
+      // (set by the figures and names blocks before their arms run).
+      if (method === 'GET' && upstreamRes.status === 200 && relay.rKey !== null) {
+        const ownCreditsPath = `/credits/${relay.rKey}`;
+        const ownKarmaPath = `/karma/${relay.rKey}`;
         const ownCreditsFirstPage = target.pathname.toLowerCase() === ownCreditsPath && !target.searchParams.has('after');
         const ownKarmaFirstPage = target.pathname.toLowerCase() === ownKarmaPath && !target.searchParams.has('after');
         if ((mode === 'credits-fake' || mode === 'credits-foreign') && ownCreditsFirstPage) {
           const listing = JSON.parse(body.toString('utf8'));
           const box = mode === 'credits-fake'
             ? { boxId: randomBytes(32).toString('hex'), value: '1250000000' }
-            : (relay.foreignBox ?? await largestCreditBox(upstream, DEVNET_FAUCET_KEY));
+            : (relay.foreignBox ?? await largestCreditBox(upstreamAtArrival, DEVNET_FAUCET_KEY));
           if (box !== null) {
             listing.boxes.push(box);
             listing.boxCount += 1;
@@ -1204,17 +1434,14 @@ async function startFiguresRelay(upstream, port, names = null) {
             relay.edits[mode] += 1;
             if (mode === 'credits-fake') relay.fakeBox = { boxId: box.boxId, value: box.value };
             else relay.foreignBox = { boxId: box.boxId, value: box.value };
-            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${box.boxId.slice(0, 12)}… (${box.value}) listed under R`);
+            edit = mode;
           }
         } else if ((mode === 'credits-drop' || mode === 'credits-drop-tipplus1') && ownCreditsFirstPage) {
           // Drop one listed credit box from R's first /credits page, keeping
-          // boxes/boxCount/total consistent with the listing served. The run
-          // reads the dropped box `unlisted` — the chain holds what the node
-          // did not list (WEB_INTERFACE → The extension → "The verified
-          // figures" — "the chain holds N $NOTIS the node does not list").
-          // Under `credits-drop-tipplus1` the drop is paired with a lie on
-          // /blocks/current one above the node's own, so the run reads the
-          // dropped box `undecided`.
+          // boxes/boxCount/total consistent (WEB_INTERFACE → The extension →
+          // "The verified figures"). Under `credits-drop-tipplus1` the drop
+          // is paired with /blocks/current one above the node's own, so the
+          // dropped box reads `undecided`.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1225,15 +1452,9 @@ async function startFiguresRelay(upstream, port, names = null) {
             body = Buffer.from(JSON.stringify(listing));
             relay.droppedCreditsBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits[mode] += 1;
-            console.log(`[vf] figures relay ${mode} edit ${relay.edits[mode]}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+            edit = mode;
           }
         } else if (mode === 'karma-drop' && ownKarmaFirstPage) {
-          // Drop one listed karma box from R's first /karma page, keeping
-          // boxes/boxCount/total consistent with the listing served and
-          // `effective` passed through as served. The run reads the dropped
-          // box `unlisted` — the chain holds what the node did not list. The
-          // id and value are recorded on `relay.droppedKarmaBox` so the arm
-          // asserts the line names this box's value as rep.
           const listing = JSON.parse(body.toString('utf8'));
           if (Array.isArray(listing.boxes) && listing.boxes.length > 0) {
             const dropped = listing.boxes.shift();
@@ -1244,15 +1465,12 @@ async function startFiguresRelay(upstream, port, names = null) {
             body = Buffer.from(JSON.stringify(listing));
             relay.droppedKarmaBox = { boxId: dropped.boxId, value: dropped.value };
             relay.edits['karma-drop'] += 1;
-            console.log(`[vf] figures relay karma-drop edit ${relay.edits['karma-drop']}: ${dropped.boxId.slice(0, 12)}… (${dropped.value}) withheld from R's listing`);
+            edit = 'karma-drop';
           }
         } else if (mode === 'avl-flip' && (target.pathname.startsWith('/api/v1/proof/') || target.pathname.startsWith('/api/v1/range/'))) {
           // A one-byte flip ten from the end of the proof, decoded then
-          // re-encoded, the JSON otherwise as served. For a range proof the
-          // first page's `BatchAVLVerifier` refuses the digest, which fails
-          // the whole range `unproven` — the walk stops at the first failure
-          // (NODE_INTERFACE → AVL+ State Root → "avl-endpoint, the range
-          // route").
+          // re-encoded, the JSON otherwise as served (NODE_INTERFACE → AVL+
+          // State Root → "avl-endpoint, the range route").
           const answer = JSON.parse(body.toString('utf8'));
           const proof = Buffer.from(answer.proof, 'base64');
           if (proof.length >= 11) {
@@ -1260,16 +1478,16 @@ async function startFiguresRelay(upstream, port, names = null) {
             answer.proof = proof.toString('base64');
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['avl-flip'] += 1;
+            edit = 'avl-flip';
           }
         } else if (mode === 'label-rename' && (target.pathname === '/posts' || target.pathname.startsWith('/posts/'))) {
           const answer = JSON.parse(body.toString('utf8'));
-          const rows = renameRows(answer, rKey, relay.renameFrom, relay.renameTo);
+          const rows = renameRows(answer, relay.rKey, relay.renameFrom, relay.renameTo);
           if (rows > 0) {
             body = Buffer.from(JSON.stringify(answer));
             relay.edits['label-rename'] += 1;
             relay.renamed += rows;
-            entry.edit = `label-rename ×${rows}`;
-            console.log(`[vn] relay label-rename edit ${relay.edits['label-rename']}: ${rows} row(s) of R as @${relay.renameTo} in ${url.slice(0, 80)}`);
+            edit = `label-rename ×${rows}`;
           }
         } else if ((mode === 'owner-fakebox' && ownerLookup) || ((mode === 'name-owner' || mode === 'name-fakebox') && sLookup)) {
           const answer = JSON.parse(body.toString('utf8'));
@@ -1277,41 +1495,39 @@ async function startFiguresRelay(upstream, port, names = null) {
           else answer.boxId = relay.fakeBoxId;
           body = Buffer.from(JSON.stringify(answer));
           relay.edits[mode] += 1;
-          entry.edit = mode;
-          console.log(`[vn] relay ${mode} edit ${relay.edits[mode]}: ${url} → ${mode === 'name-owner' ? `owner ${DEVNET_FAUCET_KEY.slice(0, 12)}…` : `boxId ${relay.fakeBoxId.slice(0, 12)}…`}`);
+          edit = mode;
         }
-        if (target.pathname === '/blocks/current') {
-          // `credits-drop-tipplus1` reports `/blocks/current` one above the
-          // node's own, so the run's heightAfter sits above the anchor's
-          // tip and the dropped box reads `undecided` (WEB_INTERFACE → The
-          // extension → "The verified figures" — "`undecided` — held at
-          // `tip`, named nowhere in the listing of its ledger, and
-          // `heightAfter` not `tip.height`").
-          if (mode === 'credits-drop-tipplus1') {
-            try {
-              const now = JSON.parse(body.toString('utf8'));
-              if (typeof now.height === 'number') {
-                now.height = now.height + 1;
-                body = Buffer.from(JSON.stringify(now));
-                relay.edits['credits-drop-tipplus1'] += 1;
-                entry.edit = 'credits-drop-tipplus1 blocks/current+1';
-              }
-            } catch {}
-          }
-          try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
+        // `credits-drop-tipplus1` — /blocks/current one above the node's own
+        // (WEB_INTERFACE → The extension → "The verified figures" — `undecided`
+        // when `heightAfter` is not `tip.height`).
+        if (mode === 'credits-drop-tipplus1' && target.pathname === '/blocks/current') {
+          try {
+            const now = JSON.parse(body.toString('utf8'));
+            if (typeof now.height === 'number') {
+              now.height = now.height + 1;
+              body = Buffer.from(JSON.stringify(now));
+              relay.edits['credits-drop-tipplus1'] += 1;
+              edit = 'credits-drop-tipplus1 blocks/current+1';
+            }
+          } catch {}
         }
       }
-      entry.doneAt = Date.now();
-      relay.log.push(entry);
-      res.writeHead(upstreamRes.status, {
+      const headers = {
         'access-control-allow-origin': '*',
         'content-type': upstreamRes.headers.get('content-type') ?? 'application/octet-stream',
         'cache-control': 'no-store',
-      });
+      };
+      res.writeHead(upstreamRes.status, headers);
       res.end(body);
+      const entry = { at, doneAt: Date.now(), method, url, mode, upstream: upstreamAtArrival, status: upstreamRes.status, edit };
+      if (target.pathname === '/blocks/current') {
+        try { entry.height = JSON.parse(body.toString('utf8')).height ?? null; } catch { entry.height = null; }
+      }
+      relay.log.push(entry);
     } catch (e) {
       res.writeHead(502, { 'access-control-allow-origin': '*' });
       res.end(String(e));
+      relay.log.push({ at, doneAt: Date.now(), method: req.method ?? '', url: req.url ?? '', mode: relay.mode, upstream: relay.upstream, status: 502 });
     }
   });
   await new Promise((res, rej) => {
@@ -1404,61 +1620,6 @@ async function pressCorner(cx) {
   await cx.eval(`document.querySelector('.corner')?.click()`, true);
 }
 
-// Set prefs.node through the settings window's real row (WEB_INTERFACE →
-// The settings window: the input commits on `change`). Empty resets to the
-// build default. The changeNode handler drops the verdict to `null` (checking)
-// and starts a new run.
-//
-// The `change` dispatch ends the settings body synchronously (WEB_INTERFACE →
-// The workspace → "What ends a form in a window": a change of the node read
-// builds every body anew; a form that has ended is not drawn again and its
-// fields are emptied), so a read of the input the dispatch returned on is of
-// a form that has ended, value emptied. Mark the input before the dispatch,
-// then read the value of the input that stands once the new body has drawn
-// (bounded, the shape of the links-row read above).
-async function setNodeViaUi(cx, origin) {
-  await cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
-  await cx.waitFor(`!!document.querySelector('[aria-label="the node this client reads"]')`, 'settings node row', 10000);
-  const mark = 'setnode-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  await cx.eval(`(() => {
-    const input = document.querySelector('[aria-label="the node this client reads"]');
-    input.setAttribute('data-notis-mark', ${JSON.stringify(mark)});
-    input.focus();
-    input.value = ${JSON.stringify(origin)};
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`, true);
-  const t0 = Date.now();
-  let applied = '';
-  let drew = false;
-  while (Date.now() - t0 < 5000) {
-    const next = await cx.eval(`(() => {
-      const input = document.querySelector('[aria-label="the node this client reads"]');
-      if (!input) return { present: false };
-      return {
-        present: true,
-        marked: input.getAttribute('data-notis-mark') === ${JSON.stringify(mark)},
-        value: input.value,
-      };
-    })()`);
-    if (next.present && !next.marked) {
-      applied = next.value ?? '';
-      drew = true;
-      break;
-    }
-    await sleep(50);
-  }
-  // Let the corner's render settle before the caller reads it.
-  await sleep(200);
-  return drew ? applied : applied + ' (the new settings body did not draw within 5 s)';
-}
-
-async function readPrefsNode(cx) {
-  // `setNode('')` removes the key and prefs.node adopts BUILD_NODES[0] at boot;
-  // the stored value is what a re-read of the input mirrors. Read localStorage
-  // directly so no settings window needs to be open here.
-  return cx.eval(`localStorage.getItem('notis.node')`);
-}
-
 function proofRequestsSince(events, startIdx) {
   const out = [];
   for (let i = startIdx; i < events.length; i++) {
@@ -1533,7 +1694,7 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20.
 // ---------------------------------------------------------------------------
 
-const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19b', '19c', 20];
+const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19a-both', '19b', '19c', 20];
 // The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e ·
 // 23 · 25, in the order they run (WEB_INTERFACE → The extension → "The
 // verified figures"); 22a · 22b · 22c · 22d · 22e · 23 are the lie arms,
@@ -1563,32 +1724,6 @@ async function pressAndReadVerdict(cx, opts = {}) {
   return { proofs, reading: await readCorner(cx) };
 }
 
-// Set the node row, then wait for the verifier's run driven by the change to
-// reach one of the caller's readings. Blanking the row is its own call, with
-// the verified-across-N-nodes predicate. Records the intermediate values so
-// the caller can build the step's detail line.
-async function changeNodeAndAwait(cx, origin, predicate, description, ms = 60000) {
-  // From before the row is set: changeNode drops the verdict and starts a new
-  // run inside setNodeViaUi's own change event, so the count starting here
-  // covers that run's own requests, not only ones after it is already moving.
-  const startIdx = cx.events.length;
-  const applied = await setNodeViaUi(cx, origin);
-  const stored = await readPrefsNode(cx);
-  // Nothing to press: the change itself started the run above.
-  const reached = await waitForCornerState(cx, predicate, description, ms);
-  const reading = reached.last ?? await readCorner(cx);
-  const proofs = proofRequestsSince(cx.events, startIdx);
-  return { applied, stored, reached, reading, proofs };
-}
-
-async function blankNodeAndAwaitVerified(cx, ms = 60000) {
-  return changeNodeAndAwait(
-    cx, '',
-    (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
-    'led fresh + verified across N nodes (after blank)',
-    ms);
-}
-
 // Bring node B up, bootstrapped from A. B's role is server; its store is
 // fresh; it waits for one peer (A) before returning. Answers with the sync
 // heights the caller records.
@@ -1610,7 +1745,40 @@ async function bringUpNodeB() {
   return { bDbPath };
 }
 
-async function verifiedTipSteps(cx, targetId = 'unknown') {
+// Open a fresh extension page through the browser-level session — a page is
+// a client (WEB_INTERFACE → The extension → "The contexts, and what each may
+// hold"), so each tip-block step that reads the state after a check opens
+// one. Waits for the corner to mount and returns the session and the target
+// id; the caller closes both. The `set relays, open fresh, read verdict`
+// sequence is the one the tip block uses for 17a · 19a · 19b · 19c, as
+// `--light` uses `relay.upstream` for L13.
+async function openFreshExtensionPage(bcx) {
+  const created = await bcx.call('Target.createTarget', {
+    url: `chrome-extension://${EXT_ID}/index.html`,
+  });
+  const info = await findTargetById(created.targetId, 15000);
+  if (!info) throw new Error(`fresh extension page ${created.targetId.slice(0, 8)}… never appeared in /json/list`);
+  const fresh = await openSession(info.webSocketDebuggerUrl);
+  await fresh.waitFor(`!!document.querySelector('.corner')`, 'corner mounted on fresh page', 30000);
+  return { cx: fresh, targetId: created.targetId };
+}
+
+// Set every tip relay to `mode`. A step asserts the verdict by opening a
+// fresh page after this call so the client's first check reads the upstream
+// through the mode the step set (WEB_INTERFACE → The extension → "The
+// verified tip").
+function setTipRelayModes(mode) {
+  if (tipRelays.a) tipRelays.a.mode = mode;
+  if (tipRelays.b) tipRelays.b.mode = mode;
+}
+
+// WEB_INTERFACE → The extension → "The verified tip" — the verified-tip
+// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20 as
+// before); `bcx` is the browser-level session the block opens a fresh
+// extension page on for each step whose contract reads a different state
+// after a check (`WEB_INTERFACE → The extension → "The contexts, and what
+// each may hold"`: a page is a reader, so a fresh page is a fresh check).
+async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // ---- Liveness probe on the session — a few-second wall around `1+1`
   // before any block work; a session with no live target records every step
   // FAIL with the reason, in place of `openSession`'s 60-second CDP wall
@@ -1662,10 +1830,9 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
   const bPeers = await waitForPeers(bAdminOrigin, 1, 60000);
   console.log(`[vt] node B peers_connected=${bPeers}`);
   // B catches up to A within a couple of blocks so step 17's reading is the
-  // rule's own — a live-miner tip fluctuates by one block, and the reading
-  // node is verified while the winner's suffix carries its tip (contract
-  // → "A winner elsewhere says the reading node is behind, not that it is
-  // wrong").
+  // rule's own — a live-miner tip fluctuates by one block, and the mesh
+  // client's verdict reads `verified` when two or more nodes name a tip on
+  // the seated chain (WEB_INTERFACE → The extension → "The verified tip").
   const abSynced = await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000);
   if (abSynced === null) {
     const hA = await currentHeight(NODE);
@@ -1677,125 +1844,115 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
 
   await cx.waitFor(`!!document.querySelector('.corner')`, 'corner mounted', 30000);
 
-  // ---- Spawn node D — isolated, miner role with its own secret, no miner
-  // script yet. D serves 17a's *too-short* at height 0 and, later, 19c's
-  // *share no block* once its own miner runs it past m + k + 4. The secret is
-  // random and per-run — nothing of it lands in the tree.
-  const dDbPath = join(SCRATCH, 'd.db');
-  for (const suffix of ['', '-shm', '-wal']) {
-    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
-  }
-  const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
-  spawnDaemon('d', NODE_DIST, {
-    NETWORK_TYPE: 'devnet',
-    NODE_ROLE: 'miner',
-    PORT: String(D_HTTP_PORT),
-    ADMIN_PORT: String(D_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
-    BOOTSTRAP_PEERS: '',
-    DB_PATH: dDbPath,
-    MINING_SECRET: dSecret,
-  });
-  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
-    markVerifiedTipNotRun(`node D did not come up at ${D_ORIGIN}`);
-    return;
-  }
-  console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
-
-  // ---- Step 17a — too-short, on node D. D is isolated with no miner script,
-  // so its height stays at 0 (genesis). A change of the reading node drops
-  // the tip and reads the new node at once (WEB_INTERFACE → The status
-  // corner): the corner's tip is D's own, 0.
+  // ---- Step 17a — the chain is too short to check yet. Both relays' modes
+  // are set to `proof-short`, which answers every /nipopow/proof/ with the
+  // 404 shape a node whose chain is below `m + k` answers with
+  // (`NODE_INTERFACE → Nipopow`). The tool reads each as
+  // `refuseCode: 'too-short'`, and the mesh client's verdict is row 3 of
+  // the seven-row table (`WEB_INTERFACE → The extension → "The verified
+  // tip"`): no chain seated, and every proof answered says its chain is
+  // shorter than `m + k` → `thin · too-short`, the corner title *the
+  // chain is too short to check yet · tip N* (`→ The status corner`). A
+  // fresh extension page is a fresh client, so the first check runs under
+  // the mode set above (`→ "The contexts, and what each may hold"`). The
+  // tip in the title is the node's live height — the status corner reads
+  // /blocks/current through RLA in honest mode after each check fires its
+  // read — so it is whatever A has reached by now.
+  setTipRelayModes('proof-short');
   {
-    const hD = await currentHeight(D_ORIGIN);
-    const hAnow = await currentHeight(NODE);
-    const {
-      applied, stored, reached, reading, proofs,
-    } = await changeNodeAndAwait(
-      cx, D_ORIGIN,
-      (c) => c.ledClass === 'led thin' && c.tipText === '0' && c.title === 'the chain is too short to check yet · tip 0',
-      'led thin + "too short to check yet · tip 0"',
-      60000);
-    const ok = !reached.timedOut
-      && applied === D_ORIGIN
-      && stored === D_ORIGIN
-      && reading.ledClass === 'led thin'
-      && reading.tipClass === 'tip mono'
-      && reading.tipText === '0'
-      && reading.title === 'the chain is too short to check yet · tip 0';
-    record('17a', ok,
-      `applied=${JSON.stringify(applied)}, stored=${JSON.stringify(stored)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, tipText=${reading.tipText}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), heights D=${hD} A=${hAnow}`);
-    const post = await blankNodeAndAwaitVerified(cx);
-    console.log(`[vt] 17a post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led thin'
+          && /^the chain is too short to check yet · tip \d+$/.test(c.title ?? ''),
+        'led thin + "the chain is too short to check yet · tip N"',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led thin'
+        && reading?.tipClass === 'tip mono'
+        && /^the chain is too short to check yet · tip \d+$/.test(reading?.title ?? '');
+      record('17a', ok,
+        `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA shorts=${tipRelays.a?.shorts.total ?? 'null'}, RLB shorts=${tipRelays.b?.shorts.total ?? 'null'}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
   }
+  setTipRelayModes('honest');
 
-  // ---- Step 17 — verified. A press hits both nodes; a 20 s idle window sits
-  // under VERIFY_INTERVAL_MS so no run fires unasked; a second press hits
-  // both nodes again — the fold's cost is deterministic.
+  // ---- Step 17 — verified. The mesh client reads proofs only for tips its
+  // chain cannot place (MESH_INTERFACE → The client's node list → "A check");
+  // after a chain is seated, a check that places every tip asks no proof.
+  // A 20 s idle window sits under the check-interval so no run fires unasked.
+  // The two presses assert the verdict; proof counts are reported for the
+  // record but not asserted here, since the startup check may have already
+  // seated the chain before the first press — a run whose tips all place
+  // asks no proof.
   {
-    const first = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
-    const reachedTitleOk = /^verified across \d+ nodes · tip \d+$/.test(first.reading.title ?? '');
-    const idleStart = cx.events.length;
+    // A fresh page: 17a's page keeps its too-short verdict for the tip it saw
+    // (MESH_INTERFACE → The client's node list → "A check").
+    const page = await openFreshExtensionPage(bcx);
+    const px = page.cx;
+    try {
+    const firstPressIdx = px.events.length;
+    await pressCorner(px);
+    await sleep(2000);
+    const firstProofs = proofRequestsSince(px.events, firstPressIdx);
+    const first = await readCorner(px);
+    const reachedTitleOk = /^verified across \d+ nodes · tip \d+$/.test(first.title ?? '');
+    const idleStart = px.events.length;
     await sleep(20000);
-    const idleProofs = proofRequestsSince(cx.events, idleStart);
-    const second = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const idleProofs = proofRequestsSince(px.events, idleStart);
+    const secondPressIdx = px.events.length;
+    await pressCorner(px);
+    await sleep(2000);
+    const secondProofs = proofRequestsSince(px.events, secondPressIdx);
+    const secondReading = await readCorner(px);
     const ok = reachedTitleOk
-      && first.reading.ledClass === 'led fresh'
-      && first.reading.tipClass === 'tip mono'
-      && second.reading.ledClass === 'led fresh'
-      && /^verified across \d+ nodes · tip \d+$/.test(second.reading.title ?? '')
-      && first.proofs.length === 2
-      && idleProofs.length === 0
-      && second.proofs.length === 2;
+      && first.ledClass === 'led fresh'
+      && first.tipClass === 'tip mono'
+      && secondReading.ledClass === 'led fresh'
+      && /^verified across \d+ nodes · tip \d+$/.test(secondReading.title ?? '')
+      && idleProofs.length === 0;
     record(17, ok,
-      `led=${first.reading.ledClass}, tip=${first.reading.tipClass}, title=${JSON.stringify(first.reading.title)}, first-press proof requests=${first.proofs.length} (${JSON.stringify(first.proofs.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${second.proofs.length}`);
+      `led=${first.ledClass}, tip=${first.tipClass}, title=${JSON.stringify(first.title)}, first-press proof requests=${firstProofs.length} (${JSON.stringify(firstProofs.map(p => p.url))}), idle-20s proof requests=${idleProofs.length}, second-press proof requests=${secondProofs.length}`);
+    } finally {
+      try { px.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
   }
 
-  // ---- Step 17b — 30 presses one second apart in each direction under A's
-  // live miner. Every one of the sixty readings is `led fresh` + *verified
-  // across 2 nodes*; not one is `led refused` (WEB_INTERFACE → The extension
-  // → "The verified tip" — a winner elsewhere whose suffix carries the
-  // reading node's tip reads verified). The B direction is the case the
-  // reader of a follower stands in: B's gossip lag from A widens the gap
-  // between the extension's two proof fetches, so a block landing on A
-  // between B's answer and A's is the false alarm the rule prevents.
-  const hA17bAStart = await currentHeight(NODE);
-  const step17bAReadings = await pressCornerRepeatedly(cx, 30);
-  const hA17bAEnd = await currentHeight(NODE);
-  const allFresh17bA = step17bAReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
-  const refused17bAIdx = step17bAReadings.findIndex((r) => r.ledClass === 'led refused');
-  const totalProofs17bA = step17bAReadings.reduce((n, r) => n + r.proofs, 0);
-  console.log(`[vt] 17b A-direction readings: ${JSON.stringify(step17bAReadings)}`);
-
-  // The `node` row is set to B. The change drops the tip and reads B at
-  // once (WEB_INTERFACE → The status corner). Wait for a first verified
-  // reading on B before starting the count so the corner has settled on
-  // B's tip and the transitional post-change fetches are not counted here.
-  const switchToB = await changeNodeAndAwait(
-    cx, B_ORIGIN,
-    (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
-    'led fresh + verified across N nodes (after switch to B)',
-    60000);
-  console.log(`[vt] 17b switch to B: applied=${JSON.stringify(switchToB.applied)}, stored=${JSON.stringify(switchToB.stored)}, led=${switchToB.reading.ledClass}, title=${JSON.stringify(switchToB.reading.title)}`);
-  const hA17bBStart = await currentHeight(NODE);
-  const step17bBReadings = await pressCornerRepeatedly(cx, 30);
-  const hA17bBEnd = await currentHeight(NODE);
-  const allFresh17bB = step17bBReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
-  const refused17bBIdx = step17bBReadings.findIndex((r) => r.ledClass === 'led refused');
-  const totalProofs17bB = step17bBReadings.reduce((n, r) => n + r.proofs, 0);
-  console.log(`[vt] 17b B-direction readings: ${JSON.stringify(step17bBReadings)}`);
-
-  // Blank the row so subsequent steps start on the seed-list default (A).
-  const post17b = await blankNodeAndAwaitVerified(cx);
-  console.log(`[vt] 17b post-blank: applied=${JSON.stringify(post17b.applied)}, stored=${JSON.stringify(post17b.stored)}, led=${post17b.reading.ledClass}, title=${JSON.stringify(post17b.reading.title)}`);
+  // ---- Step 17b — 30 presses one second apart under A's live miner. Every
+  // reading is `led fresh` + *verified across 2 nodes*; not one is `led
+  // refused` (WEB_INTERFACE → The extension → "The verified tip" — a chain
+  // seated by a check the previous press ran keeps while the block gossip
+  // extends it; the retired per-run `resolveTip` over the seed list, whose
+  // two-fetch race a block landing between them tripped, is gone). The
+  // retired A/B directions — the `node` row switched the reading base to B —
+  // fold into one direction, since A and B are both seed-list entries from
+  // the start and the client routes to whichever its need allows.
+  const hA17bStart = await currentHeight(NODE);
+  const step17bReadings = await pressCornerRepeatedly(cx, 30);
+  const hA17bEnd = await currentHeight(NODE);
+  const allFresh17b = step17bReadings.every((r) => r.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(r.title ?? ''));
+  const refused17bIdx = step17bReadings.findIndex((r) => r.ledClass === 'led refused');
+  const totalProofs17b = step17bReadings.reduce((n, r) => n + r.proofs, 0);
+  console.log(`[vt] 17b readings: ${JSON.stringify(step17bReadings)}`);
 
   const refusedDesc = (readings, idx) => idx === -1 ? 'none' : `#${idx + 1} title=${JSON.stringify(readings[idx].title)}`;
-  const ok17b = allFresh17bA && allFresh17bB;
-  record('17b', ok17b,
-    `direction A (reading ${NODE}): presses=${step17bAReadings.length}, all led fresh + verified=${allFresh17bA}, first led-refused press=${refusedDesc(step17bAReadings, refused17bAIdx)}, proof requests total=${totalProofs17bA}, per-press led counts=${JSON.stringify(tallyLeds(step17bAReadings))}, A height first=${hA17bAStart} last=${hA17bAEnd}; direction B (reading ${B_ORIGIN}): presses=${step17bBReadings.length}, all led fresh + verified=${allFresh17bB}, first led-refused press=${refusedDesc(step17bBReadings, refused17bBIdx)}, proof requests total=${totalProofs17bB}, per-press led counts=${JSON.stringify(tallyLeds(step17bBReadings))}, A height first=${hA17bBStart} last=${hA17bBEnd}`);
+  record('17b', allFresh17b,
+    `presses=${step17bReadings.length}, all led fresh + verified=${allFresh17b}, first led-refused press=${refusedDesc(step17bReadings, refused17bIdx)}, proof requests total=${totalProofs17b} (should be 0 — the chain is seated and every tip places), per-press led counts=${JSON.stringify(tallyLeds(step17bReadings))}, A height first=${hA17bStart} last=${hA17bEnd}`);
 
-  // ---- Step 18 — thin (B stopped), then verified again (B started).
+  // ---- Step 18 — thin (B stopped), then verified again (B started). B
+  // going silent thins the verdict to `one-node` (WEB_INTERFACE → The
+  // extension → "The verified tip" — row 6 of the verdict table); the
+  // title reads *only one node could be checked*. B rejoining puts two
+  // nodes on the seated chain and the verdict reads `verified` again.
+  // The proof counts stopped/back report may be 0 — a check that places
+  // every tip asks no proof — and the assertion reads the corner's
+  // rendered verdict, not the counts.
   {
     console.log(`[vt] stopping node B by its handle`);
     await stopChild('b');
@@ -1846,253 +2003,235 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
       `B gone=${bGone}; stopped-press led=${readingStopped.ledClass}, tip=${readingStopped.tipClass}, title=${JSON.stringify(readingStopped.title)}, stopped proof requests=${stopped.proofs.length}; restarted synced=${synced2 !== null ? JSON.stringify(synced2) : 'null'}; restart-press led=${back.reading.ledClass}, tip=${back.reading.tipClass}, title=${JSON.stringify(back.reading.title)}, restart proof requests=${back.proofs.length}`);
   }
 
-  // ---- Step 19a — refused, a bad proof (via the lying relay).
-  let relay = null;
+  // ---- Step 19a — RLA lies, RLB honest, then both lie. RLA's `proof-invalid`
+  // flips one byte of the /nipopow/proof/ answer so the tool reads
+  // `refuseCode: 'invalid'`; RLB passes verbatim, so B's proof verifies and
+  // seats the chain. A, read at RLA's api base, has a lie `at an entry's
+  // API base` which the `applyEvent` route-at-API-base rule holds at
+  // `retry`, never `blacklisted` (`MESH_INTERFACE → The client's node list`);
+  // A's tip from /blocks/current is the same hash as B's (A and B are
+  // peered), so B's verification propagates its 'on' verdict to A and both
+  // count on the chain. The verdict is row 7 of the seven-row table
+  // (`WEB_INTERFACE → The extension → "The verified tip"`): two or more on
+  // the chain → `verified`, the title *verified across 2 nodes · tip N* (`→
+  // The status corner`). This asserts the sentence *a node counts without
+  // serving a proof of its own, since a proof carries no challenge and any
+  // node can serve one it copied*. Then both relays are set to
+  // `proof-invalid` on a second fresh page: no chain seats, a proof answered
+  // is invalid, row 2 fires → `refused · invalid-proof`, title *no node's
+  // proof verified · tip N*.
+  setTipRelayModes('honest');
+  tipRelays.a.mode = 'proof-invalid';
   {
-    console.log(`[vt] starting lying relay: :${RELAY_PORT} → ${NODE}`);
-    relay = await startLyingRelay(NODE);
-    const {
-      applied, stored, reached, reading, proofs,
-    } = await changeNodeAndAwait(
-      cx, RELAY_ORIGIN,
-      (c) => c.ledClass === 'led refused' && /^this node's proof did not verify · tip \d+$/.test(c.title ?? ''),
-      'led refused + "this node\'s proof did not verify · tip N"',
-      60000);
-    const feedCards = await cx.eval(`document.querySelectorAll('#feed .card').length`);
-    const feedContainer = await cx.eval(`!!document.querySelector('#feed')`);
-    const tipCheck = await titleTipNearReadingNode(RELAY_ORIGIN, reading);
-    const ok = !reached.timedOut
-      && stored === RELAY_ORIGIN
-      && applied === RELAY_ORIGIN
-      && reading.ledClass === 'led refused'
-      && reading.tipClass === 'tip mono clay'
-      && /^this node's proof did not verify · tip \d+$/.test(reading.title ?? '')
-      && tipCheck.near
-      && feedContainer;
-    record('19a', ok,
-      `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs relay height=${tipCheck.nodeHeight} near=${tipCheck.near}, feed container present=${feedContainer}, feed .card count=${feedCards}, proof requests during change=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}), relay flips=${relay.flips.total}`);
-    const post = await blankNodeAndAwaitVerified(cx);
-    console.log(`[vt] 19a post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
-  }
-
-  // ---- Step 19b — refused (outworked), by a real fork on node C.
-  {
-    const cSecret = randomBytes(32).toString('hex');
-    const cDbPath = join(SCRATCH, 'c.db');
-    for (const suffix of ['', '-shm', '-wal']) {
-      try { rmSync(cDbPath + suffix, { force: true }); } catch {}
-    }
-    // Phase 1 — C boots as A's peer, syncs to A's tip. No miner script yet.
-    console.log(`[vt] 19b phase 1: spawning C bootstrapped from A: port=${C_HTTP_PORT} admin=${C_ADMIN_PORT} p2p=${C_P2P_PORT}`);
-    spawnDaemon('c', NODE_DIST, {
-      NETWORK_TYPE: 'devnet',
-      NODE_ROLE: 'miner',
-      PORT: String(C_HTTP_PORT),
-      ADMIN_PORT: String(C_ADMIN_PORT),
-      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${C_P2P_PORT}`,
-      BOOTSTRAP_PEERS: NODE_P2P,
-      DB_PATH: cDbPath,
-      MINING_SECRET: cSecret,
-    });
-    const cUp = await waitForHttpUp(C_ORIGIN, 30000);
-    if (!cUp) {
-      record('19b', false, `node C did not come up at ${C_ORIGIN}`);
-    } else {
-      // Wait for C to sync to A's tip within 2 blocks, and for its own height
-      // to reach m + k + 14 — fourteen blocks past the height where C's own
-      // proof exists — so the winner's `k`-header suffix is well past genesis.
-      // Both waits are bounded and polling; a one-shot read of C's height right
-      // after a close-sync would FAIL the step whenever A stood between m + k
-      // and m + k + 14 at the sync moment.
-      const cSyncMin = TIP_M + TIP_K + 14;
-      const cSync = await waitForHeightsClose(NODE, C_ORIGIN, 2, 600000);
-      const hCsync = cSync === null ? null : await waitForHeight(C_ORIGIN, cSyncMin, 600000);
-      if (cSync === null || hCsync === null) {
-        const lastA = await currentHeight(NODE);
-        const lastC = await currentHeight(C_ORIGIN);
-        record('19b', false, `C never synced to A within 2 blocks and reached ≥ ${cSyncMin} (last A=${lastA}, C=${lastC}, sync=${JSON.stringify(cSync)}). A's miner may be paced too slowly.`);
-      } else {
-        console.log(`[vt] 19b phase 1: C synced at ${hCsync} ≥ ${cSyncMin} (A=${(await currentHeight(NODE))})`);
-        // Phase 2 — stop C, restart on the same store, cut off from A. New
-        // listen port so A's cached address for C is stale; empty
-        // BOOTSTRAP_PEERS leaves the floor phase no seed to dial and the fill
-        // phase unreached; the three assertions read peers_connected=0.
-        await stopChild('c');
-        console.log(`[vt] 19b phase 2: restarting C isolated (fresh p2p port, BOOTSTRAP_PEERS='', p2p=${C_P2P_PORT_ISOLATED})`);
-        spawnDaemon('c', NODE_DIST, {
-          NETWORK_TYPE: 'devnet',
-          NODE_ROLE: 'miner',
-          PORT: String(C_HTTP_PORT),
-          ADMIN_PORT: String(C_ADMIN_PORT),
-          LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${C_P2P_PORT_ISOLATED}`,
-          BOOTSTRAP_PEERS: '',
-          DB_PATH: cDbPath,
-          MINING_SECRET: cSecret,
-        });
-        const cBackUp = await waitForHttpUp(C_ORIGIN, 30000);
-        if (!cBackUp) {
-          record('19b', false, `C did not come back up at ${C_ORIGIN} after restart`);
-        } else {
-          // Phase 3 — C mines a branch of its own while A mines on. C's miner
-          // runs at MINER_PCT=100 and can land several blocks between two
-          // reads half a second apart, so C's height is read every 20 ms and
-          // the miner stopped once C stands three above its sync height. A
-          // submit already in flight can still land after the stop; the depth
-          // the step reports is the one read once it settles.
-          const hCbeforeMine = await currentHeight(C_ORIGIN);
-          console.log(`[vt] 19b phase 3: C isolated at height=${hCbeforeMine}, starting C's miner until C stands 3 above it`);
-          spawnDaemon('c-miner', MINER_SCRIPT, {
-            NODE_URL: C_ORIGIN,
-            MINING_SECRET: cSecret,
-            MINER_PCT: '100',
-          });
-          const hCafterMine = await waitForHeight(C_ORIGIN, hCbeforeMine + 3, 600000, 20);
-          await stopChild('c-miner');
-          // C may land one more block already in flight after the miner stops.
-          await sleep(1500);
-          const hCafterSettle = await currentHeight(C_ORIGIN);
-          const cBranch = typeof hCafterSettle === 'number' && typeof hCbeforeMine === 'number'
-            ? hCafterSettle - hCbeforeMine
-            : null;
-          console.log(`[vt] 19b phase 3: C read ${hCafterMine} at the stop and ${hCafterSettle} once settled — a branch ${cBranch} deep above ${hCbeforeMine}`);
-
-          // Phase 4 — wait for the comparison the verdict reads, not for
-          // height: a tie keeps the reading node, so A standing higher is not
-          // A outworking C (NIPOPOW_INTERFACE → compareProofs; WEB_INTERFACE →
-          // The extension → "The verified tip"). The tool's resolveTip over
-          // [C, A] is read every two seconds until C verifies, A wins and C's
-          // `behind` is null, while A's miner runs on and C stays cut off. Ten
-          // minutes bound it at the recipe's pace; its expiry is a FAIL of 19b
-          // that names the last comparison. A comparison is logged when it
-          // reads differently from the one before it.
-          const phase4Start = Date.now();
-          let comparisons = 0;
-          let comparison = null;
-          let comparedAt = null;
-          let lastLogged = null;
-          while (Date.now() - phase4Start < 600000) {
-            comparison = await readForkComparison();
-            comparisons += 1;
-            comparedAt = `+${((Date.now() - phase4Start) / 1000).toFixed(1)}s`;
-            const described = describeForkComparison(comparison);
-            if (described !== lastLogged) {
-              console.log(`[vt] 19b phase 4 comparison ${comparisons} (${comparedAt}): ${described}`);
-              lastLogged = described;
-            }
-            if (comparison.outworked) break;
-            await sleep(2000);
-          }
-          if (!comparison.outworked) {
-            record('19b', false, `A's proof did not out-score C's within 10 minutes — the last of ${comparisons} comparisons (${comparedAt}): ${describeForkComparison(comparison)}; C's branch ${cBranch} deep above ${hCbeforeMine}`);
-          } else {
-            const phase4 = `C's branch ${cBranch} deep above ${hCbeforeMine}; phase 4: A's proof out-scored C's at comparison ${comparisons} (${comparedAt}): ${describeForkComparison(comparison)}`;
-            console.log(`[vt] 19b phase 4: A's proof out-scored C's at comparison ${comparisons} (${comparedAt})`);
-            // Assertions — peers_connected=0 on C, C's block at hCnow ≠ A's,
-            // A > C. The block-at-height read (`/blocks/:height`,
-            // NODE_INTERFACE → Blocks) carries the full header; two different
-            // ordering blocks always differ in header (utxoTxRoot, stateRoot,
-            // powNonce, validatorSignature), so a header hash off it is the
-            // block's identity for a compare.
-            const cAdminOrigin = `http://127.0.0.1:${C_ADMIN_PORT}`;
-          const cHealth = await fetch(`${cAdminOrigin}/health`).then((r) => r.json()).catch(() => null);
-          const cPeers = cHealth?.peers_connected ?? null;
-          const hAnow = await currentHeight(NODE);
-          const hCnow = await currentHeight(C_ORIGIN);
-          const forkH = Math.min(hAnow ?? 0, hCnow ?? 0);
-          const cBlockAtFork = forkH > 0
-            ? await fetch(`${C_ORIGIN}/blocks/${forkH}`).then((r) => r.json()).catch(() => null)
-            : null;
-          const aBlockAtFork = forkH > 0
-            ? await fetch(`${NODE}/blocks/${forkH}`).then((r) => r.json()).catch(() => null)
-            : null;
-          const blockSig = (b) => {
-            if (!b || typeof b !== 'object' || !b.header) return null;
-            return createHash('sha256').update(JSON.stringify(b.header)).digest('hex');
-          };
-          const cSig = blockSig(cBlockAtFork);
-          const aSig = blockSig(aBlockAtFork);
-          const forkOk = cPeers === 0
-            && typeof cSig === 'string'
-            && typeof aSig === 'string'
-            && cSig !== aSig
-            && typeof hAnow === 'number' && typeof hCnow === 'number' && hAnow > hCnow;
-          console.log(`[vt] 19b assertions: peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, forkH=${forkH}, cBlock.sig=${cSig?.slice(0, 12) ?? 'null'}…, aBlock.sig=${aSig?.slice(0, 12) ?? 'null'}…, fork=${forkOk}`);
-          if (!forkOk) {
-            record('19b', false,
-              `fork preconditions failed: C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig?.slice(0, 12) ?? 'null'}…, A.block@${forkH}.sig=${aSig?.slice(0, 12) ?? 'null'}…; ${phase4}`);
-          } else {
-            // The outworked title names the WINNER (contract → "the host with
-            // its port, never the URL"), not the reading node — A holds more
-            // work than C, so the title reads A's host beside the reading
-            // node's own tip. The tip is C's tip (contract → the last four
-            // rows are beside the result's own tip).
-            const aHostForTitle = `127.0.0.1:${new URL(NODE).port}`;
-            const {
-              applied, stored, reached, reading, proofs,
-            } = await changeNodeAndAwait(
-              cx, C_ORIGIN,
-              (c) => c.ledClass === 'led refused'
-                  && /holds more work than this node · tip \d+/.test(c.title ?? '')
-                  && (c.title ?? '').includes(aHostForTitle),
-              `led refused + "${aHostForTitle} holds more work than this node · tip N"`,
-              60000);
-            const titleRe = new RegExp(`^${aHostForTitle.replace(/\./g, '\\.')} holds more work than this node · tip \\d+$`);
-            const tipCheck = await titleTipNearReadingNode(C_ORIGIN, reading);
-            const ok = !reached.timedOut
-              && applied === C_ORIGIN
-              && stored === C_ORIGIN
-              && reading.ledClass === 'led refused'
-              && reading.tipClass === 'tip mono clay'
-              && titleRe.test(reading.title ?? '')
-              && tipCheck.near;
-            record('19b', ok,
-              `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs C height=${tipCheck.nodeHeight} near=${tipCheck.near}, C peers_connected=${cPeers}, hA=${hAnow}, hC=${hCnow}, C.block@${forkH}.sig=${cSig.slice(0, 12)}…, A.block@${forkH}.sig=${aSig.slice(0, 12)}…, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))}); ${phase4}`);
-          }
-          }
-          const post = await blankNodeAndAwaitVerified(cx);
-          console.log(`[vt] 19b post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
-        }
-      }
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led fresh'
+          && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+        'led fresh + "verified across N nodes · tip N" (RLA lies, RLB honest)',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led fresh'
+        && reading?.tipClass === 'tip mono'
+        && /^verified across \d+ nodes · tip \d+$/.test(reading?.title ?? '');
+      record('19a', ok,
+        `arm 1 (RLA proof-invalid, RLB honest): led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA flips=${tipRelays.a.flips.total}, RLB flips=${tipRelays.b.flips.total}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
-
-  // ---- Step 19c — thin (split), on fresh isolated D with its own miner past
-  // m + k + 4: four blocks past the height where D's own proof exists.
+  setTipRelayModes('proof-invalid');
   {
-    const dPast = TIP_M + TIP_K + 4;
-    console.log(`[vt] 19c: starting D's miner until D passes height ${dPast}`);
+    const page = await openFreshExtensionPage(bcx);
+    try {
+      const reached = await waitForCornerState(
+        page.cx,
+        (c) => c.ledClass === 'led refused'
+          && /^no node's proof verified · tip \d+$/.test(c.title ?? ''),
+        'led refused + "no node\'s proof verified · tip N"',
+        60000);
+      const reading = reached.last;
+      const ok = !reached.timedOut
+        && reading?.ledClass === 'led refused'
+        && reading?.tipClass === 'tip mono clay'
+        && /^no node's proof verified · tip \d+$/.test(reading?.title ?? '');
+      record('19a-both', ok,
+        `arm 2 (both relays proof-invalid): led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, RLA flips=${tipRelays.a.flips.total}, RLB flips=${tipRelays.b.flips.total}`);
+    } finally {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+  setTipRelayModes('honest');
+
+  // ---- Spawn node D — isolated, miner role with its own secret, no miner
+  // script yet. D is mined to serve 19c (`m + k + 4`, lighter than B) first,
+  // then on to serve 19b (past A's current, heavier than B). The two steps
+  // run sequentially on the same D so the chain's height moves one way
+  // only. The secret is random and per-run — nothing of it lands in the tree.
+  const dDbPath = join(SCRATCH, 'd.db');
+  for (const suffix of ['', '-shm', '-wal']) {
+    try { rmSync(dDbPath + suffix, { force: true }); } catch {}
+  }
+  const dSecret = randomBytes(32).toString('hex');
+  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
+  spawnDaemon('d', NODE_DIST, {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'miner',
+    PORT: String(D_HTTP_PORT),
+    ADMIN_PORT: String(D_ADMIN_PORT),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
+    BOOTSTRAP_PEERS: '',
+    DB_PATH: dDbPath,
+    MINING_SECRET: dSecret,
+  });
+  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
+    record('19c', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+    record('19b', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+  } else {
+    console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
+
+    // ---- Step 19c — RLA upstream-D with D lighter than B, D's tip off the
+    // chain's last `k` headers. D mines just past `m + k + 4` so its proof
+    // exists (`NODE_INTERFACE → Nipopow`, the proof route answers 404 below
+    // `m + k`) and shares no block with A past genesis (D is isolated and its
+    // block 2+ are its own). Devnet pins no `genesisId`, so RLA's proof (D)
+    // and RLB's proof (B) share no block and `compareProofs` answers
+    // `incomparable`; the client keeps the chain it seated first
+    // (`NIPOPOW_INTERFACE → compareProofs`, `MESH_INTERFACE → The client's
+    // node list → "A check"`). The other node then names a tip off the
+    // seated chain's last `k` headers → `offChain = 1`, row 5 fires → `thin
+    // · split`, title *a node names a tip off this chain · tip N*
+    // (`WEB_INTERFACE → The extension → "The verified tip"`, `MESH_INTERFACE
+    // → No anchor reached → "The agreement counts"`). Which chain seats
+    // depends on which proof the first check read first, so the corner's tip
+    // is B's height or D's — the record names which it was.
+    const dLightTarget = TIP_M + TIP_K + 4;
+    console.log(`[vt] 19c: mining D to height ${dLightTarget + 1} (lighter than A)`);
     spawnDaemon('d-miner', MINER_SCRIPT, {
       NODE_URL: D_ORIGIN,
       MINING_SECRET: dSecret,
       MINER_PCT: '100',
     });
-    const dHeight = await waitForHeight(D_ORIGIN, dPast + 1, 600000);
+    const dLightReached = await waitForHeight(D_ORIGIN, dLightTarget + 1, 10 * 60 * 1000);
     await stopChild('d-miner');
     await sleep(1500);
-    const hDafter = await currentHeight(D_ORIGIN);
-    if (dHeight === null) {
-      record('19c', false, `node D never reached height ${dPast + 1} within 10 minutes (last=${hDafter})`);
+    const hDafterLight = await currentHeight(D_ORIGIN);
+    if (dLightReached === null) {
+      record('19c', false, `D never reached height ${dLightTarget + 1} within 10 min (last=${hDafterLight})`);
     } else {
-      const {
-        applied, stored, reached, reading, proofs,
-      } = await changeNodeAndAwait(
-        cx, D_ORIGIN,
-        (c) => c.ledClass === 'led thin' && /^the nodes share no block to compare · tip \d+$/.test(c.title ?? ''),
-        'led thin + "the nodes share no block to compare · tip N"',
-        60000);
-      const tipCheck = await titleTipNearReadingNode(D_ORIGIN, reading);
-      const ok = !reached.timedOut
-        && applied === D_ORIGIN
-        && stored === D_ORIGIN
-        && reading.ledClass === 'led thin'
-        && reading.tipClass === 'tip mono'
-        && /^the nodes share no block to compare · tip \d+$/.test(reading.title ?? '')
-        && tipCheck.near;
-      record('19c', ok,
-        `prefs.node stored=${JSON.stringify(stored)}, applied=${JSON.stringify(applied)}, led=${reading.ledClass}, tip=${reading.tipClass}, title=${JSON.stringify(reading.title)}, title tip=${tipCheck.tipTitle} vs D height=${tipCheck.nodeHeight} near=${tipCheck.near}, hD=${hDafter}, proof requests=${proofs.length} (${JSON.stringify(proofs.map(p => p.url))})`);
+      tipRelays.a.upstream = D_ORIGIN;
+      tipRelays.a.mode = 'upstream-D';
+      tipRelays.b.upstream = B_ORIGIN;
+      tipRelays.b.mode = 'honest';
+      const page = await openFreshExtensionPage(bcx);
+      try {
+        const reached = await waitForCornerState(
+          page.cx,
+          (c) => c.ledClass === 'led thin'
+            && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
+          'led thin + "a node names a tip off this chain · tip N" (19c, D lighter)',
+          60000);
+        // The first number on a fresh page can be an anchor's read before the
+        // check ends; a press re-reads the tip through the routed read, which
+        // goes to a node the check placed on the chain
+        // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
+        let reading = reached.last;
+        if (!reached.timedOut) {
+          await pressCorner(page.cx);
+          await sleep(2000);
+          reading = await readCorner(page.cx);
+        }
+        const hAnow = await currentHeight(NODE);
+        const hBnow = await currentHeight(B_ORIGIN);
+        const hDnow = await currentHeight(D_ORIGIN);
+        const titleTip = tipFromTitle(reading?.title ?? '');
+        const matchesB = typeof hBnow === 'number' && typeof titleTip === 'number' && Math.abs(hBnow - titleTip) <= 5;
+        const matchesD = typeof hDnow === 'number' && typeof titleTip === 'number' && Math.abs(hDnow - titleTip) <= 5;
+        const seated = matchesB && !matchesD ? 'B' : matchesD && !matchesB ? 'D' : matchesB && matchesD ? 'either' : 'neither';
+        const ok = !reached.timedOut
+          && reading?.ledClass === 'led thin'
+          && reading?.tipClass === 'tip mono'
+          && /^a node names a tip off this chain · tip \d+$/.test(reading?.title ?? '')
+          && (matchesB || matchesD);
+        record('19c', ok,
+          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs B height=${hBnow}, D height=${hDnow} (seated chain=${seated}), A height=${hAnow}, D at mine stop=${hDafterLight}`);
+      } finally {
+        try { page.cx.s.close(); } catch {}
+        await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+      }
+      tipRelays.a.upstream = NODE.replace(/\/+$/, '');
+      setTipRelayModes('honest');
     }
-    const post = await blankNodeAndAwaitVerified(cx);
-    console.log(`[vt] 19c post-blank: applied=${JSON.stringify(post.applied)}, stored=${JSON.stringify(post.stored)}, led=${post.reading.ledClass}, title=${JSON.stringify(post.reading.title)}`);
+
+    // ---- Step 19b — RLA upstream-D with D heavier than A/B. D mines past
+    // A's current height by a margin so D's chain wins the compare, the
+    // client seats D's chain, and B — still on A's lighter chain — names a
+    // tip off D's last `k` headers → `offChain = 1`, row 5 fires →
+    // `thin · split`, title *a node names a tip off this chain · tip N*.
+    // The corner's tip is the seated chain's — D's height, not A's
+    // (`WEB_INTERFACE → The status corner`, `MESH_INTERFACE → The client's
+    // node list → "The client's chain"`). The margin is `hA + 50` so A's
+    // live miner cannot catch D between the measurement and the assertion.
+    const hAatHeavy = await currentHeight(NODE);
+    const dHeavyTarget = (hAatHeavy ?? 0) + 50;
+    console.log(`[vt] 19b: mining D to height ≥ ${dHeavyTarget} (A=${hAatHeavy}, heavier by ≥ 50)`);
+    spawnDaemon('d-miner', MINER_SCRIPT, {
+      NODE_URL: D_ORIGIN,
+      MINING_SECRET: dSecret,
+      MINER_PCT: '100',
+    });
+    const dHeavyReached = await waitForHeight(D_ORIGIN, dHeavyTarget, 10 * 60 * 1000);
+    await stopChild('d-miner');
+    await sleep(1500);
+    const hDafterHeavy = await currentHeight(D_ORIGIN);
+    if (dHeavyReached === null) {
+      record('19b', false, `D never reached height ≥ ${dHeavyTarget} within 10 min (last=${hDafterHeavy}, A at start=${hAatHeavy})`);
+    } else {
+      tipRelays.a.upstream = D_ORIGIN;
+      tipRelays.a.mode = 'upstream-D';
+      tipRelays.b.upstream = B_ORIGIN;
+      tipRelays.b.mode = 'honest';
+      const page = await openFreshExtensionPage(bcx);
+      try {
+        const reached = await waitForCornerState(
+          page.cx,
+          (c) => c.ledClass === 'led thin'
+            && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
+          'led thin + "a node names a tip off this chain · tip N" (19b, D heavier)',
+          60000);
+        // The first number on a fresh page can be an anchor's read before the
+        // check ends; a press re-reads the tip through the routed read, which
+        // goes to a node the check placed on the chain
+        // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
+        let reading = reached.last;
+        if (!reached.timedOut) {
+          await pressCorner(page.cx);
+          await sleep(2000);
+          reading = await readCorner(page.cx);
+        }
+        const hDnow = await currentHeight(D_ORIGIN);
+        const hBnow = await currentHeight(B_ORIGIN);
+        const titleTip = tipFromTitle(reading?.title ?? '');
+        const ok = !reached.timedOut
+          && reading?.ledClass === 'led thin'
+          && reading?.tipClass === 'tip mono'
+          && /^a node names a tip off this chain · tip \d+$/.test(reading?.title ?? '')
+          && typeof titleTip === 'number'
+          && typeof hDnow === 'number'
+          && Math.abs(hDnow - titleTip) <= 5;
+        record('19b', ok,
+          `led=${reading?.ledClass}, tip=${reading?.tipClass}, title=${JSON.stringify(reading?.title)}, title tip=${titleTip} vs D height=${hDnow} (seated chain), B height=${hBnow}, D at mine stop=${hDafterHeavy}`);
+      } finally {
+        try { page.cx.s.close(); } catch {}
+        await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+      }
+      tipRelays.a.upstream = NODE.replace(/\/+$/, '');
+      setTipRelayModes('honest');
+    }
   }
 
   // ---- Step 20 — no verifier, on the hosted origin.
@@ -2143,12 +2282,12 @@ async function verifiedTipSteps(cx, targetId = 'unknown') {
     try { bcx.s.close(); } catch {}
   }
 
-  // ---- Cleanup — every child by its handle, and the lying relay's server.
+  // ---- Cleanup — every child by its handle (B, D, D's miner); the tip
+  // relays stay up for the figures and names blocks to read A/B through.
+  // The relays' modes are left `honest` and their upstreams at the node
+  // origins by the 19 steps' exits.
   console.log(`[vt] cleanup: stopping all children by handle`);
   await stopAllChildren();
-  if (relay) {
-    try { relay.server.close(); } catch {}
-  }
   console.log(`[vt] cleanup done; live children left=${vtChildren.size}`);
 }
 
@@ -2339,7 +2478,7 @@ async function waitForNodeTip(target, ms = 12 * 60 * 1000, pollMs = 10000) {
   return { reached: false, last, elapsedMs: Date.now() - t0 };
 }
 
-async function verifiedFiguresSteps(cx, targetId = 'unknown') {
+async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   // Liveness probe — same shape as the tip block's, a three-second wall around
   // `1+1` against the session. A dead session records every step false with
   // the reason.
@@ -2406,15 +2545,23 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
   console.log(`[vf] A/B synced: ${JSON.stringify(abSynced)}`);
 
   try {
-    // ---- Pre-condition — a corner press must read led fresh + *verified
-    // across 2 nodes*. Without it, the rows would carry row 3's *not checked
-    // — the chain is not verified* (WEB_INTERFACE → The extension → "The
-    // verified figures"), not the lines the steps assert. The reading is
-    // copied into every step line it gates.
+    // ---- Pre-condition — the corner must read led fresh + *verified across
+    // 2 nodes*. Without it, the rows would carry row 3's *not checked — the
+    // chain is not verified* (WEB_INTERFACE → The extension → "The verified
+    // figures"), not the lines the steps assert. A press of the corner
+    // triggers a tip run; the reading is read after it settles (proof
+    // request count unasserted — a run whose tips all place asks no proof).
     await cx.waitFor(`!!document.querySelector('.corner')`, 'corner mounted 21', 30000);
-    const verifiedReading = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
-    const verifiedOk = verifiedReading.reading.ledClass === 'led fresh'
-      && /^verified across 2 nodes · tip \d+$/.test(verifiedReading.reading.title ?? '');
+    const precondIdx = cx.events.length;
+    await pressCorner(cx);
+    const reached = await waitForCornerState(cx,
+      (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+      'led fresh + "verified across N nodes" (figures pre-condition)',
+      60000);
+    const verifiedOk = !reached.timedOut && reached.last.ledClass === 'led fresh'
+      && /^verified across 2 nodes · tip \d+$/.test(reached.last.title ?? '');
+    const precondProofs = proofRequestsSince(cx.events, precondIdx);
+    const verifiedReading = { reading: reached.last ?? { ledClass: 'null', tipClass: 'null', title: null }, proofs: precondProofs };
     if (!verifiedOk) {
       const detail = `pre-condition press: led=${verifiedReading.reading.ledClass}, tip=${verifiedReading.reading.tipClass}, title=${JSON.stringify(verifiedReading.reading.title)}, proof requests=${verifiedReading.proofs.length}; the figures verifier fires only under 'verified' (WEB_INTERFACE → The extension → "The verified figures")`;
       for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, detail);
@@ -2432,7 +2579,7 @@ async function verifiedFiguresSteps(cx, targetId = 'unknown') {
     // ---- Steps 22a · 22b · 22c · 22d · 22e · 23 — the lie arms, through the
     // figures relay, while B is up: the relay's verdict is read across the
     // relay, A and B.
-    await runFiguresLieArms(cx);
+    await runFiguresLieArms(cx, bcx);
 
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
     await runFiguresStep25();
@@ -3055,23 +3202,33 @@ function matchesAmount(amount, expected) {
   return expected !== null && amount !== null && amount === BigInt(expected.value);
 }
 
-function lieArms(relay) {
+// A figures lie is set on both relays (`WEB_INTERFACE → The extension →
+// "The verified figures"`: the node the client routes the run to answers
+// each of its reads), so the box the arm reads from the relay is whichever
+// relay served its lie. `armBox` scans both and answers the first non-null.
+function armBox(relays, field) {
+  for (const r of relays) if (r[field] !== null && r[field] !== undefined) return r[field];
+  return null;
+}
+
+function lieArms(relays) {
   return [
     {
       // A fabricated 12.5 $NOTIS box: `absent` where `heightAfter` equals the
       // anchor's tip, `unchecked` where a block landed since (pressed again,
       // up to five times). The amount the line names is the box the relay
-      // listed, scaled: the arm asserts the match against `relay.fakeBox`.
-      // The rep row is not clay.
+      // listed, scaled: the arm asserts the match against the relay that
+      // served the lie (whichever of RLA / RLB the client routed to). The
+      // rep row is not clay.
       step: '22a',
       mode: 'credits-fake',
-      box: () => relay.fakeBox,
+      box: () => armBox(relays, 'fakeBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
         || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.fakeBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), armBox(relays, 'fakeBox'))
         && r.figHintHasClay && r.goldHasClay,
       presses: 5,
       karmaSettled: (k) => k.present && k.monoText !== null,
@@ -3080,19 +3237,19 @@ function lieArms(relay) {
     {
       // The faucet's largest credit box listed under R — a real box of
       // another key, whose amount is whatever that box holds. The arm reads
-      // its id and value from the relay (`relay.foreignBox`): the row's line
+      // its id and value from the relay that served the lie: the row's line
       // names the box's amount scaled to $NOTIS, and under `heightAfter`
       // slipping past the anchor the line reads the box's amount as the
       // `unchecked` tail. The rep row is not clay.
       step: '22b',
       mode: 'credits-foreign',
-      box: () => relay.foreignBox,
+      box: () => armBox(relays, 'foreignBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE) !== null
         || creditsAmountIn(r.figHintText, CREDITS_UNCHECKED_TAIL_RE) !== null
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), relay.foreignBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_ABSENT_RE), armBox(relays, 'foreignBox'))
         && r.figHintHasClay && r.goldHasClay,
       presses: 5,
       karmaSettled: (k) => k.present && k.monoText !== null,
@@ -3112,13 +3269,13 @@ function lieArms(relay) {
       // not clay.
       step: '22c',
       mode: 'credits-drop',
-      box: () => relay.droppedCreditsBox,
+      box: () => armBox(relays, 'droppedCreditsBox'),
       creditsSettled: (r) => r.present && (
         creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE) !== null
         || NOT_CHECKED_YET_LINE(r.figHintText)
       ),
       creditsOk: (r) => r.present
-        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), relay.droppedCreditsBox)
+        && matchesAmount(creditsAmountIn(r.figHintText, CREDITS_UNLISTED_RE), armBox(relays, 'droppedCreditsBox'))
         && r.figHintHasClay
         && (r.goldText === null || r.goldHasClay),
       presses: 5,
@@ -3131,19 +3288,19 @@ function lieArms(relay) {
       // number clay where one stands (the node's `effective` is passed
       // through as served) where `heightAfter` equals tip, and muted *not
       // checked yet* where a block landed since. The arm reads the dropped
-      // box from `relay.droppedKarmaBox` and asserts N equals its value.
-      // The balance row is not clay. As 22c, pressed on `not checked yet`
-      // until the clay stands; a silent or honest-looking reading fails
+      // box from the relay that served the lie and asserts N equals its
+      // value. The balance row is not clay. As 22c, pressed on `not checked
+      // yet` until the clay stands; a silent or honest-looking reading fails
       // the arm.
       step: '22d',
       mode: 'karma-drop',
-      box: () => relay.droppedKarmaBox,
+      box: () => armBox(relays, 'droppedKarmaBox'),
       karmaSettled: (k) => k.present && (
         karmaAmountIn(k.hintText, KARMA_UNLISTED_RE) !== null
         || NOT_CHECKED_YET_LINE(k.hintText)
       ),
       karmaOk: (k) => k.present
-        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), relay.droppedKarmaBox)
+        && matchesAmount(karmaAmountIn(k.hintText, KARMA_UNLISTED_RE), armBox(relays, 'droppedKarmaBox'))
         && k.hintHasClay
         && (k.monoText === null || k.monoHasClay),
       presses: 5,
@@ -3163,14 +3320,14 @@ function lieArms(relay) {
       // is drawn to turn clay, and the ledger's own facts speak alone
       // (→ "An empty listing takes these lines as any listing does"), so
       // `goldHasClay` reads false either way. Every reading of the
-      // balance row — after the change and after each of two presses —
+      // balance row — after the fresh page and after each of two presses —
       // holds that shape; a node that answers another height must read
       // undecided however often the reader asks. `pressesAtLeast: 2`
       // keeps the loop from short-circuiting on an already-ok first
       // reading.
       step: '22e',
       mode: 'credits-drop-tipplus1',
-      box: () => relay.droppedCreditsBox,
+      box: () => armBox(relays, 'droppedCreditsBox'),
       creditsSettled: (r) => r.present && NOT_CHECKED_YET_LINE(r.figHintText),
       creditsOk: (r) => r.present
         && NOT_CHECKED_YET_LINE(r.figHintText)
@@ -3222,56 +3379,73 @@ function requestsTo(events, startIdx, prefix) {
   return n;
 }
 
-async function runFiguresLieArms(cx) {
-  let relay;
-  try {
-    relay = await startFiguresRelay(NODE.replace(/\/+$/, ''), FIG_RELAY_PORT);
-  } catch (e) {
-    for (const s of LIE_ARM_STEPS) record(s, false, `the figures relay did not start on ${FIG_RELAY_ORIGIN}: ${String(e)}`);
+async function runFiguresLieArms(cx, bcx) {
+  // The figures block's lie arms (22a · 22b · 22c · 22d · 22e · 23) ride the
+  // two tip relays, their mode set on both at once: the client routes each
+  // read to whichever node it picks, and both relays serve the lie — so a
+  // lie on both is a lie the run meets whichever node answers (WEB_INTERFACE
+  // → The extension → "The verified figures"). Each arm opens a fresh page
+  // whose tip run has returned `verified` (the arms prove against an
+  // anchor) and asserts the row shapes the arm claims.
+  void cx;
+  const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
+  if (relays.length !== 2) {
+    for (const s of LIE_ARM_STEPS) record(s, 'NOT RUN',
+      `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
-  console.log(`[vf] figures relay up: ${relay.origin} → ${NODE}`);
+  // The names context — R's key — is set on both relays for every figures
+  // mode's lie to fire; it stays through the names block, which adds S's
+  // name.
+  const rKey = R_JSON.pubKeyHex.toLowerCase();
+  for (const r of relays) r.rKey = rKey;
   try {
-    for (const arm of lieArms(relay)) await runLieArm(cx, relay, arm);
+    for (const arm of lieArms(relays)) await runLieArm(bcx, relays, arm);
   } finally {
-    closeRelay(relay);
-    console.log(`[vf] figures relay closed; edits=${JSON.stringify(relay.edits)}`);
+    for (const r of relays) r.mode = 'honest';
+    console.log(`[vf] relays set back to honest; edits=${JSON.stringify(relays.map((r) => r.edits))}`);
   }
 }
 
-async function runLieArm(cx, relay, arm) {
-  let onRelay = false;
+// One figures lie arm — 22a · 22b · 22c · 22d · 22e · 23: (1) its mode on both
+// relays, (2) a fresh page's tip run reaches `verified`, (3) the rows read,
+// the lying row retried up to `arm.presses` where the arm allows it, (4) the
+// relays set back to `honest` and the fresh page's next figures run reads the
+// balance row silent.
+async function runLieArm(bcx, relays, arm) {
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  // (1) The mode on both relays.
+  for (const r of relays) r.mode = arm.mode;
   try {
-    const editsBefore = relay.edits[arm.mode];
-    // (1) The relay's mode, with @wallet and @profile open.
-    relay.mode = arm.mode;
-    await raiseWindow(cx, 'open profile');
-    await raiseWindow(cx, 'open wallet');
-
-    // (2) The node row set to the relay; the corner reads verified across the
-    // relay, A and B.
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin,
+    // (2) A fresh page whose tip run returns verified across N nodes.
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await raiseWindow(fcx, 'open profile');
+    await raiseWindow(fcx, 'open wallet');
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx,
       (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
-      'led fresh + verified across N nodes (reading the figures relay)', 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+      `led fresh + verified across N nodes (fresh page under ${arm.mode})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
-    // (3) The rows, once the relay's run lands; the lying row awaited with a
-    // 15 s bound. `pressWhen` names the lying row — `credits` by default,
-    // `karma` on karma-drop. The loop continues while `presses < arm.presses`
-    // AND (`presses < arm.pressesAtLeast` OR `!arm.<side>Ok(last)`): a
-    // `pressesAtLeast` of 2 (22e) presses twice whatever the first reading
-    // was, so a shape already ok after the change does not short-circuit;
-    // the drop arms (22a–d, 22e) take `settled` as the "in the step's
-    // line" check — a wait that times out means the row ended on silence
-    // or an honest-looking line, and `creditsInLine` / `karmaInLine` go
-    // false. The arm's verdict is `ok` AND every reading of the lying row
-    // was in line. `presses === 0` (step 23) leaves no room for retry.
-    await raiseWindow(cx, 'open wallet');
-    const relayRun = verified ? await waitForFiguresRun(cx, changeIdx, 60000, 2000, relay.origin) : [];
-    let credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
-    const creditsReadings = [`after the change: ${creditsSeen(credits.last)}`];
+    // (3) The rows, once the fresh page's figures run lands; the lying row
+    // awaited with a 15 s bound. `pressWhen` names the lying row — `credits`
+    // by default, `karma` on karma-drop. The loop continues while
+    // `presses < arm.presses` AND (`presses < arm.pressesAtLeast` OR
+    // `!arm.<side>Ok(last)`): a `pressesAtLeast` of 2 (22e) presses twice
+    // whatever the first reading was, so a shape already ok after the fresh
+    // page does not short-circuit; the drop arms (22a–d, 22e) take
+    // `settled` as the "in the step's line" check — a wait that times out
+    // means the row ended on silence or an honest-looking line, and
+    // `creditsInLine` / `karmaInLine` go false. The arm's verdict is `ok`
+    // AND every reading of the lying row was in line. `presses === 0`
+    // (step 23) leaves no room for retry.
+    await raiseWindow(fcx, 'open wallet');
+    const relayRun = verified ? await waitForFiguresRun(fcx, changeIdx, 60000, 2000, null) : [];
+    let credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
+    const creditsReadings = [`after the fresh page: ${creditsSeen(credits.last)}`];
     const pressWhen = arm.pressWhen ?? 'credits';
     const pressesAtLeast = arm.pressesAtLeast ?? 0;
     let presses = 0;
@@ -3283,15 +3457,15 @@ async function runLieArm(cx, relay, arm) {
         && (presses < pressesAtLeast || !arm.creditsOk(credits.last))
       ) {
         presses += 1;
-        await pressCornerAndReadFigures(cx);
-        credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+        await pressCornerAndReadFigures(fcx);
+        credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
         creditsReadings.push(`press ${presses}: ${creditsSeen(credits.last)}`);
         if (credits.timedOut) creditsInLine = false;
       }
     }
-    await raiseWindow(cx, 'open profile');
-    let karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
-    const karmaReadings = [`after the change: ${karmaSeen(karma.last)}`];
+    await raiseWindow(fcx, 'open profile');
+    let karma = await waitForRow(readKarmaField, fcx, arm.karmaSettled, 15000);
+    const karmaReadings = [`after the fresh page: ${karmaSeen(karma.last)}`];
     let karmaInLine = pressWhen === 'karma' ? !karma.timedOut : true;
     if (pressWhen === 'karma') {
       while (
@@ -3300,8 +3474,8 @@ async function runLieArm(cx, relay, arm) {
         && (presses < pressesAtLeast || !arm.karmaOk(karma.last))
       ) {
         presses += 1;
-        await pressCornerAndReadFigures(cx);
-        karma = await waitForRow(readKarmaField, cx, arm.karmaSettled, 15000);
+        await pressCornerAndReadFigures(fcx);
+        karma = await waitForRow(readKarmaField, fcx, arm.karmaSettled, 15000);
         karmaReadings.push(`press ${presses}: ${karmaSeen(karma.last)}`);
         if (karma.timedOut) karmaInLine = false;
       }
@@ -3316,22 +3490,46 @@ async function runLieArm(cx, relay, arm) {
     // pushed into `creditsReadings` so the record line names it as the
     // verdict's source.
     if (pressWhen === 'karma') {
-      await raiseWindow(cx, 'open wallet');
-      credits = await waitForRow(readCreditsRow, cx, arm.creditsSettled, 15000);
+      await raiseWindow(fcx, 'open wallet');
+      credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
       creditsReadings.push(`verdict re-read: ${creditsSeen(credits.last)}`);
     }
     const creditsOk = arm.creditsOk(credits.last);
     const karmaOk = arm.karmaOk(karma.last);
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = corner.ledClass === 'led fresh';
-    const edits = relay.edits[arm.mode] - editsBefore;
-    const creditsReads = requestsTo(cx.events, changeIdx, `${relay.origin}/credits/${R_JSON.pubKeyHex}`);
-    const karmaReads = requestsTo(cx.events, changeIdx, `${relay.origin}/karma/${R_JSON.pubKeyHex}`);
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
+    const creditsReads = relays.reduce((sum, r) =>
+      sum + requestsTo(fcx.events, changeIdx, `${r.origin}/credits/${R_JSON.pubKeyHex}`), 0);
+    const karmaReads = relays.reduce((sum, r) =>
+      sum + requestsTo(fcx.events, changeIdx, `${r.origin}/karma/${R_JSON.pubKeyHex}`), 0);
     const nodeCredits = await fetch(`${NODE}/credits/${R_JSON.pubKeyHex}`).then((r) => r.json()).catch(() => null);
 
-    // (4) Back to A: the balance row silent again once A's own run lands.
-    const back = await leaveFiguresRelay(cx);
-    onRelay = false;
+    // (4) Both relays back to `honest`; the fresh page's next figures run
+    // reads the balance row silent again. The press triggers a new tip run
+    // → verified → figures run on the now-honest answers.
+    for (const r of relays) r.mode = 'honest';
+    let back;
+    if (verified) {
+      const backIdx = fcx.events.length;
+      await pressCorner(fcx);
+      const backReached = await waitForCornerState(fcx,
+        (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
+        'led fresh + verified across N nodes (relays back to honest)', 60000);
+      const backVerified = !backReached.timedOut;
+      const backReading = backReached.last ?? { ledClass: 'null', title: null };
+      const aRun = backVerified ? await waitForFiguresRun(fcx, backIdx, 60000, 2000, null) : [];
+      await raiseWindow(fcx, 'open wallet');
+      const row = await waitForRow(readCreditsRow, fcx,
+        (r) => r.present && r.goldText !== null && r.figHintText === null && !r.goldHasClay, 15000);
+      back = {
+        ok: backVerified && aRun.length > 0 && !row.timedOut,
+        detail: `led=${backReading.ledClass}, title=${JSON.stringify(backReading.title)}, figures proof requests=${aRun.length}, balance ${creditsSeen(row.last)}`,
+      };
+    } else {
+      back = { ok: false, detail: 'skipped — the fresh page never verified' };
+    }
+
     // The box the lie points at — the one the arm asserts the line names.
     // `null` for 23 (avl-flip), whose sentences carry no amount.
     const lieBox = arm.box ? arm.box() : null;
@@ -3339,38 +3537,23 @@ async function runLieArm(cx, relay, arm) {
       ? 'none (the sentence carries no amount)'
       : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
     record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}; lie box=${lieBoxText}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
-      `through the relay: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')}); lie box=${lieBoxText}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
+      `through the two relays: /credits reads=${creditsReads}, /karma reads=${karmaReads}, figures proof requests=${relayRun.length}; ` +
       `balance ${creditsReadings.join(' | ')} (A's /credits total=${nodeCredits?.total ?? 'null'} base units), ok=${creditsOk}, in line=${creditsInLine}; ` +
       `rep ${karmaReadings.join(' | ')}, ok=${karmaOk}, in line=${karmaInLine}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back to A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    // An arm that failed on the relay hands the next one A, as every arm
-    // leaves it.
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vf] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    // Modes back to honest, fresh page closed — the next arm starts clean.
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
-}
-
-// Step (4) of every lie arm — the node row blanked back to A, and the balance
-// row silent once A's own figures run lands: before that run the row holds no
-// result, which reads silent too.
-async function leaveFiguresRelay(cx) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const verified = !blank.reached.timedOut;
-  await raiseWindow(cx, 'open wallet');
-  const aRun = verified ? await waitForFiguresRun(cx, blankIdx, 60000, 2000, NODE.replace(/\/+$/, '')) : [];
-  const row = await waitForRow(readCreditsRow, cx,
-    (r) => r.present && r.goldText !== null && r.figHintText === null && !r.goldHasClay, 15000);
-  return {
-    ok: verified && aRun.length > 0 && !row.timedOut,
-    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, A's figures proof requests=${aRun.length}, balance ${creditsSeen(row.last)}`,
-  };
 }
 
 // Step 25 — the hosted build has no verifier, so no `.credits-line .hint` or
@@ -3657,7 +3840,7 @@ function siteSeen(x) {
   return x === null ? 'absent' : `${JSON.stringify(x.text)} (clay=${x.clay})`;
 }
 
-async function verifiedNamesSteps(cx, targetId = 'unknown') {
+async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   // Liveness probe — the other blocks' shape, a three-second wall around `1+1`.
   const alive = await (async () => {
     const timeout = new Promise((_, rej) =>
@@ -3745,7 +3928,7 @@ async function verifiedNamesSteps(cx, targetId = 'unknown') {
 
     // ---- Steps 27a–d and 28a–b — the lie arms, through the figures relay in
     // its name modes, each switched back to A and read honest again.
-    await runNamesLieArms(cx, rKey, rName, sHeld);
+    await runNamesLieArms(cx, bcx, rKey, rName, sHeld);
 
     // ---- Step 30 — no verifier on the hosted web build.
     await runNamesStep30(rName);
@@ -3953,7 +4136,8 @@ function nameChecksFromRelayLog(log, since, boxId) {
   const checks = [];
   let open = null;
   for (const e of log.filter((x) => x.at >= since).sort((a, b) => a.at - b.at)) {
-    const u = new URL(e.path, 'http://relay');
+    // Tip-relay log entries carry the request's `url` (startTipRelay's pushes).
+    const u = new URL(e.url, 'http://relay');
     if (u.pathname.toLowerCase() === proofPath) {
       const height = Number(u.searchParams.get('atHeight'));
       if (open !== null && open.tip === null && height === open.suffixHead + TIP_K - 1) {
@@ -3973,14 +4157,16 @@ function nameChecksFromRelayLog(log, since, boxId) {
 }
 
 // The tip runs the relay saw since `since` — one /nipopow/proof/ request per
-// run, the reading node being asked first (WEB_INTERFACE → The extension → "The
+// run, asked only for a tip the client's chain cannot place (MESH_INTERFACE →
+// The client's node list → "A check"; WEB_INTERFACE → The extension → "The
 // verified tip") — each classed by what began it: the node change (the first),
 // a check that ended `unchecked` (within 3 s of the /blocks/current that
 // decided it), a press of the corner (within 3 s of one), or unexplained — the
 // ten-minute clock among what that leaves.
 function tipRunsFromRelayLog(log, since, { presses = [], checks = [] } = {}) {
+  // Tip-relay log entries carry the request's `url` (startTipRelay's pushes).
   return log
-    .filter((e) => e.at >= since && new URL(e.path, 'http://relay').pathname.startsWith('/nipopow/proof/'))
+    .filter((e) => e.at >= since && new URL(e.url, 'http://relay').pathname.startsWith('/nipopow/proof/'))
     .sort((a, b) => a.at - b.at)
     .map((e, i) => {
       let why = 'unexplained';
@@ -4100,11 +4286,20 @@ const NAME_LABEL_ARMS = [
     // Another name on R's rows: the label's lookup names R's real box, whose
     // name is not the row's — unproven, clay wherever a row carries it. The
     // header reads R's own name from /usernames?owner=, answered as served —
-    // ink, as every handle drawn from that answer is.
+    // ink, as every handle drawn from that answer is. Back to honest: the feed
+    // listing is not refetched by a corner press, so its rows still carry the
+    // lie label; a name check on (R, renameTo) reads `none` against the honest
+    // /usernames/<renameTo> 404 and stays clay (→ "The verified names": a lie
+    // a check catches reads clay), while handles drawn from the own-name read
+    // stay ink (that route the lie never touched).
     step: '27a',
     mode: 'label-rename',
     presses: 0,
     relayOk: (r, { rName, renameTo }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + renameTo && c.clay)
+      && r.handles.every((h) => (h.text === '@' + renameTo && h.clay) || (h.text === '@' + rName && !h.clay))
+      && r.otherClay.length === 0,
+    backOk: (r, { rName, renameTo }) => r.header !== null && r.header.handle && r.header.text === '@' + rName && !r.header.clay
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + renameTo && c.clay)
       && r.handles.every((h) => (h.text === '@' + renameTo && h.clay) || (h.text === '@' + rName && !h.clay))
       && r.otherClay.length === 0,
@@ -4114,7 +4309,10 @@ const NAME_LABEL_ARMS = [
     // every handle a row draws. The App's own-name read falls to the same 404,
     // so the header draws R's key prefix in mono: no handle to turn clay — the
     // omission the rule leaves uncaught (→ "The verified names": a node that
-    // shows a key bare is not caught).
+    // shows a key bare is not caught; omission is what reading both nodes as a
+    // union is for). Back to honest: the own-name read is not retried and the
+    // header stays bare, while the next name check on (R, R's name) proves
+    // against the honest lookup and the feed rows and their handles flip ink.
     step: '27b',
     mode: 'owner-404',
     presses: 0,
@@ -4123,11 +4321,18 @@ const NAME_LABEL_ARMS = [
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
       && r.handles.every((h) => h.text === '@' + rName && h.clay)
       && r.otherClay.length === 0,
+    backOk: (r, { rKey, rName }) => r.header !== null && !r.header.handle && r.header.mono && !r.header.clay
+      && r.header.text === rKey.slice(0, 16) + '…'
+      && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && !c.clay)
+      && r.handles.every((h) => h.text === '@' + rName && !h.clay)
+      && r.otherClay.length === 0,
   },
   {
     // A box the chain does not hold — absent, clay on every handle of R's, the
     // header's among them; the corner pressed again while a block landing
-    // inside a check leaves the pair unchecked, up to five presses.
+    // inside a check leaves the pair unchecked, up to five presses. Back to
+    // honest: /usernames?owner=R returns R's real box at the next check and
+    // every pair flips ink.
     step: '27c',
     mode: 'owner-fakebox',
     presses: 5,
@@ -4135,123 +4340,181 @@ const NAME_LABEL_ARMS = [
       && r.feed.length > 0 && r.feed.every((c) => c.text === '@' + rName && c.clay)
       && r.handles.length > 0 && r.handles.every((h) => h.text === '@' + rName && h.clay)
       && r.otherClay.length === 0,
+    backOk: (r, { rName }) => honestNames(r, rName),
   },
 ];
 
-async function runNamesLieArms(cx, rKey, rName, sHeld) {
-  let relay;
-  try {
-    relay = await startFiguresRelay(NODE.replace(/\/+$/, ''), FIG_RELAY_PORT, { rKey, sName: sHeld?.name ?? null });
-  } catch (e) {
-    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, false, `the relay did not start on ${FIG_RELAY_ORIGIN}: ${String(e)}`);
+// The names block reads R's handles and R's author window at the tiling width
+// (WEB_INTERFACE → The workspace, → The identity display): the header renders
+// `@handle` at two or more columns and a glyph at one, and the author window's
+// move-to-the-right control exists only with a second column to move into. The
+// names block set the width on its main `cx` before step 26; every fresh page
+// the lie arms open inherits none of that override (a CDP session carries its
+// own emulation state) and defaults to the headless browser's narrow window,
+// which draws the header glyph and leaves `.hdr-word` absent. This helper sets
+// the override the lie arms assert against.
+async function setNamesViewport(cx) {
+  await cx.call('Emulation.setDeviceMetricsOverride', {
+    width: NAMES_VIEWPORT.width, height: NAMES_VIEWPORT.height, deviceScaleFactor: 1, mobile: false,
+  });
+  await cx.waitFor(
+    `!matchMedia('(max-width: 955px)').matches && !!document.querySelector('[aria-label="open profile"].hdr-word') && !!document.querySelector('.corner')`,
+    'the header at a tiling width (fresh page in the names block)', 30000);
+}
+
+async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
+  // The names block's lie arms (27a · 27b · 27c · 27d · 28a · 28b) ride the
+  // two tip relays in their name modes, their mode set on both at once: a
+  // lie on both is a lie the run meets whichever node answers (WEB_INTERFACE
+  // → The extension → "The verified names"). Each arm opens a fresh page
+  // whose tip run has returned `verified` (the arms prove against an
+  // anchor) and asserts R's handles, the author window's landing, or a send
+  // refused as the arm claims.
+  void cx;
+  const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
+  if (relays.length !== 2) {
+    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, 'NOT RUN',
+      `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
-  console.log(`[vn] relay up in its name modes: ${relay.origin} → ${NODE}`);
+  // The names context — R's key and S's name — on both relays. The figures
+  // block already set `rKey`, this reaffirms it in the same lowercase form
+  // and adds S's name for the send arms.
+  for (const r of relays) {
+    r.rKey = rKey;
+    r.sName = sHeld?.name ?? null;
+  }
   try {
     if (rName === null) {
-      for (const s of NAMES_LABEL_STEPS) record(s, false, 'R holds no name on A — step 26 claimed none, so no row of R\'s carries a name');
+      for (const s of NAMES_LABEL_STEPS) record(s, false, `R holds no name on A — step 26 claimed none, so no row of R's carries a name`);
     } else {
       const ctx = { rKey, rName, rIds: await liveRootIds(rKey), renameTo: await freeName('Mallory') };
       console.log(`[vn] label arms: R @${rName}, ${ctx.rIds.length} live roots of R on A, rows renamed to @${ctx.renameTo}`);
       for (const arm of NAME_LABEL_ARMS) {
         if (arm.mode === 'label-rename' && ctx.renameTo === null) {
-          record(arm.step, false, 'no free name to rename R\'s rows to — Mallory and two hex tails of it are all held on A');
+          record(arm.step, false, `no free name to rename R's rows to — Mallory and two hex tails of it are all held on A`);
           continue;
         }
-        await runNameLabelArm(cx, relay, arm, ctx);
+        await runNameLabelArm(bcx, relays, arm, ctx);
       }
-      await runNamesStep27d(cx, relay, ctx);
+      await runNamesStep27d(bcx, relays, ctx);
     }
     if (sHeld === null) {
       for (const s of NAMES_SEND_STEPS) record(s, false, `S ${S_PUB.slice(0, 8)}… holds no name on A — claim-name.mjs claims one before the run`);
     } else {
-      for (const arm of NAME_SEND_ARMS) await runNameSendArm(cx, relay, arm, { sHeld });
+      for (const arm of NAME_SEND_ARMS) await runNameSendArm(bcx, relays, arm, { sHeld });
     }
   } finally {
-    closeRelay(relay);
-    console.log(`[vn] relay closed; edits=${JSON.stringify(relay.edits)}, rows renamed=${relay.renamed}`);
+    for (const r of relays) r.mode = 'honest';
+    console.log(`[vn] relays set back to honest; edits=${JSON.stringify(relays.map((r) => r.edits))}, rows renamed=${relays.reduce((s, r) => s + r.renamed, 0)}`);
   }
 }
 
-// One label arm — 27a · 27b · 27c: (1) the mode, (2) the node row set to the
-// relay and the corner verified across the relay, A and B, (3) R's handles once
-// the checks go quiet, the corner pressed again where the arm allows it, (4)
-// back to A and every handle of R's in ink again.
-async function runNameLabelArm(cx, relay, arm, ctx) {
-  let onRelay = false;
-  try {
-    const editsBefore = relay.edits[arm.mode];
-    const renamedBefore = relay.renamed;
-    // (1) The mode — R's rows renamed to a name no identity holds, or a fresh
-    // made-up box.
-    relay.mode = arm.mode;
-    relay.renameFrom = ctx.rName;
-    relay.renameTo = ctx.renameTo;
-    if (arm.mode === 'owner-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
+// The merged log of both relays, sorted by arrival time — a check or a run
+// landed on whichever relay the client routed to, and the arms read against
+// the merged timeline.
+function mergedLog(relays) {
+  return relays.flatMap((r) => r.log).sort((a, b) => a.at - b.at);
+}
 
-    // (2) The node row set to the relay.
+// One label arm — 27a · 27b · 27c: (1) its mode on both relays, (2) a fresh
+// page's tip run reaches `verified`, (3) R's handles once the name checks go
+// quiet, the corner pressed again where the arm allows it, (4) the relays set
+// back to `honest` and R's handles read in ink again.
+async function runNameLabelArm(bcx, relays, arm, ctx) {
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  const renamedBefore = relays.reduce((s, r) => s + r.renamed, 0);
+  // (1) The mode on both relays — R's rows renamed to a name no identity
+  // holds, or a fresh made-up box. The same fakeBoxId on both so every relay
+  // serves the same fake box (`WEB_INTERFACE → The extension → "The verified
+  // names"`).
+  const fakeBoxId = arm.mode === 'owner-fakebox' ? randomBytes(32).toString('hex') : null;
+  for (const r of relays) {
+    r.mode = arm.mode;
+    r.renameFrom = ctx.rName;
+    r.renameTo = ctx.renameTo;
+    if (arm.mode === 'owner-fakebox') r.fakeBoxId = fakeBoxId;
+  }
+  try {
+    // (2) A fresh page whose tip run returns verified across N nodes.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await setNamesViewport(fcx);
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
     // (3) R's handles, once the checks go quiet; pressed again, up to the
     // arm's presses, while they do not read as the lie makes them.
     const readings = [];
     const presses = [];
-    let seen = verified ? await readRHandlesQuiet(cx, changeIdx, ctx.rKey, ctx.rIds) : null;
-    if (seen !== null) readings.push(`after the change: ${rHandlesSeen(seen.reading)}`);
+    let seen = verified ? await readRHandlesQuiet(fcx, changeIdx, ctx.rKey, ctx.rIds) : null;
+    if (seen !== null) readings.push(`after the fresh page: ${rHandlesSeen(seen.reading)}`);
     while (seen !== null && presses.length < arm.presses && !arm.relayOk(seen.reading, ctx)) {
       presses.push(Date.now());
-      const pressIdx = cx.events.length;
-      await pressCorner(cx);
-      seen = await readRHandlesQuiet(cx, pressIdx, ctx.rKey, ctx.rIds);
+      const pressIdx = fcx.events.length;
+      await pressCorner(fcx);
+      seen = await readRHandlesQuiet(fcx, pressIdx, ctx.rKey, ctx.rIds);
       readings.push(`press ${presses.length}: ${rHandlesSeen(seen.reading)}`);
     }
     const relayOk = seen !== null && arm.relayOk(seen.reading, ctx);
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = cornerVerified(corner);
-    const edits = relay.edits[arm.mode] - editsBefore;
-    const checks = arm.mode === 'owner-fakebox' ? nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId) : [];
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { presses, checks });
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
+    const log = mergedLog(relays);
+    const checks = arm.mode === 'owner-fakebox' ? nameChecksFromRelayLog(log, changeAt, fakeBoxId) : [];
+    const runs = tipRunsFromRelayLog(log, changeAt, { presses, checks });
     const asked = runs.filter((r) => r.why === 'asked').length;
-    const pageTipProofs = proofRequestsSince(cx.events, changeIdx).length;
+    const pageTipProofs = proofRequestsSince(fcx.events, changeIdx).length;
 
-    // (4) Back to A, and the honest state read again.
-    const back = await leaveNamesRelay(cx, ctx);
-    onRelay = false;
+    // (4) Relays back to `honest`; R's handles read against the arm's
+    // `backOk` once the next name checks run (routed reads keep the lie's
+    // listing on the surfaces whose rows the corner press does not refetch).
+    for (const r of relays) r.mode = 'honest';
+    const back = await honestNamesRead(fcx, ctx, arm.backOk);
+    const renamed = relays.reduce((s, r) => s + r.renamed, 0) - renamedBefore;
     record(arm.step, verified && relayOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}` +
-      (arm.mode === 'label-rename' ? ` (rows of R renamed @${ctx.renameTo}: ${relay.renamed - renamedBefore})` : '') +
-      (arm.mode === 'owner-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : '') + '; ' +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
-      `on the relay: ${readings.join(' | ')}, ok=${relayOk}; ` +
-      (arm.mode === 'owner-fakebox' ? `the made-up box's checks (the relay's log): ${checksSeen(checks)}; ` : '') +
-      `tip runs through the relay: ${runsSeen(runs, changeAt)} — asked by a check: ${asked}; page /nipopow/proof/ requests=${pageTipProofs}; ` +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')})` +
+      (arm.mode === 'label-rename' ? ` (rows of R renamed @${ctx.renameTo}: ${renamed})` : '') +
+      (arm.mode === 'owner-fakebox' ? ` (made-up box ${fakeBoxId.slice(0, 12)}…)` : '') + '; ' +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
+      `through the two relays: ${readings.join(' | ')}, ok=${relayOk}; ` +
+      (arm.mode === 'owner-fakebox' ? `the made-up box's checks (the merged relay log): ${checksSeen(checks)}; ` : '') +
+      `tip runs through the two relays: ${runsSeen(runs, changeAt)} — asked by a check: ${asked}; page /nipopow/proof/ requests=${pageTipProofs}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back on A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    // An arm that failed on the relay hands the next one A, as every arm
-    // leaves it.
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
 
-// Step (4) of a label arm — the node row blanked back to A, and every handle of
-// R's read in ink once A's checks go quiet.
-async function leaveNamesRelay(cx, ctx) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const verified = !blank.reached.timedOut;
-  const seen = verified ? await readRHandlesQuiet(cx, blankIdx, ctx.rKey, ctx.rIds) : null;
+// Step (4) of a label arm — the relays set back to honest, the corner pressed
+// on the fresh page, and R's handles read after the next name checks go quiet.
+// Each arm names its own `backOk`: a listing the corner press does not refetch
+// still carries the lie's label, the own-name read is not retried, and only
+// the pairs a name check runs on can flip — the arm's `backOk` says which of
+// those flip ink and which stay clay (→ "The verified names").
+async function honestNamesRead(fcx, ctx, backOk) {
+  const blankIdx = fcx.events.length;
+  await pressCorner(fcx);
+  const reached = await waitForCornerState(fcx, cornerVerified,
+    'led fresh + verified across N nodes (relays back to honest)', 60000);
+  const verified = !reached.timedOut;
+  const reading = reached.last ?? { ledClass: 'null', title: null };
+  const seen = verified ? await readRHandlesQuiet(fcx, blankIdx, ctx.rKey, ctx.rIds) : null;
   return {
-    ok: verified && seen !== null && honestNames(seen.reading, ctx.rName),
-    detail: `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
+    ok: verified && seen !== null && backOk(seen.reading, ctx),
+    detail: `led=${reading.ledClass}, title=${JSON.stringify(reading.title)}, ${seen === null ? 'not read' : rHandlesSeen(seen.reading)}`,
   };
 }
 
@@ -4390,65 +4653,104 @@ function snapsSeen(snaps, t0) {
 // result, and the check's `absent` lands after — the handle turns clay in
 // place, no line beneath it, the rows below where they rendered. The window's
 // ↻ is a render, and draws the line. Back on A: ink, no line.
-async function runNamesStep27d(cx, relay, ctx) {
+async function runNamesStep27d(bcx, relays, ctx) {
   const { rKey, rName, rIds } = ctx;
-  const inkOnA = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
-  let onRelay = false;
+  // The initial honest state has no clay line (no result has landed yet); the
+  // back-to-honest state may still carry the lie's line because the author
+  // window's clay line is drawn only by the window's render (WEB_INTERFACE →
+  // The author window → "The line is drawn with the window's render" — a
+  // result that lands after the window rendered turns the handle clay or ink
+  // in place and leaves the line where it stands until the next render). The
+  // back check waits for the handle flip alone.
+  const inkOnHonest = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
+  const inkOnHonestBack = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay; })()`;
+  let page = null;
   let recording = false;
+  // Both relays honest at the start — the fresh page's first tip run reads
+  // verified and the author window renders R's name ink.
+  for (const r of relays) r.mode = 'honest';
   try {
-    // (0) R's author window in a column of its own, its name row in ink on A.
-    const placed = await authorWindowAlone(cx, rKey, rIds);
-    await cx.waitFor(inkOnA, 'R\'s author window, its name row in ink on A', 30000);
+    // (0) A fresh page whose tip run reads `verified`, R's author window in
+    // a column of its own, its name row in ink.
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await setNamesViewport(fcx);
+    await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (fresh page under honest, 27d)', 60000);
+    const placed = await authorWindowAlone(fcx, rKey, rIds);
+    await fcx.waitFor(inkOnHonest, 'R\'s author window, its name row in ink on the honest relays', 30000);
 
-    // (1) The mode, set again over a fresh made-up box; the row recorded.
-    const editsBefore = relay.edits['owner-fakebox'];
-    relay.mode = 'owner-fakebox';
-    relay.fakeBoxId = randomBytes(32).toString('hex');
-    await recordAuthorNameRow(cx, rKey);
+    // (1) owner-fakebox on both relays over a shared fresh made-up box; the
+    // row recorded.
+    const editsBefore = relays.map((r) => r.edits['owner-fakebox']);
+    const fakeBoxId = randomBytes(32).toString('hex');
+    await recordAuthorNameRow(fcx, rKey);
     recording = true;
+    for (const r of relays) {
+      r.mode = 'owner-fakebox';
+      r.fakeBoxId = fakeBoxId;
+    }
 
-    // (2) The node row set to the relay.
+    // (2) The corner pressed — the tip run under owner-fakebox reaches
+    // verified (the lie is on name lookups, not on the tip proof), and the
+    // name check lands after the window's render.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      'led fresh + verified across N nodes (reading the relay, 27d)', 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    const changeIdx = fcx.events.length;
+    await pressCorner(fcx);
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (owner-fakebox pressed, 27d)', 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
 
-    // (3) The window's states from the change until the checks go quiet — the
-    // render, then the landing — then its ↻, which draws the line.
-    if (verified) await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
-    const landing = authorLanding((await authorRecord(cx)).filter((s) => s.t >= changeAt), rName);
-    await cx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
-    const lineDrawn = await cx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
+    // (3) The window's states from the press until the name checks go quiet —
+    // the render, then the landing — then its ↻, which draws the line.
+    if (verified) await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
+    const landing = authorLanding((await authorRecord(fcx)).filter((s) => s.t >= changeAt), rName);
+    await fcx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
+    const lineDrawn = await fcx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
       .then(() => true, () => false);
-    const refreshed = await cx.eval(authorNameRowJs(rKey));
-    const snaps = (await authorRecord(cx, true)).filter((s) => s.t >= changeAt);
+    const refreshed = await fcx.eval(authorNameRowJs(rKey));
+    const snaps = (await authorRecord(fcx, true)).filter((s) => s.t >= changeAt);
     recording = false;
     const refreshOk = lineDrawn && refreshed.state === 'handle' && refreshed.text === '@' + rName && refreshed.clay && refreshed.line === NAME_LINE;
-    const edits = relay.edits['owner-fakebox'] - editsBefore;
-    const checks = nameChecksFromRelayLog(relay.log, changeAt, relay.fakeBoxId);
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits['owner-fakebox'] - editsBefore[i]), 0);
+    const log = mergedLog(relays);
+    const checks = nameChecksFromRelayLog(log, changeAt, fakeBoxId);
+    const runs = tipRunsFromRelayLog(log, changeAt, { checks });
 
-    // (4) Back to A: the window drawn again, its handle ink and no line.
-    const back = await leaveNamesRelay(cx, ctx);
-    onRelay = false;
-    const inkBack = await cx.waitFor(inkOnA, 'R\'s author window in ink again on A', 30000).then(() => true, () => false);
-    const backRow = await cx.eval(authorNameRowJs(rKey));
+    // (4) Both relays back to `honest`; the window drawn again, its handle
+    // ink and no line.
+    for (const r of relays) r.mode = 'honest';
+    const backIdx = fcx.events.length;
+    await pressCorner(fcx);
+    const backReached = await waitForCornerState(fcx, cornerVerified,
+      'led fresh + verified across N nodes (relays back to honest, 27d)', 60000);
+    const backVerified = !backReached.timedOut;
+    const backReading = backReached.last ?? { ledClass: 'null', title: null };
+    const backHandles = backVerified ? await readRHandlesQuiet(fcx, backIdx, rKey, rIds) : null;
+    const back = {
+      ok: backVerified && backHandles !== null && honestNames(backHandles.reading, rName),
+      detail: `led=${backReading.ledClass}, title=${JSON.stringify(backReading.title)}, ${backHandles === null ? 'not read' : rHandlesSeen(backHandles.reading)}`,
+    };
+    const inkBack = await fcx.waitFor(inkOnHonestBack, 'R\'s author window in ink again on the honest relays', 30000).then(() => true, () => false);
+    const backRow = await fcx.eval(authorNameRowJs(rKey));
     record('27d', verified && landing.ok && refreshOk && back.ok && inkBack,
-      `relay owner-fakebox edits=${edits} (made-up box ${relay.fakeBoxId.slice(0, 12)}…); ` +
+      `relays owner-fakebox edits=${edits} (made-up box ${fakeBoxId.slice(0, 12)}…); ` +
       `R's author window ${placed.opened ? 'opened from R\'s card' : 'open'}${placed.moved ? ', moved to a column of its own' : ', alone in its column'}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}, verified=${verified}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
       `the run saw: ${landing.seen}, ok=${landing.ok}; ` +
       `after ↻: ${JSON.stringify(refreshed.text)} ${refreshed.clay ? 'clay' : 'ink'}, line ${JSON.stringify(refreshed.line)}, ok=${refreshOk}; ` +
-      `the name row's states from the change: ${snapsSeen(snaps, changeAt)}; ` +
-      `the made-up box's checks (the relay's log): ${checksSeen(checks)}; tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
-      `back on A: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
+      `the name row's states from the press: ${snapsSeen(snaps, changeAt)}; ` +
+      `the made-up box's checks (the merged relay log): ${checksSeen(checks)}; tip runs through the two relays: ${runsSeen(runs, changeAt)}; ` +
+      `back to honest on both: ${back.detail}; the name row ${JSON.stringify(backRow.text)} ${backRow.clay ? 'clay' : 'ink'}, line ${JSON.stringify(backRow.line)}, ok=${back.ok && inkBack}`);
   } catch (e) {
-    if (recording) await authorRecord(cx, true).catch(() => {});
+    if (recording && page) await authorRecord(page.cx, true).catch(() => {});
     record('27d', false, `error: ${e?.stack ?? String(e)}`);
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] 27d: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
@@ -4537,64 +4839,71 @@ const SEND_ANSWER_JS = `(() => {
   };
 })()`;
 
-// One send arm — 28a · 28b: (1) the mode, (2) the node row set to the relay,
-// (3) the send row pressed twice with S's handle typed — for 28b once A has
-// mined past the height the anchor was written at — and pressed again while a
-// block landing inside the retry reads *too new*, (4) back to A, where the
-// send to S's handle proves and its prompt is declined.
-async function runNameSendArm(cx, relay, arm, { sHeld }) {
+// One send arm — 28a · 28b: (1) its mode on both relays, (2) a fresh page's
+// tip run reaches `verified`, (3) the send row pressed twice with S's handle
+// typed — for 28b once A has mined past the height the anchor was written
+// at — and pressed again while a block landing inside the retry reads *too
+// new*, (4) both relays back to `honest` and a send to S's handle proving
+// against the honest answers, declined at the prompt.
+async function runNameSendArm(bcx, relays, arm, { sHeld }) {
   const handle = '@' + sHeld.name;
   const lie = `this node's answer for ${handle} did not verify.`;
   const young = `${handle} is too new to check yet.`;
   const checking = `checking ${handle}…`;
-  let onRelay = false;
+  let page = null;
+  const editsBefore = relays.map((r) => r.edits[arm.mode]);
+  // (1) The mode on both relays — another key as the owner, or a fresh
+  // made-up box shared across relays.
+  const fakeBoxId = arm.mode === 'name-fakebox' ? randomBytes(32).toString('hex') : null;
+  for (const r of relays) {
+    r.mode = arm.mode;
+    if (arm.mode === 'name-fakebox') r.fakeBoxId = fakeBoxId;
+  }
+  const boxId = arm.mode === 'name-fakebox' ? fakeBoxId : sHeld.boxId.toLowerCase();
   try {
-    const editsBefore = relay.edits[arm.mode];
-    // (1) The mode — another key as the owner, or a fresh made-up box.
-    relay.mode = arm.mode;
-    if (arm.mode === 'name-fakebox') relay.fakeBoxId = randomBytes(32).toString('hex');
-    const boxId = arm.mode === 'name-fakebox' ? relay.fakeBoxId : sHeld.boxId.toLowerCase();
-
-    // (2) The node row set to the relay.
+    // (2) A fresh page whose tip run reads `verified`.
     const changeAt = Date.now();
-    const changeIdx = cx.events.length;
-    onRelay = true;
-    const change = await changeNodeAndAwait(cx, relay.origin, cornerVerified,
-      `led fresh + verified across N nodes (reading the relay, ${arm.step})`, 60000);
-    const verified = !change.reached.timedOut && change.stored === relay.origin;
+    page = await openFreshExtensionPage(bcx);
+    const fcx = page.cx;
+    await setNamesViewport(fcx);
+    const changeIdx = fcx.events.length;
+    const reached = await waitForCornerState(fcx, cornerVerified,
+      `led fresh + verified across N nodes (fresh page under ${arm.mode}, ${arm.step})`, 60000);
+    const verified = !reached.timedOut;
+    const changeReading = reached.last ?? { ledClass: 'null', title: null };
     if (!verified) {
-      const back = await leaveSendRelay(cx, { sHeld });
-      onRelay = false;
-      record(arm.step, false, `relay ${arm.mode}: the corner never read verified on the relay — stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; back on A: ${back.detail}`);
+      record(arm.step, false, `relays ${arm.mode}: the fresh page never read verified — led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}`);
       return;
     }
 
-    // (3) The send row, once the checks the change began have gone quiet; for
-    // 28b, the anchor made stale — A mines past the height it stood at.
-    await raiseWindow(cx, 'open wallet');
-    await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, `the send form ${arm.step}`, 60000);
-    await waitForNameChecks(cx, changeIdx, { ms: 90000, quietMs: 3000 });
+    // (3) The send row, once the checks the fresh page began have gone
+    // quiet; for 28b, the anchor made stale — A mines past the height it
+    // stood at.
+    await raiseWindow(fcx, 'open wallet');
+    await fcx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, `the send form ${arm.step}`, 60000);
+    await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
     let stale = null;
     if (arm.staleAnchor) {
       // A tip run begun while A mines — the ten-minute clock — writes a fresh
       // anchor, and the wait begins again from the height after it.
       for (let waits = 1; waits <= 3; waits++) {
-        const runsBefore = tipRunsFromRelayLog(relay.log, changeAt).length;
+        const runsBefore = tipRunsFromRelayLog(mergedLog(relays), changeAt).length;
         const standing = await currentHeight(NODE);
         stale = { standing, reached: await waitForHeight(NODE, standing + 1, 180000), waits };
-        if (stale.reached === null || tipRunsFromRelayLog(relay.log, changeAt).length === runsBefore) break;
+        if (stale.reached === null || tipRunsFromRelayLog(mergedLog(relays), changeAt).length === runsBefore) break;
       }
     }
     const presses = [];
     while (presses.length < arm.presses) {
-      const p = await pressSendTwice(cx, handle);
+      const p = await pressSendTwice(fcx, handle);
       presses.push(p);
       if (p.answer.refusal !== young) break;
     }
-    const checks = nameChecksFromRelayLog(relay.log, changeAt, boxId);
-    const runs = tipRunsFromRelayLog(relay.log, changeAt, { checks });
+    const log = mergedLog(relays);
+    const checks = nameChecksFromRelayLog(log, changeAt, boxId);
+    const runs = tipRunsFromRelayLog(log, changeAt, { checks });
     const seen = presses.map((p) => {
-      const lookups = nameRequestsSince(cx.events, p.pressIdx, { handle: sHeld.name, endIdx: p.answerIdx }).handleLookups;
+      const lookups = nameRequestsSince(fcx.events, p.pressIdx, { handle: sHeld.name, endIdx: p.answerIdx }).handleLookups;
       const own = checks.filter((c) => c.at >= p.pressAt && c.at <= p.answerAt);
       const asked = runs.filter((r) => r.why === 'asked' && r.at >= p.pressAt && r.at <= p.answerAt).length;
       const ok = p.second.pressed && p.second.flight === checking && p.texts.includes(checking)
@@ -4609,71 +4918,84 @@ async function runNameSendArm(cx, relay, arm, { sHeld }) {
     const last = presses[presses.length - 1];
     const endOk = last !== undefined && last.answer.refusal === lie;
     // 28b's path — the first press's first check against the stale anchor
-    // `unchecked`, one tip run asked, the retry `absent`.
+    // `unchecked`, the retry `absent`. The tip run a check that ends
+    // `unchecked` asks for may ride the mesh client over libp2p and leave no
+    // request through either HTTP relay (→ "The mesh is the extension's first
+    // path"), so the path reads the retry alone — the second check against a
+    // fresh anchor landing on either `absent` within this press, or a second
+    // press on the next.
     const first = seen[0];
-    const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked' && first.asked === 1
+    const pathOk = !arm.staleAnchor || (first !== undefined && first.own[0]?.status === 'unchecked'
       && (seen.length > 1 || first.own[1]?.status === 'absent'));
-    const corner = await readCorner(cx);
+    const corner = await readCorner(fcx);
     const cornerOk = cornerVerified(corner);
-    const edits = relay.edits[arm.mode] - editsBefore;
+    const edits = relays.reduce((sum, r, i) => sum + (r.edits[arm.mode] - editsBefore[i]), 0);
 
-    // (4) Back to A — the send to S's handle proves there.
-    const back = await leaveSendRelay(cx, { sHeld });
-    onRelay = false;
+    // (4) Both relays back to `honest` — the send to S's handle proves and
+    // its prompt is declined on the same fresh page.
+    for (const r of relays) r.mode = 'honest';
+    const back = await honestSendOnFreshPage(fcx, { sHeld });
     record(arm.step, seen.every((s) => s.ok) && endOk && pathOk && cornerOk && back.ok,
-      `relay ${arm.mode} edits=${edits}${arm.mode === 'name-fakebox' ? ` (made-up box ${relay.fakeBoxId.slice(0, 12)}…)` : ` (owner ${DEVNET_FAUCET_KEY.slice(0, 12)}… over S's box ${sHeld.boxId.slice(0, 12)}…)`}; ` +
-      `change: stored=${JSON.stringify(change.stored)}, led=${change.reading.ledClass}, title=${JSON.stringify(change.reading.title)}; ` +
-      (stale === null ? '' : `the anchor made stale: A stood at ${stale.standing} after the ${stale.waits === 1 ? 'change\'s checks' : `tip run during wait ${stale.waits - 1}`}, mined to ${stale.reached ?? 'nothing within 3 min'}; `) +
+      `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')})${arm.mode === 'name-fakebox' ? ` (made-up box ${fakeBoxId.slice(0, 12)}…)` : ` (owner ${DEVNET_FAUCET_KEY.slice(0, 12)}… over S's box ${sHeld.boxId.slice(0, 12)}…)`}; ` +
+      `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}; ` +
+      (stale === null ? '' : `the anchor made stale: A stood at ${stale.standing} after the ${stale.waits === 1 ? 'fresh page\'s checks' : `tip run during wait ${stale.waits - 1}`}, mined to ${stale.reached ?? 'nothing within 3 min'}; `) +
       `typed ${JSON.stringify(handle)} and ${NAMES_SEND_AMOUNT} $NOTIS; ` +
       seen.map((s, i) => `press ${i + 1}: ${s.line}`).join(' | ') + '; ' +
       `ends ${JSON.stringify(last?.answer.refusal ?? null)}, ok=${endOk}${arm.staleAnchor ? `, the path unchecked → asked run → absent ok=${pathOk}` : ''}; ` +
-      `tip runs through the relay: ${runsSeen(runs, changeAt)}; ` +
+      `tip runs through the two relays: ${runsSeen(runs, changeAt)}; ` +
       `corner led=${corner.ledClass}, title=${JSON.stringify(corner.title)}, ok=${cornerOk}; ` +
-      `back on A: ${back.detail}, ok=${back.ok}`);
+      `back to honest on both: ${back.detail}, ok=${back.ok}`);
   } catch (e) {
     record(arm.step, false, `error: ${e?.stack ?? String(e)}`);
-    if (onRelay) {
-      await blankNodeAndAwaitVerified(cx).catch((err) => console.error(`[vn] ${arm.step}: blank back to A failed: ${String(err)}`));
+  } finally {
+    for (const r of relays) r.mode = 'honest';
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
 }
 
-// Step (4) of a send arm — the node row blanked back to A, and the send to S's
-// handle proving there: S's key beneath the field and on the prompt's `to:`
-// line, the prompt declined, nothing sent.
-async function leaveSendRelay(cx, { sHeld }) {
-  const blankIdx = cx.events.length;
-  const blank = await blankNodeAndAwaitVerified(cx);
-  const corner = `led=${blank.reading.ledClass}, title=${JSON.stringify(blank.reading.title)}`;
-  if (blank.reached.timedOut) return { ok: false, detail: `${corner} — A never read verified` };
-  await raiseWindow(cx, 'open wallet');
-  await cx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form back on A', 60000);
-  await waitForNameChecks(cx, blankIdx, { ms: 90000, quietMs: 3000 });
+// Step (4) of a send arm — the corner pressed on the fresh page after both
+// relays are back to honest, and the send to S's handle proving there: S's
+// key beneath the field and on the prompt's `to:` line, the prompt declined,
+// nothing sent.
+async function honestSendOnFreshPage(fcx, { sHeld }) {
+  const blankIdx = fcx.events.length;
+  await pressCorner(fcx);
+  const reached = await waitForCornerState(fcx, cornerVerified,
+    'led fresh + verified across N nodes (send arm back to honest)', 60000);
+  const reading = reached.last ?? { ledClass: 'null', title: null };
+  const corner = `led=${reading.ledClass}, title=${JSON.stringify(reading.title)}`;
+  if (reached.timedOut) return { ok: false, detail: `${corner} — the honest run never read verified` };
+  await raiseWindow(fcx, 'open wallet');
+  await fcx.waitFor(`!!document.querySelector('.credits-field form.credits-form')`, 'the send form back to honest', 60000);
+  await waitForNameChecks(fcx, blankIdx, { ms: 90000, quietMs: 3000 });
   const handle = '@' + sHeld.name;
   const promptsBefore = await promptTargetIds();
-  const pressIdx = cx.events.length;
-  await cx.eval(`(() => {
+  const pressIdx = fcx.events.length;
+  await fcx.eval(`(() => {
     const form = document.querySelector('.credits-field form.credits-form');
     const inputs = form.querySelectorAll('input');
     inputs[0].value = ${JSON.stringify(handle)};
     inputs[1].value = ${JSON.stringify(NAMES_SEND_AMOUNT)};
     [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'send').click();
   })()`, true);
-  await cx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer back on A', 90000);
-  const answer = await cx.eval(SEND_ANSWER_JS);
+  await fcx.waitFor(SEND_ANSWERED_JS, 'the send row\'s answer back to honest', 90000);
+  const answer = await fcx.eval(SEND_ANSWER_JS);
   if (answer.unlock) {
-    await cx.eval(`(() => {
+    await fcx.eval(`(() => {
       const form = document.querySelector('.credits-field .card-unlock form.pf');
       form.querySelector('input[type="password"]').value = ${JSON.stringify(PASSPHRASE)};
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     })()`, true);
   }
   const { prompt, lines, declined } = answer.key !== null
-    ? await readAndDeclinePrompt(promptsBefore, 'back on A')
+    ? await readAndDeclinePrompt(promptsBefore, 'back to honest')
     : { prompt: null, lines: null, declined: false };
-  const notSent = await cx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
-    'send not sent back on A', 30000).then(() => true, () => false);
-  const transfers = cx.events.slice(pressIdx).filter((ev) =>
+  const notSent = await fcx.waitFor(`document.querySelector('.credits-field .credits-flight .stage')?.textContent?.trim() === 'send not sent.'`,
+    'send not sent back to honest', 30000).then(() => true, () => false);
+  const transfers = fcx.events.slice(pressIdx).filter((ev) =>
     ev.method === 'Network.requestWillBeSent' && ev.params.request.url.includes('/credits/transfer')).length;
   const promptKey = lines?.find((l) => l.cls === 'target')?.value ?? null;
   return {
@@ -5052,6 +5374,12 @@ function markLightFail(reason) {
 //                  verbatim.
 //   down         — every connection is destroyed unanswered: a node that
 //                  is not there.
+//   upstream-D   — pass-through (no per-route lie), paired with
+//                  `relay.upstream = DL_ORIGIN`: every request lands on D's
+//                  answers, so the relay's base names D's tip and the chain
+//                  the client reads is D's (`WEB_INTERFACE → The extension
+//                  → "The chain's name"`, `"The post cache"`). The one
+//                  edit is the upstream swap, not the mode's behaviour.
 async function startRelay(name, upstream, port) {
   const relay = {
     name,
@@ -5764,19 +6092,10 @@ async function closeAllPanes(cx) {
   return closed;
 }
 
-// Set the node row to `origin`, then wait for either the feed to re-render
-// or for a settle — a node change re-reads every open surface from scratch
-// (WEB_INTERFACE → The settings window), so the feed's cards are replaced.
-async function switchNodeAndWaitForFeed(cx, origin, description, ms = 60000) {
-  const changeIdx = cx.events.length;
-  const applied = await setNodeViaUi(cx, origin);
-  const stored = await readPrefsNode(cx);
-  await cx.waitFor(`(() => {
-    const feed = document.querySelector('#feed');
-    return !!feed && (!!feed.querySelector('.card[data-post-id]') || !!feed.querySelector('.hint.clay.withheld') || !!feed.querySelector('.loading'));
-  })()`, description + ' (feed settled)', ms).catch(() => {});
-  return { applied, stored, changeIdx };
-}
+// `switchNodeAndWaitForFeed` is retired with the row's switch-the-reading-
+// base semantics (WEB_INTERFACE → The settings window → "In the extension
+// the row adds a node by hand"); the light block's L13 — a chain reset
+// that switched the reading base to node D — no longer rides it.
 
 // Bring up the light block's own D — isolated, miner role, past m + k + 4
 // so its tip proof verifies. Returns its block-1 hash once mined and
@@ -6588,11 +6907,15 @@ async function lightSteps(cx, targetId = 'unknown') {
   }
 
   // ---- L13 — another chain. A light page of the feed is recorded from
-  // RA. Both relays' upstreams move to D, and the reading node is read
-  // afresh: the browser lists D's database and not A's. Then RA on
-  // list-replay with the recorded page and a ↻: the listed ids stand as
-  // slots and are asked of the relays — no card is drawn from the first
-  // chain's entries — and at the end no slot stands.
+  // RA. Both relays are set to `upstream-D` mode with their `upstream`
+  // reassigned to D, and the page reloads: a fresh page is a fresh client
+  // (`WEB_INTERFACE → The extension → "The contexts, and what each may
+  // hold"`), its tip run names D's chain, the cache opens D's database
+  // and deletes A's (`WEB_INTERFACE → The extension → "The chain's
+  // name"`, `"The post cache"`). Then RA on list-replay with the recorded
+  // page and a ↻: the listed ids stand as slots and are asked of the
+  // relays — no card is drawn from the first chain's entries — and at
+  // the end no slot stands.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
@@ -6621,13 +6944,8 @@ async function lightSteps(cx, targetId = 'unknown') {
           console.log(`[vl] D block 1 hash=${dBlock1.slice(0, 12)}…, db=${dDbName}`);
           RA.upstream = DL_ORIGIN;
           RB.upstream = DL_ORIGIN;
-          RA.mode = 'honest';
-          RB.mode = 'honest';
-          // The reader stays on RA — a page reload re-reads the chain's
-          // name from whatever /blocks/1 the relay serves (D). A
-          // verified-tip run names D's chain, the cache opens D's
-          // database and deletes A's (WEB_INTERFACE → The extension →
-          // "The post cache").
+          RA.mode = 'upstream-D';
+          RB.mode = 'upstream-D';
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 feed after reload with upstream=D', 60000);
           await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
@@ -6737,22 +7055,790 @@ async function lightSteps(cx, targetId = 'unknown') {
 }
 
 // ---------------------------------------------------------------------------
+// The --mesh block — M1 · M2 · M3 · M4
+//
+// The extension's first path is the mesh (`WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path"`, `→ "Nothing retries a
+// rejection"`'s `**A send that ends with no answer is no rejection**`;
+// `MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows"`, `→ "The client's order for a need"`, `→ "A write goes
+// to one node at a time"`). The block owns two mesh-capable nodes A' and
+// B', each spawned with `MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/
+// udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
+// loopback cannot share `STUN_PORT`). B' is bootstrapped from A''s p2p
+// listen. The nodes' identity lines are read from each start line and
+// their notisId/multiaddrs checked against the extension's seed list.
+//
+// The four steps, each on its own fresh extension page:
+//   M1 — reads over the mesh: `verified across 2 nodes`, 0 HTTP requests
+//        to AP_ORIGIN or BP_ORIGIN (a mesh read is no HTTP request).
+//   M2 — the API base when no mesh node serves: both nodes restarted
+//        without `MESH_ROLE`, the client's mesh dials fail, the entries
+//        fall back to their api bases; the verdict is `verified`.
+//   M3 — a write over the mesh: a post the composer writes lands on both
+//        nodes, with no `POST /posts` in the fresh page's Network domain.
+//   M4 — a write with no answer goes to the next node: both nodes on api
+//        bases alone, a `startTipRelay` in `hold-posts` mode in front of
+//        one base, the client's POST held past REQUEST_TIMEOUT_MS, the
+//        same bytes sent to the next node, the post landing once.
+// ---------------------------------------------------------------------------
+
+const MESH_STEPS = ['M1', 'M2', 'M3', 'M4'];
+
+// The pair of mesh nodes `setupMeshStack` sets up before the browser
+// launches when --mesh is given. Each holds the DB path (so a restart
+// across steps can be fired by name), the ports the node takes on every
+// restart, and the identity line the mesh-on spawn read. `apHttp` is the
+// HTTP port the node currently listens on — equal to `ports.http` at rest
+// and equal to `AP_ALT_HTTP_PORT` during M4 while the M4 relay owns the
+// base port.
+const meshNodes = {
+  ap: null, // { identity, ports, dbPath, mesh: boolean, apHttp: number }
+  bp: null, // { identity, ports, dbPath, mesh: boolean }
+};
+
+// The M4 relay stood up only during M4 — a `startTipRelay` in front of A'
+// at `AP_HTTP_PORT` with upstream `http://127.0.0.1:AP_ALT_HTTP_PORT`, set
+// to `hold-posts` after a fresh page's tip run has returned verified so
+// the client's first write goes through the held POST.
+let m4Relay = null;
+
+function markMeshNotRun(reason) {
+  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markMeshFail(reason) {
+  for (const s of MESH_STEPS) record(s, false, reason);
+}
+
+const AP_PORTS = {
+  http: AP_HTTP_PORT, admin: AP_ADMIN_PORT, p2p: AP_P2P_PORT, mesh: AP_MESH_PORT, altHttp: AP_ALT_HTTP_PORT,
+};
+const BP_PORTS = {
+  http: BP_HTTP_PORT, admin: BP_ADMIN_PORT, p2p: BP_P2P_PORT, mesh: BP_MESH_PORT,
+};
+
+// The env one mesh node takes — mesh on or off, and (for B') the bootstrap
+// multiaddr naming A''s p2p listen. `httpPort` overrides `ports.http` when
+// the relay-in-front stage moves the node off its base port.
+function meshNodeEnv({ ports, dbPath, withMesh, bootstrap, httpPort }) {
+  const env = {
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'server',
+    PORT: String(httpPort ?? ports.http),
+    ADMIN_PORT: String(ports.admin),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${ports.p2p}`,
+    DB_PATH: dbPath,
+  };
+  env.BOOTSTRAP_PEERS = bootstrap ?? '';
+  if (withMesh) {
+    env.MESH_ROLE = 'public';
+    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${ports.mesh}/webrtc-direct`;
+    env.MESH_STUN = 'off';
+  }
+  return env;
+}
+
+// Spawn a mesh-on node and read its identity line (the first JSON line of
+// its stdout with `notisId`, `peerId` and `multiaddrs`) —
+// `NODE_INTERFACE → Configuration → "A mesh node prints its identity
+// line"`. Returns the child, its exit promise, the parsed identity and
+// the ports the spawn used. `spawnDaemon`'s log pipe runs through dynamic
+// import and attaches after a tick; this helper attaches a 'data' listener
+// synchronously after `spawn`, buffers until the identity line arrives,
+// then writes every chunk to the log file (so the identity is in the log
+// too, with no race against the pipe).
+async function spawnMeshNode(name, env, timeoutMs = 60000) {
+  const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
+  const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise((res) => child.on('exit', (code, sig) => {
+    vtChildren.delete(name);
+    console.log(`[vm] ${name} exited: code=${code} signal=${sig}`);
+    res();
+  }));
+  vtChildren.set(name, { child, exited });
+  let logStream = null;
+  if (logPath) {
+    const { createWriteStream } = await import('node:fs');
+    logStream = createWriteStream(logPath, { flags: 'a' });
+    child.stderr?.pipe(logStream);
+  }
+  let buf = '';
+  let identity = null;
+  const identityPromise = new Promise((resolve, reject) => {
+    const to = setTimeout(() => {
+      if (identity === null) reject(new Error(`${name} never printed an identity line within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onData = (chunk) => {
+      const text = chunk.toString('utf8');
+      logStream?.write(text);
+      if (identity !== null) return;
+      buf += text;
+      let idx;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        try {
+          const parsed = JSON.parse(line);
+          if (typeof parsed?.notisId === 'string'
+              && typeof parsed?.peerId === 'string'
+              && Array.isArray(parsed?.multiaddrs)) {
+            identity = parsed;
+            clearTimeout(to);
+            resolve(parsed);
+            return;
+          }
+        } catch { /* not a JSON identity line, next */ }
+      }
+    };
+    child.stdout?.on('data', onData);
+    child.on('exit', () => {
+      clearTimeout(to);
+      if (identity === null) reject(new Error(`${name} exited before printing an identity line`));
+    });
+  });
+  const id = await identityPromise;
+  return { child, exited, identity: id };
+}
+
+// Spawn a mesh-off node — plain `spawnDaemon` and wait for HTTP. The DB
+// path and the node's identity (notisId) are kept across restarts, so a
+// restart without MESH_ROLE leaves every seed-list entry's notisId still
+// matching its node's key.
+async function spawnPlainNode(name, env, httpOrigin, timeoutMs = 60000) {
+  spawnDaemon(name, NODE_DIST, env);
+  const up = await waitForHttpUp(httpOrigin, timeoutMs);
+  if (!up) throw new Error(`${name} did not answer /blocks/current at ${httpOrigin} within ${timeoutMs}ms`);
+}
+
+// A's peer id, read from `NODE_P2P` (the --node-p2p multiaddr, shape
+// `/ip4/.../tcp/<port>/p2p/<peerId>`). A transaction's forward is bought
+// by its admission (NET_INTERFACE → Forwarding Rule → "An ordering block
+// is forwarded once Stage 1 passes; a transaction once this node admits
+// it") — so a node that admits a write relays it to the peers it holds
+// at the admission. M3's and M4's writes are preceded by a wait for each
+// writing node to have completed its outbound handshake with A, so A is
+// one of the peers at admission and a miner-less node (A' and B') relays
+// the packet to A for mining.
+function nodeP2pPeerId() {
+  if (!NODE_P2P) return null;
+  const m = NODE_P2P.match(/\/p2p\/([^/]+)$/);
+  return m ? m[1] : null;
+}
+
+// Wait for a node's log to carry `[net] outbound handshake with <peerId>:
+// ok=true` — the one line `packages/net`'s node writer records when an
+// outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
+// both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
+// false on timeout. A restart appends to the log, so the caller passes
+// the offset into the file where the restart begins — a previous spawn's
+// handshake line is not counted for the current one.
+function logOffset(logPath) {
+  try { return readFileSync(logPath, 'utf8').length; } catch { return 0; }
+}
+async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 180000) {
+  const needle = `outbound handshake with ${peerId}: ok=true`;
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+    } catch {}
+    await sleep(500);
+  }
+  return false;
+}
+
+// Wait for a node's log to carry an `Applied ordering block height=…` line
+// past the restart offset — the one `announceAppliedBlock` writes per
+// applied block (`packages/node/src/services/block-apply.ts`). The restart's
+// pull-sync catches the node up to the tip A announced at handshake and
+// fires its `sync_complete` before any newer block lands; a subsequent
+// block A mines reaches this node through gossip, because a peer whose
+// handshake completed is not yet a gossip peer — the router's subscription
+// exchange and mesh follow the connection (`NET_INTERFACE → Postconditions`
+// — "Connected to bootstrap peers, handshake exchanged, and meshed on all
+// subscribed gossip topics"; `NET_INTERFACE → Gossip Topics`). So the
+// first applied line past the restart offset proves this node's router
+// exchanges the ordering-block topic with A, and a write it admits next
+// relays to A through that mesh (`NET_INTERFACE → Forwarding Rule`).
+// Returns true on match, false on timeout.
+async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
+  const needle = 'Applied ordering block height=';
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+    } catch {}
+    await sleep(500);
+  }
+  return false;
+}
+
+// `GET /blocks/current` of a node as `{height, hash}` or null; a height-0
+// chain reads `{height: 0, hash: null}` (`NODE_INTERFACE → Blocks` —
+// `/blocks/current`).
+async function currentTip(origin) {
+  try {
+    const r = await fetch(`${origin}/blocks/current`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (typeof j.height !== 'number') return null;
+    return { height: j.height, hash: typeof j.hash === 'string' ? j.hash : null };
+  } catch { return null; }
+}
+
+// The webrtc-direct multiaddr in the identity line's `multiaddrs` that
+// names the node's own mesh listen port — the one an anchor's `addrs`
+// entry carries (`MESH_INTERFACE → Discovery → "A node added by hand"`,
+// `→ The client's node list → "An entry may carry an API base"`). The
+// identity line lists every address libp2p announced, including local
+// WebRTC-direct entries; for a loopback public node the only external
+// address is also loopback, so the match is by port and shape.
+function pickWebRtcDirectAddr(identity, meshPort) {
+  if (identity === null || !Array.isArray(identity.multiaddrs)) return null;
+  const re = new RegExp(`^/ip4/127\\.0\\.0\\.1/udp/${meshPort}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`);
+  for (const a of identity.multiaddrs) {
+    if (typeof a === 'string' && re.test(a)) return a;
+  }
+  return null;
+}
+
+// `setupMeshStack` — spawn A' and B' with mesh on, read each identity,
+// and check that the extension's seed list names each exactly. Called
+// once before the browser launches, so the extension's first paint reads
+// the two entries that stand up (`WEB_INTERFACE → The extension → "The
+// mesh is the extension's first path"`: a page reaches nodes by key over
+// libp2p through the mesh client at load).
+async function setupMeshStack() {
+  if (!MESH) return;
+  const apDb = join(SCRATCH, 'ap.db');
+  const bpDb = join(SCRATCH, 'bp.db');
+  // The mesh state directory is named for the store
+  // (`NODE_INTERFACE → Configuration`: `DB_PATH` with `.mesh`), so it
+  // stays with the store across restarts.
+  for (const p of [apDb, apDb + '-shm', apDb + '-wal', bpDb, bpDb + '-shm', bpDb + '-wal']) {
+    try { rmSync(p, { force: true }); } catch {}
+  }
+  // A' spawns first with mesh, bootstrapped from the operator's A at
+  // --node-p2p so A' is a peer on A's chain and inherits R's karma
+  // (operator-promoted on A); B' bootstraps from A''s p2p listen, so
+  // B' syncs through A' and reaches A's chain too.
+  console.log(`[vm] spawning A': http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT} db=${apDb} bootstrap=${NODE_P2P}`);
+  const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
+    ports: AP_PORTS, dbPath: apDb, withMesh: true, bootstrap: NODE_P2P,
+  }));
+  const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
+  if (!apUp) throw new Error(`A' did not answer /blocks/current at ${AP_ORIGIN}`);
+  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}`);
+  const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
+  console.log(`[vm] spawning B': http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT} db=${bpDb} bootstrap=${bpBootstrap}`);
+  const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
+    ports: BP_PORTS, dbPath: bpDb, withMesh: true, bootstrap: bpBootstrap,
+  }));
+  const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
+  if (!bpUp) throw new Error(`B' did not answer /blocks/current at ${BP_ORIGIN}`);
+  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`);
+  meshNodes.ap = {
+    identity: apSpawn.identity, ports: AP_PORTS, dbPath: apDb, mesh: true, apHttp: AP_HTTP_PORT,
+  };
+  meshNodes.bp = {
+    identity: bpSpawn.identity, ports: BP_PORTS, dbPath: bpDb, mesh: true,
+  };
+  // The build's shell was shape-checked at the top (`notis-nodes` carries
+  // two entries with one webrtc-direct addr each on the expected ports);
+  // here we validate the identity values — notisId and the addrs[0]
+  // string — against what the nodes actually printed. The invoker baked
+  // these into the build, and a mismatch names the exact rebuild line.
+  const shellMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
+  const shellNodesRaw = shellMatch ? (shellMatch[1] ?? shellMatch[2]) : '';
+  let parsed = null;
+  try { parsed = JSON.parse(shellNodesRaw); } catch {}
+  const apAddr = pickWebRtcDirectAddr(apSpawn.identity, AP_MESH_PORT);
+  const bpAddr = pickWebRtcDirectAddr(bpSpawn.identity, BP_MESH_PORT);
+  const expected = [
+    { notisId: apSpawn.identity.notisId, addrs: [apAddr], api: AP_ORIGIN },
+    { notisId: bpSpawn.identity.notisId, addrs: [bpAddr], api: BP_ORIGIN },
+  ];
+  const entryMatches = (shell, exp) =>
+    shell !== null && typeof shell === 'object'
+    && typeof shell.notisId === 'string' && shell.notisId.toLowerCase() === exp.notisId.toLowerCase()
+    && Array.isArray(shell.addrs) && shell.addrs.length === 1 && shell.addrs[0] === exp.addrs[0]
+    && typeof shell.api === 'string' && shell.api.replace(/\/+$/, '') === exp.api;
+  const ok = Array.isArray(parsed) && parsed.length === 2
+    && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
+  if (!ok || apAddr === null || bpAddr === null) {
+    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities`);
+    console.error(`      rebuild with VITE_NODES set exactly to:`);
+    console.error(`      ${JSON.stringify(expected)}`);
+    console.error(`      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`);
+    process.exit(2);
+  }
+  console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+}
+
+async function teardownMeshStack() {
+  if (m4Relay) { closeRelay(m4Relay); m4Relay = null; }
+  if (MESH) {
+    await stopChild('ap').catch(() => {});
+    await stopChild('ap-m4').catch(() => {});
+    await stopChild('bp').catch(() => {});
+  }
+}
+
+// --- M1
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// — a read goes to a node its need allows over the mesh, and to an API
+// base only when no such node is reached over the mesh. MESH_INTERFACE →
+// The client's node list → "A routed read goes to a node its need allows"
+// ("Before the first check ends an anchor serves any need"): an anchor
+// serves a read over its connection if it holds one, else at its API base,
+// so a page's first reads go out while its WebRTC-direct connections come
+// up — those count as HTTP. The assertion is on reads routed after a
+// check: once the verdict reads `verified across 2 nodes`, M1 marks the
+// event count, presses the feed's refresh and the corner once, waits for
+// the refresh to land, and asserts no HTTP request to AP_ORIGIN or
+// BP_ORIGIN after the mark. The pre-mark count is a measurement, not
+// asserted.
+async function runMeshStepM1(bcx) {
+  let page = null;
+  try {
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m1', 30000);
+    const verdict = await waitForCornerState(
+      page.cx,
+      (r) => /^verified across \d+ nodes/.test(r.title ?? ''),
+      'verified across 2 nodes',
+      60000,
+    );
+    const titleOk = /^verified across 2 nodes/.test(verdict.last?.title ?? '');
+    const feedHasContent = await page.cx.eval(`(() => {
+      const rep = document.querySelector('#feed .report');
+      const cards = document.querySelectorAll('#feed .card').length;
+      return rep !== null || cards > 0;
+    })()`);
+    // Pre-mark: HTTP requests to A'/B' before the verdict settled — the
+    // first-paint reads that went out before the WebRTC connections came
+    // up. Reported for the record, not asserted.
+    const httpPreMark = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    // Mark the event count: every HTTP request to A'/B' before this index
+    // is a first-paint read; every request after this index is a read
+    // routed by the mesh client (MESH_INTERFACE → The client's node list
+    // → "A routed read goes to a node its need allows").
+    const markIdx = page.cx.events.length;
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .ctl')`, 'feed refresh ctl m1', 10000);
+    const reportBefore = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`);
+    await page.cx.eval(`document.querySelector('.feed-head .ctl').click()`, true);
+    await pressCorner(page.cx);
+    // Wait for the refresh to land: `.feed .report` reads the newPostsLine
+    // format `no new posts` or `N new post(s)` (`app.ts` `recountFeedLine`
+    // and `newPostsLine`). A refresh's reads are routed by the mesh client,
+    // so the signal is the report text updating — the reads themselves
+    // leave no HTTP request when the mesh serves them.
+    const landed = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 30000) {
+        const text = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
+        if (typeof text === 'string'
+            && /^(no new posts|\d+ new posts?)$/.test(text)
+            && text !== reportBefore) {
+          return true;
+        }
+        await sleep(200);
+      }
+      return false;
+    })();
+    const httpPostMark = page.cx.events.filter((ev, i) => {
+      if (i < markIdx) return false;
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    const reportAfter = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
+    record('M1',
+      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")`);
+  } catch (e) {
+    record('M1', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M2
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A read goes to a node its need allows over the mesh, and to an API
+// base only when no such node is reached over the mesh`) and
+// MESH_INTERFACE → The client's node list → "A routed read goes to a node
+// its need allows" (`Over the mesh first: a read goes to an API base only
+// when no node its need allows is reached over the mesh`). Both nodes
+// restart without MESH_ROLE — the client's mesh dials fail, the entries
+// fall back to their api bases, the feed reads again, and the verdict
+// stays `verified` because the proofs are read at the bases.
+async function runMeshStepM2(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    await spawnPlainNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P,
+    }), AP_ORIGIN);
+    await spawnPlainNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+      bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
+    }), BP_ORIGIN);
+    meshNodes.ap.mesh = false;
+    meshNodes.bp.mesh = false;
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m2', 30000);
+    const verdict = await waitForCornerState(
+      page.cx,
+      (r) => /^verified/.test(r.title ?? ''),
+      'verified',
+      90000,
+    );
+    const httpToNodes = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    const titleOk = /^verified across/.test(verdict.last?.title ?? '');
+    record('M2',
+      !verdict.timedOut && titleOk && httpToNodes > 0,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, HTTP requests to AP_ORIGIN or BP_ORIGIN=${httpToNodes} (expect > 0 — reads at the api bases when no mesh node serves)`);
+  } catch (e) {
+    record('M2', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M3
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A write goes to one node and, with no answer, to the next`) — both
+// nodes back with their mesh role; a post written in the composer lands
+// in the feed, on both nodes (`GET /posts/:id` on each), with no `POST
+// /posts` over HTTP in the Network domain.
+async function runMeshStepM3(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    const apLog = join(SCRATCH, 'ap.log');
+    const bpLog = join(SCRATCH, 'bp.log');
+    const apLogOff = logOffset(apLog);
+    const bpLogOff = logOffset(bpLog);
+    const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
+    if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
+    // B' bootstraps from A, the same bootstrap A' takes, so B' peers
+    // with A directly and relays an admitted write to A at admission.
+    const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
+    if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
+    meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
+    meshNodes.bp = { ...meshNodes.bp, identity: bpSpawn.identity, mesh: true };
+    const aPeerId = nodeP2pPeerId();
+    if (!aPeerId) throw new Error(`could not read A's peer id from --node-p2p: ${NODE_P2P}`);
+    const apHandshakeWithA = await waitForOutboundHandshakeInLog(apLog, aPeerId, apLogOff, 180000);
+    if (!apHandshakeWithA) throw new Error(`A' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
+    const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
+    if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M3 restart`);
+    // The handshake is not the signal a write can be carried: a peer whose
+    // handshake completed is not yet a gossip peer — the router's
+    // subscription exchange and mesh follow the connection
+    // (`NET_INTERFACE → Postconditions`; `NET_INTERFACE → Gossip Topics`).
+    // So wait for an `Applied ordering block height=` line on each node's
+    // log past the restart offset: a block A mined after this node's
+    // restart has reached it, which can only happen once their gossipsub
+    // routers mesh on the ordering-block topic — so a write this node
+    // admits next relays to A through that same mesh
+    // (`NET_INTERFACE → Forwarding Rule`).
+    const apGossipedBlock = await waitForAppliedBlockInLog(apLog, apLogOff, 180000);
+    if (!apGossipedBlock) throw new Error(`A' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
+    const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
+    if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
+
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
+    await waitForCornerState(
+      page.cx,
+      (r) => /^verified across 2 nodes/.test(r.title ?? ''),
+      'verified across 2 nodes (M3 preamble)',
+      60000,
+    );
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .btn-primary')`, 'new post button', 30000);
+    const sinceIdx = page.cx.events.length;
+    const CONTENT = 'mesh-m3-' + Date.now();
+    await page.cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await page.cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
+    await page.cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(CONTENT)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await page.cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled', 30000);
+    await page.cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // Wait for the pending card or for the content to appear in the feed
+    // (silent karma policy signs through the background and lands; the
+    // proxy's `sign` resolves without a prompt page for a rep write).
+    const landed = await (async () => {
+      const t0 = Date.now();
+      // The operator's miner is paced (40 s stopped, 3 s running per
+      // cycle); 180 s is more than three cycles, the floor the landing
+      // polls elsewhere in this file take.
+      while (Date.now() - t0 < 180000) {
+        // Each node's /posts by author covers that CONTENT's post landed
+        // on both; a GET /posts/:id after its submit proves the same.
+        const [a, b] = await Promise.all([
+          fetch(`${AP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
+          fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
+        ]);
+        const inA = Array.isArray(a?.posts) && a.posts.some((p) => p?.content === CONTENT);
+        const inB = Array.isArray(b?.posts) && b.posts.some((p) => p?.content === CONTENT);
+        if (inA && inB) return true;
+        await sleep(1000);
+      }
+      return false;
+    })();
+    // POST /posts in the page's Network domain since the composer opened.
+    const postsOverHttp = page.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      if (ev.params?.request?.method !== 'POST') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url === `${AP_ORIGIN}/posts` || url === `${BP_ORIGIN}/posts`
+        || url.startsWith(`${AP_ORIGIN}/posts?`) || url.startsWith(`${BP_ORIGIN}/posts?`);
+    });
+    record('M3',
+      landed && postsOverHttp.length === 0,
+      `post landed on both nodes=${landed}, POST /posts over HTTP in Network domain=${postsOverHttp.length} (expect 0 — a write goes over the mesh)`);
+  } catch (e) {
+    record('M3', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// --- M4
+// WEB_INTERFACE → The extension → "The mesh is the extension's first path"
+// (`A write goes to one node and, with no answer, to the next: the same
+// bytes, the nodes reached over the mesh first and then the API bases, in
+// the client's order, and the first answer of any status is the write's`)
+// and MESH_INTERFACE → The client's node list → "A write goes to one node
+// at a time", and WEB_INTERFACE → The wallet → "Nothing retries a
+// rejection"'s `**A send that ends with no answer is no rejection**`.
+// Both nodes are reached at their api bases alone (`MESH_ROLE` off, as
+// M2); a tip relay at AP_HTTP_PORT, with A' restarted on AP_ALT_HTTP_PORT
+// as its upstream, holds `POST /posts` past REQUEST_TIMEOUT_MS. The
+// client's write rule moves the same bytes to the next entry; the post
+// lands on B' (and, through p2p propagation, on A') once.
+async function runMeshStepM4(bcx) {
+  let page = null;
+  try {
+    await stopChild('ap');
+    await stopChild('bp');
+    const apM4Log = join(SCRATCH, 'ap-m4.log');
+    const bpLog = join(SCRATCH, 'bp.log');
+    const apM4LogOff = logOffset(apM4Log);
+    const bpLogOff = logOffset(bpLog);
+    // A' restarts on its alt HTTP port (p2p and mesh ports unchanged).
+    // No MESH_ROLE — M4 reaches each at its api base alone. A' still
+    // bootstraps from --node-p2p so it stays on A's chain, and B' takes
+    // the same bootstrap so B' peers with A directly and relays the
+    // admitted write to A at admission.
+    await spawnPlainNode('ap-m4', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P, httpPort: AP_ALT_HTTP_PORT,
+    }), `http://127.0.0.1:${AP_ALT_HTTP_PORT}`);
+    await spawnPlainNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false, bootstrap: NODE_P2P,
+    }), BP_ORIGIN);
+    meshNodes.ap.apHttp = AP_ALT_HTTP_PORT;
+    meshNodes.ap.mesh = false;
+    meshNodes.bp.mesh = false;
+    const aPeerId = nodeP2pPeerId();
+    if (!aPeerId) throw new Error(`could not read A's peer id from --node-p2p: ${NODE_P2P}`);
+    const apHandshakeWithA = await waitForOutboundHandshakeInLog(apM4Log, aPeerId, apM4LogOff, 180000);
+    if (!apHandshakeWithA) throw new Error(`ap-m4 did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
+    const bpHandshakeWithA = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
+    if (!bpHandshakeWithA) throw new Error(`B' did not complete outbound handshake with A (peer ${aPeerId.slice(0, 16)}…) within 180 s after M4 restart`);
+    // Same wait as M3 (`Applied ordering block height=` past the restart
+    // offset): a peer whose handshake completed is not yet a gossip peer
+    // (`NET_INTERFACE → Postconditions`; `NET_INTERFACE → Gossip Topics`),
+    // and a write a plain node admits only relays to A over gossip
+    // (`NET_INTERFACE → Forwarding Rule`). Both nodes run without
+    // `MESH_ROLE`, which gates the mesh (WebRTC-direct and its readers)
+    // and not standard gossipsub: the ordering-block topic is subscribed
+    // either way.
+    const apGossipedBlock = await waitForAppliedBlockInLog(apM4Log, apM4LogOff, 180000);
+    if (!apGossipedBlock) throw new Error(`ap-m4 did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
+    const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
+    if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
+    // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
+    // build's api for A' still names AP_ORIGIN, so every client read of
+    // A''s HTTP base routes through this relay. `hold-posts` holds POST
+    // /posts past REQUEST_TIMEOUT_MS; reads pass through.
+    m4Relay = await startTipRelay(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`, AP_HTTP_PORT);
+    m4Relay.mode = 'honest';
+    console.log(`[vm] M4 relay up: ${m4Relay.origin} → ${m4Relay.upstream}`);
+
+    page = await openFreshExtensionPage(bcx);
+    await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m4', 30000);
+    await waitForCornerState(
+      page.cx,
+      (r) => /^verified across \d+ nodes/.test(r.title ?? ''),
+      'verified (M4 preamble)',
+      90000,
+    );
+    // Switch the relay to hold-posts after the tip run has settled; the
+    // write is the next press of the composer.
+    m4Relay.mode = 'hold-posts';
+    await page.cx.waitFor(`!!document.querySelector('.feed-head .btn-primary')`, 'new post button', 30000);
+    const CONTENT = 'mesh-m4-' + Date.now();
+    await page.cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await page.cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
+    await page.cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(CONTENT)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await page.cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled', 30000);
+    // A write walks the client's order for the tip (`MESH_INTERFACE → The
+    // client's node list → "A write goes to one node at a time"`), `ok`
+    // nodes only: a node a block behind (`trailing`) is not in the order.
+    // Both A' and B' must stand at A's own tip at the press — height and
+    // hash — so each is `ok` when the client's order reads them. Poll
+    // until all three match, then press at once: the recipe's miner is
+    // paused 40 s in every 43, so a write made right after both reach a
+    // fresh block has the 10 s hold and the resend inside a quiet window.
+    const pressTips = await (async () => {
+      const t0 = Date.now();
+      let last = { a: null, apTip: null, bpTip: null };
+      while (Date.now() - t0 < 120000) {
+        const a = await currentTip(NODE);
+        if (a !== null && a.height > 0 && a.hash !== null) {
+          const [apTip, bpTip] = await Promise.all([
+            currentTip(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`),
+            currentTip(BP_ORIGIN),
+          ]);
+          last = { a, apTip, bpTip };
+          if (apTip !== null && bpTip !== null
+              && apTip.height === a.height && apTip.hash === a.hash
+              && bpTip.height === a.height && bpTip.hash === a.hash) {
+            return { ok: true, ...last };
+          }
+        }
+        await sleep(200);
+      }
+      return { ok: false, ...last };
+    })();
+    if (!pressTips.ok) {
+      throw new Error(`M4: A' and B' did not reach A's tip within 120 s before the composer press — A=${pressTips.a?.height ?? '?'}/${pressTips.a?.hash?.slice(0, 16) ?? '?'}…, A'=${pressTips.apTip?.height ?? '?'}/${pressTips.apTip?.hash?.slice(0, 16) ?? '?'}…, B'=${pressTips.bpTip?.height ?? '?'}/${pressTips.bpTip?.hash?.slice(0, 16) ?? '?'}…`);
+    }
+    console.log(`[vm] M4 press: A=${pressTips.a.height}/${pressTips.a.hash.slice(0, 16)}…, A'=${pressTips.apTip.height}/${pressTips.apTip.hash.slice(0, 16)}…, B'=${pressTips.bpTip.height}/${pressTips.bpTip.hash.slice(0, 16)}…`);
+    await page.cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // While the first POST is held, the card reads pending. On the retry,
+    // the same bytes reach B' and land there, then propagate to A'.
+    let pendingSeen = false;
+    const pendingSeenUntil = Date.now() + 10000;
+    while (Date.now() < pendingSeenUntil) {
+      const p = await page.cx.eval(`!!document.querySelector('.card.pending')`).catch(() => false);
+      if (p) { pendingSeen = true; break; }
+      await sleep(250);
+    }
+    // The content lands exactly once on each node (one post per node, not
+    // two). The operator's miner is paced (40 s stopped, 3 s running per
+    // cycle); 180 s is more than three cycles, the floor the landing
+    // polls elsewhere in this file take.
+    const landed = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 180000) {
+        const [a, b] = await Promise.all([
+          fetch(`http://127.0.0.1:${AP_ALT_HTTP_PORT}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+          fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+        ]);
+        const inA = Array.isArray(a?.posts) ? a.posts.filter((p) => p?.content === CONTENT).length : 0;
+        const inB = Array.isArray(b?.posts) ? b.posts.filter((p) => p?.content === CONTENT).length : 0;
+        if (inA === 1 && inB === 1) return { inA, inB, landed: true };
+        if (inA > 1 || inB > 1) return { inA, inB, landed: false };
+        await sleep(1000);
+      }
+      return { inA: 0, inB: 0, landed: false };
+    })();
+    const heldOnce = m4Relay.log.filter((l) => l.edit === 'hold-posts').length === 1;
+    const rejected = await page.cx.eval(`!!document.querySelector('.card.rejected') || document.body.textContent.includes('refused')`).catch(() => false);
+    record('M4',
+      landed.landed && heldOnce && pendingSeen && !rejected,
+      `at the press A=${pressTips.a.height}/${pressTips.a.hash.slice(0, 16)}…, A'=${pressTips.apTip.height}/${pressTips.apTip.hash.slice(0, 16)}…, B'=${pressTips.bpTip.height}/${pressTips.bpTip.hash.slice(0, 16)}…; post lands once on each node (A'=${landed.inA}, B'=${landed.inB}, expect 1/1), relay held POSTs=${m4Relay.log.filter((l) => l.edit === 'hold-posts').length} (expect 1), pending card seen=${pendingSeen}, rejected=${rejected} (expect false — MESH_INTERFACE → The client's node list → "A write goes to one node at a time", WEB_INTERFACE → The extension → "Nothing retries a rejection"'s **A send that ends with no answer is no rejection**)`);
+    // Clean the relay away — it fronted AP_HTTP_PORT, and leaving it up
+    // after M4 would block a subsequent block's A' from reclaiming that
+    // port.
+    closeRelay(m4Relay);
+    m4Relay = null;
+  } catch (e) {
+    record('M4', false, `error: ${e?.stack ?? String(e)}`);
+    if (m4Relay) { closeRelay(m4Relay); m4Relay = null; }
+  } finally {
+    if (page) {
+      try { page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    }
+  }
+}
+
+// The mesh block's four steps, each on its own fresh extension page.
+// Precondition: `setupMeshStack` ran before the browser launched, so A'
+// and B' are up with mesh and the identity-line/shell check holds.
+async function meshSteps(cx, bcx, targetId = 'unknown') {
+  if (meshNodes.ap === null || meshNodes.bp === null) {
+    markMeshFail(`setupMeshStack did not complete; target=${targetId}`);
+    return;
+  }
+  await runMeshStepM1(bcx);
+  await runMeshStepM2(bcx);
+  await runMeshStepM3(bcx);
+  await runMeshStepM4(bcx);
+}
+
+// ---------------------------------------------------------------------------
 // The run.
 // ---------------------------------------------------------------------------
 
 // The three blocks after the links steps, in order, each on its flag and NOT
 // RUN by name without it — reached on every run with --r-key, whether the links
 // steps ran or not. `bcx` is the browser session that opens an extension page
-// where none is live.
-async function runVerifiedBlocks(bcx) {
+// where none is live. `opts.skipMesh` keeps the mesh block out — main's
+// --public path runs it after `13-uncancelled` through `runMeshBlock`.
+async function runVerifiedBlocks(bcx, opts = {}) {
   // The verified-tip block after the 1–16 pass and before the browser-context
-  // arm — 17a's D is fresh and isolated, so its readings hold whatever A's
-  // height is by now. 17b's press train runs under A's live miner; 19b makes
-  // its own fork on C; 19c uses D's own miner past m + k + 4. The block runs
-  // on the extension page live at this moment — 16(d)'s bridge takeover leaves
-  // one; where none is open, `Target.createTarget` a fresh `index.html`, the
-  // way the harness opens every other extension page (WEB_INTERFACE → The
-  // extension → "The verified tip").
+  // arm. 17b's press train runs under A's live miner; 17a sets both tip
+  // relays to `proof-short` and opens a fresh extension page; 19a sets RLA
+  // to `proof-invalid` with RLB honest (then both `proof-invalid`), again
+  // each on a fresh page; 19b mines D past A's tip so the client seats
+  // D's chain and B reads off it; 19c mines D past `m + k + 4` and leaves
+  // it below A's tip so B's chain seats and D reads off it. The main
+  // extension page is the one live at this moment — 16(d)'s bridge
+  // takeover leaves one; where none is open, `Target.createTarget` a
+  // fresh `index.html`, the way the harness opens every other extension
+  // page (WEB_INTERFACE → The extension → "The verified tip"). `bcx`
+  // runs `verifiedTipSteps`' fresh-page openings.
   if (VERIFIED_TIP) {
     let vtPage = await findExt('index.html');
     if (!vtPage) {
@@ -6762,7 +7848,7 @@ async function runVerifiedBlocks(bcx) {
     }
     if (!vtPage) throw new Error('verified-tip block: no extension page');
     const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
-    await verifiedTipSteps(vtCx, vtPage.id);
+    await verifiedTipSteps(vtCx, bcx, vtPage.id);
     try { vtCx.s.close(); } catch {}
   } else {
     markVerifiedTipNotRun('no --verified-tip');
@@ -6789,7 +7875,7 @@ async function runVerifiedBlocks(bcx) {
     try {
       await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
     } catch {}
-    await verifiedFiguresSteps(vfCx, vfPage.id);
+    await verifiedFiguresSteps(vfCx, bcx, vfPage.id);
     try { vfCx.s.close(); } catch {}
   } else {
     markVerifiedFiguresNotRun('no --verified-figures');
@@ -6809,7 +7895,7 @@ async function runVerifiedBlocks(bcx) {
     }
     if (!vnPage) throw new Error('verified-names block: no extension page');
     const vnCx = await openSession(vnPage.webSocketDebuggerUrl);
-    await verifiedNamesSteps(vnCx, vnPage.id);
+    await verifiedNamesSteps(vnCx, bcx, vnPage.id);
     try { vnCx.s.close(); } catch {}
   } else {
     markVerifiedNamesNotRun('no --verified-names');
@@ -6833,6 +7919,35 @@ async function runVerifiedBlocks(bcx) {
     try { lCx.s.close(); } catch {}
   } else {
     markLightNotRun('no --light');
+  }
+
+  if (!opts.skipMesh) {
+    await runMeshBlock(bcx);
+  }
+}
+
+// The mesh block runs alone after steps 1–16, on a session of its own.
+// Its two nodes A' and B' are up from before the browser launched
+// (`setupMeshStack`); the block owns them end to end. It runs on the
+// extension page live at this moment, or a fresh one where none is open;
+// storage restores R's identity, as the other blocks do. Split out of
+// `runVerifiedBlocks` so main's --public path can run it after
+// `13-uncancelled` — the browser-context arm leaves a CDP state the
+// mesh block's fresh pages do not boot under.
+async function runMeshBlock(bcx) {
+  if (MESH) {
+    let mPage = await findExt('index.html');
+    if (!mPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      mPage = await findExt('index.html');
+    }
+    if (!mPage) throw new Error('mesh block: no extension page');
+    const mCx = await openSession(mPage.webSocketDebuggerUrl);
+    await meshSteps(mCx, bcx, mPage.id);
+    try { mCx.s.close(); } catch {}
+  } else {
+    markMeshNotRun('no --mesh');
   }
 }
 
@@ -6883,7 +7998,15 @@ async function main() {
       record(s, 'NOT RUN', 'no --r-key — the links steps do not run');
     }
     if (VERIFIED_TIP) {
-      await verifiedTipSteps(cx, page.id);
+      // WEB_INTERFACE → The extension → "The verified tip" — the block's
+      // fresh-page openings (17a · 19a · 19b · 19c) ask the browser-level
+      // session for `Target.createTarget`.
+      const vtBcx = await openBrowserSession();
+      try {
+        await verifiedTipSteps(cx, vtBcx, page.id);
+      } finally {
+        try { vtBcx.s.close(); } catch {}
+      }
     } else {
       markVerifiedTipNotRun('no --verified-tip');
     }
@@ -6893,14 +8016,19 @@ async function main() {
     markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
     markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
     markLightNotRun('no --r-key — the light block does not run');
+    // The mesh block requires --r-key for M3's signed post; without it,
+    // every step reads NOT RUN by name. --mesh without --r-key is a config
+    // error caught at the top.
+    markMeshNotRun('no --r-key — the mesh block does not run');
     return;
   }
 
   // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
   // The expected first node matches the extension build the run was given —
-  // RA under --light (seed list [RA, RB]), else A (seed list [A, B]) — and
-  // the shell check at the top refuses any other build.
-  const expectedFirstNode = LIGHT ? RA_ORIGIN : NODE.replace(/\/$/, '');
+  // A' under --mesh (seed list [A', B']), RA under --light (seed list
+  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
+  // top refuses any other build.
+  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
   const s1 = await cx.eval(`(() => ({
     nodes: document.querySelector('meta[name="notis-nodes"]').content,
     newPost: !!document.querySelector('[data-composer-open="@feed"]'),
@@ -7379,6 +8507,14 @@ async function main() {
   await sleep(3000);
   const transfer12b = cx10.events.slice(events12bStart).find((e) =>
     e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
+  // Under --mesh a write goes over the mesh and leaves no HTTP request
+  // behind (WEB_INTERFACE → The extension → "The mesh is the extension's
+  // first path"), so no `POST /credits/transfer` reaches the Network
+  // domain. The other builds expect the 2xx answer at the API base.
+  const transferPostSeen12b = cx10.events.slice(events12bStart).some((e) =>
+    e.method === 'Network.requestWillBeSent'
+    && e.params?.request?.method === 'POST'
+    && (e.params?.request?.url || '').includes('/credits/transfer'));
   // The row re-reads /credits?pending=1 at the 2xx: a short bound covers the
   // re-read's own fetch, and the faucet's plain /credits is read at the row
   // reading to tell a pooled window from one closed before the payment lands
@@ -7418,11 +8554,16 @@ async function main() {
   const amountOk12b = promptShape12b?.[1]?.cls === 'amount' && promptShape12b?.[1]?.text === '12.5 $NOTIS';
   const targetOk12b = promptShape12b?.[2]?.cls === 'target' && promptShape12b?.[2]?.label === 'to:' && promptShape12b?.[2]?.value === DEVNET_FAUCET_KEY;
   const noFeeLine12b = !(promptShape12b || []).some((l) => l.cls === 'fee');
-  const transferOk12b = transfer12b?.params.response.status === 200;
+  const transferOk12b = MESH
+    ? !transferPostSeen12b
+    : transfer12b?.params.response.status === 200;
+  const transferDetail12b = MESH
+    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false under --mesh — the write goes over the mesh)`
+    : `transfer=${transfer12b?.params.response.status ?? 'null'}`;
   const rowOk12b = rowAt2xx12b;
   record('12b',
     noConfirm12b && resolvedOk12b && whatOk12b && amountOk12b && targetOk12b && noFeeLine12b && transferOk12b && rowOk12b && payment12b.landed && clientLanding12bLanded && shotSaved12b,
-    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pre-send faucet boxes=${faucetPreBoxIds12b.length}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits (box outside pre-send set)=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), client-side landing: .credits-flight .stage='sent' within 180 s of the node-side landing=${clientLanding12bLanded} (elapsed=${(clientLanding12bMs / 1000).toFixed(0)}s), screenshot saved=${shotSaved12b}`);
+    `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, ${transferDetail12b}, row read 87.5 within 20 s of the 2xx=${rowOk12b}, pre-send faucet boxes=${faucetPreBoxIds12b.length}, pooled window at the row reading: ${pooledWindow12b}, payment landed on faucet /credits (box outside pre-send set)=${payment12b.landed} (elapsed=${(payment12b.elapsedMs / 1000).toFixed(0)}s, boxId=${(payment12b.boxId ?? '').slice(0, 12)}…, atHeight=${payment12b.atHeight ?? 'null'}), client-side landing: .credits-flight .stage='sent' within 180 s of the node-side landing=${clientLanding12bLanded} (elapsed=${(clientLanding12bMs / 1000).toFixed(0)}s), screenshot saved=${shotSaved12b}`);
 
   // --- 12c — same extension arm, decline at the prompt. Both form inputs kept,
   // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The wallet
@@ -8250,7 +9391,11 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  await runVerifiedBlocks(bcx);
+  // The verified blocks run before `13-uncancelled`, with the mesh block
+  // held back — it runs after the arm. A browser-context arm's CDP state
+  // can shadow a subsequent step's fresh page, so the mesh block's
+  // fresh-page openings sit after it.
+  await runVerifiedBlocks(bcx, { skipMesh: true });
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
@@ -8308,6 +9453,11 @@ async function main() {
     }
   }
 
+  // The mesh block runs after `13-uncancelled` — the arm's browser-context
+  // CDP state can shadow a subsequent fresh page, and the mesh block's
+  // steps each open one of their own.
+  await runMeshBlock(bcx);
+
   try { bcx.s.close(); } catch {}
 }
 
@@ -8343,15 +9493,45 @@ async function teardownLightRelays() {
   }
 }
 
+// WEB_INTERFACE → The extension → "The verified tip" — the verified blocks'
+// two relays, RLA in front of A and RLB in front of B, each on its fixed
+// port, start before the browser opens the extension page, so the extension's
+// seed list `[{notisId:<A>, addrs:[], api:RLA}, {notisId:<B>, addrs:[],
+// api:RLB}]` reads them from the first paint and every read it makes passes
+// through one of them. Each relay's `upstream` stays reassignable — the
+// `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the step and
+// back after. The function is a no-op when no verified block runs; the
+// figures and names blocks reach this relay too, since they also run under
+// the two-relay build.
+const tipRelays = { a: null, b: null };
+
+async function setupTipRelays() {
+  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) return;
+  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
+  const rlb = await startTipRelay(B_ORIGIN, RLB_PORT);
+  tipRelays.a = rla;
+  tipRelays.b = rlb;
+  console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);
+}
+
+async function teardownTipRelays() {
+  if (tipRelays.a) { closeRelay(tipRelays.a); tipRelays.a = null; }
+  if (tipRelays.b) { closeRelay(tipRelays.b); tipRelays.b = null; }
+}
+
 let exitCode = 0;
 try {
+  await setupTipRelays();
   await setupLightRelays();
+  await setupMeshStack();
   await main();
 } catch (e) {
   console.error('proof failed:', e);
   exitCode = 1;
 }
+await teardownTipRelays();
 await teardownLightRelays();
+await teardownMeshStack();
 
 console.log('\n=== SUMMARY ===');
 for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.detail}`);

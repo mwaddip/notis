@@ -6,7 +6,7 @@
 // tell them apart). A node that answered no tip is in no count.
 
 import { describe, it, expect } from 'vitest';
-import { agreementCounts, type AgreementEntry } from '../src/client/agreement.js';
+import { agreementCounts, type AgreementEntry } from '../../src/mesh/agreement.js';
 
 describe('agreementCounts', () => {
   it('counts on-chain nodes, their anchors, and the off-chain tally', () => {

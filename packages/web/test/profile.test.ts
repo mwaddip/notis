@@ -1613,7 +1613,7 @@ function stubHeader(over: Partial<BlockHeader> = {}): BlockHeader {
 function pfAnchor(suffixHeight = 9005, tipHeight = 9020): Anchor {
   return {
     tip: stubHeader({ height: tipHeight }),
-    suffixHead: { header: stubHeader({ height: suffixHeight }), interlinks: [] },
+    suffixHead: stubHeader({ height: suffixHeight }),
   };
 }
 function pfBox(over: Partial<FigureBox> & Pick<FigureBox, 'boxClass' | 'status'>): FigureBox {
@@ -1634,7 +1634,7 @@ function pfFigures(result: Partial<FiguresResult> = {}, suffixHeight = 9005): Fi
   };
 }
 const VERIFIED_PF: TipVerdict = { kind: 'verified', nodes: 2, height: 9020 };
-const REFUSED_PF: TipVerdict = { kind: 'refused', reason: 'invalid-proof', by: null, height: null };
+const REFUSED_PF: TipVerdict = { kind: 'refused', reason: 'invalid-proof', height: null };
 
 describe('profile — the verified-figures line beneath the rep number', () => {
   const repCtx = (over: Partial<ProfileCtx> = {}): ProfileCtx => ctx({

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { buildPrivateViaAnnouncedRelayVariant } from '../stage/lib/config-variants.mjs';
-import { wrongKeyInfo } from '../src/client/mesh-client.js';
+import { wrongKeyInfo } from '@dagsocial/web/mesh';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);

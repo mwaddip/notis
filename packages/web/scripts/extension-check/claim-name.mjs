@@ -111,8 +111,8 @@ async function main() {
 
   const { submitClaimFlow, heldEntry, NodeClient, WriteClient } = await loadClaimFlow();
   const deps = {
-    reads: new NodeClient(() => API),
-    write: new WriteClient(() => API),
+    reads: new NodeClient({ base: () => API, fetch: (url, init) => fetch(url, init) }),
+    write: new WriteClient({ bases: () => [API], fetch: (url, init) => fetch(url, init) }),
     // The spendable view the flow reads is the node's `pending=1` listing
     // directly (WEB_INTERFACE → The wallet → "The spendable views are the
     // node's pending view"); the ledger holds no input and no change and

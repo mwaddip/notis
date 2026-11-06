@@ -157,6 +157,30 @@ if grep -Fnq "posts/batch" dist/assets/*.js; then
   grep -Fn "posts/batch" dist/assets/*.js | head -5
   exit 1
 fi
+# The web bundle holds no mesh — WEB_INTERFACE → "The build check that keeps
+# the web bundle honest". `notis-mesh://` is the mesh URL scheme the client
+# sends over the libp2p connection (MESH_INTERFACE → The mesh URL), so a
+# stray chunk that pulled the mesh client into the page script surfaces here.
+if grep -Fnq "notis-mesh://" dist/assets/*.js; then
+  echo "FAIL: notis-mesh:// reference found in the web bundle (the mesh client leaked into the zip)"
+  grep -Fn "notis-mesh://" dist/assets/*.js | head -5
+  exit 1
+fi
+# `webrtc-direct` is one of the mesh's transports (MESH_INTERFACE → Transports),
+# so a stray chunk that pulled libp2p's WebRTC-direct transport into the page
+# script surfaces here.
+if grep -Fnq "webrtc-direct" dist/assets/*.js; then
+  echo "FAIL: webrtc-direct reference found in the web bundle (the mesh transport leaked into the zip)"
+  grep -Fn "webrtc-direct" dist/assets/*.js | head -5
+  exit 1
+fi
+# `/meshsub/` is libp2p's gossipsub protocol id (MESH_INTERFACE → Block gossip),
+# so a stray chunk that pulled gossipsub into the page script surfaces here.
+if grep -Fnq "/meshsub/" dist/assets/*.js; then
+  echo "FAIL: /meshsub/ reference found in the web bundle (gossipsub leaked into the zip)"
+  grep -Fn "/meshsub/" dist/assets/*.js | head -5
+  exit 1
+fi
 
 echo "==> Build checks passed"
 

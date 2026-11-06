@@ -9,11 +9,21 @@
 // supplies.
 
 import { MeshKeyError } from '@dagsocial/net/browser';
-import { RETRY_BASE_MS, RETRY_CAP_MS } from '../protocols.js';
+import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
 
-export interface Anchor {
+/**
+ * MESH_INTERFACE → Discovery → "Anchors" — a client starts from a list of
+ * anchors, each `(notisId, addrs)` or `(notisId, addrs, api)`: a key it
+ * trusts, the addresses that key was last reached at, and where the list
+ * gives one, the API base the node answers at over HTTPS
+ * (`→ The client's node list → "An entry may carry an API base"`). An anchor
+ * with an `api` and no `addrs` is a node reached at its base alone; one with
+ * neither is refused as `MeshConfigError`.
+ */
+export interface MeshAnchor {
   notisId: string;
   addrs: string[];
+  api?: string;
 }
 
 export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
@@ -99,6 +109,13 @@ export interface NodeEntry {
    */
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
   path: 'direct' | 'relay' | null;
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the HTTPS base where the client holds no connection to the key.
+   * `null` when the list gave none; the list itself does not validate the
+   * string (the client's `assertClientConfig` does, as a `MeshConfigError`).
+   */
+  api: string | null;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -120,6 +137,15 @@ interface InternalEntry {
   notisId: string;
   anchor: boolean;
   byHand: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
+   * entry the constructor's anchor list named, never cleared. A
+   * `removeByHand` leaves such an entry alone, so a build anchor
+   * added again by hand stays after a blank commit; one not in the
+   * build list is dropped (`anchor && !fromAnchorList` is the pure
+   * hand-added anchor case).
+   */
+  fromAnchorList: boolean;
   status: NodeStatus;
   failures: number;
   clockAtFailure: number;
@@ -137,13 +163,21 @@ interface InternalEntry {
   evidence: LieEvidence | null;
   lastFailure: LastFailure | null;
   lastFailures: Record<string, LastFailure>;
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the HTTPS base where the client holds no connection to the
+   * key. Set from the anchor's `api` at construction or merged from a
+   * duplicate anchor's; `null` when the list gave none. The pairing of a
+   * base with a key is the list's word (→ Discovery → "Anchors").
+   */
+  api: string | null;
 }
 
 export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
 
-  constructor(anchors: Anchor[], ownId: string, clock: () => number) {
+  constructor(anchors: MeshAnchor[], ownId: string, clock: () => number) {
     assertNotisId(ownId);
     this.clock = clock;
     for (const a of anchors) {
@@ -155,13 +189,17 @@ export class NodeList {
         // "Two anchors with one key are one anchor" (MESH_INTERFACE → Discovery):
         // the first entry stands; the rest's addresses merge into it. Both
         // sets are anchor-given, so the merged addresses count as configured.
+        // The api too — the first non-null stands, since the pairing of a
+        // base with a key is the list's word (→ Discovery → "Anchors").
         this.mergeAddrs(existing, a.addrs);
         this.mergeConfigured(existing, a.addrs);
+        if (existing.api === null && a.api !== undefined) existing.api = a.api;
       } else {
         this.entries_.set(a.notisId, {
           notisId: a.notisId,
           anchor: true,
           byHand: false,
+          fromAnchorList: true,
           status: 'new',
           failures: 0,
           clockAtFailure: 0,
@@ -172,6 +210,7 @@ export class NodeList {
           evidence: null,
           lastFailure: null,
           lastFailures: {},
+          api: a.api ?? null,
         });
       }
     }
@@ -191,6 +230,7 @@ export class NodeList {
       notisId: id,
       anchor: false,
       byHand: false,
+      fromAnchorList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -205,6 +245,7 @@ export class NodeList {
       evidence: null,
       lastFailure: null,
       lastFailures: {},
+      api: null,
     });
   }
 
@@ -234,6 +275,7 @@ export class NodeList {
       notisId: id,
       anchor: trusted,
       byHand: true,
+      fromAnchorList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -244,7 +286,25 @@ export class NodeList {
       evidence: null,
       lastFailure: null,
       lastFailures: {},
+      api: null,
     });
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. An entry the constructor's anchor
+   * list named — the build anchor — is left alone: `fromAnchorList`
+   * is true for it, and never cleared. An entry this method can drop
+   * is one `byHand === true && fromAnchorList === false`; anything
+   * else is a no-op. An id the list does not hold is a no-op.
+   */
+  removeByHand(id: string): void {
+    assertNotisId(id);
+    const e = this.entries_.get(id);
+    if (!e) return;
+    if (e.fromAnchorList) return;
+    if (!e.byHand) return;
+    this.entries_.delete(id);
   }
 
   /**
@@ -405,6 +465,11 @@ export class NodeList {
    * group the Map's insertion order answers "first known", with anchors
    * in their given order first because the constructor inserts them
    * before any `add`.
+   *
+   * "An entry the client holds no connection to is a candidate at its
+   * API base where it has one" — a retry entry's api is reached without
+   * dialling, so the retry timer (which caps the dial cadence) does not
+   * hold out a candidate that carries one; its api is served at once.
    */
   candidates(): string[] {
     const ok: string[] = [];
@@ -419,7 +484,7 @@ export class NodeList {
       else if (e.status === 'behind') behind.push(e.notisId);
       else if (e.status === 'new') fresh.push(e.notisId);
       else if (e.status === 'retry') {
-        if (now >= this.clampedRetryAt(e)) retry.push(e.notisId);
+        if (now >= this.clampedRetryAt(e) || e.api !== null) retry.push(e.notisId);
       }
       // `blacklisted` is dropped: never a candidate.
     }
@@ -499,6 +564,7 @@ export class NodeList {
       // transport state, so it emits `null`/`null` here.
       transport: null,
       path: null,
+      api: e.api,
     };
   }
 }

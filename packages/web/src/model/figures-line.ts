@@ -49,7 +49,7 @@ export interface FiguresLineInput {
    *  spend in the next block, by this node's word*"), and row 7's silence
    *  reads `everyProven && proven === plainShown && shown === plainShown`. */
   plainShown: bigint;
-  /** The anchor's suffixHead.header.height — the height the row's proven
+  /** The anchor's suffixHead.height — the height the row's proven
    *  figure was proven at, named in *proven at block N*. Null under rows that
    *  never mention it. */
   suffixHeight: number | null;

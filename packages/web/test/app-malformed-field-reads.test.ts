@@ -89,7 +89,7 @@ function mount(): { app: App; drive: Drive; appbar: HTMLElement; feed: HTMLEleme
   workspace.append(feed, panes);
   document.body.append(appbar, workspace);
   const app = new App(
-    new NodeClient(() => ''),
+    new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }),
     {} as unknown as WriteClient,
     identity(),
     new PendingLedger(ME),

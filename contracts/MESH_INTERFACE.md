@@ -5,10 +5,11 @@
 The mesh is how a browser reaches a Notis node's HTTP API by the node's key over libp2p, with no DNS name and no hosted
 page. **A Notis node run with a mesh role is a mesh node** — one process under its node key (`NET_INTERFACE → The node
 key`), `@dagsocial/net` carrying the transports, the roles, the DHT and the endpoint (→ Place in the workspace).
-**It changes no consensus, wire or HTTP API rule.** Every answer a client checks is checked by code the extension
-already runs. The client is a reader in the nodes' own block gossip, under `net`'s rules (→ Block gossip).
-`@dagsocial/mesh-poc` holds the client's reasoning about nodes, the page and the stage; what the stage has to show is →
-Acceptance.
+**It changes no consensus, wire or HTTP API rule.** Every answer a client checks is checked by the code the extension
+runs. The client is a reader in the nodes' own block gossip, under `net`'s rules (→ Block gossip). **The client is
+`@dagsocial/web`'s** — its reasoning about nodes is the extension's first path (`WEB_INTERFACE → The extension → "The
+mesh is the extension's first path"`) — and `@dagsocial/mesh-poc` holds the page, the stage and the client's cases on
+Node.js (→ Place in the workspace); what the stage has to show is → Acceptance.
 
 It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
 
@@ -17,21 +18,28 @@ It carries Notis's own traffic and nothing else: no exit to the wider network, n
 **The node half is `@dagsocial/net`'s**, under `NetConfig.mesh` (`NET_INTERFACE → The mesh`), configured by the node's
 `MESH_*` settings (`NODE_INTERFACE → Configuration`). **The browser half is `@dagsocial/net/browser`**: the reader's
 handshake, the gossip rules, the block check, the reader's libp2p options and the mesh fetch, importing no Node
-built-in and reading no Node global. `tools/mesh-poc` is a member under `tools/`: it depends on `@dagsocial/types`,
-`@dagsocial/validation`, `@dagsocial/node-reads`, `@dagsocial/nipopow`, `@dagsocial/nipopow-client` and `@dagsocial/net`, and `src/lib.ts`
-and everything it reaches runs in the browser as written. No WASM. One native module, `node-datachannel` under
+built-in and reading no Node global. **The client is `@dagsocial/web`'s `src/mesh/`**, exported as
+`@dagsocial/web/mesh`: the node list, the client's chain, the server pick, the STUN list, the check and the client over
+them, which run in the browser as written, held to it by the member's browser typecheck. `tools/mesh-poc` is a member
+under `tools/`: it depends on `@dagsocial/web` and on the members its stage and cases reach, and holds the page, the
+stage and the client's cases that start a WebRTC transport — node-datachannel's binding takes one live
+`RTCPeerConnection` per process, so each such file runs in a process of its own. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
-**libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net` and of the member are at an exact version.
+**libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net`, of `@dagsocial/web` and of `tools/mesh-poc`
+are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
-— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Two pinned
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Three pinned
 packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
 the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
-"The WebRTC-direct certificate persists"), and `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to
-its stream and whose Node-side server adapter is kept out of the browser's import path. A pin that moves carries its
-patch to the new version, the cases deciding that it still applies and still holds.
+"The WebRTC-direct certificate persists"); `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to its
+stream and whose Node-side server adapter is kept out of the browser's import path; and `@libp2p/http-fetch`, whose
+request line carries the URL's query, whose string and bytes bodies keep the `content-type` the caller set, and whose
+string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
+JSON body, as over HTTP (→ The node endpoint). A pin that moves carries its patch to the new version, the cases deciding
+that it still applies and still holds.
 
 ## Identity
 
@@ -141,8 +149,8 @@ nothing of its own.
 
 **One router, `net`'s rules.** A node and a client each run gossipsub with `net`'s options (`gossipsubOptions`), a client
 on the ordering-block topic alone, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`):
-unsigned, named by `hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_WINDOW_MS`. The code the page runs is
-`net/browser`'s, the one copy. A node's router holds its node peers and its readers; a client's, every node it holds a
+unsigned, named by `hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_WINDOW_MS`. The code the extension's page
+and the stage's page run is `net/browser`'s, the one copy. A node's router holds its node peers and its readers; a client's, every node it holds a
 connection to; nothing dials for gossip's sake.
 
 **A block is checked before it is forwarded, and never applied.** A receiver runs the ordering-block topic's checks of
@@ -168,7 +176,10 @@ does a node on their network: past that count they follow the chain by checks al
 
 **Anchors.** A client starts from a list of anchors, each `(notisId, addrs)`: a key it trusts and the addresses that
 key was last reached at — IP multiaddrs ending in the key's `/p2p/` peer id, a browser's carrying the WebRTC-direct
-certificate's hash. **An address is a hint; the key is the identity.** A client refuses an anchor address with a
+certificate's hash — and, where the list gives one, the API base the node answers at over HTTPS, `(notisId, addrs,
+api)` (→ The client's node list → "An entry may carry an API base"). The extension's are its build's seed list
+(`WEB_INTERFACE → The extension → "The seed list, the faucet's base and the network's name"`). **An address is a hint;
+the key is the identity.** A client refuses an anchor address with a
 `/dns4/`, `/dns6/` or `/dnsaddr/` component. Two anchors with one key are one anchor; the client's own key is none.
 
 **Seeds.** A client may also start from seeds — `(notisId, addrs)` contacts it holds without trusting them, such as a
@@ -181,7 +192,8 @@ unless the reader adds it as an ordinary candidate; its address passes the clien
 Transports → "A client dials a private address only when its own configuration names it"). A key that is not 64
 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or one without `/webrtc-direct/` is
 refused. A private node prints its local WebRTC-direct address with its key, for its operator to hand over, and
-announces it to no one (→ NAT).
+announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read from its `/p2p/`
+id (`WEB_INTERFACE → The settings window`).
 
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
@@ -198,8 +210,8 @@ HTTP holds over the mesh the same, `HTTP_BODY_MAX_BYTES` among them.
 The client's side is an `HttpFetch` over the mesh URL: `GET` and `POST`, ending at `REQUEST_TIMEOUT_MS` as every read
 does (`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.
 
-**The client checks what it can with the extension's verifier**: `resolveTip` over the mesh URLs of the nodes a check
-reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
+**The client checks what it can with the extension's verifier**: `resolveTip` over the mesh URLs — or the API bases —
+of the nodes a check reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
 (`NIPOPOW_INTERFACE → The trust model`). There is no second verifier.
 
 ## The client's node list
@@ -216,6 +228,12 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | the tip it names is further down the client's chain; a valid proof that loses, or a chain too short to prove; a tip answered with no hash | being behind | `behind`, ranked below `trailing` |
 | an address answers with a key other than the one dialled | the address | that address dropped for that key when the dial's failure names it; the entry otherwise unchanged |
 | a malformed answer, a proof that fails verification, or a gossiped block refused as a lie (→ Block gossip), over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
+| the same at an entry's API base | the host, not the key — HTTPS authenticates a name, never a node key | `retry`, as a transport failure; never `blacklisted` |
+
+**An entry may carry an API base.** An anchor the list gives one is read there, over HTTPS, wherever the client holds
+no connection to its key — always, for an anchor the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
+routed read goes to a node its need allows"). It is one entry whichever way it answers — one witness in every count —
+and the pairing of a base with a key is the list's word. A read at an API base holds no connection and dials nothing.
 
 **The client's chain.** The client holds its chain's last `k` headers and block 1's. A check's proofs settle it — the
 winner's suffix and its first header — and a switch to another winner replaces it the same way; a winner whose tip the
@@ -260,11 +278,12 @@ shown, never acted on.
 on a monotonic clock. A success ends the run.
 
 **Candidates** are tried in this order: `ok`, `trailing`, `behind`, nodes not yet tried, then `retry` nodes whose time
-has come. A `blacklisted` node is never one.
+has come. A `blacklisted` node is never one. An entry the client holds no connection to is a candidate at its API base
+where it has one.
 
 **A check** runs at start, every `CHECK_INTERVAL_MS`, and at once after a failed routed read or a gossiped block that
 does not extend the client's tip (→ "The client's chain"). It dials the candidates it holds no connection to; reads
-every candidate's tip, `GET /blocks/current`, timed from the request to the end of the body — that time is the node's
+every candidate's tip — at its API base where its dial failed and it has one — `GET /blocks/current`, timed from the request to the end of the body — that time is the node's
 speed until the next check; and places each tip on the client's chain by hash: the tip, one below, further down, or
 above — filled (→ "The client's chain"), the client's tip moving when the fill links — or, below the held headers, held
 to the client's own header at that height, read from a node at its tip. **It reads proofs only for what that cannot
@@ -281,10 +300,19 @@ the caller names. One that needs the tip goes to an `ok` node; a read of content
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
 knows nothing finer. Among the nodes a read may go to and the client holds a connection to, the fast set is each node
 whose speed is within `FAST_SET_FACTOR` times the fastest's plus `FAST_SET_SLACK_MS` — every one of them while none has
-a speed — and the read goes to one of the fast set at random. With none, it fails as a transport failure. The client's
+a speed — and the read goes to one of the fast set at random. **Over the mesh first**: a read goes to an API base only
+when no node its need allows is reached over the mesh, and among the API bases by the same need and speed. **Before the
+first check ends an anchor serves any need**, over its connection or at its API base, since a verdict never blocks a
+read. With none, it fails as a transport failure. The client's
 state names the node and path the latest routed read went to; how many checks it has completed, so a reader can tell
 one check's state from the next; and, after a check, a node that was `ok` or `trailing` before it and is neither after
 it, with its latest event.
+
+**The client's order for a need** is every node the need allows reached over the mesh, the fast set first, then the API
+bases of the entries it allows, in the same order — before the first check ends, every anchor. **A write goes to one
+node at a time**: a `POST` the caller hands the client goes to the first node of the order for the tip and, when it ends
+with no answer — a transport failure or `REQUEST_TIMEOUT_MS` — the same bytes go to the next; the first answer of any
+status is the write's (`WEB_INTERFACE → The extension → "The mesh is the extension's first path"`).
 
 | Name | Value | Reads as |
 |---|---|---|
@@ -301,7 +329,7 @@ it, with its latest event.
 | `STUN_SERVERS_MAX` | `3` | the most STUN servers a client's ICE configuration names |
 | `BLOCK_READ_BYTES` | `8_388_608` | 8 MiB, the cap on a fill's `GET /blocks/:height` — the header and two 67-byte list entries, a transaction's id and a post's, for every 32 bytes of a body at `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE → Size caps`) stay within it; a block's whole JSON is read for its header, so a fill of full blocks costs more than a proof — `net`'s header sync carries headers alone |
 
-These are a proof of concept's local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
+These are local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
 the constants register (`CONSTANTS → Scope`).
 
 ## No anchor reached
@@ -309,10 +337,11 @@ the constants register (`CONSTANTS → Scope`).
 `anchorReached` is true while at least one anchor's latest event leaves it `ok`, `trailing` or `behind` — a tip placed
 on the client's chain, or a valid proof that is behind — and false otherwise: at start, and whenever every anchor's
 latest event is a failure or a lie. An anchor that is behind was still reached. While it is false the client treats
-every node it reaches as unverified, and the page says, in these words: `No anchor reached. Nothing shown here is
-verified.`
+every node it reaches as unverified: the stage's page says, in these words, `No anchor reached. Nothing shown here is
+verified.`, and the extension's verdict reads `thin` · *no-anchor* (`WEB_INTERFACE → The extension → "The verified
+tip"`).
 
-**The agreement counts.** After each check the page shows how many nodes name a tip on the client's chain within its
+**The agreement counts.** After each check the stage's page shows, and the extension's verdict reads, how many nodes name a tip on the client's chain within its
 last `k` headers — `On this chain` — how many of those are anchors, and how many name one off those headers — `Not on
 this chain's last 20 blocks`: on another chain, or further back than they reach, which the client cannot tell apart. The
 counts say what the nodes name, never that each verified: a node counts without serving a proof of its own, since a
@@ -333,7 +362,7 @@ behind NAT cannot hold one.
 
 ## Acceptance
 
-A stage on one machine runs the proof of concept end to end: public nodes, a node behind an endpoint-independent NAT and
+A stage on one machine runs the mesh end to end, its page on the client `@dagsocial/web` holds: public nodes, a node behind an endpoint-independent NAT and
 one behind a symmetric NAT, a browser behind NAT, a node on the browser's own network, an ACME test server, and hostile
 nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile host's lie outside the node it runs.
 The mesh holds when every step of the eight scenarios passes on what it measured; a step that did not run reads

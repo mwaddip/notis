@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps, type SubmitResult, type SignResult,
 } from '../src/wallet/submit';
@@ -8,7 +8,7 @@ import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { Api } from '../src/api/client';
 import type { CreditBoxRow, CreditsResult, KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
-import { isRejection } from '../src/api/write';
+import { isRejection, WriteClient } from '../src/api/write';
 import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult, Rejection } from '../src/api/write';
 import type { UsernameResult } from '../src/api/dto';
 
@@ -1341,5 +1341,45 @@ describe('a withdraw entry holds no input and no change', () => {
     expect(res.entry.kind).toBe('withdraw'); // control
     expect('inputs' in res.entry).toBe(false);
     expect('change' in res.entry).toBe(false);
+  });
+});
+
+// WEB_INTERFACE → The extension → "A write goes to one node and, with no
+// answer, to the next" — the submit flow drives a real WriteClient over two
+// bases. A send that ends with no answer goes, the same bytes, to the next
+// base; the first response of any status is the send's. A node answers a
+// transaction its pool already holds as held (NODE_INTERFACE → Service Layer
+// Architecture → "A transaction the pool already holds is answered as held"),
+// so a resend is safe.
+
+describe('a send with no answer goes, the same bytes, to the next node', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  it('the first base times out and the second answers 201 — one ledger entry, the card pending, never rejected', async () => {
+    const BASE_A = 'http://a';
+    const BASE_B = 'http://b';
+    const NEW_POST_ID = '99'.repeat(32);
+    const attempts: Array<{ url: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      void init;
+      attempts.push({ url: String(url) });
+      if (String(url).startsWith(BASE_A)) {
+        throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+      }
+      // The second node answers the transaction its pool already holds as held:
+      // the pooled entry's `expiresAtHeight` with its own txId. The flow checks
+      // the id against the one it signed, so the node echoes `lastSignedTxId`.
+      return new Response(JSON.stringify({ postId: NEW_POST_ID, status: 'pending', expiresAtHeight: 6720, txId: lastSignedTxId() }), { status: 201 });
+    }));
+    const writeClient = new WriteClient({ bases: () => [BASE_A, BASE_B], fetch: (url, init) => fetch(url, init) });
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: writeClient, ledger, identity, network: null };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry).toMatchObject({ kind: 'post', postId: NEW_POST_ID, expiresAtHeight: 6720 });
+    expect(ledger.all().map((e) => e.txId)).toEqual([res.entry.txId]);
+    expect(attempts.length).toBe(2);
+    expect(attempts[0]!.url).toBe('http://a/posts');
+    expect(attempts[1]!.url).toBe('http://b/posts');
   });
 });

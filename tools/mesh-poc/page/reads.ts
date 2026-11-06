@@ -12,9 +12,9 @@
 // it in place. `n` is 1–100; anything else is ignored and writes
 // nothing.
 
-import type { ClientState, MeshClient } from '../src/client/mesh-client.js';
-import type { NodeStatus } from '../src/client/node-list.js';
-import type { ReadNeed } from '../src/client/server-pick.js';
+import type { ClientState, MeshClient } from '@dagsocial/web/mesh';
+import type { NodeStatus } from '@dagsocial/web/mesh';
+import type { ReadNeed } from '@dagsocial/web/mesh';
 
 export interface RunReadsOptions {
   client: Pick<MeshClient, 'read' | 'state' | 'onState'>;

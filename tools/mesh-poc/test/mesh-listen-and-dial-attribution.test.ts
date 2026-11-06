@@ -15,10 +15,10 @@ import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { verdictS4InterNodeTcp } from '../stage/lib/verdicts.mjs';
-import { attributeAggregateDialErrors, notisAddressSorter, wrongKeyInfo } from '../src/client/mesh-client.js';
+import { attributeAggregateDialErrors, notisAddressSorter, wrongKeyInfo } from '@dagsocial/web/mesh';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Address } from '@libp2p/interface';
-import { NodeList } from '../src/client/node-list.js';
+import { NodeList } from '@dagsocial/web/mesh';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);

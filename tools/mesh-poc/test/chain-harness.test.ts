@@ -12,7 +12,7 @@ import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
-import { headerFromJson } from '../src/client/header-json.js';
+import { headerFromJson } from '@dagsocial/web/mesh';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const K = 5;

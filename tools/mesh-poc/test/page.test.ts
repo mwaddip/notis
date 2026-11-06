@@ -9,11 +9,11 @@ import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { ClientState, MeshClient } from '../src/client/mesh-client.js';
-import { emptyTraffic } from '../src/client/mesh-client.js';
-import type { NodeEntry } from '../src/client/node-list.js';
-import type { ReadNeed } from '../src/client/server-pick.js';
-import { MeshConfigError } from '../src/config.js';
+import type { ClientState, MeshClient } from '@dagsocial/web/mesh';
+import { emptyTraffic } from '@dagsocial/web/mesh';
+import type { NodeEntry } from '@dagsocial/web/mesh';
+import type { ReadNeed } from '@dagsocial/web/mesh';
+import { MeshConfigError } from '@dagsocial/web/mesh';
 import { MeshFetchError } from '@dagsocial/net/browser';
 import { render } from '../page/render.js';
 import { runMain } from '../page/main.js';
@@ -42,6 +42,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     lastFailures: over.lastFailures ?? {},
     transport: over.transport ?? null,
     path: over.path ?? null,
+    api: over.api ?? null,
   };
 }
 
@@ -57,6 +58,10 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     checks: over.checks ?? 0,
     traffic: over.traffic ?? emptyTraffic(),
     nodes: over.nodes ?? [],
+    seated: over.seated ?? false,
+    proofs: over.proofs ?? null,
+    anchor: over.anchor ?? null,
+    chain: over.chain ?? null,
   };
 }
 
@@ -178,6 +183,7 @@ describe('page/probe.ts', () => {
     let state: ClientState = {
       nodeId: null, transport: null, path: null, lastLeft: null,
       anchorReached: false, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     const fetched: string[] = [];
     const client: FakeClient = {
@@ -242,6 +248,7 @@ describe('page/probe.ts', () => {
     let state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
       anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     const client: FakeClient = {
       fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
@@ -267,6 +274,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     return {
       fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
@@ -286,6 +294,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     render(state, root);
     const after = root.querySelector('pre#probe');
@@ -302,6 +311,7 @@ describe('page/probe.ts survives a render', () => {
     const state1: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null,
     };
     render(state1, root);
     const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
@@ -345,7 +355,7 @@ interface FakeClientInit {
 }
 
 interface FakeClient {
-  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch' | 'stop'>;
+  client: Pick<MeshClient, 'read' | 'state' | 'onState' | 'addByHand' | 'fetch' | 'stop' | 'order'>;
   emit: (over: Partial<ClientState>) => void;
   calls: {
     addByHand: Array<{ notisId: string; addrs: string[]; trusted: boolean }>;
@@ -367,6 +377,10 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     checks: init.checks ?? 0,
     traffic: emptyTraffic(),
     nodes: init.nodes ?? [],
+    seated: false,
+    proofs: null,
+    anchor: null,
+    chain: null,
   };
   const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
   const readQueue: Array<{ nodeId: string } | { error: string }> = (init.readAnswers ?? []).slice();
@@ -379,8 +393,9 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
         throw new MeshFetchError('transport', 'no answer queued');
       }
       if ('error' in answer) throw new MeshFetchError('transport', answer.error);
-      return { response: new Response('', { status: 200 }), nodeId: answer.nodeId };
+      return { response: new Response('', { status: 200 }), nodeId: answer.nodeId, route: 'mesh' };
     },
+    order: () => [],
     state: () => state,
     onState: (cb) => {
       listeners.add(cb);
@@ -965,7 +980,7 @@ describe('page/build output', () => {
   // gossip net
   // (`TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"`), and a string in the bundle is not a DNS lookup.
   // The browser never dials a DNS anchor — that is held at runtime by
-  // `assertClientConfig` on every anchor, and `src/config.ts`'s DNS guard
+  // `assertClientConfig` on every anchor, and `packages/web/src/mesh/config.ts`'s DNS guard
   // names the three prefixes in the source itself.
   beforeAll(() => {
     execSync('pnpm --filter @dagsocial/mesh-poc page:build', {

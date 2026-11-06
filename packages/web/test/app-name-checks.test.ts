@@ -225,7 +225,7 @@ function header(height: number, tag: string): BlockHeader {
 }
 
 function anchorFor(h: number): Anchor {
-  return { tip: header(h, 'aa'), suffixHead: { header: header(h - 19, 'bb'), interlinks: [] } };
+  return { tip: header(h, 'aa'), suffixHead: header(h - 19, 'bb') };
 }
 
 interface TipRunHandle {

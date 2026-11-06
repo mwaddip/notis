@@ -404,7 +404,7 @@ describe("textLines — the command line's text of a node that sends a newline, 
     const tip = await resolveTip(['http://a', 'http://b'], M, K, devnetProfile(), clockAfterChain(chain), fetch);
     const listed = await fetchListing('http://a', USER_HEX, fetch);
     if (!listed.ok) throw new Error(listed.reason);
-    const anchor = { tip: tip.tip!, suffixHead: tip.suffixHead! };
+    const anchor = { tip: tip.tip!, suffixHead: tip.suffixHead!.header };
     const figures = await proveFigures('http://a', USER_HEX, listed.listing, anchor, devnetProfile(), fetch);
 
     const lines = textLines(tip, { figures, listing: listed.listing });

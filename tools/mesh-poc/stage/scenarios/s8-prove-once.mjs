@@ -107,7 +107,7 @@ const LONG_WAIT_MS = 240_000;
 // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page while the
 // client's own namespace black-holes every hostile host. A dropped
 // packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, from
-// `src/protocols.ts`) per hostile dial until the retry back-off takes
+// `packages/web/src/mesh/protocols.ts`) per hostile dial until the retry back-off takes
 // those nodes out of the candidates. A check runs one dial deadline
 // per candidate; step 1's five completed checks past settlement, and
 // step 4's 20 s warmup, up-to-120 s of pub1 advancement and ~3 min of

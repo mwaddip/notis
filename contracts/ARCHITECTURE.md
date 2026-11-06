@@ -1580,23 +1580,18 @@ package reaches the box.
 **A reset mints a new genesis proof payload.** Every id of a chain descends from mint ids that open with
 its payload (§How the network is committed), so a reset that kept the payload would let the retired
 chain's transactions resolve on the new one. The reset's first act on the profile is therefore a new
-payload, and then the `genesisStateRoot` measured under it. **Testnet's payload names its release line,
-and a `types` case holds the two together** (`TYPES_INTERFACE → Network profiles`): the minor a reset
-moves (→ "The release version counts resets and milestones") leaves `types`' suite red until the payload
-names it, and the node refuses to start until the pinned root is the one seeded under the new payload
-(`NODE_INTERFACE → The genesis state root is checked fail-stop`). What nothing checks is the first link —
-that a release shipping a reset moves the minor. Mainnet has not launched and its payload is mock
-content; devnet's is one value for every run, and a devnet chain holds nothing a replay could take.
+payload, and then the `genesisStateRoot` measured under it: a string no chain has used — testnet's is
+`dagsocial/testnet/genesis-proof/0.4` (`TYPES_INTERFACE → Network profiles`), and it names no release — and the node
+refuses to start until the pinned root is the one seeded under the new payload (`NODE_INTERFACE → The genesis state
+root is checked fail-stop`). Mainnet has not launched and its payload is mock content; devnet's is one value for
+every run, and a devnet chain holds nothing a replay could take.
 
-**The release version counts resets and milestones.** The repository carries one version, the root
-`package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
-and the extension (`WEB_INTERFACE → "The client ships as its own product"`). A release that ships a reset moves
-the minor; a milestone release that owes none moves the patch. It is not `protocolVersion`, which the chain
-schedules by height (→ Protocol Versioning) and no release number moves.
-
-> ⚠ **UNENFORCED — verified 2026-10-28.** Nothing checks a bump against this register. The five tags conform:
-> `v0.1.1` and `v0.3.1` shipped without a reset, `v0.2.0` and `v0.3.0` each with one; the 2026-10-28 reset ships as
-> 0.4.0, moving the minor.
+**The release version is the repository's, one for every distributable.** The repository carries one version, the
+root `package.json`'s, and every distributable of a release carries it — the node's packages, the web client's zip
+and the extension (`WEB_INTERFACE → "The client ships as its own product"`). It moves with what the release ships —
+the minor for a feature, the patch for a fix — and with nothing else: a reset is a new genesis proof payload (→ "A
+reset mints a new genesis proof payload"), never a version. It is not `protocolVersion`, which the chain schedules by
+height (→ Protocol Versioning) and no release number moves.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
@@ -2586,6 +2581,10 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   checksum through `hash32` (`NET_INTERFACE → The browser entry`), the gossip rules, `BlockCheck`, the reader's handshake, libp2p options and mesh fetch
   (`NET_INTERFACE → The browser entry`) — held by its own `tsconfig.browser.json` and by a build of it that refuses any
   Node built-in.
+- **`@dagsocial/web` has one entry other packages import, `@dagsocial/web/mesh`** — the mesh client the extension runs
+  (`MESH_INTERFACE → Place in the workspace`), built by tsup beside the client's own vite build, running in the browser
+  as written, held by the member's `tsconfig.browser.json` and by the stage page's build, which refuses any Node
+  built-in.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — every workspace member carries it.** Note it lives in each member's `CLAUDE.md`, not in
@@ -2621,7 +2620,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 
 Every package is ESM and builds with `tsup src/index.ts --format esm --dts` to a single bundled
 `dist/index.js`. The library packages (`types`, `wire`, `avltree`, `validation`, `nipopow`, `consensus`, `net`,
-`node-reads`) each declare exactly one export condition — `"."` — and there are no subpath exports anywhere. **`node` has no
+`node-reads`) each declare the export condition `"."`, and `net` one subpath beside it, `./browser`; `@dagsocial/web`,
+an application, declares the subpath `./mesh` alone. **`node` has no
 `exports` field at all**, only `main`; it is the application package and nothing depends on it, so
 bare-specifier resolution there goes through `main`. The practical effect is identical, but `node`
 is not subject to the subpath restriction the others get from `exports`.
@@ -2633,9 +2633,10 @@ the repo root and merged into every package's vitest config.
 Six rules govern it:
 
 1. **Uniform across all nine packages** — `types`, `avltree`, `wire`, `validation`, `nipopow`, `consensus`,
-   `net`, `node` and `node-reads`. Aliasing some and not others puts two copies of the same
-   module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
-   across that boundary and every module-level singleton exists twice.
+   `net`, `node` and `node-reads` — and the two subpath entries beside them, `@dagsocial/net/browser` to
+   `packages/net/src/browser.ts` and `@dagsocial/web/mesh` to `packages/web/src/mesh/index.ts`. Aliasing some and
+   not others puts two copies of the same module in one process — one transpiled from `src`, one bundled inside
+   `dist`. `instanceof` fails across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
    symbol exported from a module but missing from `index.ts` still fails at import.
 3. **`pnpm test` no longer proves a package builds.** Nothing in the unit-test path executes `tsup`,

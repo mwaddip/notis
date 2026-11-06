@@ -14,10 +14,12 @@ import {
   verdictS1DnsSilent,
   verdictS4Renewal,
 } from '../stage/lib/verdicts.mjs';
-import { messageOf } from '../src/client/mesh-client.js';
+import { messageOf } from '@dagsocial/web/mesh';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
+const REPO_ROOT = dirname(dirname(PACKAGE_ROOT));
+const SRC_MESH_CLIENT = join(REPO_ROOT, 'packages', 'web', 'src', 'mesh', 'mesh-client.ts');
 const TOPOLOGY_PATH = join(PACKAGE_ROOT, 'stage', 'topology.json');
 const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const RUN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'run.mjs');
@@ -100,7 +102,7 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
 describe('fix 1 — isTipShape reads `{height, hash}` the way readBlockCurrent does', () => {
   it('isTipShape accepts the node\'s own answer `{height, hash}` with a 64-hex hash', async () => {
   
-    const { isTipShape } = await import('../src/client/mesh-client.js');
+    const { isTipShape } = await import('@dagsocial/web/mesh');
     // The node's /blocks/current answers `{ height, hash }` where hash is
     // 64 lowercase hex. The web client's reader is the reference:
     // packages/web/src/api/readers.ts `readBlockCurrent`.
@@ -108,23 +110,23 @@ describe('fix 1 — isTipShape reads `{height, hash}` the way readBlockCurrent d
   });
   it('isTipShape accepts the genesis marker `{height: 0, hash: null}`', async () => {
 
-    const { isTipShape } = await import('../src/client/mesh-client.js');
+    const { isTipShape } = await import('@dagsocial/web/mesh');
     expect(isTipShape({ height: 0, hash: null })).toBe(true);
   });
   it('isTipShape rejects `{height, id}` (the old shape that blacklisted every honest node)', async () => {
 
-    const { isTipShape } = await import('../src/client/mesh-client.js');
+    const { isTipShape } = await import('@dagsocial/web/mesh');
     expect(isTipShape({ height: 1, id: 'ab'.repeat(32) })).toBe(false);
   });
   it('isTipShape rejects a non-hex hash', async () => {
 
-    const { isTipShape } = await import('../src/client/mesh-client.js');
+    const { isTipShape } = await import('@dagsocial/web/mesh');
     expect(isTipShape({ height: 1, hash: 'not-hex' })).toBe(false);
     expect(isTipShape({ height: 1, hash: 'AB'.repeat(32) })).toBe(false);
   });
   it('isTipShape rejects a negative or non-integer height', async () => {
 
-    const { isTipShape } = await import('../src/client/mesh-client.js');
+    const { isTipShape } = await import('@dagsocial/web/mesh');
     expect(isTipShape({ height: -1, hash: 'ab'.repeat(32) })).toBe(false);
     expect(isTipShape({ height: 1.5, hash: 'ab'.repeat(32) })).toBe(false);
   });
@@ -173,20 +175,20 @@ describe('fix 2 — up writes every mesh host\'s multiaddrs; buildHostileSeeds r
 
 describe('PEER_DIAL_MIN_MS — the dial deadline floor from the contract', () => {
   it("mesh-client cites PEER_DIAL_MIN_MS, not the literal 20_000, for the whole-peer dial deadline", () => {
-    const src = readFileSync(join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts'), 'utf8');
+    const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
     // The literal has to be gone: a `20_000` number inside the dial
     // path is the kind of edit that drifts from the contract.
     expect(src, 'the mesh-client body does not carry a 20_000 literal').not.toMatch(/Math\.max\([^)]*,\s*20_?000\s*\)/);
     // PEER_DIAL_MIN_MS is imported and used.
-    expect(src, 'PEER_DIAL_MIN_MS is imported').toMatch(/import\s+\{[^}]*\bPEER_DIAL_MIN_MS\b[^}]*\}\s+from\s+['"]\.\.\/protocols\.js['"]/);
+    expect(src, 'PEER_DIAL_MIN_MS is imported').toMatch(/import\s+\{[^}]*\bPEER_DIAL_MIN_MS\b[^}]*\}\s+from\s+['"]\.\/protocols\.js['"]/);
     expect(src, 'PEER_DIAL_MIN_MS is used in the dial-deadline computation').toMatch(/Math\.max\([^)]*PEER_DIAL_MIN_MS[^)]*\)/);
   });
   it("PEER_DIAL_MIN_MS is exported from protocols.ts at 20_000", async () => {
-    const { PEER_DIAL_MIN_MS } = await import('../src/protocols.js');
+    const { PEER_DIAL_MIN_MS } = await import('@dagsocial/web/mesh');
     expect(PEER_DIAL_MIN_MS).toBe(20_000);
   });
   it('a one-address dial\'s deadline is PEER_DIAL_MIN_MS (not DIAL_TIMEOUT_MS alone)', async () => {
-    const { PEER_DIAL_MIN_MS, DIAL_TIMEOUT_MS } = await import('../src/protocols.js');
+    const { PEER_DIAL_MIN_MS, DIAL_TIMEOUT_MS } = await import('@dagsocial/web/mesh');
     // The deadline for N addresses is `max(N * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS)`.
     // With N=1, DIAL_TIMEOUT_MS=3_000 is below PEER_DIAL_MIN_MS=20_000, so
     // the floor binds and the dial gets 20 s. Pure arithmetic — the shape
@@ -205,7 +207,7 @@ describe('fix 3 — dialByAddresses passes the whole address list to one libp2p.
   // its ADDRESS_DIAL_TIMEOUT=6 s binds each one internally, and our
   // whole-peer signal binds the operation.
   it('dialByAddresses passes an array of multiaddrs to libp2p.dial (one call for all addrs)', () => {
-    const src = readFileSync(join(PACKAGE_ROOT, 'src', 'client', 'mesh-client.ts'), 'utf8');
+    const src = readFileSync(SRC_MESH_CLIENT, 'utf8');
     // Source-grep: the function must call `.dial(` with an array of
     // multiaddrs (one call total, not one per address).
     const body = /private async dialByAddresses[\s\S]*?\n  \}\n/.exec(src);
@@ -255,7 +257,7 @@ describe('fix 6 — s1 brackets /blocks/current between two direct reads (race, 
 
 describe('fix 7 — lastFailures keeps one entry per address', () => {
   it('NodeList.failure(id, kind, msg, addr) records lastFailures[addr]', async () => {
-    const { NodeList } = await import('../src/client/node-list.js');
+    const { NodeList } = await import('@dagsocial/web/mesh');
     const id = 'a'.repeat(64);
     const other = 'b'.repeat(64);
     let now = 100;
@@ -279,7 +281,7 @@ describe('fix 7 — lastFailures keeps one entry per address', () => {
     expect(e.lastFailure).not.toBeNull();
   });
   it('a success clears lastFailures entirely', async () => {
-    const { NodeList } = await import('../src/client/node-list.js');
+    const { NodeList } = await import('@dagsocial/web/mesh');
     const id = 'a'.repeat(64);
     const other = 'b'.repeat(64);
     const list = new NodeList(

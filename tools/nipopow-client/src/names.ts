@@ -93,9 +93,9 @@ export async function proveName(
     ({ status, owner: null, name: null, boxId, heightAfter, verdict });
 
   // The box at suffixHead, and at tip when excluded there
-  const suffixHeight = anchor.suffixHead.header.height;
+  const suffixHeight = anchor.suffixHead.height;
   const tipHeight = anchor.tip.height;
-  const atSuffix = await proveBoxAtHeight(nodeUrl, boxId, suffixHeight, anchor.suffixHead.header.stateRoot, httpFetch);
+  const atSuffix = await proveBoxAtHeight(nodeUrl, boxId, suffixHeight, anchor.suffixHead.stateRoot, httpFetch);
   if (atSuffix.kind === 'unproven') return pointed('unproven', `unproven at suffixHead: ${atSuffix.verdict}`);
   if (atSuffix.kind === 'no-proof') return pointed('no-proof', `no proof at suffixHead: ${atSuffix.verdict}`);
   if (atSuffix.kind === 'included') {

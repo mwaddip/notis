@@ -10,10 +10,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { profileFor, generateKeyPair } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import { nodeKeyFromKeyPair } from '@dagsocial/net/browser';
-import { stunServersFor } from '../src/client/stun-list.js';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
-import type { NodeEntry, NodeStatus } from '../src/client/node-list.js';
-import { STUN_SERVERS_MAX } from '../src/protocols.js';
+import { stunServersFor } from '@dagsocial/web/mesh';
+import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
+import type { NodeEntry, NodeStatus } from '@dagsocial/web/mesh';
+import { STUN_SERVERS_MAX } from '@dagsocial/web/mesh';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 
@@ -40,6 +40,7 @@ function makeEntry(partial: {
     lastFailures: {},
     transport: null,
     path: null,
+    api: null,
   };
 }
 
@@ -142,6 +143,7 @@ describe('iceConfiguration — client-level', () => {
     const client = await startMeshClient({
       anchors: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
     });
     clients.push(client);
@@ -156,6 +158,7 @@ describe('iceConfiguration — client-level', () => {
         addrs: ['/ip4/11.100.0.11/udp/9999/webrtc-direct'],
       }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
     });
     clients.push(client);

@@ -134,7 +134,7 @@ function harness(entries: PendingEntry[], opts: Parameters<typeof fakeNode>[0]):
   const ledger = new PendingLedger(ME);
   for (const e of entries) ledger.add(e);
   const node = fakeNode(opts);
-  const app = new App(new NodeClient(() => ''), {} as unknown as WriteClient, identity(), ledger, undefined, undefined, null, null);
+  const app = new App(new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }), {} as unknown as WriteClient, identity(), ledger, undefined, undefined, null, null);
   const appbar = document.createElement('header');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';

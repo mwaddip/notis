@@ -3,8 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@dagsocial/*": ["../../packages/*/src/index.ts"]
+      "@dagsocial/*": ["../../packages/*/src/index.ts"],
+      "@dagsocial/web/mesh": ["../../packages/web/src/mesh/index.ts"],
+      "@dagsocial/net/browser": ["../../packages/net/src/browser.ts"]
     }
   },
-  "include": ["src", "test"]
+  "include": ["test"]
 }

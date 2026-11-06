@@ -605,7 +605,7 @@ function appendKarmaFiguresLine(
     result: ctx.figures?.result ?? null,
     shown: 0n,
     plainShown: plain === null ? 0n : BigInt(plain.effective),
-    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    suffixHeight: ctx.figures?.anchor.suffixHead.height ?? null,
     boxCount: plain === null ? 0 : plain.boxCount,
     height,
   });
@@ -635,7 +635,7 @@ function balance(field: HTMLElement, k: KarmaResult, ctx: ProfileCtx): void {
     result: ctx.figures?.result ?? null,
     shown: BigInt(k.effective),
     plainShown: plain === null ? 0n : BigInt(plain.effective),
-    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    suffixHeight: ctx.figures?.anchor.suffixHead.height ?? null,
     boxCount: plain === null ? 0 : plain.boxCount,
     height: plain === null ? k.height : plain.height,
   });

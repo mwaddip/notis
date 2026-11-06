@@ -164,7 +164,7 @@ function header(height: number, tag: string): BlockHeader {
 }
 
 function anchorFor(h: number): Anchor {
-  return { tip: header(h, 'aa'), suffixHead: { header: header(h - 19, 'bb'), interlinks: [] } };
+  return { tip: header(h, 'aa'), suffixHead: header(h - 19, 'bb') };
 }
 
 interface TipRunHandle {
@@ -655,8 +655,7 @@ describe('the send check — no anchor standing', () => {
     { kind: 'thin', reason: 'too-short', height: 12 },
     { kind: 'thin', reason: 'one-node', height: 100 },
     { kind: 'thin', reason: 'split', height: 100 },
-    { kind: 'refused', reason: 'invalid-proof', by: null, height: 100 },
-    { kind: 'refused', reason: 'outworked', by: NODE_B, height: 100 },
+    { kind: 'refused', reason: 'invalid-proof', height: 100 },
   ];
 
   it.each(UNVERIFIED)('a run the press started that ends $kind · $reason refuses — *@bob can\'t be checked* — and asks no check', async (verdict) => {
@@ -707,16 +706,6 @@ describe('the send check — no anchor standing', () => {
     expect(h.nameCalls).toHaveLength(0);
   });
 
-  it('an empty reading base starts no run, and the press refuses at once', async () => {
-    const h = harness();
-    await ready(h);
-    await endRun(h, 0, THIN);
-    setNode('');
-    const form = await press('@bob');
-    expectRefused(h, form, CANT, '@bob');
-    expect(h.tipRuns).toHaveLength(1);
-    expect(h.nameCalls).toHaveLength(0);
-  });
 });
 
 describe('the send check — a node change, and a check that throws', () => {
@@ -925,7 +914,7 @@ describe('the send check — the row reads *checking @bob…* from the press to 
     if (how === 'started') await endRun(h, 0, THIN);
     const form = await press('@bob');
     expect(flightLine()).toBe('checking @bob…');
-    await endRun(h, how === 'started' ? 1 : 0, { kind: 'refused', reason: 'invalid-proof', by: null, height: 100 });
+    await endRun(h, how === 'started' ? 1 : 0, { kind: 'refused', reason: 'invalid-proof', height: 100 });
     expect(flightLine()).toBe('');
     expectRefused(h, form, CANT, '@bob');
   });

@@ -25,7 +25,7 @@ import {
   buildPairCutArgs,
   notisBootstrapPeersFor,
 } from '../stage/lib/hostile-fork-pair.mjs';
-import { assertClientConfig } from '../src/client/mesh-client.js';
+import { assertClientConfig } from '@dagsocial/web/mesh';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);

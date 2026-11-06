@@ -56,7 +56,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const client = (): NodeClient => new NodeClient(() => ''); // same-origin (empty base)
+const client = (): NodeClient => new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) }); // same-origin (empty base)
 
 describe('read client — the viewer query', () => {
   it('carries viewer on feed, thread and post when passed, omits it when not', async () => {

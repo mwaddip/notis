@@ -224,7 +224,7 @@ function appendFiguresLine(
     result: ctx.figures?.result ?? null,
     shown,
     plainShown,
-    suffixHeight: ctx.figures?.anchor.suffixHead.header.height ?? null,
+    suffixHeight: ctx.figures?.anchor.suffixHead.height ?? null,
     boxCount: plain === null ? 0 : plain.boxCount,
     height,
   });

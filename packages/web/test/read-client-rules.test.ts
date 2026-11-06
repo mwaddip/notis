@@ -39,7 +39,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const client = (): NodeClient => new NodeClient(() => '');
+const client = (): NodeClient => new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) });
 
 // A full post row — the shape `GET /posts` and `GET /posts/:id` answer, and
 // which the field rules the extension's post check names apply to in the web

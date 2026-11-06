@@ -10,8 +10,6 @@ import type { BlockHeader } from '@dagsocial/types';
 // tests inject a `prove` stub; the last runs the tool's own function over a
 // fake fetch, so the default is pinned to be it.
 
-type PoPowHeader = Anchor['suffixHead'];
-
 function header(height: number, tag: string): BlockHeader {
   return {
     protocolVersion: 1,
@@ -29,8 +27,7 @@ function header(height: number, tag: string): BlockHeader {
 }
 
 function anchorFor(h: number): Anchor {
-  const suffixHead: PoPowHeader = { header: header(h - 19, 'bb'), interlinks: [] };
-  return { tip: header(h, 'aa'), suffixHead };
+  return { tip: header(h, 'aa'), suffixHead: header(h - 19, 'bb') };
 }
 
 const KEY = 'ab'.repeat(32);

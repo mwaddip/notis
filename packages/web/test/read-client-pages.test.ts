@@ -31,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const client = (): NodeClient => new NodeClient(() => '');
+const client = (): NodeClient => new NodeClient({ base: () => '', fetch: (url, init) => fetch(url, init) });
 
 interface Route {
   name: string;

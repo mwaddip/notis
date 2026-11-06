@@ -72,7 +72,7 @@ function fakeHeader(height: number): BlockHeader {
 }
 
 function anchorFor(h: number): Anchor {
-  return { tip: fakeHeader(h), suffixHead: { header: fakeHeader(h - 19), interlinks: [] } };
+  return { tip: fakeHeader(h), suffixHead: fakeHeader(h - 19) };
 }
 
 interface KarmaRead { key: string; pending: boolean }

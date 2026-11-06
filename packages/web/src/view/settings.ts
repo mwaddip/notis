@@ -31,6 +31,11 @@ export interface SettingsHandlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
+  // The extension's hand-added node — the row renders the hand-added form
+  // when this hook is present, else the web build's `node` row stands
+  // (WEB_INTERFACE → The settings window → "In the extension the row adds
+  // a node by hand").
+  handNode?: HandNodeSeam;
   // The extension's binary sign policy — the row renders only when both hooks
   // are present (WEB_INTERFACE → The settings window; the extension's proxy).
   policy?: () => 'silent' | 'ask';
@@ -40,6 +45,16 @@ export interface SettingsHandlers {
   // in a build whose `notis-public` is not empty).
   links?: () => 'site' | 'here';
   setLinks?: (v: 'site' | 'here') => Promise<void>;
+}
+
+/** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
+ *  "In the extension the row adds a node by hand"). `address` reads the stored
+ *  address, or `''` when none. `commit` parses, calls the mesh client's
+ *  `addByHand` or `removeByHand`, and answers `null` on success, or an error
+ *  line to show beside the field. */
+export interface HandNodeSeam {
+  address(): string;
+  commit(addr: string): string | null;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -119,8 +134,45 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
 
   // node — any origin works (NODE_INTERFACE → Cross-origin requests). The
   // field reads the node in force while the reader has typed nothing over it;
-  // text typed and not committed stands through a draw.
-  {
+  // text typed and not committed stands through a draw. In the extension the
+  // row adds a node by hand (WEB_INTERFACE → The settings window → "In the
+  // extension the row adds a node by hand"): the input holds the stored
+  // address, the commit calls the seam, an error from it stands beside the
+  // field, and the hint names the address format.
+  if (handlers.handNode) {
+    const handNode = handlers.handNode;
+    const { row: r, field } = row('node');
+    const input = el('input') as HTMLInputElement;
+    input.placeholder = '/ip4/…/udp/…/p2p/…';
+    input.setAttribute('aria-label', 'the node this client adds by hand');
+    const errLine = el('div', 'error');
+    errLine.hidden = true;
+    input.addEventListener('change', () => {
+      const result = handNode.commit(input.value);
+      if (result === null) {
+        errLine.hidden = true;
+        errLine.textContent = '';
+        // Drop the element so the test's `querySelector('.error')` reads null
+        // after a successful commit.
+        if (errLine.parentNode) errLine.parentNode.removeChild(errLine);
+        shown = handNode.address();
+        input.value = shown;
+      } else {
+        errLine.textContent = result;
+        errLine.hidden = false;
+        if (!errLine.parentNode) field.appendChild(errLine);
+      }
+    });
+    let shown = input.value;
+    draws.push(() => {
+      if (input.value !== shown) return;
+      shown = handNode.address();
+      input.value = shown;
+    });
+    field.appendChild(input);
+    field.appendChild(el('div', 'hint', 'the address a node prints at start, its /p2p/<peer id> included. blank removes the hand-added node.'));
+    b.appendChild(r);
+  } else {
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
     input.placeholder = BUILD_BASE || 'same-origin (default)';

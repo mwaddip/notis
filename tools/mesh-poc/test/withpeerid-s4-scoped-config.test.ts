@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { withPeerId } from '../src/client/mesh-client.js';
+import { withPeerId } from '@dagsocial/web/mesh';
 import { verdictS4Pub1UdpDrop } from '../stage/lib/verdicts.mjs';
 import { writeStageDefault, writeConfigVariant } from '../stage/lib/scenario-config.mjs';
 

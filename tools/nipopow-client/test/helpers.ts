@@ -436,8 +436,8 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-// A minimal Anchor for figures tests — proveFigures reads only .header.height,
-// .header.stateRoot on suffixHead and .height, .stateRoot on tip.
+// A minimal Anchor for figures tests — proveFigures reads only .height and
+// .stateRoot on suffixHead and on tip.
 export function makeAnchor(
   tipHeight: number,
   tipStateRoot: string,
@@ -459,7 +459,7 @@ export function makeAnchor(
   });
   return {
     tip: bare(tipHeight, tipStateRoot),
-    suffixHead: { header: bare(suffixHeight, suffixStateRoot), interlinks: [] },
+    suffixHead: bare(suffixHeight, suffixStateRoot),
   };
 }
 

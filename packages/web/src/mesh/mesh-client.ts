@@ -28,6 +28,7 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
+import type { Anchor } from '@dagsocial/nipopow-client';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -60,15 +61,15 @@ import {
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
-import { MeshConfigError, assertNoDns } from '../config.js';
+import { MeshConfigError, assertNoDns, assertApiBase } from './config.js';
 import {
   NodeList,
-  type Anchor,
+  type MeshAnchor,
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
 import { tipEvent, type TipEvent } from './tip-events.js';
-import { pickServer, type ReadNeed } from './server-pick.js';
+import { pickServer, orderServers, type OrderCandidate, type ReadNeed } from './server-pick.js';
 import { agreementCounts, type AgreementCounts, type AgreementEntry } from './agreement.js';
 import { stunServersFor } from './stun-list.js';
 import {
@@ -78,7 +79,7 @@ import {
   STUN_SERVERS_MAX,
   BLOCK_READ_BYTES,
   type NetworkName,
-} from '../protocols.js';
+} from './protocols.js';
 export type { ReadNeed } from './server-pick.js';
 
 /**
@@ -133,20 +134,34 @@ class HandshakeNoChainServiceError extends Error {
 }
 
 /**
- * MESH_INTERFACE → Discovery / NAT — the client's config refusals as a pure,
- * synchronous function. One check, called from `startMeshClient` as its first
- * statement and reused by any caller (such as the page) that wants to refuse
- * a config before starting a libp2p node. A `MeshConfigError` is thrown for
- * a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor or seed address, or an ICE server
- * that is not `stun:<IPv4>:<port>` / `stun:[<IPv6>]:<port>`.
+ * MESH_INTERFACE → Discovery / NAT / The client's node list — the client's
+ * config refusals as a pure, synchronous function. One check, called from
+ * `startMeshClient` as its first statement and reused by any caller (such as
+ * the page) that wants to refuse a config before starting a libp2p node. A
+ * `MeshConfigError` is thrown for a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor
+ * or seed address, an ICE server that is not `stun:<IPv4>:<port>` /
+ * `stun:[<IPv6>]:<port>`, an `api` base that is not `http://` or `https://`
+ * or has a trailing `/`, or an anchor that carries neither addrs nor api
+ * (`→ The client's node list → "An entry may carry an API base"`).
  */
 export function assertClientConfig(o: {
-  anchors: readonly Anchor[];
-  seeds?: readonly Anchor[];
+  anchors: readonly MeshAnchor[];
+  seeds?: readonly MeshAnchor[];
 }): void {
-  for (const a of o.anchors) assertNoDns('anchor', a.addrs);
+  for (const a of o.anchors) {
+    assertNoDns('anchor', a.addrs);
+    if (a.api !== undefined) assertApiBase('anchor', a.api);
+    if (a.addrs.length === 0 && (a.api === undefined || a.api === '')) {
+      throw new MeshConfigError(
+        `anchor refused: ${a.notisId} carries neither addrs nor api`,
+      );
+    }
+  }
   if (o.seeds !== undefined) {
-    for (const s of o.seeds) assertNoDns('seed', s.addrs);
+    for (const s of o.seeds) {
+      assertNoDns('seed', s.addrs);
+      if (s.api !== undefined) assertApiBase('seed', s.api);
+    }
   }
 }
 
@@ -308,24 +323,74 @@ export interface ClientState {
   checks: number;
   traffic: ClientTraffic;
   nodes: NodeEntry[];
+  /**
+   * The chain is settled — a proof has verified and seated the window and
+   * block 1 (MESH_INTERFACE → The client's node list → "The client's chain").
+   * `false` at start; `true` from the first check that settles a chain and
+   * for every state write after.
+   */
+  seated: boolean;
+  /**
+   * The last check's proof reads, counted from its `NodeTipResult`s: `asked`
+   * per URL asked, `verified` the number verified, `invalid` the number with
+   * `refuseCode === 'invalid'`, `tooShort` the number with `refuseCode ===
+   * 'too-short'`. `null` before the first check and on a check that read no
+   * proof — a check that places every tip reads none, and the field then
+   * keeps the last check's that read one.
+   */
+  proofs: { asked: number; verified: number; invalid: number; tooShort: number } | null;
+  /**
+   * The two ends of the client's chain — the tip and the suffix head — moving
+   * with every gossiped block the chain links and every re-seat
+   * (WEB_INTERFACE → The extension → "The verified figures" → "The anchor").
+   * Non-null when and only when the chain is seated and the window holds `k`.
+   */
+  anchor: Anchor | null;
+  /**
+   * The lowercase hex `blockHash` of block 1 — the chain's name
+   * (WEB_INTERFACE → The extension → "The chain's name"). Non-null whenever
+   * the chain is seated; the post cache's database name reads it, and nothing
+   * else does.
+   */
+  chain: string | null;
 }
 
 export interface MeshClient {
+  /**
+   * MESH_INTERFACE → The mesh URL / The client's node list → "An entry may
+   * carry an API base" — a `notis-mesh://<id>…` URL is sent over the
+   * connection the client holds to that key; an `http:` or `https:` URL is
+   * sent over `httpFetch` (the fetch an API base is read with). Anything
+   * else rejects as `MeshFetchError` of kind `transport`.
+   */
   fetch: HttpFetch;
   /**
    * MESH_INTERFACE → The client's node list → "A routed read goes to a
-   * node its need allows" — picks a server from the client's node list
-   * by the read's `need` and the fast set, opens the stream on the
-   * connection the client already holds there, and sets
-   * `state.nodeId / transport / path` to that node and connection.
-   * Returns the serving node's id beside the response so the caller
-   * can log it without a `state()` race (a check's own tip read may
-   * land between two of the caller's reads). Rejects as
-   * `MeshFetchError` of kind `transport` and triggers an immediate
-   * check when no node is allowed for the need, or when the fetch
-   * itself fails.
+   * node its need allows" — picks a server by the read's `need` and the
+   * fast set: a node reached over the mesh, as today; when none, an API
+   * base of an entry the need allows, by the same need and speed; before
+   * the first check ends, any anchor over its connection if it holds
+   * one, else at its base. Sets `state.nodeId / transport / path` to the
+   * serving node. Returns the serving node's id beside the response and
+   * the route it took so the caller can log it without a `state()` race.
+   * Rejects as `MeshFetchError` of kind `transport` and triggers an
+   * immediate check when no node is allowed for the need, or when the
+   * fetch itself fails.
    */
-  read(path: string, need: ReadNeed): Promise<{ response: Response; nodeId: string }>;
+  read(path: string, need: ReadNeed): Promise<{
+    response: Response;
+    nodeId: string;
+    route: 'mesh' | 'api';
+  }>;
+  /**
+   * MESH_INTERFACE → The client's node list → "The client's order for a
+   * need" — every node the need allows reached over the mesh, the fast
+   * set first, as `notis-mesh://<id>` bases, then the API bases of the
+   * entries it allows in the same order; before the first check ends,
+   * every anchor (its mesh base if connected, else its API base).
+   * Duplicates dropped. A write and a resolve walk this order.
+   */
+  order(need: ReadNeed): string[];
   check(): Promise<void>;
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
@@ -339,6 +404,26 @@ export interface MeshClient {
    * (anchor = trusted, byHand = true) and triggers an immediate check.
    */
   addByHand(notisId: string, addrs: string[], trusted: boolean): void;
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. An entry that is also a build
+   * anchor is not removed: anchors are the client's own trust, not
+   * something the settings row can take away. An id the list does
+   * not hold is a no-op. Refuses with `MeshConfigError` an id that
+   * is not 64 lowercase hex.
+   */
+  removeByHand(notisId: string): void;
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes
+   * to a node its need allows" — the base a routed read of the
+   * given need would use now: the first pick `read` makes, by the
+   * same order — mesh first, the fast set at random, else an API
+   * base, else an anchor before the first check ends. `null` when
+   * no node is allowed for the need. Pure — the client's state
+   * stays unchanged; no connection is opened; the random source
+   * is read once.
+   */
+  base(need: ReadNeed): string | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — the
    * addresses the client's own configuration names for the key: an
@@ -367,16 +452,28 @@ export interface MeshClient {
 }
 
 export interface StartMeshClientOptions {
-  anchors: Anchor[];
+  anchors: MeshAnchor[];
   /**
    * MESH_INTERFACE → Discovery → "Seeds" — contacts the client holds without
    * trusting them. A seed is a candidate like any node the DHT finds; no answer
    * from one makes `anchorReached` true. Addresses meet the same refusals as
    * an anchor's.
    */
-  seeds?: Anchor[];
+  seeds?: MeshAnchor[];
   network: NetworkName;
   profile: NetworkProfile;
+  /**
+   * NET_INTERFACE → Handshake — the agent name the reader's handshake
+   * declares. One string per caller: the page passes `notis-mesh-poc`,
+   * the extension its own.
+   */
+  agentName: string;
+  /**
+   * The client's own log sink; a line per unexpected event the client
+   * catches — a periodic check that threw, a state listener that threw.
+   * Absent: nothing is logged.
+   */
+  log?: (line: string) => void;
   /**
    * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
    * every per-entry deadline reads this; a clock that steps never holds a
@@ -399,6 +496,13 @@ export interface StartMeshClientOptions {
    */
   random?: () => number;
   resolve?: typeof resolveTip;
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the fetch an `http:` or `https:` URL is read with (an entry's
+   * API base and the paths the client appends to it). Default:
+   * `globalThis.fetch.bind(globalThis)`.
+   */
+  httpFetch?: HttpFetch;
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -454,7 +558,8 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   }));
 
   const random = o.random ?? Math.random;
-  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn);
+  const httpFetch = o.httpFetch ?? ((url, init) => globalThis.fetch(url, init));
+  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn, httpFetch);
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the
   // public nodes it holds" — the client holds its node list, so
   // the holder derives the ICE configuration from it. `webRTC` reads
@@ -506,10 +611,13 @@ class MeshClientImpl implements MeshClient {
   private readonly clock: () => number;
   private readonly resolveFn: typeof resolveTip;
   private readonly profile: NetworkProfile;
+  private readonly agentName: string;
+  private readonly log: ((line: string) => void) | undefined;
   private readonly nodeList: NodeList;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly state_: ClientState;
   private readonly meshFetchFn: HttpFetch;
+  private readonly httpFetchFn: HttpFetch;
   private readonly latestEventReason = new Map<string, string>();
   private readonly wallClock: () => number;
   private readonly random: () => number;
@@ -597,6 +705,7 @@ class MeshClientImpl implements MeshClient {
     wallClock: () => number,
     random: () => number,
     resolveFn: typeof resolveTip,
+    httpFetch: HttpFetch,
   ) {
     this.libp2p = node;
     this.clock = clock;
@@ -604,6 +713,9 @@ class MeshClientImpl implements MeshClient {
     this.random = random;
     this.resolveFn = resolveFn;
     this.profile = o.profile;
+    this.agentName = o.agentName;
+    this.log = o.log;
+    this.httpFetchFn = httpFetch;
     this.nodeList = new NodeList(o.anchors, ownId, clock);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
     // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
@@ -629,6 +741,10 @@ class MeshClientImpl implements MeshClient {
       checks: 0,
       traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
+      seated: false,
+      proofs: null,
+      anchor: null,
+      chain: null,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -852,7 +968,19 @@ class MeshClientImpl implements MeshClient {
     this.triggerImmediateCheck();
   }
 
-  readonly fetch: HttpFetch = (url, init) => this.meshFetchFn(url, init);
+  // MESH_INTERFACE → The mesh URL / The client's node list → "An entry may
+  // carry an API base" — route by URL scheme: `notis-mesh://…` goes over
+  // the connection the client holds to the key, `http:` / `https:` goes
+  // over `httpFetch`. Anything else is a transport failure.
+  readonly fetch: HttpFetch = (url, init) => {
+    if (url.startsWith('notis-mesh://')) return this.meshFetchFn(url, init);
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return this.httpFetchFn(url, init);
+    }
+    return Promise.reject(
+      new MeshFetchError('transport', `unsupported URL scheme: ${url}`),
+    );
+  };
 
   async check(): Promise<void> {
     if (this.checkInProgress) return this.checkInProgress;
@@ -868,33 +996,95 @@ class MeshClientImpl implements MeshClient {
     return this.checkInProgress;
   }
 
-  async read(path: string, need: ReadNeed): Promise<{ response: Response; nodeId: string }> {
-    // MESH_INTERFACE → The client's node list → "A routed read goes
-    // to a node its need allows". `usable` is the strict read pick's
-    // non-null result over the same connection list the fetch opens
-    // its stream on.
+  async read(path: string, need: ReadNeed): Promise<{
+    response: Response;
+    nodeId: string;
+    route: 'mesh' | 'api';
+  }> {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to a
+    // node its need allows", → "Over the mesh first", → "Before the first
+    // check ends an anchor serves any need". The mesh pick uses the strict
+    // read pick's non-null result over the same connection list the fetch
+    // opens its stream on; the API fallback uses the entry's api base.
     const entries = this.nodeList.entries();
-    const candidates = entries.map((e) => ({
+    const meshCandidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       usable: this.pickReadyConnection(e.notisId) !== null,
     }));
-    const picked = pickServer(candidates, need, this.random);
-    if (picked === null) {
+    const meshPicked = pickServer(meshCandidates, need, this.random);
+
+    let pickedId: string | null = null;
+    let route: 'mesh' | 'api' = 'mesh';
+    let url: string = '';
+    if (meshPicked !== null) {
+      pickedId = meshPicked;
+      route = 'mesh';
+      url = meshBaseUrl(meshPicked) + path;
+    } else {
+      // Mesh had none allowed: fall back to API bases of entries the need
+      // allows. Same need and speed rule as the mesh pick; the API entry
+      // is `usable` by virtue of holding an api, with its readMs the
+      // check's last base-read time.
+      const apiCandidates = entries
+        .filter((e) => e.api !== null)
+        .map((e) => ({
+          id: e.notisId,
+          status: e.status,
+          readMs: this.readMsMap.get(e.notisId) ?? null,
+          usable: true,
+        }));
+      const apiPicked = pickServer(apiCandidates, need, this.random);
+      if (apiPicked !== null) {
+        const entry = entries.find((e) => e.notisId === apiPicked);
+        // `pickServer` picks only from the candidates list, which was
+        // built from entries carrying `api !== null` — the find is
+        // known to answer, and the exclamation is defensive.
+        if (entry && entry.api !== null) {
+          pickedId = apiPicked;
+          route = 'api';
+          url = entry.api + path;
+        }
+      }
+    }
+
+    // MESH_INTERFACE → The client's node list → "Before the first check
+    // ends an anchor serves any need". Status alone does not refuse
+    // here — but `blacklisted` always does (the "lie" row stays "never
+    // a candidate" at every stage).
+    const firstCheckEnded = this.state_.checks > 0;
+    if (pickedId === null && !firstCheckEnded) {
+      for (const e of entries) {
+        if (!e.anchor) continue;
+        if (e.status === 'blacklisted') continue;
+        if (this.pickReadyConnection(e.notisId) !== null) {
+          pickedId = e.notisId;
+          route = 'mesh';
+          url = meshBaseUrl(e.notisId) + path;
+          break;
+        } else if (e.api !== null) {
+          pickedId = e.notisId;
+          route = 'api';
+          url = e.api + path;
+          break;
+        }
+      }
+    }
+
+    if (pickedId === null) {
       // Trigger a check so the next read may find an allowed node.
       // During a running check (phase 5's own tip read) the trigger
       // is a no-op — `checkInProgress !== null`.
       this.triggerImmediateCheck();
       throw new MeshFetchError('transport', `no node allowed for a ${need} read`);
     }
-    const url = meshBaseUrl(picked) + path;
     try {
-      const response = await this.meshFetchFn(url, undefined);
-      this.state_.nodeId = picked;
+      const response = await this.fetch(url, undefined);
+      this.state_.nodeId = pickedId;
       this.refreshTransportPath();
       this.emitStateChange();
-      return { response, nodeId: picked };
+      return { response, nodeId: pickedId, route };
     } catch (e) {
       // MESH_INTERFACE → The client's node list → "A read opens no
       // connection" — "a failed routed read runs a check at once,
@@ -904,13 +1094,43 @@ class MeshClientImpl implements MeshClient {
     }
   }
 
+  order(need: ReadNeed): string[] {
+    const entries = this.nodeList.entries();
+    const firstCheckEnded = this.state_.checks > 0;
+    const candidates: OrderCandidate[] = entries.map((e) => ({
+      id: e.notisId,
+      status: e.status,
+      readMs: this.readMsMap.get(e.notisId) ?? null,
+      meshUsable: this.pickReadyConnection(e.notisId) !== null,
+      anchor: e.anchor,
+      api: e.api,
+      meshBase: meshBaseUrl(e.notisId),
+    }));
+    return orderServers(candidates, need, firstCheckEnded);
+  }
+
   state(): ClientState {
+    // MESH_INTERFACE → The client's node list → "The client's chain";
+    // WEB_INTERFACE → The extension → "The verified figures" → "The anchor",
+    // → "The chain's name" — `seated`, `anchor` and `chain` are the chain's
+    // own answers, read off the live `HeldChain` so a gossiped block linked
+    // between a write and a read of state carries through to `onState`.
+    const seated = this.chain.settled();
+    const tipHdr = this.chain.tip();
+    const suffixHeadHdr = this.chain.suffixHead();
+    const anchor: Anchor | null = tipHdr !== null && suffixHeadHdr !== null
+      ? { tip: tipHdr, suffixHead: suffixHeadHdr }
+      : null;
+    const chain = this.chain.block1Hash();
     return {
       ...this.state_,
       nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections(), {
         readMs: this.readMsMap,
         behindBy: this.behindByMap,
       }),
+      seated,
+      anchor,
+      chain,
     };
   }
 
@@ -958,6 +1178,66 @@ class MeshClientImpl implements MeshClient {
     }
     this.nodeList.addByHand(notisId, addrs, trusted);
     this.triggerImmediateCheck();
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
+   * entry a reader added by hand. A build anchor is never removed:
+   * the `NodeList.removeByHand` check guards that. Refuses with
+   * `MeshConfigError` an id that is not 64 lowercase hex, then
+   * delegates; an id the list does not hold is a no-op.
+   */
+  removeByHand(notisId: string): void {
+    if (!HEX64_RE.test(notisId)) {
+      throw new MeshConfigError(`removeByHand key refused: ${notisId} is not 64 lowercase hex characters`);
+    }
+    this.nodeList.removeByHand(notisId);
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A routed read goes
+   * to a node its need allows" — the base a routed read of the
+   * given need would use now. Mirrors `read`'s pick: mesh first,
+   * the fast set at random, else an API base, else an anchor
+   * before the first check ends. `null` when no node is allowed.
+   */
+  base(need: ReadNeed): string | null {
+    const entries = this.nodeList.entries();
+    const meshCandidates = entries.map((e) => ({
+      id: e.notisId,
+      status: e.status,
+      readMs: this.readMsMap.get(e.notisId) ?? null,
+      usable: this.pickReadyConnection(e.notisId) !== null,
+    }));
+    const meshPicked = pickServer(meshCandidates, need, this.random);
+    if (meshPicked !== null) return meshBaseUrl(meshPicked);
+
+    const apiCandidates = entries
+      .filter((e) => e.api !== null)
+      .map((e) => ({
+        id: e.notisId,
+        status: e.status,
+        readMs: this.readMsMap.get(e.notisId) ?? null,
+        usable: true,
+      }));
+    const apiPicked = pickServer(apiCandidates, need, this.random);
+    if (apiPicked !== null) {
+      const entry = entries.find((e) => e.notisId === apiPicked);
+      if (entry && entry.api !== null) return entry.api;
+    }
+
+    const firstCheckEnded = this.state_.checks > 0;
+    if (!firstCheckEnded) {
+      for (const e of entries) {
+        if (!e.anchor) continue;
+        if (e.status === 'blacklisted') continue;
+        if (this.pickReadyConnection(e.notisId) !== null) {
+          return meshBaseUrl(e.notisId);
+        }
+        if (e.api !== null) return e.api;
+      }
+    }
+    return null;
   }
 
   /**
@@ -1023,8 +1303,7 @@ class MeshClientImpl implements MeshClient {
           // A check that threw is a bug — `runCheck` catches each phase's
           // own failures. Log it and carry on: the periodic cadence keeps
           // the client alive, and the next check sees the current state.
-          // eslint-disable-next-line no-console
-          console.error('[mesh-client] check threw', e);
+          this.log?.(`[mesh-client] check threw: ${messageOf(e)}`);
         })
         .finally(() => this.scheduleNextCheck(CHECK_INTERVAL_MS));
     }, ms);
@@ -1039,16 +1318,32 @@ class MeshClientImpl implements MeshClient {
       if (e.status === 'ok' || e.status === 'trailing') okTrailingBefore.add(e.notisId);
     }
 
+    // WEB_INTERFACE → The extension → "The verified tip" — the last check's
+    // proof reads, accumulated across every `resolveFn` call in phase 4; the
+    // field is written at end-of-check only when `asked > 0`, so a check that
+    // places every tip and reads no proof leaves the previous value standing.
+    const proofsThisCheck = { asked: 0, verified: 0, invalid: 0, tooShort: 0 };
+
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
     // address instead of folded into a generic transport failure.
     // MESH_INTERFACE → Block gossip → "A client is a reader of every
     // node it holds a connection to" — phase 1 and phase 2 drop a
     // candidate whose handshake answered with no chain service.
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — an entry with api but no addrs still needs no dial;
+    // one with addrs whose dial fails and no api is skipped as before;
+    // a retry entry's mesh dial waits for its retry window even when
+    // it carries an api (the api read takes the retry window's place
+    // in phase 2).
     const beforeIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
+    const nowMsPhase1 = this.clock();
     for (const id of beforeIds) {
       if (this.stopped) break;
       if (this.hasOpenConnection(id)) continue;
+      const entry = this.nodeList.entry(id);
+      if (!entry || entry.addrs.length === 0) continue; // api-only or no addresses: no dial
+      if (entry.status === 'retry' && nowMsPhase1 < entry.retryAtMs) continue;
       await this.dialByAddresses(id);
     }
 
@@ -1059,12 +1354,29 @@ class MeshClientImpl implements MeshClient {
     // until phase 4 finishes (MESH_INTERFACE → The client's node list
     // → "A check"). A failure is a transport/timeout/refused
     // failure; a body-level overflow or unparse, or a shape that is
-    // not a tip, is a `malformed` lie — the lie row of
-    // MESH_INTERFACE → The client's node list.
+    // not a tip, is a `malformed` event — on the mesh a lie, at an API
+    // base a `retry` (the client's node-list table's API-base row).
+    //
+    // After phase 1, pick each candidate's base: its mesh base when the
+    // client holds a ready (handshake-passed) connection to it, else
+    // its API base where it has one. The map is used by the timed fetch
+    // to attribute speed and bytes to the right entry, and by phase 4's
+    // `urlToHash` loop to read the id back from the URL `resolveTip`
+    // echoes (MESH_INTERFACE → The client's node list → "An entry may
+    // carry an API base" — "Every place the check maps a URL back to
+    // its entry … maps an API base's URL to its entry too, by the base
+    // the check asked, never by parsing a key out of it").
     const afterIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
+    const baseById = new Map<string, { url: string; route: 'mesh' | 'api' }>();
+    const idByBase = new Map<string, string>();
+    for (const id of afterIds) {
+      const base = this.checkBase(id);
+      baseById.set(id, base);
+      idByBase.set(base.url, id);
+    }
     const pendingReadMs = new Map<string, number>();
     const pendingBehindBy = new Map<string, number | null>();
-    const timedFetch = this.makeTimedFetch(pendingReadMs);
+    const timedFetch = this.makeTimedFetch(pendingReadMs, idByBase);
     const perNodeVerdict = new Map<string, 'on' | 'off' | 'none'>();
     for (const id of afterIds) perNodeVerdict.set(id, 'none');
 
@@ -1072,20 +1384,20 @@ class MeshClientImpl implements MeshClient {
     const tipReads: TipRead[] = [];
     for (const id of afterIds) {
       if (this.stopped) break;
-      const url = meshBaseUrl(id);
+      const base = baseById.get(id)!; // `afterIds` is the key set of `baseById`
       let response: Response;
       try {
-        response = await timedFetch(url + '/blocks/current', undefined);
+        response = await timedFetch(base.url + '/blocks/current', undefined);
       } catch (e) {
         // MESH_INTERFACE → Block gossip → "A client is a reader of
         // every node it holds a connection to" — a handshake with no
         // chain service leaves the entry unread; no failure event.
         if (e instanceof HandshakeNoChainServiceError) continue;
         const message = e instanceof Error ? e.message : String(e);
-        this.applyEvent({ id, ev: 'failure', kind: 'transport', message });
+        this.applyEvent({ id, ev: 'failure', kind: 'transport', message }, base.route);
         continue;
       }
-      const cls = await this.classifyTipRead(response, id);
+      const cls = await this.classifyTipRead(response, id, base.route);
       if (cls.kind === 'tip') {
         tipReads.push({ id, height: cls.height, hash: cls.hash });
       }
@@ -1113,12 +1425,13 @@ class MeshClientImpl implements MeshClient {
       if (placement !== 'above') continue; // placed by an earlier fill
       const gap = read.height - chainTipNow.height;
       if (gap > DEFAULT_K) continue; // more than k above — stays unplaced for phase 4
+      const base = baseById.get(read.id)!;
       const headers: BlockHeader[] = [];
       let fillAborted = false;
       for (let h = read.height; h > chainTipNow.height; h -= 1) {
-        const result = await this.readHeaderAt(read.id, h, timedFetch);
+        const result = await this.readHeaderAt(base.url, h, timedFetch);
         if (result.kind !== 'header') {
-          this.applyHeaderReadFailure(read.id, result);
+          this.applyHeaderReadFailure(read.id, result, base.route);
           fillAborted = true;
           break;
         }
@@ -1171,9 +1484,10 @@ class MeshClientImpl implements MeshClient {
       if (placements.get(read.id) !== 'under') continue;
       const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
       if (firstAtTip === null) continue;
-      const result = await this.readHeaderAt(firstAtTip, read.height, timedFetch);
+      const base = baseById.get(firstAtTip)!;
+      const result = await this.readHeaderAt(base.url, read.height, timedFetch);
       if (result.kind !== 'header') {
-        this.applyHeaderReadFailure(firstAtTip, result);
+        this.applyHeaderReadFailure(firstAtTip, result, base.route);
         continue;
       }
       if (blockHash(result.header) === read.hash) {
@@ -1222,10 +1536,15 @@ class MeshClientImpl implements MeshClient {
 
     while (!this.stopped) {
       const passUrls: string[] = [];
-      // The own-tip URL first, while the chain is settled.
+      // The own-tip URL first, while the chain is settled. The base is
+      // whichever route placed the node at tip this check — mesh if
+      // dialled, API if not (baseById).
       if (this.chain.settled()) {
         const firstAtTip = this.firstNodeAtChainTip(placedAtTip);
-        if (firstAtTip !== null) passUrls.push(meshBaseUrl(firstAtTip));
+        if (firstAtTip !== null) {
+          const base = baseById.get(firstAtTip)!;
+          passUrls.push(base.url);
+        }
       }
       // Next untried node for each hash still without a verified
       // result.
@@ -1236,9 +1555,9 @@ class MeshClientImpl implements MeshClient {
         const next = ids.find((id) => !tried.has(id));
         if (next === undefined) continue;
         tried.add(next);
-        const url = meshBaseUrl(next);
-        passUrls.push(url);
-        urlToHash.set(url, hash);
+        const base = baseById.get(next)!;
+        passUrls.push(base.url);
+        urlToHash.set(base.url, hash);
         anyReplacement = true;
       }
       if (!anyReplacement) break;
@@ -1255,25 +1574,45 @@ class MeshClientImpl implements MeshClient {
         timedFetch,
       );
 
+      // WEB_INTERFACE → The extension → "The verified tip" — count this
+      // resolveFn's reads into the check's running total. `asked` is the
+      // nodes asked, `verified`, `invalid` and `tooShort` the classes the
+      // verdict's rows 2 and 3 read.
+      for (const n of result.nodes) {
+        proofsThisCheck.asked += 1;
+        if (n.verified) proofsThisCheck.verified += 1;
+        if (n.refuseCode === 'invalid') proofsThisCheck.invalid += 1;
+        if (n.refuseCode === 'too-short') proofsThisCheck.tooShort += 1;
+      }
+
       const nowMs = this.clock();
       for (const n of result.nodes) {
-        const nid = idOfMeshUrl(n.url);
+        // MESH_INTERFACE → The client's node list → "An entry may carry
+        // an API base" — map the URL back to its entry by the base the
+        // check asked, never by parsing a key out of it. `idByBase`
+        // holds every base this check used; a URL outside it falls to
+        // `idOfMeshUrl` for a mesh URL, else a bug upstream.
+        const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
+        const route = baseById.get(nid)?.route ?? 'mesh';
         pendingBehindBy.set(nid, n.behind);
         const event = tipEvent(nid, n, nowMs);
-        this.applyEvent(event);
+        this.applyEvent(event, route);
 
         if (n.verified) {
           const hash = urlToHash.get(n.url);
           if (hash !== undefined) {
             verifiedHashes.add(hash);
             // Propagate the queried node's event to every other id
-            // that named the same hash.
+            // that named the same hash. Each other id's route is
+            // its own base's — a propagated verdict must still
+            // downgrade a lie at its own API base.
             const ids = groups.get(hash) ?? [];
             const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
             perNodeVerdict.set(nid, verdict);
             for (const otherId of ids) {
               if (otherId === nid) continue;
-              this.applyEvent({ ...event, id: otherId });
+              const otherRoute = baseById.get(otherId)?.route ?? 'mesh';
+              this.applyEvent({ ...event, id: otherId }, otherRoute);
               pendingBehindBy.set(otherId, n.behind);
               perNodeVerdict.set(otherId, verdict);
             }
@@ -1355,13 +1694,22 @@ class MeshClientImpl implements MeshClient {
       if (!seenHashes.has(h)) this.keptVerdicts.delete(h);
     }
 
+    // MESH_INTERFACE → The client's node list → "A routed read goes
+    // to a node its need allows" — "how many checks it has completed,
+    // so a reader can tell one check's state from the next". The
+    // counter increments once per `runCheck`; it moves BEFORE the
+    // routed tip read below so the read sees the first-check-ended
+    // branch of `order` and `read` (the before-first-check anchor
+    // fallback never fires from inside the check itself).
+    this.state_.checks += 1;
+
     // The routed tip read runs the classification so a failure or a lie
     // moves the serving node (MESH_INTERFACE → The client's node list);
     // `state.tip` is the client's chain's (→ "The client's chain"), set
     // below.
     try {
       const tipRead = await this.read('/blocks/current', 'tip');
-      await this.classifyTipRead(tipRead.response, tipRead.nodeId);
+      await this.classifyTipRead(tipRead.response, tipRead.nodeId, tipRead.route);
     } catch (e) {
       // A MeshFetchError (no allowed node, or a fetch failure) is a
       // no-op here: state.tip comes from the chain. A throw from
@@ -1409,12 +1757,12 @@ class MeshClientImpl implements MeshClient {
     this.state_.agreement = agreementCounts(entries);
 
     this.state_.anchorReached = this.nodeList.anchorReached();
-    // MESH_INTERFACE → The client's node list → "A routed read goes
-    // to a node its need allows" — "how many checks it has completed,
-    // so a reader can tell one check's state from the next". The
-    // counter increments once at the end of `runCheck`, so a waiter
-    // that reads `checks > baseline` sees exactly one completed check.
-    this.state_.checks += 1;
+    // WEB_INTERFACE → The extension → "The verified tip" — the field keeps
+    // the last check's that read one, so a check that placed every tip and
+    // read no proof leaves `proofs` standing.
+    if (proofsThisCheck.asked > 0) {
+      this.state_.proofs = proofsThisCheck;
+    }
     this.emitStateChange();
   }
 
@@ -1435,11 +1783,11 @@ class MeshClientImpl implements MeshClient {
    * `classifyTipRead` makes is shared through `classifyNonOkRead`.
    */
   private async readHeaderAt(
-    nodeId: string,
+    baseUrl: string,
     height: number,
     timedFetch: HttpFetch,
   ): Promise<HeaderReadResult> {
-    const url = meshBaseUrl(nodeId) + `/blocks/${String(height)}`;
+    const url = baseUrl + `/blocks/${String(height)}`;
     let response: Response;
     try {
       response = await timedFetch(url, undefined);
@@ -1458,6 +1806,26 @@ class MeshClientImpl implements MeshClient {
     const header = headerFromJson(data['header']);
     if (header === null) return { kind: 'lie', detail: 'header shape invalid' };
     return { kind: 'header', header };
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "An entry may carry an API
+   * base" — the base a check reads an id at, with its route: the mesh
+   * base when the client holds an open connection to the key (the timed
+   * fetch awaits the handshake there — the handshake belongs to the
+   * connection, not the read), else the entry's api when it has one,
+   * else the mesh base again so the read fails as transport by the
+   * retry row (no api means no API-base route; the dial already failed).
+   */
+  private checkBase(id: string): { url: string; route: 'mesh' | 'api' } {
+    if (this.hasOpenConnection(id)) {
+      return { url: meshBaseUrl(id), route: 'mesh' };
+    }
+    const entry = this.nodeList.entry(id);
+    if (entry && entry.api !== null) {
+      return { url: entry.api, route: 'api' };
+    }
+    return { url: meshBaseUrl(id), route: 'mesh' };
   }
 
   /**
@@ -1490,13 +1858,20 @@ class MeshClientImpl implements MeshClient {
    * `headerBytes`, a `/nipopow/proof/...` read's in `proofBytes`, and
    * one `proofReads` fires at the start of each proof read.
    */
-  private makeTimedFetch(target: Map<string, number>): HttpFetch {
+  private makeTimedFetch(
+    target: Map<string, number>,
+    idByBase: ReadonlyMap<string, string> = new Map<string, string>(),
+  ): HttpFetch {
     return async (url, init) => {
-      // The URL is a `meshBaseUrl(id)` + path — `idOfMeshUrl` and
-      // `pathOfMeshUrl` throwing here is a bug upstream, so the throw
-      // propagates.
-      const id = idOfMeshUrl(url);
-      const path = pathOfMeshUrl(url);
+      // MESH_INTERFACE → The client's node list → "An entry may carry an
+      // API base" — the URL may be a mesh URL or an http(s) one the
+      // check asked at an entry's api base. `idByBase` holds every base
+      // this check used (populated in `runCheck` before this helper
+      // runs); a URL outside the map falls to `idOfMeshUrl` (bug
+      // upstream for an http URL that was not registered).
+      const baseAndPath = splitBaseAndPath(url);
+      const id = idByBase.get(baseAndPath.base) ?? idOfMeshUrl(url);
+      const path = baseAndPath.path;
       const bytesBucket: keyof ClientTraffic | null =
         path === '/blocks/current' ? 'tipBytes'
         : path.startsWith('/blocks/') ? 'headerBytes'
@@ -1507,11 +1882,11 @@ class MeshClientImpl implements MeshClient {
       }
       const recordReadMs = path === '/blocks/current';
       // MESH_INTERFACE → The client's node list → "A check" — "timed
-      // from the request to the end of the body". The connection's
-      // handshake is the connection's, not the read's, so the clock
-      // starts once it is done; the inner `this.fetch` awaits the
-      // same handshake, resolved at once here.
-      await this.awaitHandshakeForNode(id);
+      // from the request to the end of the body". For a mesh URL the
+      // connection's handshake is the connection's, not the read's, so
+      // the clock starts once it is done; an API-base URL opens no
+      // connection, so there is no handshake to await.
+      if (url.startsWith('notis-mesh://')) await this.awaitHandshakeForNode(id);
       const startMs = this.clock();
       const response = await this.fetch(url, init);
       if (!response.body) {
@@ -1558,7 +1933,7 @@ class MeshClientImpl implements MeshClient {
     };
   }
 
-  private applyEvent(ev: TipEvent): void {
+  private applyEvent(ev: TipEvent, route: 'mesh' | 'api' = 'mesh'): void {
     switch (ev.ev) {
       case 'success':
         this.nodeList.success(ev.id);
@@ -1577,8 +1952,20 @@ class MeshClientImpl implements MeshClient {
         this.latestEventReason.set(ev.id, ev.message ? `failure: ${ev.kind}: ${ev.message}` : `failure: ${ev.kind}`);
         break;
       case 'lie':
-        this.nodeList.lie(ev.id, ev.evidence);
-        this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
+        // MESH_INTERFACE → The client's node list — the API-base row:
+        // "a malformed answer, a proof that fails verification … the
+        // same at an entry's API base — the host, not the key —
+        // HTTPS authenticates a name, never a node key — `retry`, as
+        // a transport failure; never `blacklisted`". The evidence
+        // detail rides as the failure's message so the page shows why.
+        if (route === 'api') {
+          const detail = `api ${ev.evidence.kind}: ${ev.evidence.detail}`;
+          this.nodeList.failure(ev.id, 'transport', detail);
+          this.latestEventReason.set(ev.id, `failure: transport: ${detail}`);
+        } else {
+          this.nodeList.lie(ev.id, ev.evidence);
+          this.latestEventReason.set(ev.id, `lie: ${ev.evidence.kind}`);
+        }
         break;
     }
   }
@@ -1762,6 +2149,7 @@ class MeshClientImpl implements MeshClient {
   private async classifyTipRead(
     response: Response,
     nodeId: string,
+    route: 'mesh' | 'api' = 'mesh',
   ): Promise<TipClassification> {
     const r = await readCappedJson<unknown>(response, HEIGHT_READ_BYTES);
     const nowMs = this.clock();
@@ -1772,10 +2160,10 @@ class MeshClientImpl implements MeshClient {
           id: nodeId,
           ev: 'lie',
           evidence: { kind: 'malformed', atMs: nowMs, detail: c.detail },
-        });
+        }, route);
         return { kind: 'lie' };
       }
-      this.applyEvent({ id: nodeId, ev: 'failure', kind: c.failureKind });
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: c.failureKind }, route);
       return { kind: 'failure' };
     }
     if (!isTipShape(r.data)) {
@@ -1783,7 +2171,7 @@ class MeshClientImpl implements MeshClient {
         id: nodeId,
         ev: 'lie',
         evidence: { kind: 'malformed', atMs: nowMs, detail: 'tip shape invalid' },
-      });
+      }, route);
       return { kind: 'lie' };
     }
     return { kind: 'tip', height: r.data.height, hash: r.data.hash };
@@ -1799,15 +2187,16 @@ class MeshClientImpl implements MeshClient {
   private applyHeaderReadFailure(
     nodeId: string,
     result: Extract<HeaderReadResult, { kind: 'failure' } | { kind: 'lie' }>,
+    route: 'mesh' | 'api' = 'mesh',
   ): void {
     if (result.kind === 'failure') {
-      this.applyEvent({ id: nodeId, ev: 'failure', kind: result.failureKind, message: result.message });
+      this.applyEvent({ id: nodeId, ev: 'failure', kind: result.failureKind, message: result.message }, route);
     } else {
       this.applyEvent({
         id: nodeId,
         ev: 'lie',
         evidence: { kind: 'malformed', atMs: this.clock(), detail: result.detail },
-      });
+      }, route);
     }
   }
 
@@ -1869,7 +2258,7 @@ class MeshClientImpl implements MeshClient {
     const result = await readerHandshake(conn, {
       magic: this.profile.magic,
       protocolVersion: PROTOCOL_VERSION,
-      agentName: 'notis-mesh-poc',
+      agentName: this.agentName,
       chainHeight,
       timeoutMs: 10_000,
     });
@@ -1938,8 +2327,7 @@ class MeshClientImpl implements MeshClient {
         // A listener's own throw must not take the client down nor silence
         // the next one — log it (a listener that throws is a bug) and
         // carry on. The state write already happened.
-        // eslint-disable-next-line no-console
-        console.error('[mesh-client] onState listener threw', e);
+        this.log?.(`[mesh-client] onState listener threw: ${messageOf(e)}`);
       }
     }
   }
@@ -1978,18 +2366,26 @@ type HeaderReadResult =
   | { kind: 'lie'; detail: string };
 
 /**
- * The path portion of a mesh URL — everything from the first `/`
- * after the `notis-mesh://<id>` prefix, or the empty string when
- * there is no path (`meshBaseUrl(id)` alone). Throws `MeshUrlError`
- * on anything other than a mesh URL — `idOfMeshUrl` does the same
- * for the id.
+ * Split a mesh or http(s) URL into its base (`notis-mesh://<id>` or
+ * `<scheme>://<host>[:<port>]`) and its path (starting with `/`). The
+ * fragments are the pair `urlToHash` and `idByBase` walk — a consistent
+ * split for either scheme, so the check's traffic bucket and its
+ * speed-record key read the same way whichever route served the read.
  */
-function pathOfMeshUrl(url: string): string {
-  const SCHEME = 'notis-mesh://';
-  if (!url.startsWith(SCHEME)) return '';
-  const rest = url.slice(SCHEME.length);
-  const slash = rest.indexOf('/');
-  return slash === -1 ? '' : rest.slice(slash);
+function splitBaseAndPath(url: string): { base: string; path: string } {
+  if (url.startsWith('notis-mesh://')) {
+    const rest = url.slice('notis-mesh://'.length);
+    const slash = rest.indexOf('/');
+    if (slash === -1) return { base: url, path: '' };
+    return { base: 'notis-mesh://' + rest.slice(0, slash), path: rest.slice(slash) };
+  }
+  // http(s)://host[:port]/path — find the first '/' after the scheme's `//`.
+  const schemeEnd = url.indexOf('://');
+  if (schemeEnd === -1) return { base: url, path: '' };
+  const after = schemeEnd + 3;
+  const slash = url.indexOf('/', after);
+  if (slash === -1) return { base: url, path: '' };
+  return { base: url.slice(0, slash), path: url.slice(slash) };
 }
 
 /**

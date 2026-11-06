@@ -18,3 +18,9 @@ export const POLICY_KEY = 'notis.signPolicy';
 /** The unlocked seed in hex, in `storage.session`
  *  (WEB_INTERFACE → The extension → "The contexts, and what each may hold"). */
 export const SEED_KEY = 'notis.seed';
+
+/** The hand-added node's address, in `localStorage` — the address a node prints
+ *  at start, held by the page and handed to the mesh client as an anchor at
+ *  load (WEB_INTERFACE → The settings window → "In the extension the row adds a
+ *  node by hand"; MESH_INTERFACE → Discovery → "A node added by hand"). */
+export const HAND_NODE_KEY = 'notis.node.hand';

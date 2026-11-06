@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeOrderingBlock,
+  generateKeyPair,
   MAGIC_DEVNET,
   PROTOCOL_VERSION,
   profileFor,
@@ -18,10 +19,10 @@ import {
 import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock } from '@dagsocial/types';
 import { asertTargetBits, blockHash } from '@dagsocial/validation';
 import { verifierProfile } from '@dagsocial/nipopow-client';
-import { gossipTopics } from '@dagsocial/net/browser';
+import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
-import { startMeshClient, type MeshClient } from '../src/client/mesh-client.js';
+import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
 
@@ -128,6 +129,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -182,6 +184,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -235,6 +238,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -289,6 +293,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -336,6 +341,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -374,6 +380,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls) => {
         resolveUrls.push([...urls]);
         return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
@@ -437,6 +444,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: otherNode.id, addrs: [otherNode.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -478,6 +486,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
     });
     clients.push(client);
@@ -524,6 +533,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
     });
     clients.push(client);
@@ -591,6 +601,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -646,6 +657,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -705,6 +717,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -761,6 +774,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -808,6 +822,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b2.id, addrs: [b2.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -871,6 +886,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -918,6 +934,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -962,6 +979,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => {
         resolveUrls.push([...urls]);
         return underlying(urls, ...rest);
@@ -1002,6 +1020,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1055,6 +1074,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1106,6 +1126,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1157,6 +1178,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1225,6 +1247,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: c.id, addrs: [c.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1289,6 +1312,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: d.id, addrs: [d.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: async (urls, ...rest) => { resolveUrls.push([...urls]); return underlying(urls, ...rest); },
     });
     clients.push(client);
@@ -1355,6 +1379,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1412,6 +1437,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1449,6 +1475,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
     });
     clients.push(client);
@@ -1485,6 +1512,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const client = await startMeshClient({
       anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
     });
     clients.push(client);
@@ -1552,6 +1580,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
         { notisId: x.id, addrs: [x.webrtcAddr] },
       ],
       network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
       resolve,
     });
     clients.push(client);
@@ -1583,4 +1612,310 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // suffix.
     expect(client.state().tip?.height).toBe(K + 2);
   }, 180_000);
+
+  it('seated, anchor and chain move with the chain', async () => {
+    // WEB_INTERFACE → The extension → "The verified figures" → "The anchor";
+    // WEB_INTERFACE → The extension → "The chain's name" — after the first
+    // check `state.seated` is true, `state.anchor` names the proof's tip and
+    // its suffix head, and `state.chain` is the proof's genesisHash (block
+    // 1's blockHash). After a gossiped block links, both ends of the anchor
+    // move by one. The HeldChain's `k` is `DEFAULT_K`, so the proof must carry
+    // that many suffix headers for the window to settle full and the suffix
+    // head to be non-null.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+
+    const chainsNow: { a: OrderingBlock[]; b: OrderingBlock[] } = { a: chain, b: chain };
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id)) return chainsNow.a;
+      if (url.includes(b.id)) return chainsNow.b;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr] },
+        { notisId: b.id, addrs: [b.webrtcAddr] },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+
+    // Before any check: no anchor, no chain, not seated.
+    const before = client.state();
+    expect(before.seated).toBe(false);
+    expect(before.anchor).toBeNull();
+    expect(before.chain).toBeNull();
+
+    await client.check(); // settle at K_DEFAULT + 1
+    const s1 = client.state();
+    expect(s1.seated).toBe(true);
+    // The anchor's tip is the proof's tip header; `chainResolve`'s proof is
+    // the chain's last `K_DEFAULT` headers, so the tip header is
+    // `chain[K_DEFAULT]` (height K_DEFAULT + 1) and the suffix head is
+    // `chain[chain.length - K_DEFAULT]` (height 2).
+    expect(s1.anchor).not.toBeNull();
+    expect(s1.anchor!.tip.height).toBe(K_DEFAULT + 1);
+    expect(s1.anchor!.suffixHead.height).toBe(2);
+    expect(blockHash(s1.anchor!.tip)).toBe(blockHash(chain[K_DEFAULT]!.header));
+    expect(blockHash(s1.anchor!.suffixHead)).toBe(blockHash(chain[1]!.header));
+    // The chain name is the proof's genesisHash — blockHash of block 1.
+    expect(s1.chain).toBe(blockHash(chain[0]!.header));
+
+    // Gossip one block linked onto the tip. Build it off `chain[K_DEFAULT]`
+    // and publish from A's mesh node so the client's gossip handler links it.
+    const extraBlock = makeChildBlock(
+      chain[K_DEFAULT]!.header,
+      chain[0]!.header.createdAt,
+      PROFILE,
+    );
+    const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
+    await vi.waitFor(() => {
+      expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
+        .toContain(a.libp2p.peerId.toString());
+      expect(pubsubOf(a.libp2p).getMeshPeers(TOPIC))
+        .toContain(client.libp2p.peerId.toString());
+    }, { timeout: 60_000, interval: 300 });
+    await pubsubOf(a.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K_DEFAULT + 2);
+    }, { timeout: 15_000, interval: 50 });
+
+    const s2 = client.state();
+    // After the link, each end of the anchor is one higher.
+    expect(s2.anchor).not.toBeNull();
+    expect(s2.anchor!.tip.height).toBe(s1.anchor!.tip.height + 1);
+    expect(s2.anchor!.suffixHead.height).toBe(s1.anchor!.suffixHead.height + 1);
+    // The chain's name does not change — the block 1 is the same.
+    expect(s2.chain).toBe(s1.chain);
+  }, 180_000);
+
+  // MESH_INTERFACE → The client's node list → "An entry may carry an API
+  // base" — an anchor the list gives one is read there over HTTPS wherever
+  // the client holds no connection to its key. These cases pin the four
+  // rules the brief names: mesh-first with an API-base fallback, the
+  // before-first-check anchor, an API-base lie as `retry`, and one
+  // entry per key whichever way it answered.
+  it('every mesh dial failing: the first read routes to api, the check seats, proofs land at the bases', async () => {
+    // MESH_INTERFACE → The client's node list → "A routed read goes to a
+    // node its need allows" / → "An entry may carry an API base" — each
+    // anchor's `addrs` names a closed port (nothing listens there), so
+    // every mesh dial fails; each anchor's `api` is the chain harness's
+    // own HTTP URL. The first `read('/blocks/current','tip')` answers
+    // with `route: 'api'` before the first check ends; the check reads
+    // tips and proofs at those bases and seats the chain.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const kA = nodeKeyFromKeyPair(generateKeyPair());
+    const kB = nodeKeyFromKeyPair(generateKeyPair());
+    const closedAddrA = fakeWebrtcAddr('127.0.0.1', 1, kA.notisId);
+    const closedAddrB = fakeWebrtcAddr('127.0.0.1', 1, kB.notisId);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.startsWith(upA.base) || url.startsWith(upB.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: kA.notisId, addrs: [closedAddrA], api: upA.base },
+        { notisId: kB.notisId, addrs: [closedAddrB], api: upB.base },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    // The before-first-check anchor fallback answers routed reads over
+    // the API base — no node has a connection yet, so the first read
+    // must land at an API before the first check ends.
+    const startedAtMs = Date.now();
+    const first = await client.read('/blocks/current', 'tip');
+    expect(Date.now() - startedAtMs).toBeLessThan(10_000);
+    expect(first.route).toBe('api');
+    expect([kA.notisId, kB.notisId]).toContain(first.nodeId);
+    expect(first.response.ok).toBe(true);
+
+    await client.check();
+    const s1 = client.state();
+    expect(s1.seated).toBe(true);
+    // Proofs counted for the API-base reads too — "`ClientState.proofs`
+    // counts the proofs read at a base as it counts those read over
+    // the mesh".
+    expect(s1.proofs).not.toBeNull();
+    expect(s1.proofs!.verified).toBeGreaterThanOrEqual(1);
+    // The agreement-on-chain count names at least one entry, and the
+    // chain name is this chain's genesis.
+    expect(s1.agreement!.onChain).toBeGreaterThanOrEqual(1);
+    expect(s1.chain).toBe(blockHash(chain[0]!.header));
+  }, 60_000);
+
+  it('a read before the first check ends is served by an anchor at its API base', async () => {
+    // MESH_INTERFACE → The client's node list → "Before the first check
+    // ends an anchor serves any need" — with no check yet completed the
+    // read reaches the anchor's api, not a transport failure.
+    const chain = makeLinkedChain(5, PROFILE);
+    const up = await chainUpstream(chain); ups.push(up);
+    const k = nodeKeyFromKeyPair(generateKeyPair());
+    const closedAddr = fakeWebrtcAddr('127.0.0.1', 1, k.notisId);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.startsWith(up.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: k.notisId, addrs: [closedAddr], api: up.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, 5),
+    });
+    clients.push(client);
+    // The state has not seen a check complete yet.
+    expect(client.state().checks).toBe(0);
+    const r = await client.read('/blocks/current', 'tip');
+    expect(r.route).toBe('api');
+    expect(r.nodeId).toBe(k.notisId);
+    const body = await r.response.json();
+    expect(body).toMatchObject({ height: chain.length });
+  }, 60_000);
+
+  it("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — a dial whose certhash does not match the peer's
+    // fails as transport, and the entry falls back to its api. The
+    // reachable anchor's reads stay on the mesh. The route the client
+    // picks is
+    // visible on each entry's `transport`/`path` pair.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const upA = await chainUpstream(chain); ups.push(upA);
+    const upB = await chainUpstream(chain); ups.push(upB);
+    const dA = mkdtempSync(join(tmpdir(), 'cbt-api-')); dirs.push(dA);
+    const dB = mkdtempSync(join(tmpdir(), 'cbt-api-')); dirs.push(dB);
+    const a = await startNode(upA, dA); nodes.push(a.node);
+    const b = await startNode(upB, dB); nodes.push(b.node);
+    // B's addr with a scrambled certhash: dial fails at WebRTC-direct's
+    // certhash check, which `applyEvent` records as transport.
+    const bBogusAddr = fakeWebrtcAddr('127.0.0.1', 1, b.id);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(a.id) || url.startsWith(upA.base)) return chain;
+      if (url.includes(b.id) || url.startsWith(upB.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [
+        { notisId: a.id, addrs: [a.webrtcAddr], api: upA.base },
+        { notisId: b.id, addrs: [bBogusAddr], api: upB.base },
+      ],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    const aEntry = s.nodes.find((n) => n.notisId === a.id)!;
+    const bEntry = s.nodes.find((n) => n.notisId === b.id)!;
+    // A reached over the mesh: has a transport/path pair.
+    expect(aEntry.transport).not.toBeNull();
+    expect(aEntry.status).toBe('ok');
+    // B's dial failed, so its reads went to its api. The status row
+    // moves by the tip there — B is at the chain's tip too, so `ok`.
+    // The entry carries no transport/path (no open connection on the
+    // mesh), and its api is the one the list named.
+    expect(bEntry.transport).toBeNull();
+    expect(bEntry.path).toBeNull();
+    expect(bEntry.status).toBe('ok');
+    expect(bEntry.api).toBe(upB.base);
+    expect(s.seated).toBe(true);
+    expect(s.agreement!.onChain).toBe(2);
+  }, 90_000);
+
+  it('one entry per key: an anchor reached both ways counts once in onChain', async () => {
+    // MESH_INTERFACE → The client's node list → "An entry may carry an
+    // API base" — "It is one entry whichever way it answers — one
+    // witness in every count". With the mesh connection open, the
+    // routed read goes over the mesh and the check reads at the mesh
+    // base; the api is a fallback the check does not need. The entry
+    // is one row in `onChain`.
+    const K_DEFAULT = 20;
+    const chain = makeLinkedChain(K_DEFAULT + 1, PROFILE);
+    const up = await chainUpstream(chain); ups.push(up);
+    const d = mkdtempSync(join(tmpdir(), 'cbt-single-')); dirs.push(d);
+    const n = await startNode(up, d); nodes.push(n.node);
+    const chainOf = (url: string): OrderingBlock[] | 'invalid' | 'unreachable' => {
+      if (url.includes(n.id) || url.startsWith(up.base)) return chain;
+      return 'unreachable';
+    };
+    const client = await startMeshClient({
+      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(chainOf, K_DEFAULT),
+    });
+    clients.push(client);
+    await client.check();
+    const s = client.state();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.onChainAnchors).toBe(1);
+    // The one entry carries both addresses and the api.
+    expect(s.nodes).toHaveLength(1);
+    expect(s.nodes[0]!.api).toBe(up.base);
+  }, 90_000);
+
+  it('an api-base malformed tip is `retry`, never `blacklisted` (the API-base row)', async () => {
+    // MESH_INTERFACE → The client's node list — "a malformed answer, a
+    // proof that fails verification … the same at an entry's API base
+    // — the host, not the key — HTTPS authenticates a name, never a
+    // node key — `retry`, as a transport failure; never `blacklisted`".
+    // The anchor carries an api alone (no addrs), so phase 1 dials
+    // nothing and phase 2's api read is the only move on the entry.
+    const liar = await handBuilt(async (req, res) => {
+      if (req.url === '/blocks/current') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('not json'); // malformed body
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    builts.push(liar);
+    const k = nodeKeyFromKeyPair(generateKeyPair());
+    const client = await startMeshClient({
+      anchors: [{ notisId: k.notisId, addrs: [], api: liar.base }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => 'unreachable', 5),
+    });
+    clients.push(client);
+    await client.check();
+    const entry = client.state().nodes.find((e) => e.notisId === k.notisId)!;
+    expect(entry.status).toBe('retry');
+    expect(entry.evidence).toBeNull();
+    expect(entry.lastFailure).not.toBeNull();
+    expect(entry.lastFailure!.kind).toBe('transport');
+    // The diagnostic names the api-lie detail so a reader sees why.
+    expect(entry.lastFailure!.message).toMatch(/api /);
+  }, 60_000);
 });
+
+/**
+ * MESH_INTERFACE → The client's node list — a webrtc-direct addr
+ * shaped for the given peer id and a closed port, so the dial reaches
+ * the port, nothing answers, and the dial fails as transport (not a
+ * wrong-key answer). The certhash is a well-formed multibase but not
+ * tied to any real listener — the port is closed, so nothing answers
+ * to check the hash either way.
+ */
+function fakeWebrtcAddr(ip: string, port: number, notisId: string): string {
+  const peerId = peerIdFromNotisId(notisId).toString();
+  // 32-byte sha2-256 placeholder: `uEiA` = base64url of multihash
+  // prefix 0x12 0x20, then 32 zero bytes. The decoder accepts it.
+  const certhash = 'uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  return `/ip4/${ip}/udp/${String(port)}/webrtc-direct/certhash/${certhash}/p2p/${peerId}`;
+}
