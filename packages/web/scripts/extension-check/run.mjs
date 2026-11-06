@@ -4655,7 +4655,15 @@ function snapsSeen(snaps, t0) {
 // ↻ is a render, and draws the line. Back on A: ink, no line.
 async function runNamesStep27d(bcx, relays, ctx) {
   const { rKey, rName, rIds } = ctx;
+  // The initial honest state has no clay line (no result has landed yet); the
+  // back-to-honest state may still carry the lie's line because the author
+  // window's clay line is drawn only by the window's render (WEB_INTERFACE →
+  // The author window → "The line is drawn with the window's render" — a
+  // result that lands after the window rendered turns the handle clay or ink
+  // in place and leaves the line where it stands until the next render). The
+  // back check waits for the handle flip alone.
   const inkOnHonest = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay && s.line === null; })()`;
+  const inkOnHonestBack = `(() => { const s = ${authorNameRowJs(rKey)}; return s.state === 'handle' && s.text === ${JSON.stringify('@' + rName)} && !s.clay; })()`;
   let page = null;
   let recording = false;
   // Both relays honest at the start — the fresh page's first tip run reads
@@ -4724,7 +4732,7 @@ async function runNamesStep27d(bcx, relays, ctx) {
       ok: backVerified && backHandles !== null && honestNames(backHandles.reading, rName),
       detail: `led=${backReading.ledClass}, title=${JSON.stringify(backReading.title)}, ${backHandles === null ? 'not read' : rHandlesSeen(backHandles.reading)}`,
     };
-    const inkBack = await fcx.waitFor(inkOnHonest, 'R\'s author window in ink again on the honest relays', 30000).then(() => true, () => false);
+    const inkBack = await fcx.waitFor(inkOnHonestBack, 'R\'s author window in ink again on the honest relays', 30000).then(() => true, () => false);
     const backRow = await fcx.eval(authorNameRowJs(rKey));
     record('27d', verified && landing.ok && refreshOk && back.ok && inkBack,
       `relays owner-fakebox edits=${edits} (made-up box ${fakeBoxId.slice(0, 12)}…); ` +
