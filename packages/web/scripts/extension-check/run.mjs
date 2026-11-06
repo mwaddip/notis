@@ -5370,11 +5370,15 @@ async function runNamesStep30(rName) {
 //        chain's database at a time": opening another closes every
 //        previous), so the block first re-reads A's chain with both relays
 //        `honest` and D gone: a fresh page whose corner settles on A's
-//        tip and whose feed draws A's roots into the cache, then closed.
-//        Then a second fresh page under `down` on both relays: the feed
-//        and R's author-posts window each read a transport failure on
-//        their first page; the cache fallback draws the roots the
-//        re-read populated beneath the error line, no `more` / `load
+//        tip, then a feed `↻` and a thread open so the reads after the
+//        seat land in A's database (reads before it wrote to D's, which
+//        the seat deleted); the page's `notis.posts.<A>` `entries` store
+//        is counted until it is at least three — less than three at the
+//        bound is W1 FAIL before `down` is set — then the page is
+//        closed. Then a second fresh page under `down` on both relays:
+//        the feed and R's author-posts window each read a transport
+//        failure on their first page; the cache fallback draws the roots
+//        the re-read populated beneath the error line, no `more` / `load
 //        older` control.
 //   W2 — the same page, relays still `down`: a like on a cached card the
 //        reader has not liked, and a root post from the composer. Each
@@ -5545,24 +5549,33 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // database at a time": opening another closes every previous), so the
   // remembered chain is D's and its cache is empty. With both tip relays
   // honest and D gone (the verified-tip block's cleanup stops it), open a
-  // fresh page: its tip run re-seats A's chain and the feed's reads write
-  // A's roots into the cache as it draws them. The chain's name is
-  // non-null under `verified` and under `thin` alike — "naming a chain
+  // fresh page and let the tip run re-seat A's chain — the chain's name is
+  // non-null under `verified` and under `thin` alike, "naming a chain
   // takes a proof that verifies, not a second witness" (→ "The chain's
-  // name") — so the seat lands whether the second relay's upstream
-  // answers or not. A thread-strip press on one of the drawn cards
-  // widens the cache's parent-with-child set for W4's targets where the
-  // feed alone would be thin.
+  // name"), so the seat lands whether the second relay's upstream answers
+  // or not. **Puts of a list read made before the chain was named land in
+  // the database open at load — the remembered chain's, D's — and the
+  // seat deletes that database**, so the page's initial feed read writes
+  // nothing that stands. The reads that populate A's cache are the ones
+  // after the seat: a feed `↻` and a thread opened, then a `count()` on
+  // A's `entries` store (`src/extension/post-cache.ts`, `STORE =
+  // 'entries'`) polled until it is at least three. Less than three at the
+  // bound is a prep that has not landed and W1 records FAIL before `down`
+  // is set.
   setBothRelayModes('honest');
   const prepDGone = (await currentHeight(D_ORIGIN)) === null;
   const prepABlock1 = await block1HashOn(NODE);
   const prepExpectedDb = typeof prepABlock1 === 'string' && /^[0-9a-f]{64}$/i.test(prepABlock1)
     ? 'notis.posts.' + prepABlock1.toLowerCase()
     : null;
+  const prepCachedTarget = 3;
+  const prepCachedBoundMs = 60000;
   let prepChainDb = null;
-  let prepCards = 0;
   let prepCornerTitle = null;
+  let prepFeedRefreshed = false;
   let prepThreadOpened = false;
+  let prepCached = 0;
+  let prepCachedIds = [];
   let prepError = null;
   let prepPage = null;
   try {
@@ -5582,19 +5595,24 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       90000,
     );
     prepCornerTitle = reached.last?.title ?? null;
-    // Wait for the feed to draw at least one card; the cache stores each
-    // bound row as the feed reads it (→ "The post cache" — "Only `bound`
-    // rows enter"). With no card the cache stays empty and W1 falls back
-    // to the error line alone.
-    await pCx.waitFor(
-      `document.querySelectorAll('#feed .card[data-post-id]').length >= 1`,
-      'feed cards prep', 60000,
-    ).catch(() => {});
-    prepCards = await pCx.eval(`document.querySelectorAll('#feed .card[data-post-id]').length`);
-    // Press one card's thread strip open so the cache holds a thread's
-    // parent beside a drawn child — W4's targets want more than one
-    // non-R card the reader has not liked, and a thread read brings in
-    // the children of the pressed root.
+    // Read the chain the cache opened under — one `notis.posts.<chain>`
+    // database at the page's origin; the remembered chain in
+    // localStorage names the same.
+    const chainDbs = await pCx.eval(`(async () => {
+      if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null;
+      const dbs = await indexedDB.databases();
+      return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+    })()`);
+    prepChainDb = Array.isArray(chainDbs) && chainDbs.length > 0 ? chainDbs[0] : null;
+    // Press the feed's own ↻ (`refresh the feed`): the reads this fires
+    // land in the database open now, A's, where the initial reads at
+    // load landed in D's (which the seat has since deleted).
+    prepFeedRefreshed = await refreshFeed(pCx);
+    await sleep(2500);
+    // Open one thread by pressing a drawn card's strip: the pane's reads
+    // of the subject and its descendants write their bound rows into
+    // A's database beside the feed's, widening W4's set of non-R cards
+    // the reader has not liked.
     try {
       const opened = await pCx.eval(`(() => {
         const c = document.querySelector('#feed .card[data-post-id]');
@@ -5606,18 +5624,44 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       })()`, true);
       if (opened === true) {
         prepThreadOpened = true;
-        await sleep(2500);
+        await sleep(3000);
       }
     } catch {}
-    // Read the chain the cache opened under — one `notis.posts.<chain>`
-    // database at the page's origin; the remembered chain in
-    // localStorage names the same.
-    const chainDbs = await pCx.eval(`(async () => {
-      if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null;
-      const dbs = await indexedDB.databases();
-      return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
-    })()`);
-    prepChainDb = Array.isArray(chainDbs) && chainDbs.length > 0 ? chainDbs[0] : null;
+    // Count entries in A's `notis.posts.<chain>` database from the page
+    // — the one source that answers whether a row stands. Poll under a
+    // bound until it is at least `prepCachedTarget`.
+    if (prepChainDb !== null) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < prepCachedBoundMs) {
+        const snap = await pCx.eval(`(async () => {
+          if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
+          return new Promise((resolve) => {
+            let req;
+            try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
+            catch { resolve({ count: 0, ids: [] }); return; }
+            req.onerror = () => resolve({ count: 0, ids: [] });
+            req.onsuccess = () => {
+              const db = req.result;
+              if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
+              const tx = db.transaction('entries', 'readonly');
+              const store = tx.objectStore('entries');
+              const c = store.count();
+              const k = store.getAllKeys();
+              let cnt = 0;
+              let keys = [];
+              c.onsuccess = () => { cnt = c.result; };
+              k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
+              tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
+              tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
+            };
+          });
+        })()`);
+        prepCached = typeof snap?.count === 'number' ? snap.count : 0;
+        prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
+        if (prepCached >= prepCachedTarget) break;
+        await sleep(1000);
+      }
+    }
   } catch (e) {
     prepError = e?.stack ?? String(e);
   } finally {
@@ -5625,6 +5669,15 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       try { prepPage.cx.s.close(); } catch {}
       await bcx.call('Target.closeTarget', { targetId: prepPage.targetId }).catch(() => {});
     }
+  }
+
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), feed-refreshed=${prepFeedRefreshed}, thread-opened=${prepThreadOpened}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''})${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  if (prepCached < prepCachedTarget) {
+    record('W1', false, prepDetail);
+    for (const s of ['W2', 'W3', 'W4']) {
+      record(s, 'NOT RUN', `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
+    }
+    return;
   }
 
   // ----- W1 — a second fresh page under `down` on both relays. The feed and
@@ -5711,7 +5764,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const feedPass = errorPresent === true && feedCards >= 1 && feedLoadOlder === false;
     const authorPass = authorOpened && authorErrorPresent === true && authorCards >= 1 && authorMoreBtn === false;
     w1Ok = feedPass && authorPass;
-    w1Detail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), cards=${prepCards}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}; feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
+    w1Detail = `${prepDetail}; feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
     record('W1', w1Ok, w1Detail);
   } catch (e) {
     record('W1', false, `error: ${e?.stack ?? String(e)}`);
@@ -5727,16 +5780,19 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   try {
     if (w1Page === null) throw new Error('W1 did not open a page — W2 has nothing to press on');
     const w2Cx = w1Page.cx;
-    // Pick a cached card the reader has not liked — the feed's own non-R
-    // cards that carry the `like` word (R has not liked them; the card
-    // offers `like`).
+    // Pick a cached card the reader has not liked — a non-R card the
+    // feed drew (the cache fallback) whose id stands in A's database,
+    // and which carries the `like` word.
     const target = await w2Cx.eval(`(() => {
       const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+      const cached = new Set(${JSON.stringify(prepCachedIds)});
       const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
       const nonOwn = cards.filter((c) => c.getAttribute('data-author') !== my);
       for (const c of nonOwn) {
+        const id = c.getAttribute('data-post-id');
+        if (!cached.has(id)) continue;
         const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-        if (likeBtn !== null) return { id: c.getAttribute('data-post-id'), author: c.getAttribute('data-author') };
+        if (likeBtn !== null) return { id, author: c.getAttribute('data-author') };
       }
       return null;
     })()`);
