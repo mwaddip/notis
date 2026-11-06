@@ -599,6 +599,68 @@ describe('the poll does not run for waiting entries alone', () => {
   });
 });
 
+describe('a waiting entry another page sent is released here and reconciled', () => {
+  it('the store record is gone, a cornerTick answers, the entry is released at that tip, and reconcile lands it', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    primeBases(h);
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    const waiting = h.drive.ledger.all().find((e) => e.waiting === true);
+    expect(waiting?.kind).toBe('post');
+    const txId = waiting!.txId;
+    // Another page's send pass absorbed the store record — ours did not.
+    h.drive.waitingStore!.remove(txId);
+    // Reads come back; a cornerTick answers at a tip above zero. The orphan
+    // release runs on that tick (even though the store lists nothing to
+    // flush) and stamps the entry's submittedAtHeight at viewerTip.
+    h.setReadsNoAnswer(false);
+    await h.drive.cornerTick();
+    await flush();
+    const released = h.drive.ledger.all().find((e) => e.txId === txId)!;
+    expect(released.waiting).toBeUndefined();
+    expect(released.submittedAtHeight).toBe(6001);
+    expect(released.expiresAtHeight).toBeGreaterThan(6001);
+    // Reconcile the entry: the node answers confirmed; the entry lands and
+    // is removed from the ledger.
+    await (h.app as unknown as { pollTick(): Promise<void> }).pollTick();
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.txId === txId)).toBeUndefined();
+  });
+});
+
+describe('no release before a tip is read', () => {
+  it('an identity change with an orphaned waiting entry: the entry still reads waiting until a cornerTick answers', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    primeBases(h);
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    const waiting = h.drive.ledger.all().find((e) => e.waiting === true);
+    const txId = waiting!.txId;
+    h.drive.waitingStore!.remove(txId); // another page dealt with it
+    // Switch to PUB2, then back to PUB: dropReaderState sets viewerTip to 0.
+    h.switchIdentity(PUB2);
+    await flush();
+    h.switchIdentity(PUB);
+    await flush();
+    // The restored ledger still holds the entry as waiting — no tip is read,
+    // so releaseOrphanWaiting did nothing on the identity change.
+    const afterSwitch = h.drive.ledger.all().find((e) => e.txId === txId)!;
+    expect(afterSwitch.waiting).toBe(true);
+    // Now a cornerTick answers — release runs.
+    h.setReadsNoAnswer(false);
+    await h.drive.cornerTick();
+    await flush();
+    const released = h.drive.ledger.all().find((e) => e.txId === txId)!;
+    expect(released.waiting).toBeUndefined();
+  });
+});
+
 describe('the web build never waits', () => {
   it('no seam: a read with no answer ends the press as today\'s transport failure', async () => {
     const h = harness({ withSeam: false });

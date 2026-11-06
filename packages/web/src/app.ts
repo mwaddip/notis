@@ -5249,8 +5249,13 @@ export class App {
     }
     this.renderCornerNow();
     // WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer"
-    // — a read a node answered is the trigger.
-    if (answered) this.flushWaitingWrites();
+    // — a read a node answered is the trigger. The orphan release runs
+    // directly too, so a ledger entry another page sent is released at this
+    // tick's `viewerTip` even when the store lists nothing to flush.
+    if (answered) {
+      this.releaseOrphanWaiting();
+      this.flushWaitingWrites();
+    }
   }
 
   // ---- the send pass (WEB_INTERFACE → The wallet → "Waiting writes go out
@@ -5259,10 +5264,16 @@ export class App {
   /** Every waiting entry whose `txId` the store no longer lists is released
    *  as submitted (WEB_INTERFACE → The wallet → "Waiting writes go out at
    *  the first answer"): another page of the extension may have sent or
-   *  ended it. Called at every send pass and at load. */
+   *  ended it. A release needs a tip a node answered — else `boundedExpiry`
+   *  reads `MEMPOOL_EXPIRY_BLOCKS`, which the first reconcile on any live
+   *  network would call expired though the other page's send may well
+   *  land; the next call after an answered read does it (→ "A pending
+   *  entry's expiry is the client's, and a node's answer can only bring
+   *  it sooner"). */
   private releaseOrphanWaiting(): void {
     const store = this.waitingStore;
     if (store === null) return;
+    if (this.viewerTip === 0) return;
     const listed = new Set(store.list().map((w) => w.txId));
     let moved = false;
     for (const e of this.ledger.all()) {
