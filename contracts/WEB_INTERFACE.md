@@ -2320,7 +2320,10 @@ client that expects to announce itself first is built against an endpoint that d
 - **Affordability is known before the attempt.** Opening a composer reads the rep view once; a price its
   `effective` does not cover disables `post` and says so, so the reader never spends a rejection to learn
   what the client already knew; every other rep spend is held to the floor before it signs (→ The wallet → "The
-  floor is the client's to know"). *(write surface)*
+  floor is the client's to know"). In the extension a read no node answers takes the waiting view's `effective`
+  instead (→ The wallet → "The waiting view"), so a composer opened while no node answers offers `post` as the post
+  it would make can wait; with no waiting view the foot says the rep could not be read, as on any failed read.
+  *(write surface)*
 
 - **The client reads the protocol era; it never holds one.** `GET /status` → `protocolVersion` is the
   era at `blockHeight + 1`, and the field is in every id preimage, so a client learns the era before
