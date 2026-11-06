@@ -254,6 +254,7 @@ export async function submitPostFlow(
     // tracked under an id the node does not share.
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, ledgerSide, ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'post',
@@ -313,6 +314,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'rep', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'like',
@@ -365,6 +367,7 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'rep', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'vouch',
@@ -463,6 +466,7 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'rep', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'invite',
@@ -510,6 +514,7 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'rep', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'withdraw',
@@ -555,6 +560,7 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<W
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'rep', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'claim',
@@ -574,35 +580,39 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
   const id = deps.identity.current();
   if (id === null) throw new Error('submitBurnFlow: no identity loaded');
 
-  const held = await deps.reads.usernameByOwner(id.pubKeyHex);
-  if (held === null) return clientRejection('this key holds no name.');
+  const run = async (): Promise<SubmitResult<BurnSubmitResult>> => {
+    const held = await deps.reads.usernameByOwner(id.pubKeyHex);
+    if (held === null) return clientRejection('this key holds no name.');
 
-  const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
-  // The floor against `effective` — a burn leaves KARMA_MINIMUM standing
-  // over USERNAME_BURN_PRICE (WEB_INTERFACE → The wallet → "The floor is the
-  // client's to know"); a burn refused ends as a refused signature does.
-  if (ctx.effective - USERNAME_BURN_PRICE < KARMA_MINIMUM) return flooredRefusal();
-  let built;
-  try {
-    built = buildBurn(ctx, { boxId: held.boxId });
-  } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to burn right now.');
-    throw e;
-  }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
-  if (!signed.ok) return signed;
-  const body = await deps.write.submitBurn(held.name, signed.body);
-  if (isRejection(body)) return { ok: false, rejection: body };
-  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+    const ctx = await readBuildContext(deps.reads, id.pubKeyHex);
+    // The floor against `effective` — a burn leaves KARMA_MINIMUM standing
+    // over USERNAME_BURN_PRICE (WEB_INTERFACE → The wallet → "The floor is the
+    // client's to know"); a burn refused ends as a refused signature does.
+    if (ctx.effective - USERNAME_BURN_PRICE < KARMA_MINIMUM) return flooredRefusal();
+    let built;
+    try {
+      built = buildBurn(ctx, { boxId: held.boxId });
+    } catch (e) {
+      if (e instanceof InsufficientKarma) return clientRejection('not enough rep to burn right now.');
+      throw e;
+    }
+    const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+    if (!signed.ok) return signed;
+    const body = await deps.write.submitBurn(held.name, signed.body);
+    if (isRejection(body)) return { ok: false, rejection: body };
+    if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
-  const entry = deps.ledger.add({
-    txId: built.txId,
-    kind: 'burn',
-    postId: held.name,
-    expiresAtHeight: body.expiresAtHeight,
-    submittedAtHeight: ctx.height,
-  });
-  return { ok: true, entry, body };
+    absorbSentSpend(deps, 'rep', ctx, built);
+    const entry = deps.ledger.add({
+      txId: built.txId,
+      kind: 'burn',
+      postId: held.name,
+      expiresAtHeight: body.expiresAtHeight,
+      submittedAtHeight: ctx.height,
+    });
+    return { ok: true, entry, body };
+  };
+  return runUnderLock(deps, run);
 }
 
 /** Submit a credits send: credits view in, credit change at index 0 when any,
@@ -658,6 +668,7 @@ export async function submitSendFlow(
     if (isRejection(body)) return { ok: false, rejection: body };
     if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
+    absorbSentSpend(deps, 'credits', ctx, built);
     const entry = deps.ledger.add({
       txId: built.txId,
       kind: 'send',
@@ -799,6 +810,24 @@ function sendIsWaiting(deps: SubmitDeps, body: unknown): boolean {
   return typeof body === 'object' && body !== null
     && (body as { status?: unknown }).status === 0
     && (body as { noAnswer?: unknown }).noAnswer === true;
+}
+
+/** Fold the sent write's spend into the active arm's base, so a later press
+ *  with no node answering does not spend a box this write's input used
+ *  (WEB_INTERFACE → The wallet → "The waiting view" — "Every spend the
+ *  client sends and a node takes advances it the same way"). A no-op with
+ *  no active arm. The caller holds the lock. */
+function absorbSentSpend(
+  deps: SubmitDeps,
+  ledger: WaitingLedger,
+  ctx: BuildContext | RepBuildContext,
+  built: BuiltTx,
+): void {
+  const active = activeWaiting(deps);
+  if (active === null) return;
+  const spent = [...built.tx.inputs];
+  const cost = costOf(ctx.spendable, spent, built.change);
+  active.store.absorbSent(ledger, active.chain, spent, built.change, cost);
 }
 
 /** Keep one waiting write and its ledger entry: the record under the store's

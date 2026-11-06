@@ -170,7 +170,10 @@ function waitingDeps(
 
 /** Record a base through a brief successful read of today's shape, so the
  *  waiting view has somewhere to start. The store is left with the base for
- *  the given ledger on `CHAIN`. */
+ *  the given ledger on `CHAIN`. The 2xx of the internal write folds its
+ *  spend into the base (WEB_INTERFACE → The wallet → "The waiting view"),
+ *  so the base is re-recorded from `/karma` / `/credits` shape after the
+ *  flow — later cases start from the shape the fresh read would record. */
 async function recordBase(storage: WaitingStorage, ledger: 'rep' | 'credits', creditBoxes: CreditBoxRow[] = []): Promise<void> {
   const w = waitingDeps(storage, CHAIN);
   const ledgerPending = new PendingLedger(PUB);
@@ -185,8 +188,19 @@ async function recordBase(storage: WaitingStorage, ledger: 'rep' | 'credits', cr
   if (ledger === 'rep') {
     // A like on a target reads /karma and /status; the store records the base.
     await submitLikeFlow(deps, TARGET_ID);
+    // Re-record a clean base from the reads' shape — the flow's 2xx absorb
+    // leaves the base one spend advanced, which later cases do not assume.
+    w.store.recordBase('rep', {
+      spendable: FULL_BOXES.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) })),
+      effective: FULL_BOXES.reduce((s, b) => s + BigInt(b.value), 0n),
+      height: 6000, era: 1, author: PUB,
+    }, CHAIN);
   } else {
     await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    w.store.recordBase('credits', {
+      spendable: creditBoxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) })),
+      height: 6000, era: 1, author: PUB,
+    }, CHAIN);
   }
   // Drop the test write the base read admitted — later cases start clean.
   writeCalls = [];
@@ -576,21 +590,122 @@ describe('a second press builds on the first\'s change', () => {
     const w = waitingDeps(storage, CHAIN, cache);
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: readsAllNoAnswer(), write: write(), ledger, identity, network: null, waiting: w };
+    // `recordBase` admits a like 2xx, so the base already carries the folded
+    // spend: its sole spendable box is that sent like's change. Each waiting
+    // like spends the previous spend's change in turn.
+    const baseStart = w.store.repView(CHAIN)!;
+    expect(baseStart.spendable.length).toBe(1);
+    const startBoxId = baseStart.spendable[0]!.boxId;
     const r1 = await submitLikeFlow(deps, TARGET_ID);
     expect(r1.ok).toBe(true);
     const r2 = await submitLikeFlow(deps, TARGET_ID);
     expect(r2.ok).toBe(true);
     const writes = w.store.list();
     expect(writes.length).toBe(2);
-    // The first spent the view's one box (BOX_ID, value 227), change at 226, cost 1.
-    expect(writes[0]!.spent).toEqual([BOX_ID]);
+    // The first spent the base's one box, cost 1.
+    expect(writes[0]!.spent).toEqual([startBoxId]);
     expect(writes[0]!.cost).toBe(1n);
     // The second spent the first's change id, cost 1.
     expect(writes[1]!.spent).toEqual([writes[0]!.change!.boxId]);
     expect(writes[1]!.cost).toBe(1n);
-    // The view's effective dropped by 2 off the base (227) — down to 225.
+    // The view's effective dropped by 2 off the base's starting value.
     const v = w.store.repView(CHAIN)!;
-    expect(v.effective).toBe(225n);
+    expect(v.effective).toBe(baseStart.effective - 2n);
+  });
+});
+
+// -------------------------------------------------------------------------
+// Every sent spend advances the base: a press after a 2xx with no node
+// answering does not spend a box the sent write used (WEB_INTERFACE →
+// The wallet → "The waiting view" — "Every spend the client sends and a
+// node takes advances it the same way").
+// -------------------------------------------------------------------------
+
+describe('a sent write advances the base — the next press with no node answering spends its change', () => {
+  it('a post sent at once advances the base, and a post made after with no node answering spends its change', async () => {
+    const storage = fakeStorage();
+    await recordBase(storage, 'rep');
+    // After recordBase, the base already names a change box, not BOX_ID.
+    // The first post below answers 2xx, advancing the base once more; its
+    // change becomes the sole spendable box.
+    const ledger1 = new PendingLedger(PUB);
+    const w1 = waitingDeps(storage, CHAIN);
+    const deps1: SubmitDeps = { reads: reads(), write: write(), ledger: ledger1, identity, network: null, waiting: w1 };
+    const r1 = await submitPostFlow(deps1, 'a thread', null);
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) return;
+    // No waiting record was kept — the post was sent.
+    expect(w1.store.list()).toEqual([]);
+    const advanced = w1.store.repView(CHAIN)!;
+    expect(advanced.spendable.length).toBe(1);
+    const changeId = advanced.spendable[0]!.boxId;
+    // The sent post's input (BOX_ID) is no longer on the view — the base
+    // was advanced past it.
+    expect(changeId).not.toBe(BOX_ID);
+    // The second post's reads get no answer; it builds from the advanced view
+    // and spends the sent post's change, not the box the sent post used.
+    writeCalls = [];
+    signCalls = [];
+    const ledger2 = new PendingLedger(PUB);
+    const w2 = waitingDeps(storage, CHAIN);
+    const deps2: SubmitDeps = { reads: readsAllNoAnswer(), write: write(), ledger: ledger2, identity, network: null, waiting: w2 };
+    const r2 = await submitPostFlow(deps2, 'another thread', null);
+    expect(r2.ok).toBe(true);
+    const waiting = w2.store.list().find((w) => w.kind === 'post')!;
+    expect(waiting.spent).toEqual([changeId]);
+  });
+
+  it('a send answered 2xx advances the credits base, and a send after with no node answering spends its change', async () => {
+    const storage = fakeStorage();
+    const CREDIT_BOX: CreditBoxRow = { boxId: '55'.repeat(32), value: '10000000000' };
+    await recordBase(storage, 'credits', [CREDIT_BOX]);
+    const ledger1 = new PendingLedger(PUB);
+    const w1 = waitingDeps(storage, CHAIN);
+    const deps1: SubmitDeps = {
+      reads: reads({ credits: async () => ({ userId: PUB, total: '10000000000', boxes: [CREDIT_BOX], boxCount: 1, next: null }) }),
+      write: write(), ledger: ledger1, identity, network: null, waiting: w1,
+    };
+    const r1 = await submitSendFlow(deps1, RECIPIENT, null, 1_250_000_000n);
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) return;
+    expect(w1.store.list()).toEqual([]);
+    const advanced = w1.store.creditView(CHAIN)!;
+    expect(advanced.spendable.length).toBe(1);
+    const changeId = advanced.spendable[0]!.boxId;
+    // The sent send's input (CREDIT_BOX) is no longer on the view.
+    expect(changeId).not.toBe(CREDIT_BOX.boxId);
+    writeCalls = [];
+    signCalls = [];
+    const ledger2 = new PendingLedger(PUB);
+    const w2 = waitingDeps(storage, CHAIN);
+    const deps2: SubmitDeps = {
+      reads: readsAllNoAnswer(),
+      write: write(), ledger: ledger2, identity, network: null, waiting: w2,
+    };
+    const r2 = await submitSendFlow(deps2, RECIPIENT, null, 1_250_000_000n);
+    expect(r2.ok).toBe(true);
+    const waiting = w2.store.list().find((w) => w.kind === 'send')!;
+    expect(waiting.spent).toEqual([changeId]);
+  });
+
+  it('a burn answered 2xx advances the base', async () => {
+    const storage = fakeStorage();
+    await recordBase(storage, 'rep');
+    const before = storage.getItem('notis.waiting.' + PUB + '.base.rep');
+    const held: UsernameResult = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const w = waitingDeps(storage, CHAIN);
+    const deps: SubmitDeps = {
+      reads: reads({ usernameByOwner: async () => held }),
+      write: write(), ledger, identity, network: null, waiting: w,
+    };
+    const res = await submitBurnFlow(deps);
+    expect(res.ok).toBe(true);
+    // The base was folded by the burn's spend — effective dropped by the
+    // burn price.
+    const after = storage.getItem('notis.waiting.' + PUB + '.base.rep');
+    expect(after).not.toBe(before);
+    expect(w.store.list()).toEqual([]);
   });
 });
 

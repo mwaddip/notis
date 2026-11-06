@@ -283,6 +283,52 @@ describe('absorb — a sent write folds into the base', () => {
   });
 });
 
+describe('absorbSent — a sent spend folds into the base, no record kept', () => {
+  it('absorbSent folds a sent spend into the base', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.recordBase('rep', repBase(100n, [{ boxId: 'a', value: 100n }]), CHAIN_A);
+    // The write the node took spent `a` and returned change `c1` of 99; its
+    // cost on rep was 1. Nothing is kept — the write was sent, not waiting.
+    s.absorbSent('rep', CHAIN_A, ['a'], { boxId: 'c1', value: 99n, createdAtBlock: 50 }, 1n);
+    const v = s.repView(CHAIN_A)!;
+    expect(v.spendable).toEqual([{ boxId: 'c1', value: 99n }]);
+    expect(v.effective).toBe(99n);
+    expect(s.list()).toEqual([]);
+  });
+
+  it('a credits-side absorbSent folds the same way, with no effective', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.recordBase('credits', creditBase([{ boxId: 'b1', value: 1000n }]), CHAIN_A);
+    s.absorbSent('credits', CHAIN_A, ['b1'], { boxId: 'c1', value: 900n, createdAtBlock: 50 }, 100n);
+    const v = s.creditView(CHAIN_A)!;
+    expect(v.spendable).toEqual([{ boxId: 'c1', value: 900n }]);
+  });
+
+  it('absorbSent of another chain does nothing', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.recordBase('rep', repBase(100n, [{ boxId: 'a', value: 100n }]), CHAIN_A);
+    // The sent write names CHAIN_B; the base is of CHAIN_A — nothing folds.
+    s.absorbSent('rep', CHAIN_B, ['a'], null, 1n);
+    const v = s.repView(CHAIN_A)!;
+    expect(v.spendable).toEqual([{ boxId: 'a', value: 100n }]);
+    expect(v.effective).toBe(100n);
+  });
+
+  it('absorbSent with no base does nothing', () => {
+    const storage = fakeStorage();
+    const locks = fakeLockManager();
+    const s = new WaitingStore(KEY, { storage, locks });
+    s.absorbSent('rep', CHAIN_A, ['a'], null, 1n);
+    expect(s.repView(CHAIN_A)).toBeNull();
+  });
+});
+
 describe('per-identity isolation', () => {
   it('a store of another key sees none of this key\'s writes', () => {
     const storage = fakeStorage();

@@ -367,19 +367,48 @@ export class WaitingStore {
       return;
     }
     const base = this.readBase(w.ledger);
-    if (base === null || base.chain !== w.chain) {
-      removeRaw(this.storage, this.wPrefix + txId);
-      return;
+    if (base !== null && base.chain === w.chain) {
+      this.foldIntoBase(w.ledger, base, w.spent, w.change, w.cost);
     }
-    const spent = new Set(w.spent);
+    removeRaw(this.storage, this.wPrefix + txId);
+  }
+
+  /** Fold a sent spend into this ledger's base on this chain
+   *  (WEB_INTERFACE → The wallet → "The waiting view" — "Every spend the
+   *  client sends and a node takes advances it the same way"): the `spent`
+   *  boxes leave the base's `spendable`, `change` joins it, and on rep
+   *  `effective` drops by `cost`. With no base, or a base of another chain,
+   *  nothing — a later read will record the base from the node's answer, and
+   *  the folded spend was already in that answer. The caller holds the lock.
+   *  Nothing is kept — the write was sent, not waiting. */
+  absorbSent(
+    ledger: WaitingLedger,
+    chain: string,
+    spent: readonly string[],
+    change: ChangeRef | null,
+    cost: bigint,
+  ): void {
+    const base = this.readBase(ledger);
+    if (base === null || base.chain !== chain) return;
+    this.foldIntoBase(ledger, base, spent, change, cost);
+  }
+
+  private foldIntoBase(
+    ledger: WaitingLedger,
+    base: { chain: string; ctx: BuildContext | RepBuildContext },
+    spent: readonly string[],
+    change: ChangeRef | null,
+    cost: bigint,
+  ): void {
+    const spentSet = new Set(spent);
     const nextSpendable: SpendableBox[] = [];
-    for (const b of base.ctx.spendable) if (!spent.has(b.boxId)) nextSpendable.push(b);
-    if (w.change !== null) nextSpendable.push({ boxId: w.change.boxId, value: w.change.value });
-    if (w.ledger === 'rep') {
+    for (const b of base.ctx.spendable) if (!spentSet.has(b.boxId)) nextSpendable.push(b);
+    if (change !== null) nextSpendable.push({ boxId: change.boxId, value: change.value });
+    if (ledger === 'rep') {
       const repCtx = base.ctx as RepBuildContext;
       this.recordBase('rep', {
         spendable: nextSpendable,
-        effective: repCtx.effective - w.cost,
+        effective: repCtx.effective - cost,
         height: repCtx.height,
         era: repCtx.era,
         author: repCtx.author,
@@ -392,7 +421,6 @@ export class WaitingStore {
         author: base.ctx.author,
       }, base.chain);
     }
-    removeRaw(this.storage, this.wPrefix + txId);
   }
 
   // -------------------------------------------------------------------------
