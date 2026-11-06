@@ -14,7 +14,9 @@
 // harness sets between steps: `honest` (every request passed through),
 // `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
 // not verify), `proof-short` (the proof route answered 404 chain-too-short,
-// `NODE_INTERFACE → Nipopow`) and `upstream-D` (every request passed to D).
+// `NODE_INTERFACE → Nipopow`), `upstream-D` (every request passed to D), and
+// `down` (every request's connection ends with no status, so the client reads
+// a transport failure — the mode the waiting-writes block runs under).
 // The build's seed list names the two relays as its two entries, each
 // `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
 // its api alone (`MESH_INTERFACE → The client's node list → "An entry may
@@ -26,6 +28,18 @@
 // sets each figures mode on both tip relays and opens a fresh page per arm;
 // the verified-names block brings up a B of its own too, and each of its lie
 // arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
+// The waiting-writes block (W1 · W2 · W3 · W4) runs after the three verified
+// blocks in the relays build — the one whose seed list is RLA and RLB in
+// front of A and B — and covers WEB_INTERFACE → The wallet → "A write no node
+// answers waits", → "Waiting writes go out at the first answer", → "A
+// refusal ends what it strands", → "A waiting write is drawn as pending",
+// and → The extension → "The post cache" → "A failed listing draws the
+// cache". Both relays are in `down` mode for W1, W2 and W4's build-up — a
+// client read reads a transport failure; honest for W3's flush and for W4's
+// final step. W4's outside spend replaces R's karma box through the node's
+// HTTP write path with a withdraw built from `@dagsocial/types`' primitives
+// and signed by the harness's own Node crypto, so the stranded write of the
+// waiting chain is refused at the first flush.
 // The light block
 // (L1 … L14) covers how the extension reads its lists light with ids and the
 // node's word, draws cached posts at once, shows slots for the rest and
@@ -108,6 +122,17 @@
 //     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
 //     names"), so the block runs a B of its own and requires what
 //     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
+//   Waiting-writes block: W1·W2·W3·W4 (WEB_INTERFACE → The wallet → "A write
+//     no node answers waits", → "Waiting writes go out at the first answer",
+//     → "A refusal ends what it strands", → "A waiting write is drawn as
+//     pending"; → The extension → "A failed listing draws the cache"). Runs
+//     after the three verified blocks in the relays build, whenever any of
+//     --verified-{tip,figures,names} is passed with --r-key — the relays are
+//     up and R's identity is loaded. W1 and W2 open one fresh page under
+//     `down` on both relays; W3 presses the corner on the same page with
+//     both relays honest; W4 opens another fresh page under `down`, replaces
+//     R's karma box on the chain through a withdraw the harness builds and
+//     submits, then sets both relays honest.
 //   --light: L1·L2·L3·L4·L5·L6·L7·L8·L9·L10·L11·L12·L13·L14. The light read,
 //     the resolve, the post check, the post cache and the chain's name
 //     (WEB_INTERFACE → The extension → "The light read", "The resolve", "The
@@ -148,7 +173,8 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from 'node:crypto';
+import { computeTxId, txToJson } from '@dagsocial/types';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
 // Boolean flags — never consume the next argument. Without this the parser
@@ -1240,6 +1266,15 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      no answer. One POST through the relay lands no
 //                      bytes upstream; the retry's bytes reach the next
 //                      node and land once there.
+//   `down`           — the waiting-writes block's mode: every request's
+//                      underlying socket is destroyed before any status
+//                      is written, so the client reads a transport
+//                      failure — no answer from any node — on every
+//                      route the extension asks. A log entry is still
+//                      pushed under `edit: 'down'`, so an assertion over
+//                      the log can filter forwarded POSTs from attempts
+//                      the relay ate (`WEB_INTERFACE → The wallet → "A
+//                      write no node answers waits"`).
 // With `relay.rKey` and (for the names block) `relay.sName` set, the relay
 // also carries the figures and names modes — one relay type, named on both
 // tip relays so a lie on both is a lie the run meets whichever node answers
@@ -1320,6 +1355,17 @@ async function startTipRelay(upstream, port) {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
       const mode0 = relay.mode;
+      // `down` — the waiting-writes block's mode (WEB_INTERFACE → The wallet
+      // → "A write no node answers waits"): the socket is destroyed before
+      // any status is written, so the client reads a transport failure on
+      // every route it asks; the log entry stands under `edit: 'down'` so
+      // the block's assertions can tell a forwarded POST from an attempt
+      // the relay ate.
+      if (mode0 === 'down') {
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: 'down', upstream: relay.upstream, status: 'destroyed', edit: 'down' });
+        try { req.socket.destroy(); } catch {}
+        return;
+      }
       // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
       // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
       // to the next entry (MESH_INTERFACE → The client's node list → "A
@@ -5309,6 +5355,620 @@ async function runNamesStep30(rName) {
 }
 
 // ---------------------------------------------------------------------------
+// The waiting-writes block — W1 · W2 · W3 · W4
+//
+// WEB_INTERFACE → The wallet → "A write no node answers waits", → "Waiting
+// writes go out at the first answer", → "A refusal ends what it strands",
+// → "A waiting write is drawn as pending", and → The extension → "The post
+// cache" → "A failed listing draws the cache". The block uses the two tip
+// relays RLA and RLB the verified blocks set up (`setupTipRelays`) — the
+// shell's seed list reaches each at its api base alone — and switches both
+// relays' modes between steps the same way the verified blocks do.
+//
+//   W1 — a fresh page under `down` on both relays: the feed and R's
+//        author-posts window each read a transport failure on their first
+//        page; the cache fallback draws the roots the earlier steps
+//        populated beneath the error line, no `more` / `load older`
+//        control.
+//   W2 — the same page, relays still `down`: a like on a cached card the
+//        reader has not liked, and a root post from the composer. Each
+//        waits — the post's pending card and the like's muted overlay both
+//        read *waiting for a node* — and neither relay's log carries a
+//        forwarded POST. A reload of the page draws them both from the
+//        waiting store, still waiting.
+//   W3 — the same page, both relays `honest`: pressing the corner is a
+//        read a node answers, which flushes the waiting writes in press
+//        order (`flushWaitingWrites` on a read a node answered). Both
+//        POSTs forward to upstream in press order (the like before the
+//        post, per the rep queue's seq), both are admitted (each txId
+//        shows in a node's pool or chain) and the post lands in the feed.
+//   W4 — a fresh page under `down` on both relays: two likes pressed; then
+//        R's karma box is replaced on the chain by a withdraw the harness
+//        builds and submits through the node's HTTP write path (the same
+//        key as the page's, but no page sees it). Both relays set honest:
+//        the flush's first like is refused by the node (the input box
+//        no longer stands), and the second ends unsent — *not sent: the
+//        one before it was refused.* — with no POST for it going out.
+// ---------------------------------------------------------------------------
+
+const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4'];
+
+function markWaitingWritesNotRun(reason) {
+  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markWaitingWritesFail(reason) {
+  for (const s of WAITING_WRITES_STEPS) record(s, false, reason);
+}
+
+// A log-filter helper: the entries forwarded to upstream — those the relay
+// actually drove through to a node — are those whose `edit` is not the
+// relay's own "ate without forwarding" marker (`down`, `hold-posts`). Reads
+// forwarded under `honest` carry no `edit`.
+function forwardedEntries(relay) {
+  return (relay?.log ?? []).filter((e) => e.edit !== 'down' && e.edit !== 'hold-posts');
+}
+
+function forwardedPostCount(relay, pathOrPrefix) {
+  return forwardedEntries(relay).filter((e) => {
+    if (e.method !== 'POST') return false;
+    const url = e.url ?? '';
+    return url === pathOrPrefix || url.startsWith(pathOrPrefix + '?');
+  }).length;
+}
+
+// Build and submit a karma withdraw of one of R's confirmed root posts
+// through the node's HTTP write path, signed with Node's crypto over the
+// txId the shared `@dagsocial/types` primitives compute. The withdraw
+// spends R's karma box and returns a new one, so R's spendable box id
+// changes on the chain while no page of the extension sees the write
+// (WEB_INTERFACE → The withdraw control; TYPES_INTERFACE → The protocol
+// hash). Answers `{ ok, status, txId, boxId, postId }` or `{ ok: false,
+// reason }` when the preconditions cannot be met.
+async function spendRKarmaBoxOutside() {
+  if (!R_JSON) return { ok: false, reason: 'no --r-key loaded' };
+  const postId = await pickOwnRootPostId();
+  if (postId === null) return { ok: false, reason: "no R-authored root post to withdraw" };
+  let karmaR = null;
+  let statusR = null;
+  try {
+    [karmaR, statusR] = await Promise.all([
+      fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json()),
+      fetch(`${NODE}/status`).then((r) => r.json()),
+    ]);
+  } catch (e) {
+    return { ok: false, reason: `read failed: ${e?.message ?? String(e)}` };
+  }
+  const boxes = Array.isArray(karmaR?.boxes) ? karmaR.boxes : [];
+  // WEB_INTERFACE → The wallet → "A builder names the own box, always": the
+  // withdraw's single input is R's own box when R holds one, else the income
+  // box. Match on the row shape `income: true` for the income box.
+  const own = boxes.find((b) => b?.income !== true);
+  const spent = own ?? boxes[0];
+  if (!spent) return { ok: false, reason: 'R holds no karma box' };
+  const authorBytes = Buffer.from(R_JSON.pubKeyHex, 'hex');
+  const tx = {
+    inputs: [spent.boxId],
+    outputs: [{
+      boxType: 'karma',
+      value: BigInt(spent.value),
+      createdAtBlock: statusR.blockHeight,
+      owner: authorBytes,
+    }],
+    signatures: {},
+    protocolVersion: statusR.protocolVersion,
+    postWithdraw: { postId },
+  };
+  const txId = computeTxId(tx);
+  let sigBytes;
+  try {
+    const privateKey = createPrivateKey({ key: Buffer.from(R_JSON.privKeyBase64, 'base64'), format: 'der', type: 'pkcs8' });
+    sigBytes = cryptoSign(null, Buffer.from(txId, 'hex'), privateKey);
+  } catch (e) {
+    return { ok: false, reason: `sign failed: ${e?.message ?? String(e)}` };
+  }
+  tx.signatures[R_JSON.pubKeyHex] = sigBytes;
+  const body = JSON.stringify({ tx: txToJson(tx) });
+  let res = null;
+  try {
+    res = await fetch(`${NODE}/posts/${encodeURIComponent(postId)}/withdraw`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+  } catch (e) {
+    return { ok: false, reason: `POST failed: ${e?.message ?? String(e)}` };
+  }
+  let answer = null;
+  try { answer = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, txId, boxId: spent.boxId, postId, answer };
+}
+
+// Wait until R's karma listing on A reads a different first-box id than the
+// one named, within `ms`. Reads /karma/<R>?pending=1 every 2 s; answers the
+// new first boxId on success, null on timeout. The withdraw lands as a
+// change box at the same value; the box id changes, which is the signal
+// the outside spend took effect (WEB_INTERFACE → The wallet → "A builder
+// names the own box, always", "The returned box is its change").
+async function waitForRBoxReplaced(previousBoxId, ms = 180000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const j = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json());
+      const first = (Array.isArray(j?.boxes) ? j.boxes : [])[0]?.boxId ?? null;
+      if (first !== null && first !== previousBoxId) return first;
+    } catch {}
+    await sleep(2000);
+  }
+  return null;
+}
+
+// Set both tip relays to `mode`, used by the waiting-writes block the same
+// way `setTipRelayModes` is used by the verified blocks. Named separately
+// so the block's comments read against the relay-setup helper by name.
+function setBothRelayModes(mode) {
+  setTipRelayModes(mode);
+}
+
+// WEB_INTERFACE → The wallet → "A write no node answers waits",
+// → "Waiting writes go out at the first answer", → "A refusal ends what it
+// strands", → "A waiting write is drawn as pending"; → The extension → "A
+// failed listing draws the cache".
+async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
+  // Liveness probe — a session with no live target records every step as
+  // FAIL with the reason, in place of CDP's own 60-second wall.
+  const alive = await (async () => {
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), timeout])) === 2; } catch { return false; }
+  })();
+  if (!alive) {
+    markWaitingWritesFail(`the waiting-writes block's session is not live: ${targetId}`);
+    return;
+  }
+  if (!tipRelays.a || !tipRelays.b) {
+    markWaitingWritesFail('the tip relays are not up — the waiting-writes block runs under the relays build');
+    return;
+  }
+  if (!R_JSON) {
+    markWaitingWritesNotRun('no --r-key — the waiting-writes block does not run');
+    return;
+  }
+
+  // ----- W1 — a fresh page under `down` on both relays. The feed and R's
+  // author-posts window each read a transport failure on their first page.
+  // The contract (WEB_INTERFACE → The extension → "A failed listing draws
+  // the cache") says cached roots stand beneath the error line with no next
+  // page.
+  setBothRelayModes('down');
+  // Clear each relay's log so forwarded-POST assertions in later steps read
+  // only what this block produced; the previous blocks' entries are kept
+  // in a snapshot for the record.
+  const prevLogA = tipRelays.a.log.length;
+  const prevLogB = tipRelays.b.log.length;
+  let w1Page = null;
+  let w1Ok = false;
+  let w1Detail = '';
+  try {
+    w1Page = await openFreshExtensionPage(bcx);
+    const w1Cx = w1Page.cx;
+    await w1Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W1', 30000);
+    // The feed's error line — a cold first page under `down` reads a
+    // transport failure in every seed-walk attempt, so feed.error settles
+    // on 'no node answered — set one in settings' (the seed-walk branch) or
+    // the fetch's own message (the non-walk branch). Either is the error
+    // line in the DOM.
+    const errorPresent = await w1Cx.waitFor(
+      `!!document.querySelector('#feed .error')`,
+      'feed error line W1', 60000,
+    ).then(() => true, () => false);
+    await sleep(2000);
+    const feedCards = await w1Cx.eval(`document.querySelectorAll('#feed .card').length`);
+    const feedLoadOlder = await w1Cx.eval(`!!document.querySelector('#feed button[aria-label="load older posts"]')`);
+    const feedStateSnapshot = await w1Cx.eval(`(() => {
+      const err = document.querySelector('#feed .error')?.textContent ?? null;
+      return { error: err, cards: document.querySelectorAll('#feed .card').length };
+    })()`);
+    // Open the @posts:<R> window. The feed's error path ate R's feed cards,
+    // so the author-posts window is reached through the header's profile
+    // button — R's `@profile` window is always available while identity is
+    // loaded, and it never reads the network for its name/key rows. From
+    // there, the author button opens @author:<R>, and `posts` opens
+    // @posts:<R>. Two card clicks, no network needed to reach each.
+    let authorOpened = false;
+    let authorErrorPresent = null;
+    let authorCards = 0;
+    let authorMoreBtn = false;
+    try {
+      // The @profile window carries no "open my author window" shortcut, so
+      // the path through the feed is the only one. With no card to click
+      // under `down` the author window stays unreached — recorded as such.
+      const rCard = await w1Cx.eval(`(() => {
+        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+        const c = [...document.querySelectorAll('#feed .card[data-post-id]')]
+          .find((c) => c.getAttribute('data-author') === my
+            && c.querySelector('.who button.authorbtn') !== null);
+        return c ? c.getAttribute('data-post-id') : null;
+      })()`);
+      if (rCard !== null) {
+        await w1Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${rCard}"]');
+          c.querySelector('.who button.authorbtn').click();
+        })()`, true);
+        await sleep(1500);
+        // Inside the opened author window, the `posts` button opens
+        // @posts:<R>.
+        const openedAuthor = await w1Cx.eval(`(() => {
+          const btn = [...document.querySelectorAll('button')]
+            .find((b) => (b.getAttribute('aria-label') ?? '') === "open this author's posts");
+          if (btn === null) return false;
+          btn.click();
+          return true;
+        })()`, true);
+        authorOpened = openedAuthor === true;
+        if (authorOpened) {
+          await sleep(2500);
+          authorErrorPresent = await w1Cx.eval(`!!document.querySelector('.author-posts .error')`);
+          authorCards = await w1Cx.eval(`document.querySelectorAll('.author-posts .card').length`);
+          authorMoreBtn = await w1Cx.eval(`!!document.querySelector('.author-posts button[aria-label="load more posts by this author"]')`);
+        }
+      }
+    } catch (e) {
+      authorErrorPresent = `open failed: ${e?.message ?? String(e)}`;
+    }
+    const feedPass = errorPresent === true && feedCards >= 1 && feedLoadOlder === false;
+    const authorPass = authorOpened && authorErrorPresent === true && authorCards >= 1 && authorMoreBtn === false;
+    w1Ok = feedPass && authorPass;
+    w1Detail = `feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
+    record('W1', w1Ok, w1Detail);
+  } catch (e) {
+    record('W1', false, `error: ${e?.stack ?? String(e)}`);
+  }
+
+  // ----- W2 — same page, relays still `down`. Press like on a cached card
+  // the reader has not liked, and a root post from the composer. Each
+  // waits (WEB_INTERFACE → The wallet → "A waiting write is drawn as
+  // pending"); neither relay's log carries a forwarded POST. A reload of
+  // the page draws them both from the waiting store, still waiting.
+  let w2CardLikedId = null;
+  let w2PostContent = null;
+  try {
+    if (w1Page === null) throw new Error('W1 did not open a page — W2 has nothing to press on');
+    const w2Cx = w1Page.cx;
+    // Pick a cached card the reader has not liked — the feed's own non-R
+    // cards that carry the `like` word (R has not liked them; the card
+    // offers `like`).
+    const target = await w2Cx.eval(`(() => {
+      const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+      const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+      const nonOwn = cards.filter((c) => c.getAttribute('data-author') !== my);
+      for (const c of nonOwn) {
+        const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+        if (likeBtn !== null) return { id: c.getAttribute('data-post-id'), author: c.getAttribute('data-author') };
+      }
+      return null;
+    })()`);
+    // Mark positions in the relays' logs now, so W2's forwarded-POST
+    // assertion reads only what this step's presses produced.
+    const w2LogAIdx = tipRelays.a.log.length;
+    const w2LogBIdx = tipRelays.b.log.length;
+    let likePressed = false;
+    if (target !== null) {
+      w2CardLikedId = target.id;
+      await w2Cx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${target.id}"]');
+        const lb = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+        lb.click();
+      })()`, true);
+      likePressed = true;
+      await sleep(2000);
+    }
+    // A root post from the composer — the "new post" button is in the
+    // feed-head and renders even under error (feed-head is drawn before
+    // the error-return in `renderFeedInto`).
+    w2PostContent = 'ww-waiting-post-' + Date.now();
+    await w2Cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
+    await w2Cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened W2', 15000);
+    await w2Cx.eval(`(() => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = ${JSON.stringify(w2PostContent)};
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await w2Cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled W2', 30000);
+    await w2Cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
+    // Give the submit flow time to run: signRun -> write attempt -> waiting.
+    // The write proxy to the background takes a tick; silent policy signs
+    // through the extension without a prompt window.
+    await sleep(6000);
+    // Assert the post card reads *waiting for a node* and the like's
+    // overlay reads the muted count (count + 1 without the `.settled`
+    // class). The like's waiting is not a text line — it is the overlay.
+    const postStage = await w2Cx.eval(`(() => {
+      const cards = [...document.querySelectorAll('.card.pending')];
+      for (const c of cards) {
+        const text = (c.textContent ?? '');
+        if (text.includes(${JSON.stringify(w2PostContent)})) {
+          return c.querySelector('.stage span')?.textContent ?? null;
+        }
+      }
+      return null;
+    })()`);
+    let likeOverlay = null;
+    if (target !== null) {
+      likeOverlay = await w2Cx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${target.id}"]');
+        if (c === null) return null;
+        const liked = c.querySelector('.liked');
+        if (liked === null) return { present: false };
+        return { present: true, settled: liked.classList.contains('settled'), count: liked.querySelector('.n')?.textContent ?? null };
+      })()`);
+    }
+    // Neither relay's log carries a forwarded POST — under `down` the POST
+    // attempts are destroyed with `edit: 'down'`.
+    const w2NewA = tipRelays.a.log.slice(w2LogAIdx);
+    const w2NewB = tipRelays.b.log.slice(w2LogBIdx);
+    const forwardedPostsA = w2NewA.filter((e) => e.method === 'POST' && e.edit !== 'down');
+    const forwardedPostsB = w2NewB.filter((e) => e.method === 'POST' && e.edit !== 'down');
+
+    // Reload the page; the pending ledger and the waiting store are per-
+    // identity local-storage records, so both entries come back.
+    await w2Cx.call('Page.reload');
+    await sleep(3500);
+    const reloadedPage = await findExt('index.html');
+    let reloadedCx = w2Cx;
+    if (reloadedPage?.webSocketDebuggerUrl) {
+      try { w2Cx.s.close(); } catch {}
+      reloadedCx = await openSession(reloadedPage.webSocketDebuggerUrl);
+      w1Page.cx = reloadedCx;
+      w1Page.targetId = reloadedPage.id;
+    }
+    await reloadedCx.waitFor(`!!document.querySelector('#feed')`, 'feed root W2 after reload', 30000);
+    await sleep(2000);
+    const postStageAfterReload = await reloadedCx.eval(`(() => {
+      const cards = [...document.querySelectorAll('.card.pending')];
+      for (const c of cards) {
+        const text = (c.textContent ?? '');
+        if (text.includes(${JSON.stringify(w2PostContent)})) {
+          return c.querySelector('.stage span')?.textContent ?? null;
+        }
+      }
+      return null;
+    })()`);
+    let likeOverlayAfterReload = null;
+    if (target !== null) {
+      likeOverlayAfterReload = await reloadedCx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${target.id}"]');
+        if (c === null) return null;
+        const liked = c.querySelector('.liked');
+        if (liked === null) return { present: false };
+        return { present: true, settled: liked.classList.contains('settled') };
+      })()`);
+    }
+    const postWaiting = postStage === 'waiting for a node';
+    const likeWaiting = target === null
+      || (likeOverlay?.present === true && likeOverlay?.settled === false);
+    const postWaitingAfterReload = postStageAfterReload === 'waiting for a node';
+    const likeWaitingAfterReload = target === null
+      || (likeOverlayAfterReload?.present === true && likeOverlayAfterReload?.settled === false);
+    const noForwardedPosts = forwardedPostsA.length === 0 && forwardedPostsB.length === 0;
+    const w2Ok = likePressed && postWaiting && likeWaiting
+      && postWaitingAfterReload && likeWaitingAfterReload && noForwardedPosts;
+    record('W2', w2Ok,
+      `like target=${target !== null ? target.id.slice(0, 8) + '…' : 'none (no cached non-R card with the like word)'}; pressed=${likePressed}; post stage='${postStage}' (expect 'waiting for a node'); like overlay=${JSON.stringify(likeOverlay)} (expect present, not settled); after reload: post stage='${postStageAfterReload}', like overlay=${JSON.stringify(likeOverlayAfterReload)}; forwarded POSTs via RLA=${forwardedPostsA.length} (${forwardedPostsA.map((e) => `${e.method} ${e.url}`).join(', ')}), via RLB=${forwardedPostsB.length} (${forwardedPostsB.map((e) => `${e.method} ${e.url}`).join(', ')}) — expect 0/0 under both relays 'down'`);
+  } catch (e) {
+    record('W2', false, `error: ${e?.stack ?? String(e)}`);
+  }
+
+  // ----- W3 — same page, both relays `honest`. Press the corner: a read
+  // the corner tick answers triggers `flushWaitingWrites`, which sends
+  // each waiting write of the loaded identity in press order under the
+  // rep queue (WEB_INTERFACE → The wallet → "The reader's spends run one
+  // at a time, per ledger"). Assert: the like POST arrives before the
+  // post POST in a relay's log, both admitted (each txId in a node's
+  // pool or chain), and the post's content lands in the feed.
+  //
+  // The bound: the corner polls every 30 s past a verdict (CONSTANTS →
+  // Client defaults, the tip-run cadence), and the miner is paced at
+  // about ten blocks a minute (`promote.mjs` and the extension-check
+  // recipe). A write that admits now reaches the chain within three
+  // miner cycles — 180 s is the floor the other blocks' landing polls
+  // use. 300 s here covers one race of two reads on the corner tick.
+  try {
+    if (w1Page === null) throw new Error('no page for W3 — W1/W2 did not open one');
+    const w3Cx = w1Page.cx;
+    setBothRelayModes('honest');
+    const w3LogAIdx = tipRelays.a.log.length;
+    const w3LogBIdx = tipRelays.b.log.length;
+    await pressCorner(w3Cx);
+    // The flush may run on this corner tick's answered reads; wait for
+    // both expected POSTs (likes and posts) in either relay's log,
+    // whichever the client routes to. No `rtk proxy` is needed — the log
+    // is read via array access, not shell output.
+    const bound = 300000;
+    const t0 = Date.now();
+    let forwardedLikes = 0;
+    let forwardedPosts = 0;
+    let likeFirstAt = null;
+    let postFirstAt = null;
+    while (Date.now() - t0 < bound) {
+      const aNew = tipRelays.a.log.slice(w3LogAIdx);
+      const bNew = tipRelays.b.log.slice(w3LogBIdx);
+      const merged = [...aNew, ...bNew].filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts');
+      forwardedLikes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?'))).length;
+      forwardedPosts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?'))).length;
+      if (likeFirstAt === null) {
+        const first = merged.find((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
+        if (first) likeFirstAt = first.at;
+      }
+      if (postFirstAt === null) {
+        const first = merged.find((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
+        if (first) postFirstAt = first.at;
+      }
+      if (forwardedLikes >= 1 && forwardedPosts >= 1 && likeFirstAt !== null && postFirstAt !== null) break;
+      await sleep(1000);
+    }
+    // Each txId admitted — in the node's pool (`/mempool`) or the chain
+    // (`/posts/:id` answers 200). The client's post content lands in the
+    // feed as a confirmed card the feed reads.
+    const postLanded = await (async () => {
+      const t1 = Date.now();
+      while (Date.now() - t1 < bound) {
+        try {
+          const j = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json());
+          if (Array.isArray(j?.posts) && j.posts.some((p) => p?.content === w2PostContent)) return true;
+        } catch {}
+        await sleep(2000);
+      }
+      return false;
+    })();
+    const feedShowsConfirmed = await w3Cx.eval(`(() => {
+      const nodes = [...document.querySelectorAll('.card .card-content')];
+      return nodes.some((n) => (n.textContent ?? '').includes(${JSON.stringify(w2PostContent)}));
+    })()`).catch(() => false);
+    const orderedOk = likeFirstAt !== null && postFirstAt !== null && likeFirstAt <= postFirstAt;
+    const w3Ok = forwardedLikes >= 1 && forwardedPosts >= 1 && orderedOk && postLanded;
+    record('W3', w3Ok,
+      `forwarded likes POST=${forwardedLikes} (expect ≥1), posts POST=${forwardedPosts} (expect ≥1), press order like@${likeFirstAt}·post@${postFirstAt} (expect like before post)=${orderedOk}, post landed in feed under /posts?author=R=${postLanded}, DOM feed shows the content=${feedShowsConfirmed}`);
+  } catch (e) {
+    record('W3', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    // Clean up W1/W2/W3's page before W4 opens its own fresh one.
+    if (w1Page) {
+      try { w1Page.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: w1Page.targetId }).catch(() => {});
+      w1Page = null;
+    }
+  }
+
+  // ----- W4 — a fresh page under `down` on both relays: two likes pressed
+  // from cached cards; then R's karma box is replaced on the chain by a
+  // withdraw the harness builds and submits through the node's HTTP write
+  // path, signed with Node's crypto over the shared `computeTxId`. Both
+  // relays are then set `honest`: the flush's first like is refused by the
+  // node (the input box the client selected is no longer held), and the
+  // second ends unsent — *not sent: the one before it was refused.*
+  // (WEB_INTERFACE → The wallet → "A refusal ends what it strands") —
+  // with no POST for it going out.
+  try {
+    setBothRelayModes('down');
+    const w4LogAIdx = tipRelays.a.log.length;
+    const w4LogBIdx = tipRelays.b.log.length;
+    const w4Page = await openFreshExtensionPage(bcx);
+    const w4Cx = w4Page.cx;
+    try {
+      await w4Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W4', 30000);
+      // Two targets the reader has not liked — cards that carry the `like`
+      // word under the author's non-R key. Under `down` the feed renders
+      // what the cache fallback puts on it; where the cache fallback does
+      // not reach the DOM, `pressable` is empty and the record names why.
+      const pressable = await w4Cx.eval(`(() => {
+        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+        const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+        return cards
+          .filter((c) => c.getAttribute('data-author') !== my)
+          .map((c) => ({ id: c.getAttribute('data-post-id'), hasLike: [...c.querySelectorAll('button.word')].some((b) => (b.textContent ?? '').trim() === 'like') }))
+          .filter((x) => x.hasLike);
+      })()`);
+      let firstLikeId = null;
+      let secondLikeId = null;
+      if (pressable.length >= 1) {
+        firstLikeId = pressable[0].id;
+        await w4Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${pressable[0].id}"]');
+          [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like').click();
+        })()`, true);
+        await sleep(2000);
+      }
+      if (pressable.length >= 2) {
+        secondLikeId = pressable[1].id;
+        await w4Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${pressable[1].id}"]');
+          [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like').click();
+        })()`, true);
+        await sleep(2000);
+      }
+      // Replace R's karma box on the chain through the node's HTTP write
+      // path — the harness holds R's key — before the relays come back.
+      // The withdraw's answer is awaited for a few seconds, then the
+      // chain is polled until R's first karma box id changes.
+      const preKarma = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json()).catch(() => null);
+      const preFirstBoxId = (Array.isArray(preKarma?.boxes) ? preKarma.boxes[0]?.boxId : null) ?? null;
+      const spent = await spendRKarmaBoxOutside();
+      let replaced = null;
+      if (spent.ok && preFirstBoxId !== null) {
+        replaced = await waitForRBoxReplaced(preFirstBoxId, 240000);
+      }
+      // Both relays back to `honest`; the next corner tick on this page
+      // (or a press of the corner) is an answered read that fires the
+      // flush.
+      setBothRelayModes('honest');
+      await pressCorner(w4Cx);
+      // Wait for the first flush outcome: either the first like's
+      // rejection shows in the feed as the card's report line, or the
+      // relay's log shows the forwarded POST /likes for the first like
+      // followed by none for the second. The App's `applyRejectedOutcome`
+      // writes "not sent: the one before it was refused." for a stranded
+      // ledger write, and the client never re-sends it.
+      const bound = 180000;
+      const t0 = Date.now();
+      let firstLikeForwarded = 0;
+      let secondLikeForwarded = 0;
+      let rejectionLine = null;
+      let strandedLine = null;
+      while (Date.now() - t0 < bound) {
+        const aNew = tipRelays.a.log.slice(w4LogAIdx);
+        const bNew = tipRelays.b.log.slice(w4LogBIdx);
+        const merged = [...aNew, ...bNew]
+          .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
+          .filter((e) => e.url === '/likes' || (e.url ?? '').startsWith('/likes?'));
+        // The first like's forward reaches the node; the node's answer is
+        // the rejection; the second like's forward never leaves (the
+        // write is stranded).
+        firstLikeForwarded = merged.length;
+        // A rejection landed in the feed as the card's report line.
+        rejectionLine = await w4Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${firstLikeId ?? ''}"]');
+          if (c === null) return null;
+          return c.querySelector('.report')?.textContent ?? null;
+        })()`).catch(() => null);
+        strandedLine = secondLikeId === null ? null : await w4Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${secondLikeId}"]');
+          if (c === null) return null;
+          return c.querySelector('.report')?.textContent ?? null;
+        })()`).catch(() => null);
+        if (firstLikeForwarded >= 1 && rejectionLine !== null && (secondLikeId === null || strandedLine !== null)) break;
+        await sleep(1500);
+      }
+      // After the flush, assert the second like never forwards: the
+      // stranding rule drops it before any POST goes.
+      await sleep(3000);
+      const afterNewA = tipRelays.a.log.slice(w4LogAIdx);
+      const afterNewB = tipRelays.b.log.slice(w4LogBIdx);
+      const allLikePosts = [...afterNewA, ...afterNewB]
+        .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
+        .filter((e) => e.url === '/likes' || (e.url ?? '').startsWith('/likes?'));
+      secondLikeForwarded = Math.max(0, allLikePosts.length - 1);
+      const strandedTextOk = secondLikeId === null
+        || (typeof strandedLine === 'string' && strandedLine.includes('not sent: the one before it was refused'));
+      const firstRefused = typeof rejectionLine === 'string' && rejectionLine.trim() !== '';
+      const w4Ok = spent.ok && replaced !== null && firstLikeForwarded >= 1 && firstRefused && strandedTextOk && secondLikeForwarded === 0;
+      record('W4', w4Ok,
+        `pressable likes in feed=${pressable.length} (≥2 expected); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first like forwarded POST count=${firstLikeForwarded} (≥1 expected); first like's rejection line=${JSON.stringify(rejectionLine)} (non-empty expected); second like forwarded POST count=${secondLikeForwarded} (0 expected — stranded); second like's stranding line=${JSON.stringify(strandedLine)} (expect 'not sent: the one before it was refused.')`);
+    } finally {
+      try { w4Cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: w4Page.targetId }).catch(() => {});
+    }
+  } catch (e) {
+    record('W4', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    // Clean every step up: relays back to `honest`, previous log entries
+    // left in place — the record's own slice is what the block's own
+    // steps read.
+    setBothRelayModes('honest');
+    void prevLogA; void prevLogB; // kept for the record's debug reads
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The light block — steps L1 · L2 · L3 · L4 · L5 · L6 · L7 · L8 · L9 · L10 ·
 // L11 · L12 · L13 · L14 (WEB_INTERFACE → The extension → "The light read",
 // "The resolve", "The post check", "The post cache", "The chain's name").
@@ -7899,6 +8559,34 @@ async function runVerifiedBlocks(bcx, opts = {}) {
     try { vnCx.s.close(); } catch {}
   } else {
     markVerifiedNamesNotRun('no --verified-names');
+  }
+
+  // The waiting-writes block runs after the verified blocks in the relays
+  // build (WEB_INTERFACE → The wallet → "A write no node answers waits";
+  // this file's header → "The waiting-writes block"). It uses the two tip
+  // relays `setupTipRelays` set up and R's identity loaded by steps 2–12;
+  // --light and --mesh builds have a different seed list and run their own
+  // blocks instead, so the waiting-writes block is gated on neither being
+  // set.
+  if (R_KEY && !LIGHT && !MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
+    let wPage = await findExt('index.html');
+    if (!wPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      wPage = await findExt('index.html');
+    }
+    if (!wPage) throw new Error('waiting-writes block: no extension page');
+    const wCx = await openSession(wPage.webSocketDebuggerUrl);
+    await waitingWritesSteps(wCx, bcx, wPage.id);
+    try { wCx.s.close(); } catch {}
+  } else {
+    markWaitingWritesNotRun(LIGHT
+      ? '--light runs its own block; the waiting-writes block is relays-build only'
+      : MESH
+        ? '--mesh runs its own block; the waiting-writes block is relays-build only'
+        : !R_KEY
+          ? 'no --r-key — the waiting-writes block needs R\'s identity'
+          : 'no --verified-tip / --verified-figures / --verified-names — the tip relays are not up');
   }
 
   // The light block runs alone after steps 1–16, on a session of its own.
