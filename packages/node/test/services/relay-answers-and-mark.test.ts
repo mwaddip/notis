@@ -234,13 +234,13 @@ describe('the relay handler answers whether it admitted the transaction', () => 
   });
 
   it('a conflicting relayed arrival at a full credit class leaves the pool unchanged', async () => {
-    // MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
-    // capacity gate."; MEMPOOL_INTERFACE → getBoxWithPending → "A relayed
-    // transaction is judged against the pending view, as a submitted one
-    // is". The relay reads the input through the pending view, which
-    // throws `PendingSpendConflictError` for a box a pooled entry spends;
-    // the credit class is full and the arrival would outbid the cheapest
-    // resident, and still nothing moves.
+    // NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
+    // "A pooled spender's conflict is the pool's refusal"; MEMPOOL_INTERFACE
+    // → getBoxWithPending → "A relayed transaction is judged against the
+    // pending view, as a submitted one is". The relay reads the input
+    // through the pending view, which throws `PendingSpendConflictError`
+    // for a box a pooled entry spends; the credit class is full and the
+    // arrival would outbid the cheapest resident, and still nothing moves.
     const { sender, box } = await storeWithCredit();
     const mempool = await import('../../src/store/mempool.js');
     mempool.setMempoolCap(2); // one credit slot

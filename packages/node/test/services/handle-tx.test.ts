@@ -12,7 +12,7 @@ import {
   KARMA_MINIMUM,
   POST_PRICE_THREAD,
 } from '@dagsocial/types';
-import type { AnyBox, AnyBoxCandidate, KarmaBox, PostCommit, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBoxCandidate, KarmaBox, PostCommit, UtxoTransaction } from '@dagsocial/types';
 import { materializeOutput } from '@dagsocial/consensus';
 import {
   blockBudgetSeam,
@@ -242,20 +242,20 @@ function buildThread(
   content: string,
 ): { tx: UtxoTransaction; content: string; postId: string } {
   const change = karma.value - POST_PRICE_THREAD;
-  const outputs: AnyBox[] = [];
+  const outputs: AnyBoxCandidate[] = [];
   if (change > 0n) {
     outputs.push({
       boxType: 'karma',
       value: change,
       createdAtBlock: 0,
       owner: author.userId,
-    } as unknown as AnyBox);
+    });
   }
   outputs.push({
     boxType: 'karma_price',
     value: POST_PRICE_THREAD,
     createdAtBlock: 0,
-  } as unknown as AnyBox);
+  });
   const commit: PostCommit = {
     contentHash: computeContentHash(content),
     author: author.userId,
@@ -443,9 +443,10 @@ describe('the relay judges the transaction against the pending view', () => {
     expect(counters['relayed_txs_input_missing_total']).toBe(0);
   });
 
-  // MEMPOOL_INTERFACE → insertUtxoTx → "The conflict gate runs before the
-  // capacity gate": an arrival spending a box a pooled entry spends answers
-  // the conflict — one line, `false`, the pool as it stood.
+  // NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
+  // "A pooled spender's conflict is the pool's refusal": an arrival
+  // spending a box a pooled entry spends answers the conflict — one line,
+  // `false`, the pool as it stood.
   it('a relayed transaction spending a box a pooled entry spends answers false, one line naming the conflict, pool unchanged', async () => {
     const { sender, box } = await storeWithCredit();
     const parent = makeCreditTx(sender, [box], 1_000n);

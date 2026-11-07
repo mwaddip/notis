@@ -771,16 +771,15 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     // reaches the engine's karma arm with the pooled change in hand; at
     // held 12, pending 2, owed 0, spend 1 the floor's rule refuses.
     const warned: string[] = [];
-    const logged: string[] = [];
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warned.push(a.map(String).join(' ')); });
-    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(' ')); });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const returned = handleRelayedTx(like3, undefined, 'peer-relay-under-test');
     expect(returned).toBe(false);
 
     // The pool is unchanged — the refusal left no row.
     expect(getPendingEntries(100).length).toBe(beforePool);
-    void logged;
-    expect(warned.some((l) => l.includes('Relayed tx rejected:') && l.includes('below the floor of 10'))).toBe(true);
+    const refusalLines = warned.filter((l) => l.includes('Relayed tx rejected:') && l.includes('below the floor of 10'));
+    expect(refusalLines.length).toBe(1);
   });
 });

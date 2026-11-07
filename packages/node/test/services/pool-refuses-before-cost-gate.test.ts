@@ -199,7 +199,8 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     const returned = handleRelayedTx(colliding, undefined, 'peer-x');
     expect(returned).toBe(false);
     expect(getPendingEntries(10)).toHaveLength(1);
-    expect(warned.some((l) => l.includes('Relayed tx dropped, input spent by a pending entry'))).toBe(true);
+    const conflictLines = warned.filter((l) => l.includes('Relayed tx dropped, input spent by a pending entry'));
+    expect(conflictLines.length).toBe(1);
 
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(0);
   });
