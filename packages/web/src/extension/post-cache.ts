@@ -611,14 +611,6 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     return out;
   }
 
-  /** For each row whose id is held, replace the entry's row (stored without
-   *  `tx`) and `lastSeen`, keeping `txBytes`, `author`, `parent` and `own`;
-   *  move the running total by the sum of the size differences, in the same
-   *  transaction (WEB_INTERFACE → The extension → "The post cache"). An
-   *  entry whose row is a `WithdrawnJson` is left as it is — the withdrawn
-   *  row carries no text, and refresh never restores text or rewrites the
-   *  withdrawal; an id not held is nothing; an empty list and no database
-   *  are nothing. */
   /** Refresh a kept entry's row and last-seen, as a refresh does a stored
    *  one (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
    *  A withdrawn kept entry is left as it is. */
@@ -637,6 +629,14 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     }
   }
 
+  /** For each row whose id is held, replace the entry's row (stored without
+   *  `tx`) and `lastSeen`, keeping `txBytes`, `author`, `parent` and `own`;
+   *  move the running total by the sum of the size differences, in the same
+   *  transaction (WEB_INTERFACE → The extension → "The post cache"). An
+   *  entry whose row is a `WithdrawnJson` is left as it is — the withdrawn
+   *  row carries no text, and refresh never restores text or rewrites the
+   *  withdrawal; an id not held is nothing; an empty list and no database
+   *  are nothing. */
   async function refreshInternal(rows: readonly PostJson[]): Promise<void> {
     if (rows.length === 0) return;
     // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does":
