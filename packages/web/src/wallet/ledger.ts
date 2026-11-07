@@ -1,6 +1,6 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
-import { heldEntry } from './expiry';
+import { boundedExpiry, heldEntry } from './expiry';
 import type { PostJson, WithdrawnJson, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
 import type { PendingEntry, EntryOutcome, SendRef, UnboundedEntry } from './types';
 
@@ -58,6 +58,27 @@ export class PendingLedger {
     if (this.entries.delete(txId)) this.persist();
   }
 
+  /** Bring a waiting entry out of waiting — a node answered the write, so the
+   *  entry becomes a plain one: `waiting` gone, `submittedAtHeight` the tip the
+   *  client read at the answer, `expiresAtHeight` bounded from it as any added
+   *  entry is (WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+   *  answer", → "A pending entry's expiry is the client's, and a node's answer
+   *  can only bring it sooner"). Persisted. Answers the held entry, or `null`
+   *  for an id not held or not waiting. */
+  release(txId: string, answeredExpiry: unknown, sentAtHeight: number): PendingEntry | null {
+    const prev = this.entries.get(txId);
+    if (prev === undefined || prev.waiting !== true) return null;
+    const { waiting: _waiting, ...rest } = prev;
+    const released: PendingEntry = {
+      ...rest,
+      submittedAtHeight: sentAtHeight,
+      expiresAtHeight: boundedExpiry(sentAtHeight, answeredExpiry),
+    };
+    this.entries.set(txId, released);
+    this.persist();
+    return released;
+  }
+
   private persist(): void {
     if (this.storageKey === null) return; // no identity → persists nothing
     writeStore(this.storageKey, JSON.stringify(this.all().map(toStored)));
@@ -97,6 +118,7 @@ export class PendingLedger {
 // ---------------------------------------------------------------------------
 
 export function reconcilePost(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched === null) return 'expired'; // 404 — the mempool purged it, or it was never admitted
   if (isWithdrawn(fetched)) return 'landed'; // on-chain, then withdrawn
@@ -105,6 +127,7 @@ export function reconcilePost(entry: PendingEntry, fetched: PostJson | Withdrawn
 }
 
 export function reconcileLike(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched !== null && !isWithdrawn(fetched) && fetched.likedByViewer === true) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
@@ -114,6 +137,7 @@ export function reconcileLike(entry: PendingEntry, fetched: PostJson | Withdrawn
  *  the grant was asked, so a risen boxCount is the grant — expired past its height
  *  while still zero, else pending (WEB_INTERFACE → The faucet step). */
 export function reconcileGrant(entry: PendingEntry, karma: KarmaResult, tip: number): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (karma.boxCount > 0) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -128,6 +152,7 @@ export function reconcileSend(
   recipientBoxes: ReadonlyArray<{ boxId: string }>,
   tip: number,
 ): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   const boxId = entry.send?.boxId;
   if (boxId === undefined) return 'expired'; // a send entry missing its payload cannot land
   if (recipientBoxes.some((b) => b.boxId === boxId)) return 'landed';
@@ -138,6 +163,7 @@ export function reconcileSend(
  *  box the faucet named — `entry.postId` is that box id (WEB_INTERFACE → The
  *  faucet step). Expired past its height while absent, else pending. */
 export function reconcileCreditGrant(entry: PendingEntry, credits: CreditsResult, tip: number): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (credits.boxes.some((b) => b.boxId === entry.postId)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -163,6 +189,7 @@ export function reconcileVouch(
   vouches: ReadonlyArray<{ targetId: string }>,
   tip: number,
 ): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (vouches.some((v) => v.targetId === entry.postId)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -180,6 +207,7 @@ export function reconcileUnvouch(
   vouches: ReadonlyArray<{ targetId: string }>,
   tip: number,
 ): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   const gone = !vouches.some((v) => v.targetId === entry.postId);
   if (gone) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
@@ -192,6 +220,7 @@ export function reconcileInvite(
   bonds: ReadonlyArray<{ inviteePublicKey: string }>,
   tip: number,
 ): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (bonds.some((b) => b.inviteePublicKey === entry.postId)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -203,6 +232,7 @@ export function reconcileInvite(
  *  still pending, unlike a post entry: a confirmed live post is not a landing
  *  for a withdrawal (WEB_INTERFACE → The withdraw control). */
 export function reconcileWithdraw(entry: PendingEntry, fetched: PostJson | WithdrawnJson | null, tip: number, withheld = false): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (withheld) return tip > entry.expiresAtHeight ? 'expired' : 'pending';
   if (fetched === null) return 'expired';
   if (isWithdrawn(fetched)) return 'landed';
@@ -213,6 +243,7 @@ export function reconcileWithdraw(entry: PendingEntry, fetched: PostJson | Withd
  *  expired once the tip passes `expiresAtHeight`; else pending
  *  (WEB_INTERFACE → The wallet). */
 export function reconcileClaim(entry: PendingEntry, held: UsernameResult | null, tip: number): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (held !== null && held.name === entry.postId) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -220,6 +251,7 @@ export function reconcileClaim(entry: PendingEntry, held: UsernameResult | null,
 /** A pending burn is landed when the owner holds no name (or a different one);
  *  expired past the height; else pending (WEB_INTERFACE → The wallet). */
 export function reconcileBurn(entry: PendingEntry, held: UsernameResult | null, tip: number): EntryOutcome {
+  if (entry.waiting === true) return 'pending';
   if (held === null || held.name !== entry.postId) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
@@ -271,6 +303,7 @@ interface StoredEntry {
   send?: StoredSend;
   expiresAtHeight: number;
   submittedAtHeight: number;
+  waiting?: true;
 }
 
 function toStored(e: PendingEntry): StoredEntry {
@@ -281,6 +314,7 @@ function toStored(e: PendingEntry): StoredEntry {
     ...(e.send ? { send: { toHex: e.send.toHex, toName: e.send.toName, amount: e.send.amount.toString(), boxId: e.send.boxId } } : {}),
     expiresAtHeight: e.expiresAtHeight,
     submittedAtHeight: e.submittedAtHeight,
+    ...(e.waiting === true ? { waiting: true as const } : {}),
   };
 }
 
@@ -320,6 +354,14 @@ function parseStoredEntry(v: unknown): UnboundedEntry {
     }
     send = { toHex: so.toHex, toName: so.toName as string | null, amount: BigInt(so.amount), boxId: so.boxId };
   }
+  // WEB_INTERFACE → The wallet → "A write no node answers waits": a waiting
+  // entry carries `waiting: true` (absent is the plain case); any other value
+  // is a malformed entry, as today's rule.
+  let waiting: true | undefined;
+  if (o.waiting !== undefined) {
+    if (o.waiting !== true) throw new Error('entry waiting is not true');
+    waiting = true;
+  }
   return {
     txId: o.txId,
     kind: o.kind as PendingEntry['kind'],
@@ -327,5 +369,6 @@ function parseStoredEntry(v: unknown): UnboundedEntry {
     ...(send ? { send } : {}),
     expiresAtHeight: o.expiresAtHeight,
     submittedAtHeight: o.submittedAtHeight,
+    ...(waiting === true ? { waiting: true as const } : {}),
   };
 }

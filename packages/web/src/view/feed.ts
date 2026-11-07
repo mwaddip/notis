@@ -85,7 +85,10 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
 
   if (feed.error) {
     container.appendChild(el('div', 'error', `can't reach the node right now — ${feed.error}`));
-    return;
+    // Fall through to draw the rows the cache fallback wrote beneath the
+    // error line (WEB_INTERFACE → The extension → "A failed listing draws
+    // the cache"); `feed.next` is null so the foot carries no `load older`,
+    // `feed.loaded` is false so `loading…` and `no posts yet.` stay off.
   }
   if (feed.report) container.appendChild(reportNode(feed.report));
   // The withheld line (WEB_INTERFACE → The extension → "The post check"):

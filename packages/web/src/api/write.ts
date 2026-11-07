@@ -93,11 +93,15 @@ export interface SendSubmitResult {
  *  both (WEB_INTERFACE → Writes). A transport failure — `status: 0` — carries
  *  `timedOut: true` when the deadline ended it, as `fetchJson` carries it on a
  *  read (WEB_INTERFACE → Reading a node's answer → "A failure the deadline
- *  ended says so"). Every other result leaves it absent. */
+ *  ended says so"). `noAnswer: true` marks the send `send` returns once the
+ *  loop is exhausted — the empty-order `no node to send to` and the last
+ *  attempt's transport failure — and no other result
+ *  (WEB_INTERFACE → The wallet → "A write no node answers waits"). */
 export interface Rejection {
   status: number;
   message: string;
   timedOut?: true;
+  noAnswer?: true;
 }
 
 /** A success body carries no `message`; a rejection always does. */
@@ -279,7 +283,10 @@ export class WriteClient {
       }
       return rebuilt;
     }
-    return last;
+    // The loop is exhausted — the empty-order `no node to send to` or every
+    // attempt a transport failure — and the send reads as *no answer*
+    // (WEB_INTERFACE → The wallet → "A write no node answers waits").
+    return { ...last, noAnswer: true };
   }
 }
 

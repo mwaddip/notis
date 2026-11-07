@@ -73,4 +73,20 @@ describe('heldEntry', () => {
     const held = heldEntry({ txId: 't2', kind: 'like', postId: 'p2', expiresAtHeight: undefined, submittedAtHeight: BUILT });
     expect(held.expiresAtHeight).toBe(OWN);
   });
+
+  // WEB_INTERFACE → The wallet → "A pending entry's expiry is the client's, and
+  // a node's answer can only bring it sooner": a waiting entry has no expiry
+  // while it waits — so heldEntry leaves it at Number.MAX_SAFE_INTEGER whatever
+  // the caller or storage held.
+  it('a waiting entry is not bounded', () => {
+    const base: UnboundedEntry = { txId: 't3', kind: 'post', postId: 'p3', submittedAtHeight: BUILT, expiresAtHeight: undefined, waiting: true };
+    expect(heldEntry(base).expiresAtHeight).toBe(Number.MAX_SAFE_INTEGER);
+    expect(heldEntry(base).waiting).toBe(true);
+    // A stored waiting entry carrying a bounded height restores unbounded, since
+    // the ledger holds `waiting` whatever the stored height was.
+    expect(heldEntry({ ...base, expiresAtHeight: BUILT + 1 }).expiresAtHeight).toBe(Number.MAX_SAFE_INTEGER);
+    // One answering a later height is the same, so no stored answer can end
+    // the waiting through the bound.
+    expect(heldEntry({ ...base, expiresAtHeight: 1e15 }).expiresAtHeight).toBe(Number.MAX_SAFE_INTEGER);
+  });
 });

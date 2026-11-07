@@ -14,7 +14,9 @@
 // harness sets between steps: `honest` (every request passed through),
 // `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
 // not verify), `proof-short` (the proof route answered 404 chain-too-short,
-// `NODE_INTERFACE → Nipopow`) and `upstream-D` (every request passed to D).
+// `NODE_INTERFACE → Nipopow`), `upstream-D` (every request passed to D), and
+// `down` (every request's connection ends with no status, so the client reads
+// a transport failure — the mode the waiting-writes block runs under).
 // The build's seed list names the two relays as its two entries, each
 // `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
 // its api alone (`MESH_INTERFACE → The client's node list → "An entry may
@@ -26,6 +28,18 @@
 // sets each figures mode on both tip relays and opens a fresh page per arm;
 // the verified-names block brings up a B of its own too, and each of its lie
 // arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
+// The waiting-writes block (W1 · W2 · W3 · W4) runs after the three verified
+// blocks in the relays build — the one whose seed list is RLA and RLB in
+// front of A and B — and covers WEB_INTERFACE → The wallet → "A write no node
+// answers waits", → "Waiting writes go out at the first answer", → "A
+// refusal ends what it strands", → "A waiting write is drawn as pending",
+// and → The extension → "The post cache" → "A failed listing draws the
+// cache". Both relays are in `down` mode for W1, W2 and W4's build-up — a
+// client read reads a transport failure; honest for W3's flush and for W4's
+// final step. W4's outside spend replaces R's karma box through the node's
+// HTTP write path with a withdraw built from `@dagsocial/types`' primitives
+// and signed by the harness's own Node crypto, so the stranded write of the
+// waiting chain is refused at the first flush.
 // The light block
 // (L1 … L14) covers how the extension reads its lists light with ids and the
 // node's word, draws cached posts at once, shows slots for the rest and
@@ -108,6 +122,28 @@
 //     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
 //     names"), so the block runs a B of its own and requires what
 //     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
+//   Waiting-writes block: W1·W2·W3·W4 (WEB_INTERFACE → The wallet → "A write
+//     no node answers waits", → "Waiting writes go out at the first answer",
+//     → "A refusal ends what it strands", → "A waiting write is drawn as
+//     pending"; → The extension → "A failed listing draws the cache"). Runs
+//     after the three verified blocks in the relays build, whenever any of
+//     --verified-{tip,figures,names} is passed with --r-key — the relays are
+//     up and R's identity is loaded. W1 and W2 open one fresh page under
+//     `down` on both relays; W3 presses the corner on the same page with
+//     both relays honest; W4 opens another fresh page under `down`, presses
+//     two root posts from the composer whose builders chain on the rep
+//     queue, replaces R's karma box on the chain through a withdraw the
+//     harness builds and submits, then sets both relays honest.
+//   --waiting-only: iterate on the waiting-writes block alone. Runs steps
+//     1 and 2 (seed list check and R's import), brings up the two tip
+//     relays in front of A (RLB's upstream is A too, since B is not
+//     needed), skips steps 3–20 and the verified-tip / figures / names
+//     blocks, then runs the waiting-writes block and the [diag]
+//     liveness line, and ends — 13-uncancelled and the mesh block are
+//     recorded NOT RUN. Requires --r-key and refuses combination with
+//     --verified-{tip,figures,names}, --light or --mesh. **The full run
+//     is the record**; this flag is for turning the block over fast
+//     while a defect of it is being tracked down.
 //   --light: L1·L2·L3·L4·L5·L6·L7·L8·L9·L10·L11·L12·L13·L14. The light read,
 //     the resolve, the post check, the post cache and the chain's name
 //     (WEB_INTERFACE → The extension → "The light read", "The resolve", "The
@@ -140,6 +176,7 @@
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--mesh --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--waiting-only] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -148,13 +185,14 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from 'node:crypto';
+import { computeTxId, txToJson } from '@dagsocial/types';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh', 'waiting-only']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
@@ -225,6 +263,16 @@ const LIGHT = args.get('light') === true;
 // api:<HTTP base>}` — the harness prints the VITE_NODES to rebuild with
 // when the shape disagrees. Absent, every step reads NOT RUN by name.
 const MESH = args.get('mesh') === true;
+// --waiting-only: iterate on the waiting-writes block alone. The harness
+// runs steps 1 and 2 (the seed list check and R's import — the only
+// earlier state the block needs), brings up the two tip relays in front
+// of A (both relays' upstream is A, since B is not needed), skips steps
+// 3–20 and the verified-tip / figures / names blocks, then runs the
+// waiting-writes block (prep · W1 · W2 · W3 · W4) and the `[diag]`
+// liveness line, and ends — 13-uncancelled and the mesh block read
+// NOT RUN. The full run is the record; this flag is for turning the
+// block over fast while a defect of it is being tracked down.
+const WAITING_ONLY = args.get('waiting-only') === true;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -395,6 +443,20 @@ if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
 // apis in front. The builds differ and a run takes one.
 if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
   console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
+  process.exit(2);
+}
+
+// --waiting-only needs --r-key (the block signs with R and reads R's
+// listings) and refuses combination with any of the three verified
+// blocks, --light or --mesh: the flag runs the waiting-writes block
+// alone, under the relays build, in front of A alone — a combined run
+// is the full one and `--waiting-only` is dropped.
+if (WAITING_ONLY && !R_KEY) {
+  console.error('--waiting-only requires --r-key — the waiting-writes block signs with R and reads R\'s listings');
+  process.exit(2);
+}
+if (WAITING_ONLY && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH)) {
+  console.error('--waiting-only cannot be combined with --verified-tip, --verified-figures, --verified-names, --light or --mesh — the flag runs the waiting-writes block alone; a combined run is the full one with the flag dropped');
   process.exit(2);
 }
 
@@ -939,6 +1001,131 @@ async function findWorker(chromePort = port) {
   return list.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.endsWith('/background.js'));
 }
 
+// The diagnostic line that runs just before `13-uncancelled`: for every
+// target `/json/list` reports (page, service_worker, worker, browser),
+// name its type, the first 80 chars of its URL, and whether a fresh CDP
+// session's `Runtime.evaluate('1+1')` answers within 3 s — `live`,
+// `hung`, or `no-ws`. An extension page gets a `label` comparing its
+// target id against the known `mainPageId` (what `main()` opened and
+// what the block reuses under `--waiting-only`): `main()` for that one,
+// `block-leftover` for any other. For every page that reads `hung`,
+// `probeHungPage` opens a fresh session, reads `document.visibilityState`
+// if the page answers, runs `Debugger.enable` then `Debugger.pause` and
+// collects the top 8 frames of the next `Debugger.paused` event (up to
+// 5 s), then `Debugger.resume`s and closes; one line per hung page.
+async function probeHungPage(wsUrl) {
+  let sock = null;
+  const result = { visibility: null, frames: [], reason: null };
+  try {
+    sock = new WebSocket(wsUrl);
+    await new Promise((res, rej) => {
+      sock.onopen = res;
+      sock.onerror = rej;
+      setTimeout(() => rej(new Error('open timeout')), 2000);
+    });
+    let nextId = 0;
+    const pending = new Map();
+    const events = [];
+    sock.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+      if (m.method) events.push(m);
+    };
+    const call = (method, params = {}, timeoutMs = 3000) => new Promise((res, rej) => {
+      const id = ++nextId;
+      const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout on ' + method)); }, timeoutMs);
+      pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+      sock.send(JSON.stringify({ id, method, params }));
+    });
+    try {
+      const vr = await call('Runtime.evaluate', { expression: 'document.visibilityState', returnByValue: true }, 2000);
+      result.visibility = vr?.result?.value ?? null;
+    } catch {}
+    try { await call('Debugger.enable', {}, 3000); } catch (e) { result.reason = 'Debugger.enable failed: ' + String(e?.message ?? e); return result; }
+    try { await call('Debugger.pause', {}, 3000); } catch (e) { result.reason = 'Debugger.pause failed: ' + String(e?.message ?? e); try { await call('Debugger.disable', {}, 2000); } catch {} return result; }
+    const paused = await new Promise((res) => {
+      const start = Date.now();
+      const check = setInterval(() => {
+        const ev = events.find((e) => e.method === 'Debugger.paused');
+        if (ev) { clearInterval(check); res(ev); return; }
+        if (Date.now() - start >= 5000) { clearInterval(check); res(null); }
+      }, 100);
+    });
+    if (paused) {
+      const frames = Array.isArray(paused.params?.callFrames) ? paused.params.callFrames.slice(0, 8) : [];
+      result.frames = frames.map((f) => ({
+        fn: f.functionName || '(anonymous)',
+        url: typeof f.url === 'string' ? f.url.slice(-60) : '',
+        at: `${f.location?.lineNumber ?? '?'}:${f.location?.columnNumber ?? '?'}`,
+      }));
+      result.reason = paused.params?.reason ?? null;
+    } else {
+      result.reason = 'no Debugger.paused within 5s';
+    }
+    try { await call('Debugger.resume', {}, 2000); } catch {}
+  } catch (e) {
+    result.reason = 'probe failed: ' + String(e?.message ?? e);
+  } finally {
+    try { sock?.close(); } catch {}
+  }
+  return result;
+}
+
+async function diagBeforeThirteenUncancelled(mainPageId) {
+  try {
+    const liveList = await jsonList();
+    const probes = [];
+    const hung = [];
+    for (const t of liveList) {
+      const url = (t.url ?? '').slice(0, 80);
+      const entry = { type: t.type ?? '?', url };
+      const isExtPage = t.type === 'page' && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`);
+      if (isExtPage) entry.label = t.id === mainPageId ? 'main()' : 'block-leftover';
+      if (!t.webSocketDebuggerUrl) {
+        entry.live = 'no-ws';
+        probes.push(entry);
+        continue;
+      }
+      let probeSock = null;
+      try {
+        probeSock = new WebSocket(t.webSocketDebuggerUrl);
+        await new Promise((res, rej) => {
+          probeSock.onopen = res;
+          probeSock.onerror = rej;
+          setTimeout(() => rej(new Error('open timeout')), 2000);
+        });
+        let nextId = 0;
+        const pending = new Map();
+        probeSock.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+        };
+        const probeCall = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nextId;
+          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          probeSock.send(JSON.stringify({ id, method, params }));
+        });
+        const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+        entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
+      } catch {
+        entry.live = 'hung';
+      } finally {
+        try { probeSock?.close(); } catch {}
+      }
+      probes.push(entry);
+      if (entry.live === 'hung' && isExtPage) hung.push({ entry, wsUrl: t.webSocketDebuggerUrl });
+    }
+    console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
+    for (const { entry, wsUrl } of hung) {
+      const info = await probeHungPage(wsUrl);
+      console.log(`[diag] hung page stack: label=${entry.label} url=${JSON.stringify(entry.url)} visibility=${JSON.stringify(info.visibility)} pausedReason=${JSON.stringify(info.reason)} frames=${JSON.stringify(info.frames)}`);
+    }
+  } catch (e) {
+    console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
+  }
+}
+
 // The browser-level CDP session — the only one that can `Target.createTarget`,
 // `Target.closeTarget`, `Target.createBrowserContext`, and see `targetCreated`
 // / `targetDestroyed` events at the browser scope. Distinct from a per-target
@@ -1074,6 +1261,27 @@ async function pollKarma(target = 20, ms = 25000) {
 
 async function feedContains(id) {
   try { const j = await (await fetch(`${NODE}/posts/${id}`)).json(); return j && !j.kind; } catch { return false; }
+}
+
+// Pick one of R's root posts that still stands on the chain — a withdraw
+// spent against a tombstone (`kind !== undefined` on `/posts/:id`) is
+// refused with HTTP 400, so the harness's W4 spend takes a live one. The
+// node's answer is read page by page under `KARMA_LISTING_MAX`-shaped
+// queries; the first live id wins, else null.
+async function pickOwnLiveRootPostId() {
+  try {
+    const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`);
+    const j = await r.json();
+    const rows = Array.isArray(j?.posts) ? j.posts : [];
+    for (const row of rows) {
+      if (typeof row?.id !== 'string') continue;
+      // The listing itself carries no tombstone on root rows — confirm
+      // with `/posts/:id`, which answers `{ kind: 'withdrawn', … }` for
+      // a withdrawn post and `{ id, content, … }` for a live one.
+      if (await feedContains(row.id)) return row.id;
+    }
+  } catch {}
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,6 +1448,15 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      no answer. One POST through the relay lands no
 //                      bytes upstream; the retry's bytes reach the next
 //                      node and land once there.
+//   `down`           — the waiting-writes block's mode: every request's
+//                      underlying socket is destroyed before any status
+//                      is written, so the client reads a transport
+//                      failure — no answer from any node — on every
+//                      route the extension asks. A log entry is still
+//                      pushed under `edit: 'down'`, so an assertion over
+//                      the log can filter forwarded POSTs from attempts
+//                      the relay ate (`WEB_INTERFACE → The wallet → "A
+//                      write no node answers waits"`).
 // With `relay.rKey` and (for the names block) `relay.sName` set, the relay
 // also carries the figures and names modes — one relay type, named on both
 // tip relays so a lie on both is a lie the run meets whichever node answers
@@ -1320,6 +1537,17 @@ async function startTipRelay(upstream, port) {
       const method = req.method ?? 'GET';
       const url = req.url ?? '/';
       const mode0 = relay.mode;
+      // `down` — the waiting-writes block's mode (WEB_INTERFACE → The wallet
+      // → "A write no node answers waits"): the socket is destroyed before
+      // any status is written, so the client reads a transport failure on
+      // every route it asks; the log entry stands under `edit: 'down'` so
+      // the block's assertions can tell a forwarded POST from an attempt
+      // the relay ate.
+      if (mode0 === 'down') {
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: 'down', upstream: relay.upstream, status: 'destroyed', edit: 'down' });
+        try { req.socket.destroy(); } catch {}
+        return;
+      }
       // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
       // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
       // to the next entry (MESH_INTERFACE → The client's node list → "A
@@ -5309,6 +5537,1133 @@ async function runNamesStep30(rName) {
 }
 
 // ---------------------------------------------------------------------------
+// The waiting-writes block — W1 · W2 · W3 · W4
+//
+// WEB_INTERFACE → The wallet → "A write no node answers waits", → "Waiting
+// writes go out at the first answer", → "A refusal ends what it strands",
+// → "A waiting write is drawn as pending", and → The extension → "The post
+// cache" → "A failed listing draws the cache". The block uses the two tip
+// relays RLA and RLB the verified blocks set up (`setupTipRelays`) — the
+// shell's seed list reaches each at its api base alone — and switches both
+// relays' modes between steps the same way the verified blocks do.
+//
+//   W1 — the verified-tip block's 19c and 19b seated D's chain in the post
+//        cache (WEB_INTERFACE → The extension → "The post cache" — "One
+//        chain's database at a time": opening another closes every
+//        previous), so the block first re-reads A's chain with both relays
+//        `honest` and D gone: a fresh page whose corner settles on A's
+//        tip and whose `localStorage['notis.posts.chain']` has moved to
+//        A's block-1 hash (the App's `postCache.open(chain)` writes it
+//        from a tip run naming the chain) and whose
+//        `indexedDB.databases()` lists A's database. Without this wait
+//        the reload re-opens the previously-remembered database and
+//        A's never fills; a timeout names the chain the page still
+//        held and ends W1 FAIL before `down` is set. The page is then
+//        reloaded — with A's database open from the start, the
+//        reload's feed reads check every bound row and the puts land.
+//        A's `notis.posts.<A>` `entries` store is counted until it is
+//        at least three. A strip-press on a cached non-R root then
+//        opens one thread so its reads of the subject and its
+//        descendants write into the cache too, widening W4's set of
+//        non-R cards R has not liked. The page is then closed. Then a
+//        second fresh page under `down` on both relays: the feed and
+//        R's author-posts window each read a transport failure on
+//        their first page; the cache fallback draws the roots the
+//        reload populated beneath the error line, no `more` / `load
+//        older` control; the author window is opened by pressing a
+//        cached R-authored card's author button (a card renders no
+//        data-author, so R is picked by id against `prepRRootIds`).
+//   W2 — the same page, relays still `down`: a like on a cached card the
+//        reader has not liked, and a root post from the composer. Each
+//        waits — the post's pending card and the like's muted overlay both
+//        read *waiting for a node* — and neither relay's log carries a
+//        forwarded POST. A reload of the page draws them both from the
+//        waiting store, still waiting.
+//   W3 — the same page, both relays `honest`: pressing the corner is a
+//        read a node answers, which flushes the waiting writes in press
+//        order (`flushWaitingWrites` on a read a node answered). Both
+//        POSTs forward to upstream in press order (the like before the
+//        post, per the rep queue's seq), both are admitted (each txId
+//        shows in a node's pool or chain) and the post lands in the feed.
+//   W4 — a fresh page under `down` on both relays: two root posts from
+//        the composer, each waiting on no node answer (the second's
+//        builder spends the first's change — one chain on the rep
+//        queue). R's karma box is then replaced on the chain by a
+//        withdraw the harness builds and submits through the node's
+//        HTTP write path (the same key as the page's, but no page sees
+//        it). Both relays set honest: the flush's first post is
+//        refused by the node (the input box no longer stands) and its
+//        pending card's stage line reads the rejection, and the second
+//        post ends unsent — its pending card reads *not sent: the one
+//        before it was refused.* — with no POST for it going out.
+// ---------------------------------------------------------------------------
+
+const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4'];
+
+function markWaitingWritesNotRun(reason) {
+  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markWaitingWritesFail(reason) {
+  for (const s of WAITING_WRITES_STEPS) record(s, false, reason);
+}
+
+// A log-filter helper: the entries forwarded to upstream — those the relay
+// actually drove through to a node — are those whose `edit` is not the
+// relay's own "ate without forwarding" marker (`down`, `hold-posts`). Reads
+// forwarded under `honest` carry no `edit`.
+function forwardedEntries(relay) {
+  return (relay?.log ?? []).filter((e) => e.edit !== 'down' && e.edit !== 'hold-posts');
+}
+
+function forwardedPostCount(relay, pathOrPrefix) {
+  return forwardedEntries(relay).filter((e) => {
+    if (e.method !== 'POST') return false;
+    const url = e.url ?? '';
+    return url === pathOrPrefix || url.startsWith(pathOrPrefix + '?');
+  }).length;
+}
+
+// Build and submit a karma withdraw of one of R's confirmed root posts
+// through the node's HTTP write path, signed with Node's crypto over the
+// txId the shared `@dagsocial/types` primitives compute. The withdraw
+// spends R's karma box and returns a new one, so R's spendable box id
+// changes on the chain while no page of the extension sees the write
+// (WEB_INTERFACE → The withdraw control; TYPES_INTERFACE → The protocol
+// hash). Answers `{ ok, status, txId, boxId, postId }` or `{ ok: false,
+// reason }` when the preconditions cannot be met.
+async function spendRKarmaBoxOutside() {
+  if (!R_JSON) return { ok: false, reason: 'no --r-key loaded' };
+  // Pick a live root (not a tombstone): a withdraw spent against an
+  // already-withdrawn post is refused with 400, so the picker filters
+  // tombstones through `/posts/:id` per entry.
+  const postId = await pickOwnLiveRootPostId();
+  if (postId === null) return { ok: false, reason: "no live R-authored root post to withdraw (every one is a tombstone or none exists)" };
+  let karmaR = null;
+  let statusR = null;
+  try {
+    [karmaR, statusR] = await Promise.all([
+      fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json()),
+      fetch(`${NODE}/status`).then((r) => r.json()),
+    ]);
+  } catch (e) {
+    return { ok: false, reason: `read failed: ${e?.message ?? String(e)}` };
+  }
+  const boxes = Array.isArray(karmaR?.boxes) ? karmaR.boxes : [];
+  // WEB_INTERFACE → The wallet → "A builder names the own box, always": the
+  // withdraw's single input is R's own box when R holds one, else the income
+  // box. Match on the row shape `income: true` for the income box.
+  const own = boxes.find((b) => b?.income !== true);
+  const spent = own ?? boxes[0];
+  if (!spent) return { ok: false, reason: 'R holds no karma box' };
+  const authorBytes = Buffer.from(R_JSON.pubKeyHex, 'hex');
+  const tx = {
+    inputs: [spent.boxId],
+    outputs: [{
+      boxType: 'karma',
+      value: BigInt(spent.value),
+      createdAtBlock: statusR.blockHeight,
+      owner: authorBytes,
+    }],
+    signatures: {},
+    protocolVersion: statusR.protocolVersion,
+    postWithdraw: { postId },
+  };
+  const txId = computeTxId(tx);
+  let sigBytes;
+  try {
+    const privateKey = createPrivateKey({ key: Buffer.from(R_JSON.privKeyBase64, 'base64'), format: 'der', type: 'pkcs8' });
+    sigBytes = cryptoSign(null, Buffer.from(txId, 'hex'), privateKey);
+  } catch (e) {
+    return { ok: false, reason: `sign failed: ${e?.message ?? String(e)}` };
+  }
+  tx.signatures[R_JSON.pubKeyHex] = sigBytes;
+  const body = JSON.stringify({ tx: txToJson(tx) });
+  let res = null;
+  try {
+    res = await fetch(`${NODE}/posts/${encodeURIComponent(postId)}/withdraw`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+  } catch (e) {
+    return { ok: false, reason: `POST failed: ${e?.message ?? String(e)}` };
+  }
+  // Read the body once as text, then try to parse — the node's refusal
+  // body names the cause (NODE_INTERFACE → Withdrawal) and a red
+  // without the body teaches nothing.
+  const bodyText = await res.text().catch(() => '');
+  let answer;
+  try { answer = JSON.parse(bodyText); } catch { answer = bodyText; }
+  return { ok: res.ok, status: res.status, txId, boxId: spent.boxId, postId, answer };
+}
+
+// Wait until R's karma listing on A reads a different first-box id than the
+// one named, within `ms`. Reads /karma/<R>?pending=1 every 2 s; answers the
+// new first boxId on success, null on timeout. The withdraw lands as a
+// change box at the same value; the box id changes, which is the signal
+// the outside spend took effect (WEB_INTERFACE → The wallet → "A builder
+// names the own box, always", "The returned box is its change").
+async function waitForRBoxReplaced(previousBoxId, ms = 180000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const j = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json());
+      const first = (Array.isArray(j?.boxes) ? j.boxes : [])[0]?.boxId ?? null;
+      if (first !== null && first !== previousBoxId) return first;
+    } catch {}
+    await sleep(2000);
+  }
+  return null;
+}
+
+// Set both tip relays to `mode`, used by the waiting-writes block the same
+// way `setTipRelayModes` is used by the verified blocks. Named separately
+// so the block's comments read against the relay-setup helper by name.
+function setBothRelayModes(mode) {
+  setTipRelayModes(mode);
+}
+
+// WEB_INTERFACE → The wallet → "A write no node answers waits",
+// → "Waiting writes go out at the first answer", → "A refusal ends what it
+// strands", → "A waiting write is drawn as pending"; → The extension → "A
+// failed listing draws the cache".
+async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
+  // Liveness probe — a session with no live target records every step as
+  // FAIL with the reason, in place of CDP's own 60-second wall.
+  const alive = await (async () => {
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('liveness timeout')), 3000));
+    try { return (await Promise.race([cx.eval(`1+1`), timeout])) === 2; } catch { return false; }
+  })();
+  if (!alive) {
+    markWaitingWritesFail(`the waiting-writes block's session is not live: ${targetId}`);
+    return;
+  }
+  if (!tipRelays.a || !tipRelays.b) {
+    markWaitingWritesFail('the tip relays are not up — the waiting-writes block runs under the relays build');
+    return;
+  }
+  if (!R_JSON) {
+    markWaitingWritesNotRun('no --r-key — the waiting-writes block does not run');
+    return;
+  }
+
+  // Every page the block opens is tracked, and the top-level finally closes
+  // whichever are still live — a step that threw past its own close leaves
+  // the page open, and the next block's `findExt` would return it. The
+  // initial extension page `main()` opens is not tracked and never closed
+  // here; 13-uncancelled opens its CDP session on that one.
+  const blockPages = [];
+  const trackPage = (page) => { if (page) blockPages.push(page); return page; };
+  const closeBlockPage = async (page) => {
+    if (!page) return;
+    const i = blockPages.indexOf(page);
+    if (i >= 0) blockPages.splice(i, 1);
+    try { page.cx?.s.close(); } catch {}
+    await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    // Wait until the target is gone from `/json/list` — Chrome takes a
+    // moment to finish closing after `Target.closeTarget` returns, and
+    // a later `findExt('index.html')` can return the half-closed page
+    // (its CDP session is unresponsive, so `Page.enable` on it stalls
+    // to the 60 s wall). Bounded; a page that never leaves the list
+    // is noted in the log but no error — the top-level finally has
+    // already called close.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000) {
+      try {
+        const list = await jsonList();
+        if (!list.some((t) => t.id === page.targetId)) return;
+      } catch {}
+      await sleep(200);
+    }
+    console.log(`[diag] closeBlockPage: target ${page.targetId.slice(0, 8)}… still in /json/list after 10s`);
+  };
+
+  try {
+  // ----- Preparation — the verified-tip block's 19c and 19b seated D's
+  // chain (WEB_INTERFACE → The extension → "The post cache" — "One chain's
+  // database at a time": opening another closes every previous), so the
+  // remembered chain is D's and its cache is empty. With both tip relays
+  // honest and D gone (the verified-tip block's cleanup stops it), open a
+  // fresh page and let the tip run re-seat A's chain — the chain's name is
+  // non-null under `verified` and under `thin` alike, "naming a chain
+  // takes a proof that verifies, not a second witness" (→ "The chain's
+  // name"), so the seat lands whether the second relay's upstream answers
+  // or not. **A page's puts land only in the database open at load**: the
+  // rows the initial feed read checked write to D's database and the seat
+  // on A then deletes that database, and a `↻` is a re-read of the same
+  // listing whose posts the App already holds — so the re-read checks
+  // nothing and puts nothing. **A reload fills A's cache at once**: with
+  // the remembered chain's database open from the start, the reload's
+  // feed reads check every bound row and the puts land. After the reload
+  // A's `notis.posts.<A>` `entries` store (`src/extension/post-cache.ts`,
+  // `STORE = 'entries'`) is counted from the page and polled until it is
+  // at least three. Less than three at the bound records W1 FAIL before
+  // `down` is set. A strip-press on a cached non-R root then opens one
+  // thread: its reads of the subject and its descendants write into the
+  // cache beside the feed, widening W4's set of non-R cards R has not
+  // liked.
+  setBothRelayModes('honest');
+  const prepDGone = (await currentHeight(D_ORIGIN)) === null;
+  const prepABlock1 = await block1HashOn(NODE);
+  const prepExpectedDb = typeof prepABlock1 === 'string' && /^[0-9a-f]{64}$/i.test(prepABlock1)
+    ? 'notis.posts.' + prepABlock1.toLowerCase()
+    : null;
+  const prepCachedTarget = 3;
+  const prepCachedBoundMs = 60000;
+  // R's root post ids on the node, read for the prep's intersection with
+  // the cache and for W1's author-window press (a card renders no
+  // data-author; R's root is picked by id).
+  let prepRRootIds = [];
+  try {
+    const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`);
+    const j = await r.json();
+    const rows = Array.isArray(j?.posts) ? j.posts : [];
+    prepRRootIds = rows.map((p) => (typeof p?.id === 'string' ? p.id : null)).filter((id) => id !== null);
+  } catch {}
+  let prepChainDb = null;
+  let prepChainHeld = null;
+  let prepChainMoveTimedOut = false;
+  let prepCornerTitle = null;
+  let prepReloaded = false;
+  let prepCornerAfterReload = null;
+  let prepCached = 0;
+  let prepCachedIds = [];
+  let prepRCachedRootIds = [];
+  let prepThreadOpened = false;
+  let prepPostResult = { ok: false, reason: 'not attempted' };
+  let prepError = null;
+  let prepPage = null;
+  try {
+    prepPage = trackPage(await openFreshExtensionPage(bcx));
+    let pCx = prepPage.cx;
+    await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
+    // Wait for the corner's tip run to settle — the title names a tip once
+    // the client's chain is seated. Either shape is acceptable: step 17's
+    // "verified across N nodes · tip N" (both relays' upstreams answered)
+    // or step 18's "only one node could be checked · tip N" (B is down
+    // after the verified-tip block's cleanup). Each seats the chain.
+    const reached = await waitForCornerState(
+      pCx,
+      (c) => (c.ledClass === 'led fresh' || c.ledClass === 'led thin')
+        && / tip \d+$/.test(c.title ?? ''),
+      'corner seated on A\'s chain (verified across N nodes · tip N, or only one node could be checked · tip N)',
+      90000,
+    );
+    prepCornerTitle = reached.last?.title ?? null;
+    // Wait for the page to move to A's database before the reload: the
+    // App writes `localStorage['notis.posts.chain']` from
+    // `postCache.open(chain)` only once a tip run names the chain, and
+    // `indexedDB.databases()` lists A's database only once the open
+    // completes. A reload before this re-opens the previously-remembered
+    // database (D's, from the verified-tip block), so A's never fills.
+    // A timeout names the chain the page still held and ends W1 FAIL
+    // before `down` is set.
+    const chainMoveBoundMs = 60000;
+    const chainMovedStart = Date.now();
+    let chainMoveSnap = { remembered: null, lists: [] };
+    let chainMoved = false;
+    while (Date.now() - chainMovedStart < chainMoveBoundMs) {
+      chainMoveSnap = await pCx.eval(`(async () => {
+        let remembered = null;
+        try { remembered = localStorage.getItem('notis.posts.chain'); } catch {}
+        let lists = [];
+        if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
+          const dbs = await indexedDB.databases();
+          lists = dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+        }
+        return { remembered, lists };
+      })()`).catch(() => ({ remembered: null, lists: [] }));
+      const rem = typeof chainMoveSnap?.remembered === 'string' ? chainMoveSnap.remembered.toLowerCase() : null;
+      const lists = Array.isArray(chainMoveSnap?.lists) ? chainMoveSnap.lists.map((n) => String(n).toLowerCase()) : [];
+      if (prepExpectedDb !== null && rem === (prepABlock1?.toLowerCase() ?? null) && lists.includes(prepExpectedDb)) {
+        chainMoved = true;
+        break;
+      }
+      await sleep(1000);
+    }
+    prepChainDb = Array.isArray(chainMoveSnap?.lists) && chainMoveSnap.lists.length > 0
+      ? chainMoveSnap.lists[0]
+      : null;
+    prepChainHeld = chainMoveSnap?.remembered ?? null;
+    if (!chainMoved) {
+      prepChainMoveTimedOut = true;
+      // Skip the reload and the count: without the chain move, the
+      // reload re-opens the previously-remembered database and the
+      // count stays zero. prepDetail names the chain the page held,
+      // and `prepCached < prepCachedTarget` records W1 FAIL with it.
+    } else {
+    // Reload the page: with A's database open from the start, the
+    // reload's feed reads check every bound row and the puts land.
+    // The target id stays the same across Page.reload; narrow findExt
+    // to it so a bare match in /json/list cannot return another page.
+    await pCx.call('Page.reload');
+    await sleep(3500);
+    const reloadedList = await jsonList();
+    const reloadedPage = reloadedList.find((t) => t.id === prepPage.targetId) ?? null;
+    if (reloadedPage?.webSocketDebuggerUrl) {
+      try { pCx.s.close(); } catch {}
+      pCx = await openSession(reloadedPage.webSocketDebuggerUrl);
+      prepPage.cx = pCx;
+    }
+    prepReloaded = true;
+    await pCx.waitFor(`!!document.querySelector('.corner')`, 'corner after reload', 30000);
+    await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root after reload', 30000);
+    await pCx.waitFor(
+      `document.querySelectorAll('#feed .card[data-post-id]').length >= 1`,
+      'feed cards after reload', 60000,
+    ).catch(() => {});
+    prepCornerAfterReload = (await readCorner(pCx))?.title ?? null;
+    // Count entries in A's `notis.posts.<chain>` database from the page
+    // — the one source that answers whether a row stands. Poll under a
+    // bound until it is at least `prepCachedTarget`.
+    if (prepChainDb !== null) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < prepCachedBoundMs) {
+        const snap = await pCx.eval(`(async () => {
+          if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
+          return new Promise((resolve) => {
+            let req;
+            try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
+            catch { resolve({ count: 0, ids: [] }); return; }
+            req.onerror = () => resolve({ count: 0, ids: [] });
+            req.onsuccess = () => {
+              const db = req.result;
+              if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
+              const tx = db.transaction('entries', 'readonly');
+              const store = tx.objectStore('entries');
+              const c = store.count();
+              const k = store.getAllKeys();
+              let cnt = 0;
+              let keys = [];
+              c.onsuccess = () => { cnt = c.result; };
+              k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
+              tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
+              tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
+            };
+          });
+        })()`);
+        prepCached = typeof snap?.count === 'number' ? snap.count : 0;
+        prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
+        if (prepCached >= prepCachedTarget) break;
+        await sleep(1000);
+      }
+    }
+    // Intersect R's root ids (read from the node before the page opened)
+    // with the cache's ids: a card W1 can click has its id in both.
+    const cachedSet = new Set(prepCachedIds);
+    prepRCachedRootIds = prepRRootIds.filter((id) => cachedSet.has(id));
+    // Strip-press one feed root to open a thread — its reads of the
+    // subject and its descendants write their bound rows into A's
+    // database, widening W4's set of non-R cards R has not liked
+    // beyond the feed's own roots. Prefer a non-R cached root so the
+    // thread's non-R replies cache naturally; fall back to any cached
+    // feed root.
+    const rRoots = new Set(prepRRootIds);
+    try {
+      const opened = await pCx.eval(`(() => {
+        const my = ${JSON.stringify(R_JSON.pubKeyHex)};
+        const rRoots = new Set(${JSON.stringify(Array.from(rRoots))});
+        const cached = new Set(${JSON.stringify(prepCachedIds)});
+        const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+        const nonR = cards.find((c) => {
+          const id = c.getAttribute('data-post-id');
+          return cached.has(id) && !rRoots.has(id) && c.querySelector('button.strip') !== null;
+        });
+        const anyCached = cards.find((c) => cached.has(c.getAttribute('data-post-id')) && c.querySelector('button.strip') !== null);
+        const target = nonR ?? anyCached;
+        if (!target) return false;
+        target.querySelector('button.strip').click();
+        return true;
+      })()`, true);
+      if (opened === true) {
+        prepThreadOpened = true;
+        // Give the thread's reads time to land and the cache's puts to commit.
+        await sleep(4000);
+      }
+    } catch {}
+    // Make one root post from the composer so the client records a rep
+    // waiting view (WEB_INTERFACE → The wallet → "A flow with no
+    // waiting view ends as a transport failure", → "The waiting store
+    // keeps every waiting write as a record of its own"): under
+    // `--waiting-only` each run starts from a fresh browser profile
+    // and no earlier step records one; in a full run the earlier
+    // steps do. The composer's 2xx is awaited by the stage line
+    // reading `submitted` on the pending card. Without this view W2's
+    // composer stays disabled and its like ends as a transport
+    // failure before the waiting arm engages.
+    const prepPostContent = 'ww-prep-' + Date.now();
+    try {
+      const opened = await pCx.eval(`(() => {
+        const b = document.querySelector('[data-composer-open="@feed"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`, true) === true;
+      if (!opened) { prepPostResult = { ok: false, reason: 'composer did not open' }; }
+      else {
+        const ready = await pCx.waitFor(
+          `document.querySelector('.composer textarea')`,
+          'composer opened prep', 15000,
+        ).then(() => true, () => false);
+        if (!ready) { prepPostResult = { ok: false, reason: 'composer textarea never appeared' }; }
+        else {
+          await pCx.eval(`(() => {
+            const ta = document.querySelector('.composer textarea');
+            if (!ta) return false;
+            ta.value = ${JSON.stringify(prepPostContent)};
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+          })()`, true);
+          const enabled = await pCx.waitFor(
+            `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+            'composer post enabled prep', 30000,
+          ).then(() => true, () => false);
+          if (!enabled) { prepPostResult = { ok: false, reason: 'composer post button never enabled (rep view not recorded yet)' }; }
+          else {
+            await pCx.eval(`(() => { const b = document.querySelector('.composer .btn-primary'); if (b) b.click(); })()`, true);
+            // Poll the pending card's stage line until it reads
+            // 'submitted' (write's 2xx landed; rep view recorded).
+            const t0 = Date.now();
+            const bound = 60000;
+            let landed = null;
+            while (Date.now() - t0 < bound) {
+              const snap = await pCx.eval(`(() => {
+                const cards = [...document.querySelectorAll('.card.pending')];
+                for (const c of cards) {
+                  if ((c.textContent ?? '').includes(${JSON.stringify(prepPostContent)})) {
+                    return { id: c.getAttribute('data-post-id'), stage: c.querySelector('.stage span')?.textContent ?? null };
+                  }
+                }
+                return null;
+              })()`).catch(() => null);
+              if (snap && snap.stage === 'submitted') { landed = snap; break; }
+              await sleep(1000);
+            }
+            prepPostResult = landed !== null
+              ? { ok: true, postId: landed.id }
+              : { ok: false, reason: 'post never read submitted within ' + bound + 'ms' };
+          }
+        }
+      }
+    } catch (e) {
+      prepPostResult = { ok: false, reason: `error: ${e?.message ?? String(e)}` };
+    }
+    }
+  } catch (e) {
+    prepError = e?.stack ?? String(e);
+  } finally {
+    await closeBlockPage(prepPage);
+  }
+
+  const prepPostNamed = prepPostResult.ok === true
+    ? (prepPostResult.postId ?? 'ok')
+    : (prepPostResult.reason ?? 'unknown');
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  if (prepCached < prepCachedTarget) {
+    record('W1', false, prepDetail);
+    for (const s of ['W2', 'W3', 'W4']) {
+      record(s, 'NOT RUN', `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
+    }
+    return;
+  }
+
+  // ----- W1 — a second fresh page under `down` on both relays. The feed and
+  // R's author-posts window each read a transport failure on their first
+  // page. The contract (WEB_INTERFACE → The extension → "A failed listing
+  // draws the cache") says cached roots stand beneath the error line with
+  // no next page.
+  setBothRelayModes('down');
+  let w1Page = null;
+  let w1Ok = false;
+  let w1Detail = '';
+  try {
+    w1Page = trackPage(await openFreshExtensionPage(bcx));
+    const w1Cx = w1Page.cx;
+    await w1Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W1', 30000);
+    // The feed's error line — a cold first page under `down` reads a
+    // transport failure in every seed-walk attempt, so feed.error settles
+    // on 'no node answered — set one in settings' (the seed-walk branch) or
+    // the fetch's own message (the non-walk branch). Either is the error
+    // line in the DOM.
+    const errorPresent = await w1Cx.waitFor(
+      `!!document.querySelector('#feed .error')`,
+      'feed error line W1', 60000,
+    ).then(() => true, () => false);
+    await sleep(2000);
+    const feedCards = await w1Cx.eval(`document.querySelectorAll('#feed .card').length`);
+    const feedLoadOlder = await w1Cx.eval(`!!document.querySelector('#feed button[aria-label="load older posts"]')`);
+    const feedStateSnapshot = await w1Cx.eval(`(() => {
+      const err = document.querySelector('#feed .error')?.textContent ?? null;
+      return { error: err, cards: document.querySelectorAll('#feed .card').length };
+    })()`);
+    // Open the @posts:<R> window. The feed's error path ate R's feed cards,
+    // so the author-posts window is reached through the header's profile
+    // button — R's `@profile` window is always available while identity is
+    // loaded, and it never reads the network for its name/key rows. From
+    // there, the author button opens @author:<R>, and `posts` opens
+    // @posts:<R>. Two card clicks, no network needed to reach each.
+    let authorOpened = false;
+    let authorErrorPresent = null;
+    let authorCards = 0;
+    let authorMoreBtn = false;
+    try {
+      // The @profile window carries no "open my author window" shortcut, so
+      // the path through the feed is the only one. A card renders no
+      // data-author (`src/view/card.ts`: only `dataset.postId`), so R's
+      // card is picked by id — a cached R root whose data-post-id matches
+      // one in `prepRCachedRootIds`. With no such card in the DOM under
+      // `down` the author window stays unreached and the detail names so.
+      const rCard = await w1Cx.eval(`(() => {
+        const rCached = new Set(${JSON.stringify(prepRCachedRootIds)});
+        const c = [...document.querySelectorAll('#feed .card[data-post-id]')]
+          .find((c) => rCached.has(c.getAttribute('data-post-id'))
+            && c.querySelector('.who button.authorbtn') !== null);
+        return c ? c.getAttribute('data-post-id') : null;
+      })()`);
+      if (rCard !== null) {
+        await w1Cx.eval(`(() => {
+          const c = document.querySelector('[data-post-id="${rCard}"]');
+          c.querySelector('.who button.authorbtn').click();
+        })()`, true);
+        await sleep(1500);
+        // Inside the opened author window, the `posts` button opens
+        // @posts:<R>. `.find` answers `undefined`, never `null`, when
+        // no element matches — a `=== null` check mistakes the miss
+        // for a hit.
+        const openedAuthor = await w1Cx.eval(`(() => {
+          const btn = [...document.querySelectorAll('button')]
+            .find((b) => (b.getAttribute('aria-label') ?? '') === "open this author's posts");
+          if (!btn) return false;
+          btn.click();
+          return true;
+        })()`, true);
+        authorOpened = openedAuthor === true;
+        if (authorOpened) {
+          await sleep(2500);
+          authorErrorPresent = await w1Cx.eval(`!!document.querySelector('.author-posts .error')`);
+          authorCards = await w1Cx.eval(`document.querySelectorAll('.author-posts .card').length`);
+          authorMoreBtn = await w1Cx.eval(`!!document.querySelector('.author-posts button[aria-label="load more posts by this author"]')`);
+        }
+      }
+    } catch (e) {
+      authorErrorPresent = `open failed: ${e?.message ?? String(e)}`;
+    }
+    const feedPass = errorPresent === true && feedCards >= 1 && feedLoadOlder === false;
+    const authorPass = authorOpened && authorErrorPresent === true && authorCards >= 1 && authorMoreBtn === false;
+    w1Ok = feedPass && authorPass;
+    w1Detail = `${prepDetail}; feed: error=${errorPresent} (${JSON.stringify(feedStateSnapshot.error)}), cards=${feedStateSnapshot.cards} (≥1 expected), load-older=${feedLoadOlder} (false expected); author-posts: opened=${authorOpened}, error=${authorErrorPresent}, cards=${authorCards} (≥1 expected), more=${authorMoreBtn} (false expected)`;
+    record('W1', w1Ok, w1Detail);
+  } catch (e) {
+    record('W1', false, `error: ${e?.stack ?? String(e)}`);
+  }
+
+  // ----- W2 — same page, relays still `down`. Press like on a cached card
+  // the reader has not liked, and a root post from the composer. Each
+  // waits (WEB_INTERFACE → The wallet → "A waiting write is drawn as
+  // pending"); neither relay's log carries a forwarded POST. A reload of
+  // the page draws them both from the waiting store, still waiting.
+  let w2CardLikedId = null;
+  let w2PostContent = null;
+  try {
+    if (w1Page === null) throw new Error('W1 did not open a page — W2 has nothing to press on');
+    const w2Cx = w1Page.cx;
+    // Mark positions in the relays' logs now, so W2's forwarded-POST
+    // assertion reads only what this step's presses produced.
+    const w2LogAIdx = tipRelays.a.log.length;
+    const w2LogBIdx = tipRelays.b.log.length;
+    // Pick a cached card R has not liked and press its `like` word in
+    // one eval — a split picker and presser can race a redraw of the
+    // cache fallback (the card's `like` word may be gone by the time
+    // the press runs); doing both under one lookup also reports which
+    // element was missing where. A card renders no data-author (`src/
+    // view/card.ts`: only `dataset.postId`), so non-R is tested against
+    // `prepRRootIds` instead. The eval answers `{ok, id, reason}`.
+    const likePress = await w2Cx.eval(`(() => {
+      const rRoots = new Set(${JSON.stringify(prepRRootIds)});
+      const cached = new Set(${JSON.stringify(prepCachedIds)});
+      const cards = [...document.querySelectorAll('#feed .card[data-post-id]')];
+      if (cards.length === 0) return { ok: false, reason: 'no feed cards in DOM' };
+      let found = null;
+      for (const c of cards) {
+        const id = c.getAttribute('data-post-id');
+        if (!cached.has(id)) continue;
+        if (rRoots.has(id)) continue;
+        // .find answers undefined on a miss, never null — a truthy
+        // check reads the miss without stranding the press on an
+        // absent button.
+        const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
+        if (likeBtn) { found = { id, btn: likeBtn }; break; }
+      }
+      if (!found) return { ok: false, reason: 'no non-R cached card with the like word' };
+      found.btn.click();
+      return { ok: true, id: found.id };
+    })()`, true);
+    const likePressed = likePress?.ok === true;
+    const target = likePressed ? { id: likePress.id } : null;
+    if (likePressed) w2CardLikedId = likePress.id;
+    if (likePressed) await sleep(2000);
+    // A root post from the composer — the "new post" button is in the
+    // feed-head and renders even under error (feed-head is drawn before
+    // the error-return in `renderFeedInto`). Each lookup reports what
+    // it did instead of throwing when an element is missing — a red
+    // then names the element the harness failed on, not a stack.
+    w2PostContent = 'ww-waiting-post-' + Date.now();
+    const composerOpened = await w2Cx.eval(`(() => {
+      const b = document.querySelector('[data-composer-open="@feed"]');
+      if (b === null) return false;
+      b.click();
+      return true;
+    })()`, true);
+    let composerReady = false;
+    if (composerOpened === true) {
+      composerReady = await w2Cx.waitFor(`document.querySelector('.composer textarea')`, 'composer opened W2', 15000)
+        .then(() => true, () => false);
+    }
+    let composerFilled = false;
+    if (composerReady) {
+      composerFilled = await w2Cx.eval(`(() => {
+        const ta = document.querySelector('.composer textarea');
+        if (ta === null) return false;
+        ta.value = ${JSON.stringify(w2PostContent)};
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`, true) === true;
+    }
+    let postBtnEnabled = false;
+    if (composerFilled) {
+      postBtnEnabled = await w2Cx.waitFor(
+        `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+        'composer post enabled W2', 30000,
+      ).then(() => true, () => false);
+    }
+    let postBtnClicked = false;
+    if (postBtnEnabled) {
+      postBtnClicked = await w2Cx.eval(`(() => {
+        const b = document.querySelector('.composer .btn-primary');
+        if (b === null) return false;
+        b.click();
+        return true;
+      })()`, true) === true;
+    }
+    // Give the submit flow time to run: signRun -> write attempt -> waiting.
+    // The write proxy to the background takes a tick; silent policy signs
+    // through the extension without a prompt window.
+    await sleep(6000);
+    // Assert the post card reads *waiting for a node* and the like's
+    // overlay reads the muted count (count + 1 without the `.settled`
+    // class). The like's waiting is not a text line — it is the overlay.
+    const postStage = await w2Cx.eval(`(() => {
+      const cards = [...document.querySelectorAll('.card.pending')];
+      for (const c of cards) {
+        const text = (c.textContent ?? '');
+        if (text.includes(${JSON.stringify(w2PostContent)})) {
+          return c.querySelector('.stage span')?.textContent ?? null;
+        }
+      }
+      return null;
+    })()`);
+    let likeOverlay = null;
+    if (target !== null) {
+      likeOverlay = await w2Cx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${target.id}"]');
+        if (c === null) return null;
+        const liked = c.querySelector('.liked');
+        if (liked === null) return { present: false };
+        return { present: true, settled: liked.classList.contains('settled'), count: liked.querySelector('.n')?.textContent ?? null };
+      })()`);
+    }
+    // Neither relay's log carries a forwarded POST — under `down` the POST
+    // attempts are destroyed with `edit: 'down'`.
+    const w2NewA = tipRelays.a.log.slice(w2LogAIdx);
+    const w2NewB = tipRelays.b.log.slice(w2LogBIdx);
+    const forwardedPostsA = w2NewA.filter((e) => e.method === 'POST' && e.edit !== 'down');
+    const forwardedPostsB = w2NewB.filter((e) => e.method === 'POST' && e.edit !== 'down');
+
+    // Reload the page; the pending ledger and the waiting store are per-
+    // identity local-storage records, so both entries come back. The
+    // target id stays the same across `Page.reload`, so `findExt` is
+    // narrowed to w1Page.targetId — a bare `findExt('index.html')`
+    // returns the first match in `/json/list`, which may be the initial
+    // page `main()` opens, and the misidentification would then have
+    // W3's close end `main()`'s page while this page kept running — a
+    // later block's `Page.enable` on the orphan stalls out.
+    await w2Cx.call('Page.reload');
+    await sleep(3500);
+    const reloadedList = await jsonList();
+    const reloadedPage = reloadedList.find((t) => t.id === w1Page.targetId) ?? null;
+    let reloadedCx = w2Cx;
+    if (reloadedPage?.webSocketDebuggerUrl) {
+      try { w2Cx.s.close(); } catch {}
+      reloadedCx = await openSession(reloadedPage.webSocketDebuggerUrl);
+      w1Page.cx = reloadedCx;
+    }
+    await reloadedCx.waitFor(`!!document.querySelector('#feed')`, 'feed root W2 after reload', 30000);
+    await sleep(2000);
+    const postStageAfterReload = await reloadedCx.eval(`(() => {
+      const cards = [...document.querySelectorAll('.card.pending')];
+      for (const c of cards) {
+        const text = (c.textContent ?? '');
+        if (text.includes(${JSON.stringify(w2PostContent)})) {
+          return c.querySelector('.stage span')?.textContent ?? null;
+        }
+      }
+      return null;
+    })()`);
+    let likeOverlayAfterReload = null;
+    if (target !== null) {
+      likeOverlayAfterReload = await reloadedCx.eval(`(() => {
+        const c = document.querySelector('[data-post-id="${target.id}"]');
+        if (c === null) return null;
+        const liked = c.querySelector('.liked');
+        if (liked === null) return { present: false };
+        return { present: true, settled: liked.classList.contains('settled') };
+      })()`);
+    }
+    const postWaiting = postStage === 'waiting for a node';
+    const likeWaiting = target === null
+      || (likeOverlay?.present === true && likeOverlay?.settled === false);
+    const postWaitingAfterReload = postStageAfterReload === 'waiting for a node';
+    const likeWaitingAfterReload = target === null
+      || (likeOverlayAfterReload?.present === true && likeOverlayAfterReload?.settled === false);
+    const noForwardedPosts = forwardedPostsA.length === 0 && forwardedPostsB.length === 0;
+    const composerStageOk = composerOpened === true && composerReady && composerFilled && postBtnEnabled && postBtnClicked;
+    const w2Ok = likePressed && composerStageOk && postWaiting && likeWaiting
+      && postWaitingAfterReload && likeWaitingAfterReload && noForwardedPosts;
+    record('W2', w2Ok,
+      `like: pressed=${likePressed}, target=${target !== null ? target.id.slice(0, 8) + '…' : `none (${likePress?.reason ?? 'unknown'})`}; composer: opened=${composerOpened}, ready=${composerReady}, filled=${composerFilled}, post-enabled=${postBtnEnabled}, post-clicked=${postBtnClicked}; post stage='${postStage}' (expect 'waiting for a node'); like overlay=${JSON.stringify(likeOverlay)} (expect present, not settled); after reload: post stage='${postStageAfterReload}', like overlay=${JSON.stringify(likeOverlayAfterReload)}; forwarded POSTs via RLA=${forwardedPostsA.length} (${forwardedPostsA.map((e) => `${e.method} ${e.url}`).join(', ')}), via RLB=${forwardedPostsB.length} (${forwardedPostsB.map((e) => `${e.method} ${e.url}`).join(', ')}) — expect 0/0 under both relays 'down'`);
+  } catch (e) {
+    record('W2', false, `error: ${e?.stack ?? String(e)}`);
+  }
+
+  // ----- W3 — same page, both relays `honest`. Press the corner: a read
+  // the corner tick answers triggers `flushWaitingWrites`, which sends
+  // each waiting write of the loaded identity in press order under the
+  // rep queue (WEB_INTERFACE → The wallet → "The reader's spends run one
+  // at a time, per ledger"). Assert: the like POST arrives before the
+  // post POST in a relay's log, both admitted (each txId in a node's
+  // pool or chain), and the post's content lands in the feed.
+  //
+  // The bound: the corner polls every 30 s past a verdict (CONSTANTS →
+  // Client defaults, the tip-run cadence), and the miner is paced at
+  // about ten blocks a minute (`promote.mjs` and the extension-check
+  // recipe). A write that admits now reaches the chain within three
+  // miner cycles — 180 s is the floor the other blocks' landing polls
+  // use. 300 s here covers one race of two reads on the corner tick.
+  try {
+    if (w1Page === null) throw new Error('no page for W3 — W1/W2 did not open one');
+    const w3Cx = w1Page.cx;
+    const w3HonestAt = Date.now();
+    setBothRelayModes('honest');
+    const w3LogAIdx = tipRelays.a.log.length;
+    const w3LogBIdx = tipRelays.b.log.length;
+    const w3CornerPresses = [];
+    w3CornerPresses.push(Date.now() - w3HonestAt);
+    await pressCorner(w3Cx);
+    // The flush may run on this corner tick's answered reads; poll the
+    // relays' logs for the full bound and record every forwarded POST
+    // with its arrival time (ms after the honest switch), status, edit
+    // and upstream. The assertion stays `≥1 like POST, ≥1 post POST,
+    // like before post`; the detail widens so a red names each POST's
+    // position relative to the honest switch and to the corner press.
+    const bound = 300000;
+    const t0 = Date.now();
+    let forwardedLikes = 0;
+    let forwardedPosts = 0;
+    let likeFirstAt = null;
+    let postFirstAt = null;
+    let likeArrivals = [];
+    let postArrivals = [];
+    while (Date.now() - t0 < bound) {
+      const aNew = tipRelays.a.log.slice(w3LogAIdx);
+      const bNew = tipRelays.b.log.slice(w3LogBIdx);
+      const merged = [...aNew, ...bNew].filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts');
+      const likes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
+      const posts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
+      forwardedLikes = likes.length;
+      forwardedPosts = posts.length;
+      if (likeFirstAt === null && likes.length > 0) likeFirstAt = likes[0].at;
+      if (postFirstAt === null && posts.length > 0) postFirstAt = posts[0].at;
+      likeArrivals = likes.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
+      postArrivals = posts.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
+      if (forwardedLikes >= 1 && forwardedPosts >= 1 && likeFirstAt !== null && postFirstAt !== null) break;
+      await sleep(1000);
+    }
+    // Each txId admitted — in the node's pool (`/mempool`) or the chain
+    // (`/posts/:id` answers 200). The client's post content lands in the
+    // feed as a confirmed card the feed reads.
+    const postLanded = await (async () => {
+      const t1 = Date.now();
+      while (Date.now() - t1 < bound) {
+        try {
+          const j = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json());
+          if (Array.isArray(j?.posts) && j.posts.some((p) => p?.content === w2PostContent)) return true;
+        } catch {}
+        await sleep(2000);
+      }
+      return false;
+    })();
+    const feedShowsConfirmed = await w3Cx.eval(`(() => {
+      const nodes = [...document.querySelectorAll('.card .card-content')];
+      return nodes.some((n) => (n.textContent ?? '').includes(${JSON.stringify(w2PostContent)}));
+    })()`).catch(() => false);
+    // Read each live extension page's waiting store (every
+    // notis.waiting.<R>.* record with seq, kind, txId, spent, change),
+    // the pending cards' stage text, the like overlays, the report
+    // lines of the feed and every open column, and
+    // document.visibilityState. Without this a red only names the
+    // counts; with it a red names which half of the flow did not move.
+    const collectW3Diag = async (pcx) => pcx.eval(`(() => {
+      const prefix = 'notis.waiting.' + ${JSON.stringify(R_JSON.pubKeyHex)} + '.';
+      const waiting = [];
+      let seqVal = null;
+      let baseRep = null;
+      let baseCredits = null;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k || !k.startsWith(prefix)) continue;
+          const tail = k.slice(prefix.length);
+          const raw = localStorage.getItem(k);
+          if (tail.startsWith('w.')) {
+            try {
+              const r = JSON.parse(raw);
+              waiting.push({
+                seq: r?.seq ?? null,
+                kind: r?.kind ?? null,
+                ledger: r?.ledger ?? null,
+                txId: typeof r?.txId === 'string' ? r.txId.slice(0, 8) : null,
+                spent: Array.isArray(r?.spent) ? r.spent.map((s) => typeof s === 'string' ? s.slice(0, 8) : null) : [],
+                change: r?.change?.boxId ? String(r.change.boxId).slice(0, 8) : null,
+                content: typeof r?.content === 'string' ? r.content.slice(0, 32) : null,
+              });
+            } catch { waiting.push({ key: tail, parseErr: true }); }
+          } else if (tail === 'seq') { try { seqVal = JSON.parse(raw); } catch {} }
+          else if (tail === 'base.rep') { try { baseRep = JSON.parse(raw); } catch {} }
+          else if (tail === 'base.credits') { try { baseCredits = JSON.parse(raw); } catch {} }
+        }
+      } catch {}
+      const pending = [...document.querySelectorAll('.card.pending')].map((c) => ({
+        id: c.getAttribute('data-post-id'),
+        stage: c.querySelector('.stage span')?.textContent ?? null,
+        textStart: (c.textContent ?? '').slice(0, 60),
+      }));
+      const overlays = [...document.querySelectorAll('.card .liked')].map((o) => ({
+        id: o.closest('[data-post-id]')?.getAttribute('data-post-id'),
+        settled: o.classList.contains('settled'),
+        count: o.querySelector('.n')?.textContent ?? null,
+      }));
+      const feedReport = document.querySelector('#feed > .report')?.textContent ?? null;
+      const colReports = [...document.querySelectorAll('#panes .region > .report')].map((r) => r.textContent ?? null);
+      return {
+        waiting,
+        seq: seqVal,
+        baseRep: baseRep ? { height: baseRep.height, era: baseRep.era, effective: baseRep.effective } : null,
+        baseCredits: baseCredits ? { height: baseCredits.height, era: baseCredits.era } : null,
+        pending,
+        overlays,
+        feedReport,
+        colReports,
+        visibility: document.visibilityState,
+      };
+    })()`).catch((e) => ({ error: String(e?.message ?? e) }));
+    const diagsByPage = {};
+    diagsByPage['pressed(' + w1Page.targetId.slice(0, 8) + ')'] = await collectW3Diag(w3Cx);
+    try {
+      const list = await jsonList();
+      for (const t of list) {
+        if (t.type !== 'page') continue;
+        if (typeof t.url !== 'string' || !t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)) continue;
+        if (t.id === w1Page.targetId) continue;
+        if (!t.webSocketDebuggerUrl) continue;
+        try {
+          const cx = await openSession(t.webSocketDebuggerUrl);
+          diagsByPage['other(' + t.id.slice(0, 8) + ')'] = await collectW3Diag(cx);
+          try { cx.s.close(); } catch {}
+        } catch (e) {
+          diagsByPage['other(' + t.id.slice(0, 8) + ')'] = { error: String(e?.message ?? e) };
+        }
+      }
+    } catch {}
+    const orderedOk = likeFirstAt !== null && postFirstAt !== null && likeFirstAt <= postFirstAt;
+    const w3Ok = forwardedLikes >= 1 && forwardedPosts >= 1 && orderedOk && postLanded;
+    record('W3', w3Ok,
+      `honest@${w3HonestAt} corner-presses(msAfterHonest)=${JSON.stringify(w3CornerPresses)}; forwarded likes POST=${forwardedLikes} (expect ≥1), posts POST=${forwardedPosts} (expect ≥1); like arrivals=${JSON.stringify(likeArrivals)}, post arrivals=${JSON.stringify(postArrivals)}; press order like@${likeFirstAt}·post@${postFirstAt} (expect like before post)=${orderedOk}; post landed in feed under /posts?author=R=${postLanded}, DOM feed shows the content=${feedShowsConfirmed}; pages=${JSON.stringify(diagsByPage)}`);
+  } catch (e) {
+    record('W3', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    // Clean up W1/W2/W3's page before W4 opens its own fresh one.
+    await closeBlockPage(w1Page);
+    w1Page = null;
+  }
+
+  // ----- W4 — a fresh page under `down` on both relays: two root posts
+  // from the composer, each waiting on no node answer. The second post's
+  // builder spends the first's change (WEB_INTERFACE → The wallet →
+  // "The reader's spends run one at a time, per ledger"; → "The waiting
+  // view"), so the two writes form one chain on the rep queue. Then R's
+  // karma box is replaced on the chain by a withdraw the harness builds
+  // and submits through the node's HTTP write path, signed with Node's
+  // crypto over the shared `computeTxId`. Both relays are set `honest`:
+  // the flush's first post is refused by the node (the input box the
+  // builder selected is no longer held) and its pending card's stage
+  // line reads the rejection, and the second post is stranded with its
+  // stage line reading *not sent: the one before it was refused.* with
+  // no POST going out for it (WEB_INTERFACE → The wallet → "A refusal
+  // ends what it strands"; `app.ts` `applyRejectedOutcome` sets the
+  // submission's reason and the pending card's stage line reads it).
+  let w4Page = null;
+  try {
+    setBothRelayModes('down');
+    const w4LogAIdx = tipRelays.a.log.length;
+    const w4LogBIdx = tipRelays.b.log.length;
+    w4Page = trackPage(await openFreshExtensionPage(bcx));
+    const w4Cx = w4Page.cx;
+    try {
+      await w4Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W4', 30000);
+      // Press one root post from the composer under `down`. The composer
+      // opens, the text is typed, post is pressed, the card falls under
+      // `.card.pending` with the composer-text in its body. Each
+      // lookup reports what it found so a red names the element.
+      const pressRootPost = async (content) => {
+        const opened = await w4Cx.eval(`(() => {
+          const b = document.querySelector('[data-composer-open="@feed"]');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`, true) === true;
+        if (!opened) return { opened: false };
+        const ready = await w4Cx.waitFor(
+          `document.querySelector('.composer textarea')`,
+          'composer opened W4', 15000,
+        ).then(() => true, () => false);
+        if (!ready) return { opened, ready: false };
+        const filled = await w4Cx.eval(`(() => {
+          const ta = document.querySelector('.composer textarea');
+          if (!ta) return false;
+          ta.value = ${JSON.stringify(content)};
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`, true) === true;
+        if (!filled) return { opened, ready, filled: false };
+        const enabled = await w4Cx.waitFor(
+          `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+          'composer post enabled W4', 30000,
+        ).then(() => true, () => false);
+        if (!enabled) return { opened, ready, filled, enabled: false };
+        const clicked = await w4Cx.eval(`(() => {
+          const b = document.querySelector('.composer .btn-primary');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`, true) === true;
+        return { opened, ready, filled, enabled, clicked };
+      };
+      const firstPostContent = 'ww-w4-first-post-' + Date.now();
+      const secondPostContent = 'ww-w4-second-post-' + Date.now();
+      const firstPress = await pressRootPost(firstPostContent);
+      await sleep(5000);
+      const secondPress = await pressRootPost(secondPostContent);
+      await sleep(5000);
+      // Both pending cards read 'waiting for a node' before the outside
+      // spend fires; a sanity read of the stage lines keyed by content.
+      const stageOf = (content) => w4Cx.eval(`(() => {
+        const cards = [...document.querySelectorAll('.card.pending')];
+        for (const c of cards) {
+          if ((c.textContent ?? '').includes(${JSON.stringify(content)})) {
+            return c.querySelector('.stage span')?.textContent ?? null;
+          }
+        }
+        return null;
+      })()`);
+      const firstStageWaiting = await stageOf(firstPostContent);
+      const secondStageWaiting = await stageOf(secondPostContent);
+      // Replace R's karma box on the chain through the node's HTTP
+      // write path — the harness holds R's key — before the relays
+      // come back. The withdraw's answer is awaited, then the chain
+      // is polled until R's first karma box id changes.
+      const preKarma = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json()).catch(() => null);
+      const preFirstBoxId = (Array.isArray(preKarma?.boxes) ? preKarma.boxes[0]?.boxId : null) ?? null;
+      const spent = await spendRKarmaBoxOutside();
+      let replaced = null;
+      if (spent.ok && preFirstBoxId !== null) {
+        replaced = await waitForRBoxReplaced(preFirstBoxId, 240000);
+      }
+      // Both relays back to `honest`; a press of the corner is an
+      // answered read that fires the flush.
+      setBothRelayModes('honest');
+      await pressCorner(w4Cx);
+      // Poll for the first-post flush outcome: the forwarded POST /posts
+      // count, and both pending cards' stage lines. The App's
+      // `applyRejectedOutcome` for a post writes the rejection reason
+      // onto the submission and re-renders the pending card, so the
+      // `.stage` text replaces 'waiting for a node' with the reason.
+      const bound = 180000;
+      const t0 = Date.now();
+      let firstPostForwarded = 0;
+      let firstStage = firstStageWaiting;
+      let secondStage = secondStageWaiting;
+      while (Date.now() - t0 < bound) {
+        const aNew = tipRelays.a.log.slice(w4LogAIdx);
+        const bNew = tipRelays.b.log.slice(w4LogBIdx);
+        const forwardedPosts = [...aNew, ...bNew]
+          .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
+          .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
+        firstPostForwarded = forwardedPosts.length;
+        firstStage = await stageOf(firstPostContent);
+        secondStage = await stageOf(secondPostContent);
+        const firstMoved = typeof firstStage === 'string' && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
+        const secondStranded = typeof secondStage === 'string' && secondStage.includes('not sent: the one before it was refused');
+        if (firstPostForwarded >= 1 && firstMoved && secondStranded) break;
+        await sleep(1500);
+      }
+      // After the flush, the second post never forwarded: the stranding
+      // rule drops it before any POST goes.
+      await sleep(3000);
+      const afterNewA = tipRelays.a.log.slice(w4LogAIdx);
+      const afterNewB = tipRelays.b.log.slice(w4LogBIdx);
+      const allPostPosts = [...afterNewA, ...afterNewB]
+        .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
+        .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
+      const secondPostForwarded = Math.max(0, allPostPosts.length - 1);
+      const firstRefused = typeof firstStage === 'string' && firstStage.trim() !== ''
+        && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
+      const strandedTextOk = typeof secondStage === 'string'
+        && secondStage.includes('not sent: the one before it was refused');
+      const twoPressed = firstPress?.clicked === true && secondPress?.clicked === true;
+      const w4Ok = spent.ok && replaced !== null && twoPressed
+        && firstPostForwarded >= 1 && firstRefused && strandedTextOk && secondPostForwarded === 0;
+      record('W4', w4Ok,
+        `first post pressed=${JSON.stringify(firstPress)}; second post pressed=${JSON.stringify(secondPress)}; first stage while waiting=${JSON.stringify(firstStageWaiting)}, second stage while waiting=${JSON.stringify(secondStageWaiting)} (both expect 'waiting for a node'); outside spend status=${spent.status ?? spent.reason} body=${JSON.stringify(spent.answer ?? null)} postId=${(spent.postId ?? '').slice(0, 12)}… boxId=${(spent.boxId ?? '').slice(0, 12)}…; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first post forwarded POST count=${firstPostForwarded} (≥1 expected); first post's stage after flush=${JSON.stringify(firstStage)} (non-empty rejection expected, not 'waiting for a node'); second post forwarded POST count=${secondPostForwarded} (0 expected — stranded); second post's stage after flush=${JSON.stringify(secondStage)} (expect 'not sent: the one before it was refused.')`);
+    } finally {
+      await closeBlockPage(w4Page);
+    }
+  } catch (e) {
+    record('W4', false, `error: ${e?.stack ?? String(e)}`);
+  }
+  } catch (e) {
+    // A red inside the block must never stop the harness: the outer
+    // catch holds the throw so the finally below runs the teardown
+    // and the caller returns to the next block. Any unrecorded step
+    // reads FAIL with the one reason.
+    for (const s of ['W1', 'W2', 'W3', 'W4']) {
+      if (!findings.some((f) => f.step === s)) record(s, false, `block threw: ${e?.stack ?? String(e)}`);
+    }
+  } finally {
+    // The teardown touches no run-path state: every path declares
+    // what it reads here itself. Relays back to `honest`, every page
+    // the block opened closed — a step that threw past its own close
+    // would leave its target in `/json/list`, and a later block's
+    // `findExt` could return the orphan, which stalls `Page.enable`
+    // out to the 60 s wall.
+    setBothRelayModes('honest');
+    for (const p of [...blockPages]) {
+      await closeBlockPage(p);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The light block — steps L1 · L2 · L3 · L4 · L5 · L6 · L7 · L8 · L9 · L10 ·
 // L11 · L12 · L13 · L14 (WEB_INTERFACE → The extension → "The light read",
 // "The resolve", "The post check", "The post cache", "The chain's name").
@@ -7530,6 +8885,17 @@ async function runMeshStepM2(bcx) {
 // nodes back with their mesh role; a post written in the composer lands
 // in the feed, on both nodes (`GET /posts/:id` on each), with no `POST
 // /posts` over HTTP in the Network domain.
+//
+// Before the write, both mesh nodes must report a peer — each node's
+// admin `GET /health` `peers_connected ≥ 1` on its loopback admin port,
+// polled under a bound. A' bootstraps from --node-p2p and B' from A',
+// but a handshake completed is not yet a gossip peer (`NET_INTERFACE →
+// Postconditions`; `→ Gossip Topics`); the gossip mesh for the
+// ordering-block topic forms after the router's subscription exchange,
+// and the write the composer press admits relays over gossip to A's
+// miner. `peers_connected ≥ 1` names the state at which the node holds
+// at least one live connection, short of which the write would pile up
+// locally unmined.
 async function runMeshStepM3(bcx) {
   let page = null;
   try {
@@ -7573,6 +8939,21 @@ async function runMeshStepM3(bcx) {
     if (!apGossipedBlock) throw new Error(`A' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
     const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
     if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M3 restart (the handshake completed but gossip mesh did not form)`);
+
+    // Both mesh nodes report a peer — the admin `GET /health` on each node's
+    // loopback admin port answers `peers_connected ≥ 1`. The gossip-block
+    // wait above proves the ordering-block topic has formed its mesh on
+    // each node; peers_connected is the one admin figure that reports the
+    // connection count as the node sees it, and the write the composer
+    // press admits goes nowhere until each node holds at least one peer
+    // (`NET_INTERFACE → Forwarding Rule`).
+    const apPeersBound = 60000;
+    const apPeers = await waitForPeers(`http://127.0.0.1:${AP_ADMIN_PORT}`, 1, apPeersBound);
+    if (apPeers === null) throw new Error(`A' did not report peers_connected ≥ 1 on admin /health within ${apPeersBound / 1000} s after M3 restart`);
+    const bpPeersBound = 60000;
+    const bpPeers = await waitForPeers(`http://127.0.0.1:${BP_ADMIN_PORT}`, 1, bpPeersBound);
+    if (bpPeers === null) throw new Error(`B' did not report peers_connected ≥ 1 on admin /health within ${bpPeersBound / 1000} s after M3 restart`);
+    console.log(`[vm] M3 preflight: A' peers_connected=${apPeers}, B' peers_connected=${bpPeers}`);
 
     page = await openFreshExtensionPage(bcx);
     await page.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m3', 30000);
@@ -7901,6 +9282,34 @@ async function runVerifiedBlocks(bcx, opts = {}) {
     markVerifiedNamesNotRun('no --verified-names');
   }
 
+  // The waiting-writes block runs after the verified blocks in the relays
+  // build (WEB_INTERFACE → The wallet → "A write no node answers waits";
+  // this file's header → "The waiting-writes block"). It uses the two tip
+  // relays `setupTipRelays` set up and R's identity loaded by steps 2–12;
+  // --light and --mesh builds have a different seed list and run their own
+  // blocks instead, so the waiting-writes block is gated on neither being
+  // set.
+  if (R_KEY && !LIGHT && !MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
+    let wPage = await findExt('index.html');
+    if (!wPage) {
+      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+      await sleep(2000);
+      wPage = await findExt('index.html');
+    }
+    if (!wPage) throw new Error('waiting-writes block: no extension page');
+    const wCx = await openSession(wPage.webSocketDebuggerUrl);
+    await waitingWritesSteps(wCx, bcx, wPage.id);
+    try { wCx.s.close(); } catch {}
+  } else {
+    markWaitingWritesNotRun(LIGHT
+      ? '--light runs its own block; the waiting-writes block is relays-build only'
+      : MESH
+        ? '--mesh runs its own block; the waiting-writes block is relays-build only'
+        : !R_KEY
+          ? 'no --r-key — the waiting-writes block needs R\'s identity'
+          : 'no --verified-tip / --verified-figures / --verified-names — the tip relays are not up');
+  }
+
   // The light block runs alone after steps 1–16, on a session of its own.
   // The two relays (RA, RB) are up from before the browser launched
   // (`setupLightRelays`); the block owns its own node D on 19820 for L13's
@@ -8070,6 +9479,39 @@ async function main() {
   const p2 = await findExt('index.html');
   const cx2 = await openSession(p2.webSocketDebuggerUrl);
   await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
+
+  // --waiting-only: iterate on the waiting-writes block alone. Steps 1
+  // and 2 brought up R's identity; everything between here and the
+  // waiting-writes block reads NOT RUN. 13-uncancelled and the mesh
+  // block also read NOT RUN (the flag ends after waiting-writes), and
+  // the [diag] line prints just before 13-uncancelled's NOT RUN.
+  if (WAITING_ONLY) {
+    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+      record(s, 'NOT RUN', '--waiting-only skips the earlier steps');
+    }
+    markVerifiedTipNotRun('--waiting-only skips the verified-tip block');
+    markVerifiedFiguresNotRun('--waiting-only skips the verified-figures block');
+    markVerifiedNamesNotRun('--waiting-only skips the verified-names block');
+    markLightNotRun('--waiting-only skips the light block');
+    markMeshNotRun('--waiting-only skips the mesh block');
+    const wBcx = await openBrowserSession();
+    try {
+      let wPage = await findExt('index.html');
+      if (!wPage) throw new Error('--waiting-only: no extension page');
+      const wCx = await openSession(wPage.webSocketDebuggerUrl);
+      try { await waitingWritesSteps(wCx, wBcx, wPage.id); } finally { try { wCx.s.close(); } catch {} }
+      // The liveness diagnostic — the same line a full run prints
+      // before 13-uncancelled runs; a --waiting-only run ends after it.
+      // The diag's extension-page labels compare against the id of the
+      // page `main()` opened (same id as `wPage.id`, since findExt
+      // returns the one open one).
+      await diagBeforeThirteenUncancelled(page.id);
+      record('13-uncancelled', 'NOT RUN', '--waiting-only skips the browser-context arm');
+    } finally {
+      try { wBcx.s.close(); } catch {}
+    }
+    return;
+  }
 
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
@@ -9397,6 +10839,13 @@ async function main() {
   // fresh-page openings sit after it.
   await runVerifiedBlocks(bcx, { skipMesh: true });
 
+  // The diag line prints just before 13-uncancelled runs. See
+  // `diagBeforeThirteenUncancelled`'s comment for its shape and for the
+  // hung-page stack line that follows when a page reads `hung`. The
+  // page id is `main()`'s initial extension page, so `block-leftover`
+  // names a page some block opened and did not close.
+  await diagBeforeThirteenUncancelled(page.id);
+
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
   // `Target.createBrowserContext` context (per `--load-extension`'s default
@@ -9405,7 +10854,57 @@ async function main() {
   // the next CDP call in a same-browser session, so the arm sits last where
   // a freeze cannot shadow any other step.
   {
-    let extPageAfter16 = await findExt('index.html');
+    // Open the observer on the first `index.html` in `/json/list` that
+    // answers `Runtime.evaluate('1+1')` within 3 s — `main()`'s page by
+    // id when it still stands (step 15 can have closed it and a fresh
+    // one now holds that URL), otherwise the first live one. A page
+    // whose session stalls (half-closed leftover) is skipped so
+    // `Page.enable` cannot stall out to the 60 s wall; the block's
+    // teardown has already waited for closed targets to leave the
+    // list, so a leftover reaching here is one that did not finish in
+    // the bound.
+    const extCandidates = await (async () => {
+      try {
+        const list = await jsonList();
+        const indexes = list.filter((t) => t.type === 'page'
+          && typeof t.url === 'string'
+          && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)
+          && typeof t.webSocketDebuggerUrl === 'string');
+        // main()'s id first when it still stands, else the browser's order.
+        const mainFirst = indexes.find((t) => t.id === page.id);
+        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== page.id)] : indexes;
+      } catch { return []; }
+    })();
+    const probeAnswers = async (wsUrl) => {
+      let sock = null;
+      try {
+        sock = new WebSocket(wsUrl);
+        await new Promise((res, rej) => {
+          sock.onopen = res;
+          sock.onerror = rej;
+          setTimeout(() => rej(new Error('open timeout')), 2000);
+        });
+        let nextId = 0;
+        const pending = new Map();
+        sock.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+        };
+        const call = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nextId;
+          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          sock.send(JSON.stringify({ id, method, params }));
+        });
+        const answer = await call('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+        return answer?.result?.value === 2;
+      } catch { return false; }
+      finally { try { sock?.close(); } catch {} }
+    };
+    let extPageAfter16 = null;
+    for (const cand of extCandidates) {
+      if (await probeAnswers(cand.webSocketDebuggerUrl)) { extPageAfter16 = cand; break; }
+    }
     let cxObserver = null;
     let openBeforeArm = null;
     try {
@@ -9506,9 +11005,15 @@ async function teardownLightRelays() {
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
-  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) return;
+  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY)) return;
+  // The verified blocks run RLB in front of B; under --waiting-only B is
+  // not needed, so RLB's upstream is A too. The seed list the extension
+  // was built with still names both bases, and the client reads both —
+  // every read reaches A either way, and the corner's tip run can
+  // verify with two nodes answering the same chain.
+  const rlbUpstream = WAITING_ONLY ? NODE.replace(/\/+$/, '') : B_ORIGIN;
   const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
-  const rlb = await startTipRelay(B_ORIGIN, RLB_PORT);
+  const rlb = await startTipRelay(rlbUpstream, RLB_PORT);
   tipRelays.a = rla;
   tipRelays.b = rlb;
   console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);

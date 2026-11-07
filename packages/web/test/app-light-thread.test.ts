@@ -440,6 +440,8 @@ describe('threadMore appends slots and resolves them', () => {
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
       refresh: realCache.refresh.bind(realCache),
+      roots: realCache.roots.bind(realCache),
+      byAuthor: realCache.byAuthor.bind(realCache),
       getMany: async (ids) => {
         const answer = await realCache.getMany(ids);
         if (!holdNext) return answer;

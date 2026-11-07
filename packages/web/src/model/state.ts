@@ -100,11 +100,12 @@ export interface AppState {
   submissions: Submission[];    // the client's own in-flight posts, rendered as cards
 }
 
-// The flight of one of the client's own submissions — two stages then one of
-// three endings; a pending card the reader may watch turn from hollow to landed
-// without asking, because they asked for the post.
-// HOUSE_STYLE → "Pending state is the one legitimate unsolicited update, and it pays for itself in geometry"
-export type FlightStage = 'submitting' | 'submitted' | 'landed' | 'expired' | 'rejected';
+// The flight of one of the client's own submissions — the stages a pending
+// card may hold, and the three endings; `waiting` stands for a write kept in
+// the waiting store because no node answered (WEB_INTERFACE → The wallet →
+// "A waiting write is drawn as pending"). HOUSE_STYLE → "Pending state is the
+// one legitimate unsolicited update, and it pays for itself in geometry"
+export type FlightStage = 'submitting' | 'submitted' | 'waiting' | 'landed' | 'expired' | 'rejected';
 
 /** A post the reader submitted, rendered from the composer's own data as a
  *  pending card until it lands, expires or is rejected. */
@@ -171,9 +172,10 @@ export interface RenderCtx {
   bonds: BondsResult | null;
   inviteFlight: Flight | null;
   // The author's own controls (WEB_INTERFACE → The withdraw control). withdrawState
-  // is 'pending' from the ledger's entry (durable across a reload), else the
-  // transient flight; canSignWithdraw is the spendable view non-empty.
-  withdrawState: (postId: string) => 'pending' | Flight | null;
+  // is 'pending' from the ledger's entry (durable across a reload), 'waiting' for
+  // an entry a node has not answered — drawn as pending with the waiting line —
+  // else the transient flight; canSignWithdraw is the spendable view non-empty.
+  withdrawState: (postId: string) => 'pending' | 'waiting' | Flight | null;
   canSignWithdraw: boolean;
   // The reader's own name (WEB_INTERFACE → The identity display).
   ownName: UsernameResult | null;
@@ -185,7 +187,7 @@ export interface RenderCtx {
   nameClay: (key: string, name: string) => boolean;
   // The username row (WEB_INTERFACE → The username row).
   usernameFlight: Flight | null;
-  pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
+  pendingUsername: { kind: 'claim' | 'burn'; name: string; waiting?: boolean } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
   // The wallet window (WEB_INTERFACE → The wallet window). credits is the
@@ -210,7 +212,7 @@ export interface RenderCtx {
   creditsPlain: CreditsResult | null;
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
-  pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  pendingSend: { toHex: string; toName: string | null; amount: bigint; waiting?: boolean } | null;
   sendCheck: string | null;
   sendAnswer: SendAnswer | null;
   // The wallet's send row confirm — true on the web build (the confirm row
@@ -504,6 +506,21 @@ export interface PostCache {
    *  `WithdrawnJson` is left as it is — the node's word, and a lie costs a
    *  re-fetch. */
   refresh(rows: readonly PostJson[]): Promise<void>;
+  /** The entries held with no parent — the feed's cache fallback on a failed
+   *  first page (WEB_INTERFACE → The extension → "A failed listing draws the
+   *  cache"). Ordered newest first by block height — a withdrawn row by its
+   *  `withdrawnAtHeight`, confirmed — ties by id, then the rows with
+   *  `blockHeight: null`, ties by id; at most `limit`. One read-only
+   *  transaction over the entries store. A `limit` of zero or less, no
+   *  database or a transaction the browser refuses answers an empty list. */
+  roots(limit: number): Promise<HeldPost[]>;
+  /** The entries held for `author`, through the author index — the author
+   *  window's cache fallback on a failed first page (WEB_INTERFACE → The
+   *  extension → "A failed listing draws the cache"). The entry's `author`
+   *  is the transaction's, so the window carries every post the author
+   *  committed, roots and replies alike. Ordered and capped as `roots`;
+   *  absorbs the same failures. */
+  byAuthor(author: string, limit: number): Promise<HeldPost[]>;
 }
 
 /** One row held in the cache, as `getMany` answers. The row is the entry's

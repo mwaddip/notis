@@ -118,6 +118,8 @@ function recordingCache(): { cache: PostCache; puts: Array<{ id: string; row: Po
     thread: async (): Promise<CachedThread | null> => null,
     getMany: async (): Promise<Map<string, HeldPost>> => new Map(),
     refresh: async () => {},
+    roots: async (): Promise<HeldPost[]> => [],
+    byAuthor: async (): Promise<HeldPost[]> => [],
   };
   return { cache, puts, withdraws };
 }

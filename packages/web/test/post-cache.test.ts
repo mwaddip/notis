@@ -649,3 +649,111 @@ describe('post-cache — refresh', () => {
     expect(g.has(hid('nope'))).toBe(false);
   });
 });
+
+// WEB_INTERFACE → The extension → "A failed listing draws the cache": the two
+// readers the App drives on any failed first page — the feed's roots and the
+// author window's entries. Each sorts the confirmed rows by block height
+// (highest first) with ties by id, then the rows with `blockHeight: null`,
+// returns a withdrawn entry as its withdrawn row, caps at `limit`, and
+// absorbs the same failures `getMany` does (no database, a transaction the
+// browser refuses).
+describe('post-cache — roots and byAuthor', () => {
+  it('roots answers parentless entries, confirmed newest first, then the pending, capped', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const r10 = row('r10', { blockHeight: 10 });
+    const r20 = row('r20', { blockHeight: 20 });
+    const r20b = row('r20b', { blockHeight: 20 });
+    const pend = row('pend', { blockHeight: null, status: 'pending' });
+    const reply = row('rep', { parentRefs: [r10.id] });
+    await cache.put({ id: r10.id, txBytes: new Uint8Array([1]), row: r10, author: r10.author, parent: null, own: false });
+    await cache.put({ id: r20.id, txBytes: new Uint8Array([2]), row: r20, author: r20.author, parent: null, own: false });
+    await cache.put({ id: r20b.id, txBytes: new Uint8Array([3]), row: r20b, author: r20b.author, parent: null, own: false });
+    await cache.put({ id: pend.id, txBytes: new Uint8Array([4]), row: pend, author: pend.author, parent: null, own: false });
+    await cache.put({ id: reply.id, txBytes: new Uint8Array([5]), row: reply, author: reply.author, parent: r10.id, own: false });
+
+    const all = await cache.roots(10);
+    // Confirmed first by height desc; ties by id asc; pending last.
+    const confirmedIds = [r20.id, r20b.id].sort();
+    expect(all.map((h) => h.row.id)).toEqual([confirmedIds[0], confirmedIds[1], r10.id, pend.id]);
+    // The reply is not a root.
+    expect(all.map((h) => h.row.id)).not.toContain(reply.id);
+
+    // At most `limit`.
+    const capped = await cache.roots(2);
+    expect(capped.map((h) => h.row.id)).toEqual([confirmedIds[0], confirmedIds[1]]);
+
+    // A zero or negative limit answers empty.
+    expect(await cache.roots(0)).toEqual([]);
+  });
+
+  it("byAuthor answers that author's entries alone, confirmed newest first", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const A1 = 'aa'.repeat(32);
+    const A2 = 'bb'.repeat(32);
+    const a1low = row('a1-low', { author: A1, blockHeight: 10 });
+    const a1high = row('a1-high', { author: A1, blockHeight: 30 });
+    const a1pend = row('a1-pend', { author: A1, blockHeight: null, status: 'pending' });
+    const a2 = row('a2', { author: A2, blockHeight: 20 });
+    // A1's reply under A2's root — byAuthor takes every entry whose author
+    // is A1, roots and replies alike.
+    const a1reply = row('a1-rep', { author: A1, parentRefs: [a2.id], blockHeight: 25 });
+    await cache.put({ id: a1low.id, txBytes: new Uint8Array([1]), row: a1low, author: A1, parent: null, own: false });
+    await cache.put({ id: a1high.id, txBytes: new Uint8Array([2]), row: a1high, author: A1, parent: null, own: false });
+    await cache.put({ id: a1pend.id, txBytes: new Uint8Array([3]), row: a1pend, author: A1, parent: null, own: false });
+    await cache.put({ id: a2.id, txBytes: new Uint8Array([4]), row: a2, author: A2, parent: null, own: false });
+    await cache.put({ id: a1reply.id, txBytes: new Uint8Array([5]), row: a1reply, author: A1, parent: a2.id, own: false });
+
+    const got = await cache.byAuthor(A1, 10);
+    expect(got.map((h) => h.row.id)).toEqual([a1high.id, a1reply.id, a1low.id, a1pend.id]);
+    const other = await cache.byAuthor(A2, 10);
+    expect(other.map((h) => h.row.id)).toEqual([a2.id]);
+    // Capped.
+    const capped = await cache.byAuthor(A1, 2);
+    expect(capped.map((h) => h.row.id)).toEqual([a1high.id, a1reply.id]);
+    // Zero limit answers empty.
+    expect(await cache.byAuthor(A1, 0)).toEqual([]);
+    // An author with no entries answers empty.
+    expect(await cache.byAuthor('cc'.repeat(32), 10)).toEqual([]);
+  });
+
+  it('a withdrawn entry answers its withdrawn row; the withdrawn-at height places it among the confirmed', async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    const a = row('a', { blockHeight: 10 });
+    const b = row('b', { blockHeight: 20 });
+    await cache.put({ id: a.id, txBytes: new Uint8Array([1]), row: a, author: a.author, parent: null, own: false });
+    await cache.put({ id: b.id, txBytes: new Uint8Array([2]), row: b, author: b.author, parent: null, own: false });
+    // Withdraw `a` at height 25 — the withdrawn row is confirmed at 25 and
+    // places ahead of `b` at 20.
+    const w = { ...tomb('a'), withdrawnAtHeight: 25 };
+    await cache.withdraw(a.id, w);
+    const got = await cache.roots(10);
+    expect(got.length).toBe(2);
+    expect(got[0]!.row.id).toBe(a.id);
+    expect((got[0]!.row as WithdrawnJson).kind).toBe('withdrawn');
+    expect(got[1]!.row.id).toBe(b.id);
+    // byAuthor answers the same withdrawn row.
+    const ba = await cache.byAuthor(a.author, 10);
+    expect((ba.find((h) => h.row.id === a.id)!.row as WithdrawnJson).kind).toBe('withdrawn');
+  });
+
+  it('roots with no database answers empty; byAuthor with no database answers empty', async () => {
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: null, localStorage: ls, now: c.tick });
+    await cache.open('A');
+    expect(await cache.roots(10)).toEqual([]);
+    expect(await cache.byAuthor('aa'.repeat(32), 10)).toEqual([]);
+  });
+});

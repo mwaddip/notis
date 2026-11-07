@@ -336,3 +336,100 @@ describe('a write with no answer goes again, the same bytes, to the next node', 
     expect(isRejection(res)).toBe(false);
   });
 });
+
+// WEB_INTERFACE → The wallet → "A write no node answers waits": a send `send`
+// returns once the loop is exhausted carries `noAnswer: true` — the empty-order
+// `no node to send to` and the last attempt's transport failure (its `timedOut`
+// kept); a 2xx over its cap, a 2xx not of the route's shape, a non-2xx the
+// node answered, and a transport failure followed by a node's answer carry
+// none.
+describe("a send no node answered carries noAnswer", () => {
+  interface Attempt { url: string; body: string | undefined }
+  function stubBases(per: Array<(a: Attempt) => Response | Promise<Response> | Error>): Attempt[] {
+    const attempts: Attempt[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const attempt: Attempt = { url: String(url), body: init?.body as string | undefined };
+      attempts.push(attempt);
+      const step = per[attempts.length - 1];
+      if (step === undefined) throw new Error(`no step for attempt ${attempts.length}`);
+      const out = step(attempt);
+      if (out instanceof Error) throw out;
+      return out;
+    }));
+    return attempts;
+  }
+  function writeOver(bases: string[]): WriteClient {
+    return new WriteClient({ bases: () => bases, fetch: (url, init) => fetch(url, init) });
+  }
+
+  it('every base failing in transport answers { status: 0, noAnswer: true }', async () => {
+    const attempts = stubBases([
+      () => new Error('ECONNREFUSED'),
+      () => new Error('ECONNREFUSED'),
+    ]);
+    const res = await writeOver(['http://a', 'http://b']).submitLike({});
+    expect(attempts.length).toBe(2);
+    expect(res).toEqual({ status: 0, message: 'ECONNREFUSED', noAnswer: true });
+  });
+
+  it('an empty order answers noAnswer: true with no request made', async () => {
+    const attempts = stubBases([]);
+    const res = await writeOver([]).submitLike({});
+    expect(attempts.length).toBe(0);
+    expect(res).toEqual({ status: 0, message: 'no node to send to', noAnswer: true });
+  });
+
+  it("a deadline on the last base keeps timedOut: true beside noAnswer", async () => {
+    const attempts = stubBases([
+      () => new Error('ECONNREFUSED'),
+      () => timeoutError(),
+    ]);
+    const res = await writeOver(['http://a', 'http://b']).submitLike({});
+    expect(attempts.length).toBe(2);
+    expect(res).toEqual({ status: 0, message: 'timed out', timedOut: true, noAnswer: true });
+  });
+
+  it('a 2xx over its cap carries no noAnswer', async () => {
+    const answer = { status: 'pending', txId: TX_OK, expiresAtHeight: 5720 };
+    const bare = JSON.stringify({ ...answer, pad: '' });
+    const pad = 'a'.repeat(WRITE_ANSWER_READ_BYTES + 1 - new TextEncoder().encode(bare).length);
+    const over = JSON.stringify({ ...answer, pad });
+    stubBases([
+      () => new Response(over, { status: 200 }),
+    ]);
+    const res = await writeOver(['http://a']).submitLike({});
+    expect(isRejection(res)).toBe(true);
+    if (!isRejection(res)) return;
+    expect(res.status).toBe(0);
+    expect(res.noAnswer).toBeUndefined();
+  });
+
+  it("a 2xx not of its route's shape carries no noAnswer", async () => {
+    stubBases([
+      () => new Response(JSON.stringify({ status: 'pending', txId: 'FF'.repeat(32), expiresAtHeight: 5720 }), { status: 200 }),
+    ]);
+    const res = await writeOver(['http://a']).submitLike({});
+    expect(isRejection(res)).toBe(true);
+    if (!isRejection(res)) return;
+    expect(res.status).toBe(0);
+    expect(res.noAnswer).toBeUndefined();
+  });
+
+  it('a 500 carries no noAnswer', async () => {
+    stubBases([
+      () => new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 }),
+    ]);
+    const res = await writeOver(['http://a']).submitLike({});
+    expect(res).toEqual({ status: 500, message: 'Internal error' });
+  });
+
+  it('a transport failure on the first base and a 409 on the second answers the 409 with no noAnswer', async () => {
+    const attempts = stubBases([
+      () => new Error('ECONNREFUSED'),
+      () => new Response(JSON.stringify({ error: 409, reason: 'that karma is still tied up in a post' }), { status: 409 }),
+    ]);
+    const res = await writeOver(['http://a', 'http://b']).submitLike({});
+    expect(attempts.length).toBe(2);
+    expect(res).toEqual({ status: 409, message: 'that karma is still tied up in a post' });
+  });
+});

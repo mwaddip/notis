@@ -10,6 +10,9 @@ import { summarise, classifyLedger } from './policy';
 import { K_LINKS, K_OPEN_PREFIX, readLinksPref, type LinksPref } from './links';
 import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
 import { readHex64 } from '../hex64';
+import type { LockManager } from '../locks';
+
+export type { LockManager };
 
 // The extension's identity service — WEB_INTERFACE → The extension. It holds
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
@@ -33,14 +36,6 @@ const K_SIGN_PREFIX = 'notis.sign.';
  *  against the sender's URL for `arrived` and `offered`. */
 export interface BackgroundConfig {
   publicBase: string;
-}
-
-/** The Web Locks seam the background takes — WEB_INTERFACE → The extension →
- *  "`sign`, in the background, in order", step 9. Every read and write of a
- *  prompt record runs under one exclusive lock named `notis.prompt`, so a
- *  worker that dies releases it and nothing in a worker global holds it. */
-export interface LockManager {
-  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
 }
 
 /** `install` reads the lock manager from here — a required argument. The

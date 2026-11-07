@@ -84,7 +84,7 @@ export interface WalletCtx {
   creditsPlain: CreditsResult | null; // /credits plain — read beside the view for a verifier run
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
-  pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  pendingSend: { toHex: string; toName: string | null; amount: bigint; waiting?: boolean } | null;
   sendCheck: string | null;
   sendAnswer: SendAnswer | null;
   // The send row's confirm — true on the web (the confirm row stands in the
@@ -456,7 +456,10 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
     } else if (ps !== null) {
       const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
       const l = el('div', 'stage');
-      l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
+      // A waiting entry reads *waiting for a node* in place of *submitted*
+      // (WEB_INTERFACE → The wallet → "A waiting write is drawn as pending").
+      const tail = ps.waiting ? 'waiting for a node' : 'submitted';
+      l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · ${tail}`;
       flight.appendChild(l);
     } else if (ctx.sendFlight) {
       if (ctx.sendFlight.stage === 'landed') {

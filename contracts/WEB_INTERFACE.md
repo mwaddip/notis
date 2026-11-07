@@ -415,7 +415,9 @@ verified tip"). Every reader that takes a fetch — the App's, the light client'
 which sends a `notis-mesh://` URL over the connection it holds (`MESH_INTERFACE → The mesh URL`) and an API base's URL
 over the page's `fetch`; every answer is the node's, read as over HTTPS. **A write goes to one node and, with no
 answer, to the next**: the same bytes, the nodes reached over the mesh first and then the API bases, in the client's
-order, and the first answer of any status is the write's (→ The wallet → "Nothing retries a rejection"). A resend is
+order, and the first answer of any status is the write's (→ The wallet → "Nothing retries a rejection"). With no answer
+from any node, or none to send to, the write waits for a node and goes out at the first answer (→ The wallet → "A write
+no node answers waits"). A resend is
 safe because a node answers a transaction its pool already holds as held (`NODE_INTERFACE → Service Layer Architecture
 → "A transaction the pool already holds is answered as held"`); one confirmed between two sends is refused by the
 second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
@@ -760,8 +762,11 @@ the cache holds is read from it when the read from the node fails** — the post
 descendants, each as any card renders, the author's name and the counts as the node last gave them: an entry was
 checked, and came from a node, before it was held — and the pane reports the failed read as it does over any rows it
 holds; the next read that answers lands on those rows as a refresh does (→ Reading the feed and threads → "No answer
-overwrites a newer one"). **The feed and the author window's list have no such fallback**: a listing that fails
-shows its error line and no row.
+overwrites a newer one"). **A failed listing draws the cache**, by the thread's rule: on any failed first page the
+feed draws the cache's roots and an author window that author's entries — the confirmed newest first by block height,
+ties by id, then the pending, at most a page — each live card as any card renders, a withdrawn entry filtered out,
+under the list's error line and with no next page; the next listing that answers lands on those rows as a refresh
+does. A build with no cache — the web build — shows the error line and no row.
 **Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
 its own written with every put, withdrawal and eviction — a put past it evicts the least
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
@@ -1529,7 +1534,8 @@ pending view, as admission spends from it"): the reader's confirmed boxes no poo
 outputs pooled transactions create to the reader's key that none spends — the reader's own spends from this page,
 from another page and from another browser alike, and a send to the reader the node pools. **The client keeps no
 model of the pool**: a transaction the node drops returns its inputs to the view at the next read, and a spend made
-anywhere else leaves it. **The views are the answering node's word** — no proof covers a pooled box — so they choose
+anywhere else leaves it. In the extension the one model beside the views is of the reader's own writes waiting for a
+node (→ "The waiting view"). **The views are the answering node's word** — no proof covers a pooled box — so they choose
 a spend's inputs, gate it and fill the `rep` and `balance` rows, and the extension's verified figures never read them
 (→ The extension → "The verified figures"). **There are two views, one per ledger:** the rep view is `/karma`'s and
 the credits view `/credits`'s, so a send's change is never offered to a post, nor a post's to a send.
@@ -1549,7 +1555,8 @@ boxes for as long as the own box covers what they do, and the total shown is the
 overlay, a flight's stage line, a landing — and for the bounded poll (→ "Landing is the one unsolicited update, and
 it is bounded"); it chooses no input and gates no spend, which the views do. **An entry holds no input and no change**, since nothing
 chooses a box from it: its kind, its subject, its transaction's id, its two heights (below) and, for a send, the
-payment (→ The wallet window → "The `send` row"). **It is persisted, per identity** —
+payment (→ The wallet window → "The `send` row"); an entry is marked **waiting** while its write waits for a node
+(→ "A write no node answers waits"). **It is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another key's entries,
 and a reload still draws what the reader submitted. **An identity change rebuilds the ledger for the new key at
 once** (→ The identity module, `onChange`).
@@ -1557,7 +1564,9 @@ once** (→ The identity module, `onChange`).
 **A pending entry's expiry is the client's, and a node's answer can only bring it sooner.** An entry expires at its
 `submittedAtHeight` plus `MEMPOOL_EXPIRY_BLOCKS` — the lifetime a node gives every transaction it pools
 (`MEMPOOL_INTERFACE → What takes an entry out of the pool`) — or at the `expiresAtHeight` its answer carried when that
-is a block height below it. `submittedAtHeight` is the height the transaction was built at, the `/status` height its
+is a block height below it. **A waiting entry has no expiry while it waits**: at the answer to its send its
+`submittedAtHeight` is the tip the client read then, and the rule runs from there, as the pool's lifetime runs from
+admission (→ "Waiting writes go out at the first answer"). `submittedAtHeight` is the height the transaction was built at, the `/status` height its
 outputs declare; for a faucet grant, the highest tip the client has read when it asks. The ledger applies the rule
 where an entry enters it — added, and restored from storage — so every flow is covered, and a stored entry carrying a
 later height is cut back at the next load: an answered height alone would let a node keep an entry drawn as pending,
@@ -1627,7 +1636,8 @@ rep is for posting* is the floor's one sentence on every surface that names it.
 **The reader's spends run one at a time, per ledger.** A rep spend — a post, a like, a vouch, an invite, a
 withdrawal, a claim, a burn — makes its reads only once the rep spend before it has its answer: the node's, a
 transport failure, or `notSigned`. So each flow reads the rep view with every earlier spend of this page in it, and
-two presses never select one box. A press made while one is in flight waits its turn behind it, in press order,
+two presses never select one box; in the extension a ledger's waiting writes go before every press on it (→ "Waiting
+writes go out at the first answer"). A press made while one is in flight waits its turn behind it, in press order,
 and keeps its own step at the press — the like's overlay, a flight's `submitting…`. **A press waiting its turn
 belongs to the key and the node it was made under**: a change of either ends every press still waiting — no read,
 nothing signed, nothing sent. A change of the key takes the press's step with everything the old key had standing
@@ -1654,8 +1664,9 @@ flight lines, and the extension's prompt (→ The extension). Rep is indivisible
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; the reader sees the rejection, and
 the next spend reads the views anew. **A send that ends with no answer is no rejection**: in the extension the same
 bytes go to the next node in the client's order, and the first answer of any status is the send's (→ The extension →
-"The mesh is the extension's first path"); in the web build, and in the extension once every node is tried, it ends
-the flight as a transport failure (→ Reading a node's answer). **A rejection's words follow the node's message, never its status alone**: a
+"The mesh is the extension's first path"); in the web build it ends the flight as a transport failure (→ Reading a
+node's answer), and in the extension, once every node is tried, the write waits for a node (→ "A write no node answers
+waits"). **A rejection's words follow the node's message, never its status alone**: a
 409 is the pool's conflict over a box another pooled spend holds (`MEMPOOL_INTERFACE → getBoxWithPending`), which
 reads *that rep is still tied up in a spend that has not landed.* on every rep surface, and a like the node already
 holds reads *you have already liked this post* only from the node's own words for it.
@@ -1677,6 +1688,60 @@ withdraw's transient flight, the vouch mark, an invite's, a claim's or a burn's 
 line in their report: *like not sent.*, *withdraw not sent.*, or *your key is locked* for the race. A
 `try again` on an expired card returns to *expired* on `notSigned`, `try again` still offered. A
 transport failure after the collapse stays the rejected ending.
+
+**A write no node answers waits.** In the extension a post — a root or a reply — a like, a vouch, an invite, a
+withdrawal, a claim and a send to a key **wait for a node** when no node answers their flow: its reads before the
+write, or its send once every node in the client's order is tried. No answer is what the write rule reads as none — a
+transport failure, `status: 0`, the deadline's included (→ Reading a node's answer), from every node, or an order
+holding no node to send to; any answer of any status is the node's, and keeps every rule above. A flow whose reads got
+no answer builds from the waiting view (→ "The waiting view"), holds the spend to the floor against it (→ "The floor is
+the client's to know"), asks for the signature as any flow does, and sends nothing; a flow whose send got no answer
+keeps the transaction it signed. Either way the write waits: its transaction, a post's text and what the spend took and
+returned are kept in the waiting store, and its pending entry is marked waiting. A waiting post's id is the client's
+own, `computePostId(txId, 0)`, and the post enters the post cache then as a submitted one does (→ The extension → "The
+post cache"); a reply's parent's or a like's target's author is the one its cache entry states, and a target the cache
+does not hold ends the flow as a transport failure. **An unvouch, a burn and a send to a handle never wait**: each
+resolves a box or a holder at the press, from a node and never from a cache, so with no node answering each ends as a
+transport failure. The web build keeps no waiting store, and a write no node answers ends its flight as a transport
+failure.
+
+**The waiting view.** Per ledger, the last spendable view a flow of the identity read — its boxes, its `effective`,
+the `/status` height and era — recorded at every read a node answered, and advanced by each waiting write on that
+ledger in the order they were made: its inputs out, its change in, `effective` less what it took. **Every spend the
+client sends and a node takes advances it the same way** — a write answered 2xx at once as well as a waiting write
+sent later — so the view never offers a box the reader's own sent spend has used. A waiting write's
+outputs declare the view's height, never above a height a node answered, so no output claims a height the chain has
+not reached. **A flow with no waiting view ends as a transport failure** — there is nothing on this browser to build
+from. **The view and every waiting write carry the chain's name** (→ The extension → "The chain's name"), and a view of
+another chain answers nothing.
+
+**The waiting store keeps every waiting write as a record of its own**, per identity — `notis.waiting.<pubKeyHex>.…`
+in `localStorage` — never one list rewritten whole, so no page's write drops another's; a flow builds on the view and
+records its write under one lock per identity (`navigator.locks`), so two pages build in turn, the second on the
+first's change. A record that does not parse is dropped alone. A waiting write of a key not loaded stays stored, and
+goes out when that key is loaded and a node answers.
+
+**Waiting writes go out at the first answer.** At every corner read a node answers (→ The status corner), at every
+first page of the feed a node answers, and at a verified tip run that names a new chain — once the client's verified tip
+has named the chain — the page sends each ledger's waiting writes in the order they were made, one at a time, by the
+write rule (→ The extension → "The mesh is the extension's first path"), the first answer of any status each one's; a
+send that again reaches no node leaves it, and those after it, waiting. A ledger's pass runs as a spend in that ledger's queue (→ "The reader's spends run one at a time, per
+ledger"), one page sends at a time under a lock, and every page sends every waiting write of the loaded identity,
+whichever page made it. A 2xx goes on as a submitted write: its entry stops waiting, and its expiry runs from the tip
+the client read at the answer (→ "A pending entry's expiry is the client's, and a node's answer can only bring it
+sooner"); a 2xx whose transaction id, or a post's id, differs from the waiting one's is a client rejection, as on any
+send. Nothing goes out while no page of the extension is open: the reader runs in the page.
+
+**A refusal ends what it strands.** A waiting write the node refuses is shown as any rejection is and never retried
+(→ "Nothing retries a rejection"); every later waiting write on its ledger that spends its change — or the change of
+one so ended — ends unsent, *not sent: the one before it was refused.*, and the next press reads the views anew. A
+waiting write of another chain than the one the verified tip names ends unsent, *not sent: the chain changed.* Each
+ends in its surface's line, where a rejection reads.
+
+**A waiting write is drawn as pending** — the pending card, the like's overlay, a row's flight — its stage line
+*waiting for a node*, and after a reload as before it: a waiting post's pending card is drawn from its record — its
+text and its parent — where no node lists it. The status corner is unchanged: its muted dot is how the reader sees that no node answers
+(→ The status corner).
 
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
@@ -2258,7 +2323,10 @@ client that expects to announce itself first is built against an endpoint that d
 - **Affordability is known before the attempt.** Opening a composer reads the rep view once; a price its
   `effective` does not cover disables `post` and says so, so the reader never spends a rejection to learn
   what the client already knew; every other rep spend is held to the floor before it signs (→ The wallet → "The
-  floor is the client's to know"). *(write surface)*
+  floor is the client's to know"). In the extension a read no node answers takes the waiting view's `effective`
+  instead (→ The wallet → "The waiting view"), so a composer opened while no node answers offers `post` as the post
+  it would make can wait; with no waiting view the foot says the rep could not be read, as on any failed read.
+  *(write surface)*
 
 - **The client reads the protocol era; it never holds one.** `GET /status` → `protocolVersion` is the
   era at `blockHeight + 1`, and the field is in every id preimage, so a client learns the era before

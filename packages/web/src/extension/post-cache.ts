@@ -527,6 +527,90 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     total = nextTotal;
   }
 
+  /** The height to place an entry at for the listing order
+   *  (WEB_INTERFACE → The extension → "A failed listing draws the cache"):
+   *  a withdrawn row is confirmed at its `withdrawnAtHeight`, a live post
+   *  at its `blockHeight` (number) or `null` for pending. */
+  function heightOf(row: PostJson | WithdrawnJson): number | null {
+    if (isWithdrawn(row)) return row.withdrawnAtHeight;
+    return row.blockHeight;
+  }
+
+  /** Compare two entries for the listing order (WEB_INTERFACE → The
+   *  extension → "A failed listing draws the cache"): confirmed rows first
+   *  by height descending, ties by id ascending; then the rows with no
+   *  height (pending), ties by id ascending. */
+  function compareEntries(a: Entry, b: Entry): number {
+    const ha = heightOf(a.row);
+    const hb = heightOf(b.row);
+    if (ha === null && hb === null) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    if (ha === null) return 1;
+    if (hb === null) return -1;
+    if (ha !== hb) return hb - ha;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+
+  function sliceToHeld(entries: Entry[], limit: number): HeldPost[] {
+    entries.sort(compareEntries);
+    const out: HeldPost[] = [];
+    for (let i = 0; i < entries.length && i < limit; i++) {
+      const e = entries[i]!;
+      out.push({ row: e.row, author: e.author, parent: e.parent });
+    }
+    return out;
+  }
+
+  /** Walk the entries store and collect the entries `parent === null` names.
+   *  The parent index is non-unique over `parent`; IndexedDB does not index
+   *  rows whose index key would be `null`, so an index cursor on the parent
+   *  index cannot reach the roots — the store cursor is the one path
+   *  (WEB_INTERFACE → The extension → "A failed listing draws the cache"). */
+  function rootsInternal(limit: number): Promise<HeldPost[]> {
+    if (db === null || limit <= 0) return Promise.resolve([]);
+    return new Promise<HeldPost[]>((resolve) => {
+      const collected: Entry[] = [];
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction(STORE, 'readonly');
+      } catch { resolve([]); return; }
+      const cur = tx.objectStore(STORE).openCursor();
+      cur.onsuccess = (): void => {
+        const c = cur.result;
+        if (c) {
+          const e = c.value as Entry;
+          if (e.parent === null) collected.push(e);
+          c.continue();
+        }
+      };
+      tx.oncomplete = (): void => resolve(sliceToHeld(collected, limit));
+      tx.onerror = (): void => resolve([]);
+      tx.onabort = (): void => resolve([]);
+    });
+  }
+
+  function byAuthorInternal(author: string, limit: number): Promise<HeldPost[]> {
+    if (db === null || limit <= 0) return Promise.resolve([]);
+    return new Promise<HeldPost[]>((resolve) => {
+      const collected: Entry[] = [];
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction(STORE, 'readonly');
+      } catch { resolve([]); return; }
+      const idx = tx.objectStore(STORE).index(IDX_AUTHOR);
+      const cur = idx.openCursor(author);
+      cur.onsuccess = (): void => {
+        const c = cur.result;
+        if (c) {
+          collected.push(c.value as Entry);
+          c.continue();
+        }
+      };
+      tx.oncomplete = (): void => resolve(sliceToHeld(collected, limit));
+      tx.onerror = (): void => resolve([]);
+      tx.onabort = (): void => resolve([]);
+    });
+  }
+
   async function threadInternal(id: string): Promise<CachedThread | null> {
     if (db === null) return null;
     const subject = await readEntry(id);
@@ -595,6 +679,12 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     },
     refresh(rows): Promise<void> {
       return serial(() => refreshInternal(rows));
+    },
+    roots(limit): Promise<HeldPost[]> {
+      return serial(() => rootsInternal(limit));
+    },
+    byAuthor(author, limit): Promise<HeldPost[]> {
+      return serial(() => byAuthorInternal(author, limit));
     },
   };
 }

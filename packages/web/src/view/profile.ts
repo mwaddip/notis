@@ -73,7 +73,7 @@ export interface ProfileCtx {
   ownNameLoaded: boolean;
   nameClay: (key: string, name: string) => boolean; // a handle reads clay (→ The extension → "The verified names")
   usernameFlight: Flight | null;
-  pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
+  pendingUsername: { kind: 'claim' | 'burn'; name: string; waiting?: boolean } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
   // The extension's verified-figures run — WEB_INTERFACE → The extension →
@@ -829,11 +829,14 @@ function usernameRow(handlers: ProfileHandlers, read: () => ProfileCtx): BodyRow
 
     // The flight's ending stands beside whatever the line and the form read; a
     // pending claim or burn reads its stage — the ledger's entry, durable
-    // across a reload.
+    // across a reload; a waiting entry reads *waiting for a node* in place of
+    // *submitted* (WEB_INTERFACE → The wallet → "A waiting write is drawn as
+    // pending").
     const f = ctx.usernameFlight;
     let stage: Flight | null = f !== null && (f.stage === 'rejected' || f.stage === 'expired') ? f : null;
     if (pending !== null) {
       if (f?.stage === 'submitting') stage = f;
+      else if (pending.waiting) stage = { stage: 'waiting' };
       else if (f === null || f.stage === 'submitted') stage = { stage: 'submitted' };
     }
     flight.replaceChildren(...(stage === null ? [] : [stageLine(stage)]));

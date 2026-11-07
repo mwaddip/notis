@@ -22,7 +22,15 @@ export function boundedExpiry(submittedAtHeight: number, answered: unknown): num
   return isBlockHeight(answered) && answered < own ? answered : own;
 }
 
-/** An entry as the ledger holds it: its `expiresAtHeight` bounded. */
+/** An entry as the ledger holds it: its `expiresAtHeight` bounded. A waiting
+ *  entry has no expiry while it waits (WEB_INTERFACE → The wallet → "A pending
+ *  entry's expiry is the client's, and a node's answer can only bring it
+ *  sooner"), so its `expiresAtHeight` is `Number.MAX_SAFE_INTEGER` whatever
+ *  the caller or storage held — and a stored one is restored the same way. */
 export function heldEntry(entry: UnboundedEntry): PendingEntry {
-  return { ...entry, expiresAtHeight: boundedExpiry(entry.submittedAtHeight, entry.expiresAtHeight) };
+  if (entry.waiting === true) {
+    return { ...entry, expiresAtHeight: Number.MAX_SAFE_INTEGER, waiting: true };
+  }
+  const { waiting: _waiting, ...rest } = entry;
+  return { ...rest, expiresAtHeight: boundedExpiry(entry.submittedAtHeight, entry.expiresAtHeight) };
 }

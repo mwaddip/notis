@@ -402,6 +402,8 @@ describe('an answer that lands between a read\'s cache read and its write', () =
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
       refresh: realCache.refresh.bind(realCache),
+      roots: realCache.roots.bind(realCache),
+      byAuthor: realCache.byAuthor.bind(realCache),
       getMany: async (ids) => {
         const answer = await realCache.getMany(ids);
         if (!holdNext) return answer;
@@ -668,6 +670,8 @@ describe('load older appends slots and resolves them', () => {
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
       refresh: realCache.refresh.bind(realCache),
+      roots: realCache.roots.bind(realCache),
+      byAuthor: realCache.byAuthor.bind(realCache),
       getMany: async (ids) => {
         const answer = await realCache.getMany(ids);
         if (!holdNext) return answer;
@@ -726,6 +730,8 @@ describe('load older appends slots and resolves them', () => {
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
       refresh: realCache.refresh.bind(realCache),
+      roots: realCache.roots.bind(realCache),
+      byAuthor: realCache.byAuthor.bind(realCache),
       getMany: async (ids) => {
         const answer = await realCache.getMany(ids);
         if (!holdNext) return answer;
@@ -973,6 +979,8 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
       thread: async () => null,
       getMany: async () => { throw new Error('nope'); },
       refresh: async () => {},
+      roots: async () => [],
+      byAuthor: async () => [],
     };
     const h = harness({
       resolver: r.resolver, cache: rejecting,

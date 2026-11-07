@@ -461,6 +461,33 @@ describe('the author-posts window', () => {
     const empty = authorPostsBody(postsHandlers(), postsCtx({ feed: feedState({ posts: [] }) }));
     expect(empty.querySelector('.empty')?.textContent).toBe('no posts yet');
   });
+
+  // WEB_INTERFACE → The extension → "A failed listing draws the cache": on a
+  // failed first page the author window renders the error line and, beneath
+  // it, the rows the cache fallback wrote; with no rows the error line alone,
+  // never the empty-state line.
+  it('an author window with an error and rows draws the line and then the cards', () => {
+    const feed = feedState({ loaded: false, error: 'node answered 500', next: null });
+    const b = authorPostsBody(postsHandlers(), postsCtx({ feed }));
+    const err = b.querySelector<HTMLElement>('.error');
+    expect(err).not.toBeNull();
+    expect(err!.textContent).toBe("can't load these posts — node answered 500");
+    const cards = [...b.querySelectorAll('.card')] as HTMLElement[];
+    expect(cards.map((c) => c.dataset['postId'])).toEqual([P1, P2]);
+    // No `more posts` beyond the cache — next is null.
+    expect([...b.querySelectorAll('button')].find((x) => x.textContent === 'more posts')).toBeUndefined();
+    // No `no posts yet` line stands when posts are shown.
+    expect(b.querySelector('.empty')).toBeNull();
+  });
+
+  it('an author window with an error and no rows draws the line alone', () => {
+    const feed = feedState({ posts: [], loaded: false, error: 'no node answered', next: null });
+    const b = authorPostsBody(postsHandlers(), postsCtx({ feed }));
+    expect(b.querySelector<HTMLElement>('.error')?.textContent).toBe("can't load these posts — no node answered");
+    expect(b.querySelectorAll('.card').length).toBe(0);
+    // The empty-state line is held off on error — the node did not answer.
+    expect(b.querySelector('.empty')).toBeNull();
+  });
 });
 
 describe('a handle the chain does not back is clay (WEB_INTERFACE → The identity display, → The author window)', () => {

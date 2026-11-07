@@ -69,7 +69,9 @@ export interface CardOpts {
   onAuthor?: ((key: string) => void) | null; // the prefix button opens the author window
   nameClay?: (key: string, name: string) => boolean; // the handle reads clay (→ The extension → "The verified names")
   // The author's own controls (WEB_INTERFACE → The withdraw control).
-  withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
+  // 'pending' and 'waiting' come from the ledger — the durable states that
+  // survive a reload — else the transient flight in the slot.
+  withdraw?: 'pending' | 'waiting' | Flight | null;
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
   // The post's link and where its press goes when the clipboard takes no
   // write — one option, so no card carries the copy glyph without the row its
@@ -187,6 +189,10 @@ export function stageLine(flight: Flight): HTMLElement {
     said.textContent = 'submitting…';
   } else if (flight.stage === 'submitted') {
     said.textContent = 'submitted';
+  } else if (flight.stage === 'waiting') {
+    // WEB_INTERFACE → The wallet → "A waiting write is drawn as pending" — the
+    // stage line reads *waiting for a node*, drawn as the pending stages are.
+    said.textContent = 'waiting for a node';
   } else if (flight.stage === 'rejected') {
     // Say what happened, never a status code (HOUSE_STYLE → Voice).
     said.textContent = flight.reason ?? '';
@@ -245,6 +251,7 @@ function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): boolean {
 function withdrawArea(post: PostJson, opts: CardOpts): { el: HTMLElement; offered: boolean } | null {
   const w = opts.withdraw ?? null;
   if (w === 'pending') return { el: stageLine({ stage: 'submitted' }), offered: false };
+  if (w === 'waiting') return { el: stageLine({ stage: 'waiting' }), offered: false };
   if (w !== null) return { el: stageLine(w), offered: false }; // the transient flight — submitting or expired
   if (!opts.onWithdraw) return null;
 

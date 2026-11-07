@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { NodeClient, PageError, type Page } from '../src/api/client';
+import { NodeClient, ApiError, PageError, type Page } from '../src/api/client';
+import { isNoAnswer } from '../src/api/errors';
 import { FEED_PAGE_READ_BYTES, STATUS_READ_BYTES } from '@dagsocial/node-reads';
 import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 
@@ -341,5 +342,26 @@ describe("every paged read's URL carries its limit", () => {
     // in it — the client's URL names one all the same.
     await client().karma(KEY, {} as Page);
     expect(calls[0]?.url).toMatch(/[?&]limit=\d+/);
+  });
+});
+
+// WEB_INTERFACE → The wallet → "A write no node answers waits": the extension
+// reads a transport failure — `ApiError` with status 0 — as *no answer*; any
+// other `ApiError`, a `PageError`, and anything else is the node's.
+describe("isNoAnswer reads a status 0 ApiError as no answer", () => {
+  it('an ApiError with status 0 reads as no answer', () => {
+    expect(isNoAnswer(new ApiError(0, 'timed out'))).toBe(true);
+  });
+
+  it("an ApiError with status 500 is the node's, not no answer", () => {
+    expect(isNoAnswer(new ApiError(500, 'Internal Server Error'))).toBe(false);
+  });
+
+  it('a PageError is not no answer', () => {
+    expect(isNoAnswer(new PageError())).toBe(false);
+  });
+
+  it('a plain Error is not no answer', () => {
+    expect(isNoAnswer(new Error('anything else'))).toBe(false);
   });
 });

@@ -17,7 +17,7 @@ import { PendingLedger } from '../src/wallet/ledger';
 import { createPostCache } from '../src/extension/post-cache';
 import { buildPost } from '../src/wallet/builders';
 import type { Api } from '../src/api/client';
-import type { AppState, PostCache, PostResolver, PostsVerifier, TipRun, TipVerifier } from '../src/model/state';
+import type { AppState, FeedState, PostCache, PostResolver, PostsVerifier, TipRun, TipVerifier } from '../src/model/state';
 import type { ResolveEnd } from '../src/model/post-resolve';
 import type { WriteClient } from '../src/api/write';
 import type { PostCheck } from '@dagsocial/nipopow-client';
@@ -85,8 +85,9 @@ function scriptedVerifier(decide: (row: unknown, idx: number) => PostCheck): { v
 }
 
 interface Fake {
-  feedCalls: Array<{ light: boolean | undefined }>;
+  feedCalls: Array<{ light: boolean | undefined; author: string | undefined }>;
   feedRes: FeedResult;
+  feedThrows?: boolean;
   threadCalls: Array<{ light: boolean | undefined; id: string }>;
   threadRes: ThreadResult | null;
   threadThrows: boolean;
@@ -95,8 +96,9 @@ interface Fake {
 
 function makeApi(f: Fake): Api {
   return {
-    feed: async (_page, _viewer, _author, _roots, light): Promise<FeedResult> => {
-      f.feedCalls.push({ light });
+    feed: async (_page, _viewer, author, _roots, light): Promise<FeedResult> => {
+      f.feedCalls.push({ light, author });
+      if (f.feedThrows === true) throw new Error('offline');
       return f.feedRes;
     },
     thread: async (id, _page, _viewer, light): Promise<ThreadResult | null> => {
@@ -130,9 +132,11 @@ function harness(opts: {
   threadRes?: ThreadResult | null;
   postRes?: PostResult | null;
   threadThrows?: boolean;
+  feedThrows?: boolean;
 } = {}) {
   const fake: Fake = {
     feedCalls: [], feedRes: opts.feedRes ?? { posts: [], next: null, pending: [], pendingCount: 0 },
+    feedThrows: opts.feedThrows ?? false,
     threadCalls: [], threadRes: opts.threadRes ?? null,
     threadThrows: opts.threadThrows ?? false,
     postRes: opts.postRes ?? null,
@@ -181,6 +185,9 @@ function harness(opts: {
     fetchThread(id: string): Promise<void>;
     refreshThread(id: string): Promise<void>;
     renderRegionsFor(id: string): void;
+    ensurePostsData(key: string): string;
+    loadAuthorPosts(key: string): Promise<void>;
+    authorPostsData: Map<string, FeedState>;
     state: AppState;
   };
   return { app, drive, fake, feedEl, panes };
@@ -285,6 +292,8 @@ describe('app-post-cache — a thread read that answers does not call thread()',
       thread: (i) => { threadCalls++; return cache.thread(i); },
       getMany: (ids) => cache.getMany(ids),
       refresh: (rs) => cache.refresh(rs),
+      roots: (l) => cache.roots(l),
+      byAuthor: (a, l) => cache.byAuthor(a, l),
     };
     const h = harness({
       verifier: sv.verifier, cache: counted,
@@ -505,6 +514,8 @@ describe('app-post-cache — a cached thread goes through putThreadRows', () => 
       thread: async (i) => { await gate; return inner.thread(i); },
       getMany: (ids) => inner.getMany(ids),
       refresh: (rs) => inner.refresh(rs),
+      roots: (l) => inner.roots(l),
+      byAuthor: (a, l) => inner.byAuthor(a, l),
     };
     const h = harness({ verifier: sv.verifier, cache: wrapped, threadThrows: true });
     void h.drive.fetchThread(subject.id);
@@ -537,6 +548,8 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
       thread: (i) => cache.thread(i),
       getMany: (ids) => cache.getMany(ids),
       refresh: (rs) => cache.refresh(rs),
+      roots: (l) => cache.roots(l),
+      byAuthor: (a, l) => cache.byAuthor(a, l),
     };
     const chains = ['X', 'X', 'Y'];
     let i = 0;
@@ -576,5 +589,204 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
     drive.startVerification();
     await settle();
     expect(opens).toEqual(['X', 'Y']);
+  });
+});
+
+// WEB_INTERFACE → The extension → "A failed listing draws the cache": on any
+// failed first page the feed draws the cache's roots and an author window
+// that author's entries, under the list's error line and with no next page;
+// the next listing that answers lands on those rows as a refresh does. A
+// build with no cache (the web build) keeps today's line and no row.
+
+describe('app-post-cache — a failed feed listing draws the cached roots under the error line', () => {
+  it('seeded cache: feed error is set, feed.posts holds the cached roots, feed.next is null', async () => {
+    const subject = row('r');
+    const b = row('b');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    // Two roots at different heights; byAuthor would give the same pair.
+    const BR = BOUND(subject);
+    if (BR.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: subject.id, txBytes: BR.txBytes, row: { ...subject, blockHeight: 20 }, author: subject.author, parent: null, own: false });
+    const BB = BOUND(b);
+    if (BB.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: b.id, txBytes: BB.txBytes, row: { ...b, blockHeight: 30 }, author: b.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.error).not.toBeNull();
+    // Cached roots stand under the error line, newest first by block height.
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([b.id, subject.id]);
+    expect(h.drive.state.feed.next).toBeNull();
+  });
+
+  // WEB_INTERFACE → The extension → "A failed listing draws the cache": the
+  // rows the state holds reach the page beneath the error line, as cards.
+  it('a failed listing shows the cached cards on the page beneath the error line', async () => {
+    const a = row('a');
+    const b = row('b');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BA = BOUND(a);
+    if (BA.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: a.id, txBytes: BA.txBytes, row: { ...a, blockHeight: 10 }, author: a.author, parent: null, own: false });
+    const BB = BOUND(b);
+    if (BB.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: b.id, txBytes: BB.txBytes, row: { ...b, blockHeight: 20 }, author: b.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    await h.drive.loadFeed();
+    await settle();
+    // The feed container holds both an `.error` and the two `.card`s, in that
+    // order. `data-post-id` carries the id a cache fallback wrote.
+    const err = h.feedEl.querySelector<HTMLElement>('.error');
+    expect(err).not.toBeNull();
+    const cards = [...h.feedEl.querySelectorAll('.card')] as HTMLElement[];
+    expect(cards.map((c) => c.dataset['postId'])).toEqual([b.id, a.id]);
+    // The error line comes before the first card in the feed container.
+    const errIdx = [...h.feedEl.children].indexOf(err!);
+    const firstCardIdx = [...h.feedEl.children].indexOf(cards[0]!);
+    expect(errIdx).toBeGreaterThanOrEqual(0);
+    expect(firstCardIdx).toBeGreaterThan(errIdx);
+  });
+});
+
+describe("app-post-cache — an author window's failed listing draws that author's cached posts", () => {
+  it("seeded cache: f.error is set, f.posts holds byAuthor's answer, f.next is null", async () => {
+    const K = 'cc'.repeat(32);
+    const OTHER = 'dd'.repeat(32);
+    const a = row('a', { author: K });
+    const b = row('b', { author: K });
+    const other = row('other', { author: OTHER });
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BA = BOUND(a);
+    if (BA.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: a.id, txBytes: BA.txBytes, row: { ...a, blockHeight: 30 }, author: K, parent: null, own: false });
+    const BB = BOUND(b);
+    if (BB.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: b.id, txBytes: BB.txBytes, row: { ...b, blockHeight: 10 }, author: K, parent: null, own: false });
+    const BO = BOUND(other);
+    if (BO.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: other.id, txBytes: BO.txBytes, row: { ...other, blockHeight: 20 }, author: OTHER, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    h.drive.ensurePostsData(K);
+    await h.drive.loadAuthorPosts(K);
+    await settle();
+    const f = h.drive.authorPostsData.get(K)!;
+    expect(f.error).not.toBeNull();
+    expect(f.posts.map((p) => p.id)).toEqual([a.id, b.id]);
+    expect(f.next).toBeNull();
+  });
+});
+
+describe('app-post-cache — the next answered listing replaces the cached rows', () => {
+  it('a feed that answers after the cache fallback replaces feed.posts with the fresh rows', async () => {
+    const cached = row('cached');
+    const fresh = row('fresh');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BC = BOUND(cached);
+    if (BC.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: cached.id, txBytes: BC.txBytes, row: cached, author: cached.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([cached.id]);
+    // Node answers now.
+    h.fake.feedThrows = false;
+    h.fake.feedRes = { posts: [fresh], next: null, pending: [], pendingCount: 0 };
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.error).toBeNull();
+    expect(h.drive.state.feed.posts.map((p) => p.id)).toEqual([fresh.id]);
+  });
+});
+
+describe('app-post-cache — a listing read before a node change draws nothing', () => {
+  it('a cache answer arriving after readerGen bumps writes no rows (feed)', async () => {
+    const r = row('r');
+    const sv = scriptedVerifier((rw) => BOUND(rw as PostJson));
+    const { cache: inner } = makeCache();
+    await inner.open('C');
+    const BR = BOUND(r);
+    if (BR.status !== 'bound') throw new Error('invariant');
+    await inner.put({ id: r.id, txBytes: BR.txBytes, row: r, author: r.author, parent: null, own: false });
+    // Gate the roots() call so the test can bump the generation mid-flight.
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    const wrapped: PostCache = {
+      open: (c) => inner.open(c),
+      put: (e) => inner.put(e),
+      withdraw: (i, w) => inner.withdraw(i, w),
+      thread: (i) => inner.thread(i),
+      getMany: (ids) => inner.getMany(ids),
+      refresh: (rs) => inner.refresh(rs),
+      roots: async (l) => { await gate; return inner.roots(l); },
+      byAuthor: (a, l) => inner.byAuthor(a, l),
+    };
+
+    const h = harness({ verifier: sv.verifier, cache: wrapped, feedThrows: true });
+    void h.drive.loadFeed();
+    // Bump the readerGen as a node change would, before the cache answers.
+    (h.app as unknown as { readerGen: number }).readerGen += 1;
+    release();
+    await settle();
+    // The cache's rows were dropped by the generation guard.
+    expect(h.drive.state.feed.posts.length).toBe(0);
+  });
+});
+
+describe('app-post-cache — a withdrawal seen to land stays withdrawn over a cached row', () => {
+  it("a live cached root whose id the client saw withdrawn is filtered from feed.posts", async () => {
+    const seen = row('seen');
+    const sv = scriptedVerifier((r) => BOUND(r as PostJson));
+    const { cache } = makeCache();
+    await cache.open('C');
+    const BS = BOUND(seen);
+    if (BS.status !== 'bound') throw new Error('invariant');
+    await cache.put({ id: seen.id, txBytes: BS.txBytes, row: seen, author: seen.author, parent: null, own: false });
+
+    const h = harness({ verifier: sv.verifier, cache, feedThrows: true });
+    // The client saw this id withdrawn — the private set that `liveRows` and
+    // `known` both read (WEB_INTERFACE → Reading the feed and threads → "A
+    // withdrawal the client has seen land is final on every write of rows").
+    const w = tomb('seen');
+    (h.app as unknown as { withdrawnSeen: Map<string, WithdrawnJson> }).withdrawnSeen.set(seen.id, w);
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.error).not.toBeNull();
+    // `liveRows` filters the id — no live row is shown for a post the client
+    // saw withdrawn, and the feed's row type carries no withdrawn arm.
+    expect(h.drive.state.feed.posts.map((p) => p.id)).not.toContain(seen.id);
+  });
+});
+
+describe('app-post-cache — the web build keeps the line and no row', () => {
+  it('with no cache handed in, a failed feed listing shows the error line and no row', async () => {
+    const h = harness({ verifier: null, cache: null, feedThrows: true });
+    await h.drive.loadFeed();
+    await settle();
+    expect(h.drive.state.feed.error).not.toBeNull();
+    expect(h.drive.state.feed.posts.length).toBe(0);
+    expect(h.drive.state.feed.next).toBeNull();
+  });
+
+  it("with no cache handed in, a failed author listing shows the error line and no row", async () => {
+    const K = 'cc'.repeat(32);
+    const h = harness({ verifier: null, cache: null, feedThrows: true });
+    h.drive.ensurePostsData(K);
+    await h.drive.loadAuthorPosts(K);
+    await settle();
+    const f = h.drive.authorPostsData.get(K)!;
+    expect(f.error).not.toBeNull();
+    expect(f.posts.length).toBe(0);
   });
 });
