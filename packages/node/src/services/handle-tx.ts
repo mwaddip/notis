@@ -21,6 +21,7 @@ import {
   getUsernameByOwner,
 } from '../store/index.js';
 import { getBoxWithPending, getHeldEntry } from '../store/mempool.js';
+import { noteRelayedTxInputMissing } from '../metrics.js';
 import { admitTx } from './admit-tx.js';
 import { admissionHeld, admissionOwed, admissionGetOwnKarmaBoxIds } from './karma-admission.js';
 import { ClientError } from './client-error.js';
@@ -162,8 +163,10 @@ export function handleRelayedTx(
     // logged": the engine's `Input box not found or already spent: <id>`
     // over the pending view — the answer to a copy of a transaction a
     // block already carried, and to a child whose parent this node does
-    // not pool — writes no line.
+    // not pool — writes no line and adds one to
+    // `relayed_txs_input_missing_total` (NODE_INTERFACE → Admin Listener).
     if (result.error?.startsWith('Input box not found or already spent: ')) {
+      noteRelayedTxInputMissing();
       return false;
     }
     console.warn(`Relayed tx rejected: ${result.error}`);

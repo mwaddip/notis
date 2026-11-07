@@ -1,6 +1,7 @@
 // NODE_INTERFACE → Admin Listener: the in-memory metrics seam.
-// Written at four sites (journal wrappers, block-apply tip push, counted PoW
-// wrapper, HTTP middleware); the admin router reads it. Nothing else writes it.
+// Written at five sites (journal wrappers, block-apply tip push, counted PoW
+// wrapper, HTTP middleware, the relay's missing-input branch); the admin
+// router reads it. Nothing else writes it.
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type { BlockHeader } from '@dagsocial/types';
 
@@ -13,6 +14,7 @@ let powVerificationsTotal = 0;
 let powVerificationFailuresTotal = 0;
 let httpRequestsTotal = 0;
 let postBodiesPulledTotal = 0;
+let relayedTxsInputMissingTotal = 0;
 
 export function noteTip(height: number): void {
   dagTipHeight = height;
@@ -35,6 +37,15 @@ export function notePowVerification(ok: boolean): void {
 
 export function noteHttpRequest(): void {
   httpRequestsTotal++;
+}
+
+// NODE_INTERFACE → Admin Listener → "relayed_txs_input_missing_total":
+// every relayed transaction `onTx` refuses for a missing input — the
+// handler's one write site (NODE_INTERFACE → Net Integration → Relay
+// handlers (mempool-based) → "A relayed transaction refused for a missing
+// input is counted, not logged").
+export function noteRelayedTxInputMissing(): void {
+  relayedTxsInputMissingTotal++;
 }
 
 export function countedVerifyOrderingBlockPoW(header: BlockHeader): boolean {
@@ -67,6 +78,7 @@ export function getCounters(): {
   powVerificationFailuresTotal: number;
   httpRequestsTotal: number;
   postBodiesPulledTotal: number;
+  relayedTxsInputMissingTotal: number;
 } {
   return {
     postsReceivedTotal,
@@ -75,6 +87,7 @@ export function getCounters(): {
     powVerificationFailuresTotal,
     httpRequestsTotal,
     postBodiesPulledTotal,
+    relayedTxsInputMissingTotal,
   };
 }
 
@@ -86,4 +99,5 @@ export function resetForTests(): void {
   powVerificationsTotal = 0;
   powVerificationFailuresTotal = 0;
   httpRequestsTotal = 0;
+  relayedTxsInputMissingTotal = 0;
 }

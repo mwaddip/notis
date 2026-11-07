@@ -55,6 +55,7 @@ export function createAdminRouter(deps: AdminDeps): Router {
         pow_verification_failures_total: c.powVerificationFailuresTotal,
         http_requests_total: c.httpRequestsTotal,
         post_bodies_pulled_total: c.postBodiesPulledTotal,
+        relayed_txs_input_missing_total: c.relayedTxsInputMissingTotal,
       },
     });
   });

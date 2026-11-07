@@ -382,7 +382,7 @@ describe('the relay judges the transaction against the pending view', () => {
     expect(mempool.getPendingEntries(100).length).toBe(2);
   });
 
-  it.fails('a relayed transaction whose input exists nowhere is silent, moves relayed_txs_input_missing_total by one, and pools nothing', async () => {
+  it('a relayed transaction whose input exists nowhere is silent, moves relayed_txs_input_missing_total by one, and pools nothing', async () => {
     const { sender } = await storeWithCredit();
     // An input box the store has never seen — a credit box whose id derives
     // from a nonce the store never saw.
@@ -438,7 +438,7 @@ describe('the relay judges the transaction against the pending view', () => {
     expect(mempool.getPendingEntries(10).length).toBe(0);
   });
 
-  it.fails('GET /stats serves relayed_txs_input_missing_total, 0 on a fresh process', async () => {
+  it('GET /stats serves relayed_txs_input_missing_total, 0 on a fresh process', async () => {
     const counters = await statsCounters();
     expect(counters['relayed_txs_input_missing_total']).toBe(0);
   });
