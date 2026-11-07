@@ -113,8 +113,9 @@ what every `pnpm -r test` in the gate pays.
 - **You own this package only.** Never edit `../../packages/*` or `../../contracts/`. Cross-cutting
   changes — the workspace glob, the lockfile beyond this package's entry — are main's to route.
 - **Forced verification before "done":** every `dist` a spawned process loads fresh
-  (`pnpm --filter @dagsocial/<p> build` for `wire`, `types`, `validation`, `net`, `avltree`, `nipopow`, `consensus`,
-  `node`, `node-reads`, `nipopow-client`, in that order — each after the packages it imports), then
+  (`pnpm --filter @dagsocial/<p> build` for `avltree`, `wire`, `types`, `node-reads`, `validation`, `consensus`,
+  `net`, `nipopow`, `nipopow-client`, `node`, in that order — each after the packages it imports, the order
+  `pnpm -r exec` walks), then
   `pnpm --filter @dagsocial/e2e typecheck` **and** `pnpm --filter @dagsocial/e2e test`, both clean,
   with the suite's wall-clock stated. ⛔ **`typecheck` is two configs**, and the test one is the config
   that catches an argument the runtime happens to accept — run
@@ -135,7 +136,7 @@ what every `pnpm -r test` in the gate pays.
 
 ## Quick commands
 ```bash
-for p in wire types validation net avltree nipopow consensus node node-reads nipopow-client; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
+for p in avltree wire types node-reads validation consensus net nipopow nipopow-client node; do pnpm --filter @dagsocial/$p build; done   # fresh dists, in order
 pnpm --filter @dagsocial/e2e typecheck
 npx tsc --noEmit -p tools/e2e/tsconfig.test.json    # the second config, run explicitly
 time pnpm --filter @dagsocial/e2e test              # the mesh; state the wall-clock
