@@ -2268,11 +2268,13 @@ are inputs of `validateTx`, in the deps of the HTTP routes and of the relay alik
 **`getOwnKarmaBoxIds(owner)` answers rule 3** of "An identity holds at most two karma boxes" — the
 ids of the unmarked karma boxes the owner holds in the state the transaction is judged against. Block
 application answers over the overlay, the body as applied so far, so a second spend in one body names
-the first's change. Submission answers over the pending view — confirmed boxes and pooled
-transactions' outputs, less every box a pooled transaction spends
-(`MEMPOOL_INTERFACE → getBoxWithPending`) — so the own box of an owner with a pooled spend is that
-spend's change, and an owner whose pooled spend returned no change holds none. The relay answers over
-the confirmed set, as it resolves inputs.
+the first's change. Admission — the HTTP routes and the relay alike — answers over the pending view: confirmed
+boxes and pooled transactions' outputs, less every box a pooled transaction spends
+(`MEMPOOL_INTERFACE → getBoxWithPending`), so the own box of an owner with a pooled spend is that
+spend's change, and an owner whose pooled spend returned no change holds none.
+
+> ⚠ **AHEAD OF CODE (2026-11-07).** The relay's `getOwnKarmaBoxIds` is `relayGetOwnKarmaBoxIds`
+> (`packages/node/src/services/karma-admission.ts`), over the confirmed set; this rule leads it.
 
 ### Vouch transition rules
 
@@ -5574,7 +5576,8 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
     "post_bodies_pulled_total": 17,
     "pow_verifications_total": 6100,
     "pow_verification_failures_total": 2,
-    "http_requests_total": 12000
+    "http_requests_total": 12000,
+    "relayed_txs_input_missing_total": 3
   }
 }
 ```
@@ -5587,10 +5590,11 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 | `pow_verifications_total` | every `verifyOrderingBlockPoW` the node runs on **received** work — net's relay check (through the validators object node supplies to `NetNode`) and block application's — never the miner's check of its own template |
 | `pow_verification_failures_total` | those of the above that returned `false` |
 | `http_requests_total` | every request the **public** app receives (an express middleware ahead of the routes); the admin app's own requests are not counted |
+| `relayed_txs_input_missing_total` | every relayed transaction `onTx` refuses for a missing input — `validateTx`'s *Input box not found or already spent* over the pending view (→ Net Integration → Relay handlers (mempool-based) → "A relayed transaction refused for a missing input is counted, not logged") |
 
 **The seam.** Counters count journal events where an event exists — the `journal.ts` wrapper is the one
 place an event is emitted (JOURNAL_EVENTS), so it is the one place its counter moves; the tip, the PoW
-outcomes and the HTTP requests have no event and are noted at their single sites. Counters are
+outcomes, the HTTP requests and the relay's missing inputs have no event and are noted at their single sites. Counters are
 process-lifetime, never persisted: a restart resets them and `since`.
 
 **Not served, by ruling (user, 2026-08-22):** `validated_height` and `indexed_height` — the node owns one
@@ -5830,13 +5834,22 @@ not fail the API request.
 
 - **`onTx(tx, content, fromPeerId)`**: asks the pool for the transaction's id first — a held one answers `false` and
   logs nothing (→ Service Layer Architecture → "A transaction the pool already holds is answered as held") — then
-  validates (read-only, `validateTx`) → inserts into mempool via `admitTx`, whose correctness gates refuse as every
-  route's do; for a post transaction the packet's body — already verified against `tx.post.contentHash` by net's topic
-  validator — is stored as the pending row in the same store transaction as the admission
-  (Post transactions → the packet is the unit), and `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It
+  validates (read-only, `validateTx`) against the pending view, as the routes do (MEMPOOL_INTERFACE →
+  getBoxWithPending → "A relayed transaction is judged against the pending view, as a submitted one is"), so a child
+  whose parent this node pools is admitted and relayed on → inserts into mempool via `admitTx`, whose correctness gates
+  refuse as every route's do; for a post transaction the packet's body — already verified against
+  `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same store transaction as the
+  admission (Post transactions → the packet is the unit), and `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **It
   answers whether it admitted the transaction**, and net forwards it then and only then
   (NET_INTERFACE → Forwarding Rule): every refusal — the rules', a full pool, an input a pending entry spends, a policy
-  refusal — answers `false` and penalises nobody (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing"). **Its
+  refusal — answers `false` and penalises nobody (NET_INTERFACE → Stage 2 → "A Stage 2 refusal records nothing").
+  **A pooled spender's conflict is the pool's refusal**: the pending view throws `PendingSpendConflictError` where
+  `validateTx` reads an input a pooled entry spends (MEMPOOL_INTERFACE → getBoxWithPending), and the handler answers it
+  as it answers the conflict gate's — one line, `false` — never as a throw out of the handler. **A relayed
+  transaction refused for a missing input is counted, not logged**: `validateTx`'s *Input box not found or already
+  spent* — the answer to a copy of a transaction a block already carried, and to a child whose parent this node does
+  not pool — answers `false`, writes no line, and adds one to `relayed_txs_input_missing_total` (→ Admin Listener).
+  Every other refusal but the held one logs one line naming its reason. **Its
   `validateTx` answers each required signature from net's Stage 1**, which verified every entry of the map over the
   transaction's id (NET_INTERFACE → Stage 1 → "A transaction's signatures are checked at Stage 1"): a required signer's
   check is `true` exactly when the signature is the map's own entry for that key and the message is the transaction's id
@@ -5858,6 +5871,11 @@ not fail the API request.
   registrations — this one and `setPipeline`'s — hand the intake's `CorruptChainStateError` to
   `failStopIfCorruptChain`: the apply funnel re-throws it, and the registration is its outer frame
   ("What the funnel's totality catch is FOR").
+
+> ⚠ **AHEAD OF CODE (2026-11-07).** `handleRelayedTx` (`packages/node/src/services/handle-tx.ts`) validates over the
+> confirmed set (`getBox`, `relayGetOwnKarmaBoxIds`), has no answer for a `PendingSpendConflictError` thrown inside
+> `validateTx`, writes no line for *Input box not found or already spent* or *Missing or invalid owner signature*, and
+> counts neither; `/stats` serves no `relayed_txs_input_missing_total`. The `onTx` bullet leads it.
 
 ### Ordering block apply-time authorization
 
