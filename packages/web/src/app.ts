@@ -398,8 +398,9 @@ export class App {
   // The page's read of the rep view ended with no answer — the gate the
   // waiting view enables and the control reads
   // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
-  // wait"). Set by the own-view read's outcome in `loadMembershipState`,
-  // dropped with the rest of the reader's state.
+  // wait"). Set by every read of the reader's own view in `readOwnKarma`
+  // under the read's own generation, dropped with the rest of the reader's
+  // state.
   private repNoAnswer = false;
   // The plain /karma listing read beside the view where the App holds a
   // figures verifier, or where the tick has a grant standing — the listing
@@ -542,8 +543,9 @@ export class App {
   // The page's read of the credits view ended with no answer — the gate the
   // waiting view enables for the send row
   // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
-  // wait"). Set by the own-view read's outcome in `refreshWalletCredits`,
-  // dropped with the rest of the reader's state.
+  // wait"). Set by every read of the reader's own view in `readOwnCredits`
+  // under the read's own generation, dropped with the rest of the reader's
+  // state.
   private creditsNoAnswer = false;
   // The plain /credits listing read beside the view where the App holds a
   // figures verifier, or where the tick has a credits grant standing — the
@@ -3806,7 +3808,7 @@ export class App {
     // and no reason that reads it stands before it does (WEB_INTERFACE →
     // The author window, → The wallet → "A page no node answers offers
     // what can wait"). The row reads `—`.
-    if (this.profileKarma === null) return { kind: 'em' };
+    if (this.profileKarma === null) return { kind: 'unread' };
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
     const cooldownBlocks = networkNumbers(BUILD_NETWORK, this.state.status)?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
@@ -3891,14 +3893,17 @@ export class App {
    *  total on every page, so the first page's value stands. The read's own
    *  outcome gates the send row's waiting arm on a page no node answers
    *  (WEB_INTERFACE → The wallet → "A page no node answers offers what can
-   *  wait"): a no-answer sets `creditsNoAnswer`, any answer clears it. */
+   *  wait"): a no-answer sets `creditsNoAnswer`, any answer clears it, each
+   *  under the reader's generation captured when the read began — so a
+   *  stale read's outcome touches nothing after a node or identity change. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
+    const gen = this.readerGen;
     try {
       const r = await this.readCreditsFor(key, { pending: true });
-      this.setCreditsNoAnswer(false);
+      if (gen === this.readerGen) this.setCreditsNoAnswer(false);
       return r;
     } catch (e) {
-      this.setCreditsNoAnswer(isNoAnswer(e));
+      if (gen === this.readerGen) this.setCreditsNoAnswer(isNoAnswer(e));
       throw e;
     }
   }
@@ -3937,22 +3942,25 @@ export class App {
    *  read's own outcome gates the withdraw control and the `your vouch`
    *  row's waiting arm on a page no node answers (WEB_INTERFACE → The
    *  wallet → "A page no node answers offers what can wait"): a no-answer
-   *  sets `repNoAnswer`, any answer clears it. */
+   *  sets `repNoAnswer`, any answer clears it, each under the reader's
+   *  generation captured when the read began — so a stale read's outcome
+   *  touches nothing after a node or identity change. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
+    const gen = this.readerGen;
     try {
       const r = await this.readKarmaFor(key, { pending: true });
-      this.setRepNoAnswer(false);
+      if (gen === this.readerGen) this.setRepNoAnswer(false);
       return r;
     } catch (e) {
-      this.setRepNoAnswer(isNoAnswer(e));
+      if (gen === this.readerGen) this.setRepNoAnswer(isNoAnswer(e));
       throw e;
     }
   }
 
   /** Set `repNoAnswer` to `v` and re-render where the gate reads it — the
    *  panes carry the withdraw control, and an author window's `your vouch`
-   *  row the `em` arm (WEB_INTERFACE → The wallet → "A page no node answers
-   *  offers what can wait"). */
+   *  row the `unread` arm (WEB_INTERFACE → The wallet → "A page no node
+   *  answers offers what can wait"). */
   private setRepNoAnswer(v: boolean): void {
     if (this.repNoAnswer === v) return;
     this.repNoAnswer = v;

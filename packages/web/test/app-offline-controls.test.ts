@@ -920,7 +920,7 @@ describe('a page no node answers with no tip run names a chain takes the chain f
 // -------------------------------------------------------------------------
 
 describe('the gate reads the read\'s own generation; a stale read\'s outcome touches nothing', () => {
-  it.fails('rep: a held read under node A ends with no answer after a node change; the gate stays off while the new node\'s read is held, and on once it ends', async () => {
+  it('rep: a held read under node A ends with no answer after a node change; the gate stays off while the new node\'s read is held, and on once it ends', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
@@ -956,7 +956,7 @@ describe('the gate reads the read\'s own generation; a stale read\'s outcome tou
     expect(withdrawBtn()!.disabled).toBe(false);
   });
 
-  it.fails('credits: a held read under node A ends with no answer after a node change; the send row stays hidden while the new node\'s read is held, and stands once it ends', async () => {
+  it('credits: a held read under node A ends with no answer after a node change; the send row stays hidden while the new node\'s read is held, and stands once it ends', async () => {
     const h = harness({
       rememberChain: CHAIN,
       credits: { kind: 'held' },

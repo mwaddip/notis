@@ -40,7 +40,7 @@ export type YourVouch =
   | { kind: 'pending' }                                               // the flight's stage line in the word's place
   | { kind: 'vouched'; sinceBlock: number | null; cooldownBlocks: number } // vouched since N · unvouch, the held sentence
   | { kind: 'reason'; text: string }                                  // the one line the reader cannot vouch
-  | { kind: 'em' };                                                   // no rep view read: muted `—`, no action (WEB_INTERFACE → The wallet → "A page no node answers offers what can wait")
+  | { kind: 'unread' };                                               // no rep view read: muted `—`, no action (WEB_INTERFACE → The wallet → "A page no node answers offers what can wait")
 
 export interface AuthorCtx {
   authorKey: string;
@@ -205,7 +205,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
 }
 
 function yourVouch(field: HTMLElement, yv: YourVouch, flight: Flight | null, press: (word: 'vouch' | 'unvouch') => void): void {
-  if (yv.kind === 'em') {
+  if (yv.kind === 'unread') {
     // No rep view has been read: a muted `—`, no action (WEB_INTERFACE → The
     // wallet → "A page no node answers offers what can wait").
     field.appendChild(el('span', 'inkmute', '—'));

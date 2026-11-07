@@ -119,11 +119,12 @@ catches the transport failure, reads `WaitingStore.repView(chain)` and sets the 
 covers the price, so a post the extension can wait is offered; with no waiting view the foot reads as on any failed
 read. **The withdraw control and the wallet's `send` row read the waiting view on a page no node answers**
 (`WEB_INTERFACE → The wallet → "A page no node answers offers what can wait"`): the App's `repNoAnswer` and
-`creditsNoAnswer` (`src/app.ts`) hold the own-view read's own outcome in `loadMembershipState` and `refreshWalletCredits`,
-and `canSignWithdraw`, `withdrawReason` and `waitingSpendable` take the waiting view through `tipChain ?? rememberedChain()`;
+`creditsNoAnswer` (`src/app.ts`) are settled by every read of the reader's own view in `readOwnKarma` and
+`readOwnCredits` under the read's own generation, and `canSignWithdraw`, `withdrawReason` and `waitingSpendable` take
+the waiting view through `tipChain ?? rememberedChain()`;
 the rep row, the balance row, the invite form, vouch and claim read the node's answer alone, and the author window's
 `your vouch` row on another key reads `—` while no rep view has been read (`yourVouchFor`, `src/view/author.ts`'s
-`YourVouch` `em` arm). **The waiting store** (`src/wallet/waiting.ts`) holds each write under
+`YourVouch` `unread` arm). **The waiting store** (`src/wallet/waiting.ts`) holds each write under
 `notis.waiting.<pubKeyHex>.w.<txId>` in `localStorage` — its txId, chain, ledger, kind, spent inputs, change ref, cost
 and the signed transaction — never one list rewritten whole, a record that does not parse dropped alone; the per-ledger
 base under `.base.rep` / `.base.credits` is the last spendable view each ledger read, recorded at every read a node
