@@ -486,9 +486,14 @@ describe('card — the withdraw control', () => {
     c.remove();
   });
 
-  it('canWithdraw false renders the button disabled with the reason as the title', () => {
+  it('canWithdraw false renders the button disabled with the reason the App names as the title', () => {
     const asked: string[] = [];
-    const c = card(confirmed(PUB), { you: true, onWithdraw: (id) => { asked.push(id); }, canWithdraw: false });
+    const c = card(confirmed(PUB), {
+      you: true,
+      onWithdraw: (id) => { asked.push(id); },
+      canWithdraw: false,
+      withdrawReason: 'needs one rep box to sign with; this key has none',
+    });
     const wb = metaWithdraw(c);
     expect(wb.disabled).toBe(true);
     expect(wb.title).toBe('needs one rep box to sign with; this key has none');

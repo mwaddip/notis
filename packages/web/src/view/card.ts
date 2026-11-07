@@ -73,6 +73,7 @@ export interface CardOpts {
   // survive a reload — else the transient flight in the slot.
   withdraw?: 'pending' | 'waiting' | Flight | null;
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
+  withdrawReason?: string;               // the title the App names when canWithdraw is false (WEB_INTERFACE → The withdraw control, → The wallet → "A page no node answers offers what can wait")
   // The post's link and where its press goes when the clipboard takes no
   // write — one option, so no card carries the copy glyph without the row its
   // refusal opens (WEB_INTERFACE → Links).
