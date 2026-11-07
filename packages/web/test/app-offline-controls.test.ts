@@ -564,14 +564,130 @@ describe('the rep and balance rows read the node, not the waiting view', () => {
 // -------------------------------------------------------------------------
 
 describe('invite, claim and the invites line do not read the waiting view', () => {
-  it('a base covering the bond, no node answer: the invite form is absent and the invites row reads "—"', async () => {
-    const h = harness({ rememberChain: CHAIN });
-    await resolveTipRunVerified(h);
-    primeRepBase(h, [{ boxId: BOX, value: 227n }], 1000n);
-    h.drive.openProfile();
-    await flush();
-    expect(inviteFormEl()).toBeNull();
-    expect(invitesLineText()).toBe('—');
+  // notis-network=testnet is set on the shell head so BUILD_NETWORK reads it;
+  // the module cache is cleared and the App is loaded through a dynamic import,
+  // the pattern app-network-numbers-build.test.ts uses. The invite form's
+  // numbers come from the build network, not /status, and `ctx.invite`'s
+  // bondMin and bondMax stand with no node's answer (WEB_INTERFACE →
+  // Invariants → "A per-network number is read, never assumed").
+  it('a base covering the bond, notis-network=testnet: ctx.invite\'s testnet numbers stand; the invite form is absent and the invites row reads "—"', async () => {
+    const meta = document.createElement('meta');
+    meta.setAttribute('name', 'notis-network');
+    meta.setAttribute('content', 'testnet');
+    document.head.appendChild(meta);
+    try {
+      vi.resetModules();
+      const appMod = await import('../src/app');
+      const ledgerMod = await import('../src/wallet/ledger');
+      const { profileFor } = await import('@dagsocial/types');
+
+      const identity: AppIdentity = {
+        current: () => ({ pubKeyHex: PUB, locked: false }),
+        sign: async () => ({ signature: 'ab'.repeat(64) }),
+        draft: async () => ({ pubKeyHex: PUB }),
+        create: async () => ({ pubKeyHex: PUB }),
+        discardDraft: () => {},
+        inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
+        importFile: async () => ({ pubKeyHex: PUB }),
+        exportFile: async () => '{}',
+        unlock: async () => {},
+        lock: async () => {},
+        forget: async () => {},
+        backedUp: () => true,
+        onChange: () => {},
+      };
+
+      const fakeApi: Api = {
+        feed: async () => { throw NO_ANSWER; },
+        thread: async () => { throw NO_ANSWER; },
+        post: async () => { throw NO_ANSWER; },
+        status: async () => { throw NO_ANSWER; },
+        currentBlock: async () => { throw NO_ANSWER; },
+        karma: async () => { throw NO_ANSWER; },
+        credits: async () => { throw NO_ANSWER; },
+        vouchesByTarget: async () => { throw NO_ANSWER; },
+        vouchesByVoucher: async () => { throw NO_ANSWER; },
+        vouchCooldowns: async () => { throw NO_ANSWER; },
+        bonds: async () => { throw NO_ANSWER; },
+        usernameByOwner: async () => { throw NO_ANSWER; },
+        usernameByName: async () => { throw NO_ANSWER; },
+      };
+
+      const writeClient = {
+        submitPost: async () => ({ status: 'pending' as const, txId: 'cc'.repeat(32), expiresAtHeight: 6720 }),
+      } as unknown as WriteClient;
+
+      const postCache: PostCache = {
+        open: async () => {},
+        openRemembered: async () => {},
+        put: async () => {},
+        withdraw: async () => {},
+        thread: async () => null,
+        getMany: async () => new Map(),
+        refresh: async () => {},
+        roots: async () => [],
+        byAuthor: async () => [],
+      };
+
+      const tipRuns: TipTrap[] = [];
+      const tipVerifier: TipVerifier = {
+        run: () => {
+          let resolve!: (v: TipRunLike) => void;
+          let reject!: (e: unknown) => void;
+          const promise = new Promise<TipRunLike>((r, j) => { resolve = r; reject = j; });
+          tipRuns.push({ resolve, reject, promise });
+          return promise;
+        },
+      };
+
+      localStorage.setItem('notis.posts.chain', CHAIN);
+      const waitingSeam = { storage: window.localStorage as WaitingStorage, locks: fakeLockManager() };
+      const ledger = new ledgerMod.PendingLedger(PUB);
+      const app = new appMod.App(
+        fakeApi, writeClient, identity, ledger, undefined, undefined,
+        tipVerifier, undefined, undefined, undefined, postCache, undefined,
+        undefined, waitingSeam,
+      );
+      const appbar = document.createElement('div');
+      const feedEl = document.createElement('section'); feedEl.id = 'feed';
+      const panes = document.createElement('section'); panes.id = 'panes';
+      document.body.append(appbar, feedEl, panes);
+      app.start(appbar, feedEl, panes);
+
+      // Resolve the verified tip run under CHAIN.
+      await flush();
+      if (tipRuns.length === 0) await flush();
+      tipRuns[tipRuns.length - 1]!.resolve({
+        verdict: verifiedVerdict(2, 6001), anchor: anchorFor(6001), chain: CHAIN,
+      });
+      await flush();
+
+      // Prime the rep base with a box and an effective that covers the bond.
+      const store = (app as unknown as { waitingStore: WaitingStore | null }).waitingStore;
+      if (store === null) throw new Error('no waiting store to prime');
+      store.recordBase('rep', {
+        spendable: [{ boxId: BOX, value: 227n }],
+        effective: 1000n, height: 6000, era: 1, author: PUB,
+      }, CHAIN);
+      await flush();
+
+      (app as unknown as { openProfile(): void }).openProfile();
+      await flush();
+
+      const ctx = (app as unknown as { ctx(): Record<string, unknown> }).ctx();
+      const invite = ctx['invite'] as { bondMin: string; bondMax: string; probationBlocks: number } | null;
+      const p = profileFor('testnet');
+      expect(invite).not.toBeNull();
+      expect(invite!.bondMin).toBe(p.inviteBondMin.toString());
+      expect(invite!.bondMax).toBe(p.inviteBondMax.toString());
+      expect(invite!.probationBlocks).toBe(p.inviteProbationBlocks);
+
+      expect(inviteFormEl()).toBeNull();
+      expect(invitesLineText()).toBe('—');
+    } finally {
+      document.head.removeChild(meta);
+      vi.resetModules();
+    }
   });
 
   it('claim: the profile window offers no claim form on a page no node answers', async () => {
