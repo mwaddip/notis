@@ -805,6 +805,39 @@ describe('a node change drops the waiting arm; a node that answers later lands a
     expect(wb.disabled).toBe(true);
     expect(wb.title).toBe('needs one rep box to sign with; this key has none');
   });
+
+  // The rep view's read ends with an answer while a sibling ends with no
+  // answer, so Promise.all rejects and holdKarma never runs; the contract's
+  // condition is "the page's read of that view has ended with no answer"
+  // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+  // wait"), and this read ended with an answer — the gate is off and the
+  // control reads *can't read your rep right now*.
+  it('a node answers rep while a sibling ends with no answer: the gate reads the answer, withdraw disabled with "can\'t read your rep right now"', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      cachedRoots: [ownRootHeld()],
+      cachedThread: () => ownThread(),
+    });
+    await resolveTipRunVerified(h);
+    primeRepBase(h, [{ boxId: BOX, value: 227n }]);
+    await h.drive.loadFeed();
+    await flush();
+    await openOwnPane(h);
+    // The waiting view enables the control — the first reads all ended with no
+    // answer, so repNoAnswer stands.
+    expect(withdrawBtn()!.disabled).toBe(false);
+    // The rep view answers. The siblings still end with no answer
+    // (otherReadsNoAnswer stays true), so Promise.all rejects and holdKarma
+    // never runs — profileKarma stays null. The rep read's own outcome clears
+    // repNoAnswer; the gate reads null and the title is "can't read your rep
+    // right now".
+    h.setKarma({ kind: 'answer', karma: karmaFor(PUB, [{ boxId: BOX, value: '227' }]) });
+    await h.drive.loadMembershipState();
+    await flush();
+    const wb = withdrawBtn()!;
+    expect(wb.disabled).toBe(true);
+    expect(wb.title).toBe("can't read your rep right now");
+  });
 });
 
 // -------------------------------------------------------------------------
