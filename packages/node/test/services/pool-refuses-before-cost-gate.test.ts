@@ -177,16 +177,29 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
     expect(getPendingEntries(10)).toHaveLength(1);
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(1);
 
-    // The relay validates against the confirmed set (`getBox`), which still
-    // holds `box`, so the pool's own conflict gate is what answers.
+    // MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is
+    // judged against the pending view, as a submitted one is": the relay
+    // reads `box` through the pending view, which throws
+    // `PendingSpendConflictError` for a box a pooled entry spends, answered
+    // as the conflict gate's — one line, `false`.
     const colliding = makeCreditTx(sender, [box], 4_000n);
     expect(colliding.inputs[0]).toBe(first.inputs[0]);
 
     vi.mocked(applyBlock).mockClear();
 
+    // The outer `beforeAll` silenced warn/log/error for the suite; capture
+    // the handler's own line without breaking other cases' silence by
+    // installing a per-case spy that pushes into a local array (the
+    // outer `afterAll` restores every mock).
+    const warned: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warned.push(a.map(String).join(' '));
+    });
+
     const returned = handleRelayedTx(colliding, undefined, 'peer-x');
     expect(returned).toBe(false);
     expect(getPendingEntries(10)).toHaveLength(1);
+    expect(warned.some((l) => l.includes('Relayed tx dropped, input spent by a pending entry'))).toBe(true);
 
     expect(vi.mocked(applyBlock).mock.calls.length).toBe(0);
   });

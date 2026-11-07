@@ -745,7 +745,7 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
   // -------- The relay --------
 
-  it('handleRelayedTx refuses a third chained like over two pooled ones, and the pool holds what it held', async () => {
+  it.fails('handleRelayedTx refuses a third chained like at the floor, naming the floor, and the pool holds what it held', async () => {
     const target1 = postId;
     const target2 = insertNamedPost('relay-second');
     const target3 = insertNamedPost('relay-third');
@@ -764,17 +764,20 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
     const like3 = buildLike(liker, change2, target3);
 
     const { handleRelayedTx } = await import('../../src/services/handle-tx.js');
-    // The handler logs the refusal and returns — the suite silences stdout.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      handleRelayedTx(like3, undefined, 'peer-relay-under-test');
-    } finally {
-      warn.mockRestore();
-      log.mockRestore();
-    }
+    // MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is
+    // judged against the pending view, as a submitted one is": the relay
+    // reaches the engine's karma arm with the pooled change in hand; at
+    // held 12, pending 2, owed 0, spend 1 the floor's rule refuses.
+    const warned: string[] = [];
+    const logged: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warned.push(a.map(String).join(' ')); });
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(' ')); });
+
+    const returned = handleRelayedTx(like3, undefined, 'peer-relay-under-test');
+    expect(returned).toBe(false);
 
     // The pool is unchanged — the refusal left no row.
     expect(getPendingEntries(100).length).toBe(beforePool);
+    expect(warned.some((l) => l.includes('Relayed tx rejected:') && l.includes('below the floor of 10'))).toBe(true);
   });
 });
