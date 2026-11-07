@@ -79,9 +79,12 @@ interface KarmaBehavior {
   karma?: KarmaResult;
 }
 interface CreditsBehavior {
-  kind: 'answer' | 'no-answer' | 'bad-answer';
+  kind: 'answer' | 'no-answer' | 'bad-answer' | 'held';
   credits?: CreditsResult;
 }
+
+interface KarmaTrap { resolve: (v: KarmaResult) => void; reject: (e: unknown) => void; promise: Promise<KarmaResult> }
+interface CreditsTrap { resolve: (v: CreditsResult) => void; reject: (e: unknown) => void; promise: Promise<CreditsResult> }
 
 interface Opts {
   withSeam?: boolean;
@@ -103,6 +106,8 @@ interface Harness {
   setCredits(c: CreditsBehavior): void;
   writeBodies: Array<{ kind: string; body: Record<string, unknown> }>;
   tipRuns: TipTrap[];
+  karmaTraps: KarmaTrap[];
+  creditsTraps: CreditsTrap[];
   switchNode(origin: string): Promise<void>;
   drive: {
     openComposer(parentId: string | null): void;
@@ -149,17 +154,30 @@ function harness(opts: Opts = {}): Harness {
   let credits: CreditsBehavior = opts.credits ?? { kind: 'no-answer' };
   let karmaN = 0;
   const otherNoAnswer = opts.otherReadsNoAnswer ?? true;
+  const karmaTraps: KarmaTrap[] = [];
+  const creditsTraps: CreditsTrap[] = [];
 
   const karmaRead = async (): Promise<KarmaResult> => {
     karmaN++;
     if (karma.kind === 'held') {
-      return new Promise<KarmaResult>(() => { /* a pending read the test leaves pending */ });
+      let resolve!: (v: KarmaResult) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<KarmaResult>((r, j) => { resolve = r; reject = j; });
+      karmaTraps.push({ resolve, reject, promise });
+      return promise;
     }
     if (karma.kind === 'no-answer') throw NO_ANSWER;
     if (karma.kind === 'bad-answer') throw new ApiError(500, 'server error');
     return karma.karma ?? karmaFor(PUB, [{ boxId: BOX, value: '227' }]);
   };
   const creditsRead = async (): Promise<CreditsResult> => {
+    if (credits.kind === 'held') {
+      let resolve!: (v: CreditsResult) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<CreditsResult>((r, j) => { resolve = r; reject = j; });
+      creditsTraps.push({ resolve, reject, promise });
+      return promise;
+    }
     if (credits.kind === 'no-answer') throw NO_ANSWER;
     if (credits.kind === 'bad-answer') throw new ApiError(500, 'server error');
     return credits.credits ?? creditsFor(PUB, [{ boxId: CREDIT_BOX, value: '10000000000' }]);
@@ -295,6 +313,8 @@ function harness(opts: Opts = {}): Harness {
     setCredits: (c) => { credits = c; },
     writeBodies,
     tipRuns,
+    karmaTraps,
+    creditsTraps,
     switchNode: async (origin) => {
       await (app as unknown as { changeNode(o: string): Promise<void> }).changeNode(origin);
     },
@@ -670,6 +690,190 @@ describe('a node change drops the waiting arm; a node that answers later lands a
     expect(wb.title).toBe('needs one rep box to sign with; this key has none');
   });
 });
+
+// -------------------------------------------------------------------------
+
+const confirmWithdrawBtn = (): HTMLButtonElement | null =>
+  document.querySelector<HTMLButtonElement>('#panes .card-confirm button[aria-label="withdraw this post now"]');
+
+const sendRowSubmit = (): HTMLButtonElement | null =>
+  document.querySelector<HTMLButtonElement>('#panes .send-row form button[type="submit"]');
+
+const sendConfirmBtn = (): HTMLButtonElement | null => {
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#panes .send-row .pf-confirm .pf-actions button.word')) {
+    if (b.textContent === 'send') return b;
+  }
+  return null;
+};
+
+describe('a press on a page no node answers waits: a withdraw waits, a send waits', () => {
+  it('withdraw pressed twice on the reader\'s own card builds a waiting withdraw entry; no POST', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      cachedRoots: [ownRootHeld()],
+      cachedThread: () => ownThread(),
+    });
+    await resolveTipRunVerified(h);
+    primeRepBase(h, [{ boxId: BOX, value: 227n }]);
+    await h.drive.loadFeed();
+    await flush();
+    await openOwnPane(h);
+    const wb = withdrawBtn()!;
+    expect(wb.disabled).toBe(false);
+    // First press: the confirm row mounts under the card.
+    wb.click();
+    await flush();
+    const confirm = confirmWithdrawBtn();
+    expect(confirm).not.toBeNull();
+    // Second press: the flow builds from the waiting rep view, signs, and the
+    // read's own transport failure sends the entry to the waiting store — no
+    // POST goes out (WEB_INTERFACE → The wallet → "A page no node answers
+    // offers what can wait", → "A write no node answers waits").
+    confirm!.click();
+    await flush();
+    await flush();
+    const ledgerEntries = h.drive.ledger.all();
+    const withdraws = ledgerEntries.filter((e) => e.kind === 'withdraw');
+    expect(withdraws.length).toBe(1);
+    expect(withdraws[0]?.waiting).toBe(true);
+    expect(h.writeBodies.filter((b) => b.kind === 'withdraw').length).toBe(0);
+  });
+
+  it('send from the send row to a 64-hex key, confirmed, builds a waiting send entry; no POST', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h);
+    primeCreditsBase(h, [{ boxId: CREDIT_BOX, value: 10_000_000_000n }]);
+    h.drive.openWallet();
+    await flush();
+    const sr = sendRow();
+    expect(sr).not.toBeNull();
+    expect(sr!.hidden).toBe(false);
+    const toInput = sr!.querySelector<HTMLInputElement>('input[aria-label^="the recipient"]');
+    const amountInput = sr!.querySelector<HTMLInputElement>('input[aria-label="the amount in $NOTIS"]');
+    expect(toInput).not.toBeNull();
+    expect(amountInput).not.toBeNull();
+    toInput!.value = AUTHOR; // a 64-hex key
+    amountInput!.value = '1';
+    const first = sendRowSubmit();
+    expect(first).not.toBeNull();
+    first!.click();
+    await flush();
+    const confirm = sendConfirmBtn();
+    expect(confirm).not.toBeNull();
+    confirm!.click();
+    await flush();
+    await flush();
+    const sends = h.drive.ledger.all().filter((e) => e.kind === 'send');
+    expect(sends.length).toBe(1);
+    expect(sends[0]?.waiting).toBe(true);
+    expect(h.writeBodies.filter((b) => b.kind === 'send').length).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------------
+
+describe('a page no node answers with no tip run names a chain takes the chain from the remembered one', () => {
+  it('withdraw, no tip run: a rep base with a box under the remembered chain; the button is enabled', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      cachedRoots: [ownRootHeld()],
+      cachedThread: () => ownThread(),
+    });
+    // No resolveTipRunVerified — the client's chain is the remembered one.
+    primeRepBase(h, [{ boxId: BOX, value: 227n }]);
+    await h.drive.loadFeed();
+    await flush();
+    await openOwnPane(h);
+    const wb = withdrawBtn();
+    expect(wb).not.toBeNull();
+    expect(wb!.disabled).toBe(false);
+  });
+
+  it('send, no tip run: a credits base with a box under the remembered chain; the row stands', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    // No resolveTipRunVerified.
+    primeCreditsBase(h, [{ boxId: CREDIT_BOX, value: 10_000_000_000n }]);
+    h.drive.openWallet();
+    await flush();
+    const sr = sendRow();
+    expect(sr).not.toBeNull();
+    expect(sr!.hidden).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------------
+
+describe('the gate reads the read\'s own generation; a stale read\'s outcome touches nothing', () => {
+  it.fails('rep: a held read under node A ends with no answer after a node change; the gate stays off while the new node\'s read is held, and on once it ends', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      cachedRoots: [ownRootHeld()],
+      cachedThread: () => ownThread(),
+      karma: { kind: 'held' },
+    });
+    primeRepBase(h, [{ boxId: BOX, value: 227n }]);
+    await h.drive.loadFeed();
+    await flush();
+    await openOwnPane(h);
+    // No karma read has settled under node A — the gate is off.
+    expect(withdrawBtn()!.disabled).toBe(true);
+    const trapsUnderA = h.karmaTraps.length;
+    expect(trapsUnderA).toBeGreaterThan(0);
+    // Switch node — the new node's reads are held too.
+    await h.switchNode('http://other');
+    await flush();
+    const trapsAfter = h.karmaTraps.length;
+    expect(trapsAfter).toBeGreaterThan(trapsUnderA);
+    // A's read ends with no answer. The new node's read is still held.
+    h.karmaTraps[0]!.reject(NO_ANSWER);
+    await flush();
+    await flush();
+    // The gate is still off — the stale read touches nothing.
+    expect(withdrawBtn()!.disabled).toBe(true);
+    expect(withdrawBtn()!.title).toBe("can't read your rep right now");
+    // The new node's read ends with no answer. The gate reads the waiting view.
+    for (let i = trapsUnderA; i < trapsAfter; i++) {
+      h.karmaTraps[i]!.reject(NO_ANSWER);
+    }
+    await flush();
+    await flush();
+    expect(withdrawBtn()!.disabled).toBe(false);
+  });
+
+  it.fails('credits: a held read under node A ends with no answer after a node change; the send row stays hidden while the new node\'s read is held, and stands once it ends', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      credits: { kind: 'held' },
+    });
+    primeCreditsBase(h, [{ boxId: CREDIT_BOX, value: 10_000_000_000n }]);
+    h.drive.openWallet();
+    await flush();
+    // No credits read has settled — the row stays hidden.
+    expect(sendRow()!.hidden).toBe(true);
+    const trapsUnderA = h.creditsTraps.length;
+    expect(trapsUnderA).toBeGreaterThan(0);
+    await h.switchNode('http://other');
+    await flush();
+    h.drive.openWallet();
+    await flush();
+    const trapsAfter = h.creditsTraps.length;
+    expect(trapsAfter).toBeGreaterThan(trapsUnderA);
+    // A's read ends with no answer. The new node's read is still held.
+    h.creditsTraps[0]!.reject(NO_ANSWER);
+    await flush();
+    await flush();
+    expect(sendRow()!.hidden).toBe(true);
+    // The new node's read ends with no answer.
+    for (let i = trapsUnderA; i < trapsAfter; i++) {
+      h.creditsTraps[i]!.reject(NO_ANSWER);
+    }
+    await flush();
+    await flush();
+    expect(sendRow()!.hidden).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------------
 
 // Keep asResult referenced so the helper is available for later cases.
 void asResult;
