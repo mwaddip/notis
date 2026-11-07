@@ -946,6 +946,36 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect((await cache.getMany([other.id])).has(other.id)).toBe(false);
   });
 
+  it("the cap: with two non-own kept entries the older evicts first, the newer stands", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    // Three puts under the file's clock() — two non-own and one `own`, in
+    // that order, each about a third of POST_CACHE_BYTES. Slightly under a
+    // third so the three fit and a fourth put is the one that needs an
+    // eviction; the row JSON is tens of hundreds of bytes — negligible
+    // beside the Uint8Array.
+    const third = Math.floor(POST_CACHE_BYTES / 3) - 2000;
+    const big = new Uint8Array(third);
+    const older = row('older');
+    const newer = row('newer');
+    const own1 = row('own1');
+    const extra = row('extra');
+    await cache.put({ id: older.id, txBytes: big, row: older, author: older.author, parent: null, own: false });
+    await cache.put({ id: newer.id, txBytes: big, row: newer, author: newer.author, parent: null, own: false });
+    await cache.put({ id: own1.id, txBytes: big, row: own1, author: own1.author, parent: null, own: true });
+    // A fourth put needs room: the older non-own is gone, the newer
+    // non-own, the own entry and the new one stand, all read with no
+    // database open.
+    await cache.put({ id: extra.id, txBytes: big, row: extra, author: extra.author, parent: null, own: false });
+    expect((await cache.getMany([older.id])).has(older.id)).toBe(false);
+    expect((await cache.getMany([newer.id])).has(newer.id)).toBe(true);
+    expect((await cache.getMany([own1.id])).has(own1.id)).toBe(true);
+    expect((await cache.getMany([extra.id])).has(extra.id)).toBe(true);
+  });
+
   it("no indexedDB: a put before naming keeps nothing — every read answers empty after it", async () => {
     const ls = fakeLs();
     const c = clock();
