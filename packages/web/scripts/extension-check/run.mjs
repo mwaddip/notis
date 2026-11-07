@@ -10854,16 +10854,57 @@ async function main() {
   // the next CDP call in a same-browser session, so the arm sits last where
   // a freeze cannot shadow any other step.
   {
-    // Open the observer on `main()`'s page by its target id, never on
-    // the first `index.html` the browser lists — a block-leftover that
-    // is still closing can land in the list first, and opening a CDP
-    // session on it stalls `Page.enable` out to the 60 s wall. The id
-    // is the same one `diagBeforeThirteenUncancelled` labels `main()`.
+    // Open the observer on the first `index.html` in `/json/list` that
+    // answers `Runtime.evaluate('1+1')` within 3 s — `main()`'s page by
+    // id when it still stands (step 15 can have closed it and a fresh
+    // one now holds that URL), otherwise the first live one. A page
+    // whose session stalls (half-closed leftover) is skipped so
+    // `Page.enable` cannot stall out to the 60 s wall; the block's
+    // teardown has already waited for closed targets to leave the
+    // list, so a leftover reaching here is one that did not finish in
+    // the bound.
+    const extCandidates = await (async () => {
+      try {
+        const list = await jsonList();
+        const indexes = list.filter((t) => t.type === 'page'
+          && typeof t.url === 'string'
+          && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)
+          && typeof t.webSocketDebuggerUrl === 'string');
+        // main()'s id first when it still stands, else the browser's order.
+        const mainFirst = indexes.find((t) => t.id === page.id);
+        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== page.id)] : indexes;
+      } catch { return []; }
+    })();
+    const probeAnswers = async (wsUrl) => {
+      let sock = null;
+      try {
+        sock = new WebSocket(wsUrl);
+        await new Promise((res, rej) => {
+          sock.onopen = res;
+          sock.onerror = rej;
+          setTimeout(() => rej(new Error('open timeout')), 2000);
+        });
+        let nextId = 0;
+        const pending = new Map();
+        sock.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+        };
+        const call = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nextId;
+          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          sock.send(JSON.stringify({ id, method, params }));
+        });
+        const answer = await call('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+        return answer?.result?.value === 2;
+      } catch { return false; }
+      finally { try { sock?.close(); } catch {} }
+    };
     let extPageAfter16 = null;
-    try {
-      const list = await jsonList();
-      extPageAfter16 = list.find((t) => t.id === page.id && typeof t.webSocketDebuggerUrl === 'string') ?? null;
-    } catch {}
+    for (const cand of extCandidates) {
+      if (await probeAnswers(cand.webSocketDebuggerUrl)) { extPageAfter16 = cand; break; }
+    }
     let cxObserver = null;
     let openBeforeArm = null;
     try {
