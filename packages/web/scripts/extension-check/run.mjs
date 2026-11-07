@@ -5370,22 +5370,27 @@ async function runNamesStep30(rName) {
 //        chain's database at a time": opening another closes every
 //        previous), so the block first re-reads A's chain with both relays
 //        `honest` and D gone: a fresh page whose corner settles on A's
-//        tip and is then reloaded — with A's database open from the
-//        start, the reload's feed reads check every bound row and the
-//        puts land. The page's `notis.posts.<A>` `entries` store is
-//        counted until it is at least three — less than three at the
-//        bound is W1 FAIL before `down` is set. A strip-press on a
-//        cached non-R root then opens one thread so its reads of the
-//        subject and its descendants write into the cache too,
-//        widening W4's set of non-R cards R has not liked. The page is
-//        then closed. Then a second fresh page under `down` on both
-//        relays: the feed and R's author-posts window each read a
-//        transport failure on their first page; the cache fallback
-//        draws the roots the reload populated beneath the error line,
-//        no `more` / `load older` control; the author window is opened
-//        by pressing a cached R-authored card's author button (a card
-//        renders no data-author, so R is picked by id against
-//        `prepRRootIds`).
+//        tip and whose `localStorage['notis.posts.chain']` has moved to
+//        A's block-1 hash (the App's `postCache.open(chain)` writes it
+//        from a tip run naming the chain) and whose
+//        `indexedDB.databases()` lists A's database. Without this wait
+//        the reload re-opens the previously-remembered database and
+//        A's never fills; a timeout names the chain the page still
+//        held and ends W1 FAIL before `down` is set. The page is then
+//        reloaded — with A's database open from the start, the
+//        reload's feed reads check every bound row and the puts land.
+//        A's `notis.posts.<A>` `entries` store is counted until it is
+//        at least three. A strip-press on a cached non-R root then
+//        opens one thread so its reads of the subject and its
+//        descendants write into the cache too, widening W4's set of
+//        non-R cards R has not liked. The page is then closed. Then a
+//        second fresh page under `down` on both relays: the feed and
+//        R's author-posts window each read a transport failure on
+//        their first page; the cache fallback draws the roots the
+//        reload populated beneath the error line, no `more` / `load
+//        older` control; the author window is opened by pressing a
+//        cached R-authored card's author button (a card renders no
+//        data-author, so R is picked by id against `prepRRootIds`).
 //   W2 — the same page, relays still `down`: a like on a cached card the
 //        reader has not liked, and a root post from the composer. Each
 //        waits — the post's pending card and the like's muted overlay both
@@ -5608,6 +5613,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     prepRRootIds = rows.map((p) => (typeof p?.id === 'string' ? p.id : null)).filter((id) => id !== null);
   } catch {}
   let prepChainDb = null;
+  let prepChainHeld = null;
+  let prepChainMoveTimedOut = false;
   let prepCornerTitle = null;
   let prepReloaded = false;
   let prepCornerAfterReload = null;
@@ -5634,25 +5641,60 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       90000,
     );
     prepCornerTitle = reached.last?.title ?? null;
-    // Read the chain the cache opened under — one `notis.posts.<chain>`
-    // database at the page's origin; the remembered chain in
-    // localStorage names the same.
-    const chainDbs = await pCx.eval(`(async () => {
-      if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return null;
-      const dbs = await indexedDB.databases();
-      return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
-    })()`);
-    prepChainDb = Array.isArray(chainDbs) && chainDbs.length > 0 ? chainDbs[0] : null;
+    // Wait for the page to move to A's database before the reload: the
+    // App writes `localStorage['notis.posts.chain']` from
+    // `postCache.open(chain)` only once a tip run names the chain, and
+    // `indexedDB.databases()` lists A's database only once the open
+    // completes. A reload before this re-opens the previously-remembered
+    // database (D's, from the verified-tip block), so A's never fills.
+    // A timeout names the chain the page still held and ends W1 FAIL
+    // before `down` is set.
+    const chainMoveBoundMs = 60000;
+    const chainMovedStart = Date.now();
+    let chainMoveSnap = { remembered: null, lists: [] };
+    let chainMoved = false;
+    while (Date.now() - chainMovedStart < chainMoveBoundMs) {
+      chainMoveSnap = await pCx.eval(`(async () => {
+        let remembered = null;
+        try { remembered = localStorage.getItem('notis.posts.chain'); } catch {}
+        let lists = [];
+        if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
+          const dbs = await indexedDB.databases();
+          lists = dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+        }
+        return { remembered, lists };
+      })()`).catch(() => ({ remembered: null, lists: [] }));
+      const rem = typeof chainMoveSnap?.remembered === 'string' ? chainMoveSnap.remembered.toLowerCase() : null;
+      const lists = Array.isArray(chainMoveSnap?.lists) ? chainMoveSnap.lists.map((n) => String(n).toLowerCase()) : [];
+      if (prepExpectedDb !== null && rem === (prepABlock1?.toLowerCase() ?? null) && lists.includes(prepExpectedDb)) {
+        chainMoved = true;
+        break;
+      }
+      await sleep(1000);
+    }
+    prepChainDb = Array.isArray(chainMoveSnap?.lists) && chainMoveSnap.lists.length > 0
+      ? chainMoveSnap.lists[0]
+      : null;
+    prepChainHeld = chainMoveSnap?.remembered ?? null;
+    if (!chainMoved) {
+      prepChainMoveTimedOut = true;
+      // Skip the reload and the count: without the chain move, the
+      // reload re-opens the previously-remembered database and the
+      // count stays zero. prepDetail names the chain the page held,
+      // and `prepCached < prepCachedTarget` records W1 FAIL with it.
+    } else {
     // Reload the page: with A's database open from the start, the
     // reload's feed reads check every bound row and the puts land.
+    // The target id stays the same across Page.reload; narrow findExt
+    // to it so a bare match in /json/list cannot return another page.
     await pCx.call('Page.reload');
     await sleep(3500);
-    const reloadedPage = await findExt('index.html');
+    const reloadedList = await jsonList();
+    const reloadedPage = reloadedList.find((t) => t.id === prepPage.targetId) ?? null;
     if (reloadedPage?.webSocketDebuggerUrl) {
       try { pCx.s.close(); } catch {}
       pCx = await openSession(reloadedPage.webSocketDebuggerUrl);
       prepPage.cx = pCx;
-      prepPage.targetId = reloadedPage.id;
     }
     prepReloaded = true;
     await pCx.waitFor(`!!document.querySelector('.corner')`, 'corner after reload', 30000);
@@ -5730,13 +5772,14 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         await sleep(4000);
       }
     } catch {}
+    }
   } catch (e) {
     prepError = e?.stack ?? String(e);
   } finally {
     await closeBlockPage(prepPage);
   }
 
-  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {
@@ -5751,11 +5794,6 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // draws the cache") says cached roots stand beneath the error line with
   // no next page.
   setBothRelayModes('down');
-  // Clear each relay's log so forwarded-POST assertions in later steps read
-  // only what this block produced; the previous blocks' entries are kept
-  // in a snapshot for the record.
-  const prevLogA = tipRelays.a.log.length;
-  const prevLogB = tipRelays.b.log.length;
   let w1Page = null;
   let w1Ok = false;
   let w1Detail = '';
@@ -6265,17 +6303,22 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   } catch (e) {
     record('W4', false, `error: ${e?.stack ?? String(e)}`);
   }
+  } catch (e) {
+    // A red inside the block must never stop the harness: the outer
+    // catch holds the throw so the finally below runs the teardown
+    // and the caller returns to the next block. Any unrecorded step
+    // reads FAIL with the one reason.
+    for (const s of ['W1', 'W2', 'W3', 'W4']) {
+      if (!findings.some((f) => f.step === s)) record(s, false, `block threw: ${e?.stack ?? String(e)}`);
+    }
   } finally {
-    // Every path through the block ends with: relays back to `honest`,
-    // and every page the block opened closed. A step that threw past
-    // its own close would leave its target in `/json/list`, and a
-    // later block's `findExt` could return the orphan — opening a CDP
-    // session on an orphan the browser has detached stalls out on
-    // `Page.enable` until the 60 s wall. `void prevLogA` / `prevLogB`
-    // keeps the two snapshots in place for a debug read of the block's
-    // own entries.
+    // The teardown touches no run-path state: every path declares
+    // what it reads here itself. Relays back to `honest`, every page
+    // the block opened closed — a step that threw past its own close
+    // would leave its target in `/json/list`, and a later block's
+    // `findExt` could return the orphan, which stalls `Page.enable`
+    // out to the 60 s wall.
     setBothRelayModes('honest');
-    void prevLogA; void prevLogB;
     for (const p of [...blockPages]) {
       await closeBlockPage(p);
     }
