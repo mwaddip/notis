@@ -192,7 +192,7 @@ import { matchPatternFor } from '../../extension/match-pattern.mjs';
 // Boolean flags — never consume the next argument. Without this the parser
 // below reads the following flag as the flag's value, and every arg after
 // `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh']);
+const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh', 'waiting-only']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
