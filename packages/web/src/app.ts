@@ -3836,54 +3836,42 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    // Each read's outcome stands on its own: a failed read leaves its state
-    // alone, a successful one is held. The rep view read's own outcome
-    // sets `repNoAnswer` inside `readOwnKarma` so a sibling rejection does
-    // not hide it (WEB_INTERFACE → The wallet → "A page no node answers
-    // offers what can wait").
+    // The plain promise resolves to `null` on failure, so `Promise.all`
+    // rejects only on a view, vouch, escrow, bonds or name read, and a
+    // failed read leaves the last-known state.
     const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
       ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
       : Promise.resolve(null);
-    const results = await Promise.allSettled([
-      this.readOwnKarma(cur.pubKeyHex),
-      this.client.status(),
-      this.readVouchSet(cur.pubKeyHex),
-      this.readEscrow(cur.pubKeyHex),
-      this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
-      this.client.usernameByOwner(cur.pubKeyHex),
-      plainPromise,
-    ]);
-    if (gen !== this.readerGen) return;
     let karmaTaken = false;
     let karmaPlain: KarmaResult | null = null;
-    const karmaR = results[0];
-    if (karmaR.status === 'fulfilled') {
-      this.bumpTip(karmaR.value.height);
-      karmaTaken = this.holdKarma(karmaR.value, order);
+    try {
+      const [karma, status, vouched, escrow, bonds, ownName, plain] = await Promise.all([
+        this.readOwnKarma(cur.pubKeyHex),
+        this.client.status(),
+        this.readVouchSet(cur.pubKeyHex),
+        this.readEscrow(cur.pubKeyHex),
+        this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
+        this.client.usernameByOwner(cur.pubKeyHex),
+        plainPromise,
+      ]);
+      if (gen !== this.readerGen) return;
+      this.bumpTip(karma.height);
+      karmaTaken = this.holdKarma(karma, order);
+      if (this.newerRead('status', order)) this.state.status = status;
+      this.bumpTip(status.blockHeight);
+      if (this.newerRead('vouches', order)) {
+        this.vouched = vouched;
+        this.escrowHeldUntil = escrow;
+      }
+      if (this.newerRead('bonds', order)) this.bondsView = bonds;
+      if (this.newerRead('name', order)) {
+        this.ownName = ownName;
+        this.ownNameLoaded = true;
+      }
+      karmaPlain = plain;
+    } catch {
+      return; // a failed read leaves the last-known state; the ↻ retries
     }
-    const statusR = results[1];
-    if (statusR.status === 'fulfilled') {
-      if (this.newerRead('status', order)) this.state.status = statusR.value;
-      this.bumpTip(statusR.value.blockHeight);
-    }
-    const vouchedR = results[2];
-    const escrowR = results[3];
-    if (vouchedR.status === 'fulfilled' && escrowR.status === 'fulfilled'
-        && this.newerRead('vouches', order)) {
-      this.vouched = vouchedR.value;
-      this.escrowHeldUntil = escrowR.value;
-    }
-    const bondsR = results[4];
-    if (bondsR.status === 'fulfilled' && this.newerRead('bonds', order)) {
-      this.bondsView = bondsR.value;
-    }
-    const nameR = results[5];
-    if (nameR.status === 'fulfilled' && this.newerRead('name', order)) {
-      this.ownName = nameR.value;
-      this.ownNameLoaded = true;
-    }
-    const plainR = results[6];
-    if (plainR.status === 'fulfilled') karmaPlain = plainR.value;
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();

@@ -653,6 +653,7 @@ describe('a node change drops the waiting arm; a node that answers later lands a
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
       cachedThread: () => ownThread(),
+      otherReadsNoAnswer: false,
     });
     await resolveTipRunVerified(h);
     primeRepBase(h, [{ boxId: BOX, value: 227n }]);

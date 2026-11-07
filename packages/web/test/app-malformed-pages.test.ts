@@ -412,7 +412,7 @@ describe('the reader\'s own listing reads end on a malformed page, in their call
 // ---------------------------------------------------------------------------
 
 describe('every other loop that follows `next` ends at a page with no `next`', () => {
-  it('the vouch set (readVouchSet) — one request, the membership read keeps the rep listing it held', async () => {
+  it('the vouch set (readVouchSet) — one request, the membership read keeps what it held', async () => {
     const h = harness();
     await h.drive.refreshOwnKarma();
     const held = h.drive.profileKarma;
@@ -420,12 +420,10 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
     const before = h.node.count('vouchesByVoucher', ME);
     await h.drive.loadMembershipState();
     expect(h.node.count('vouchesByVoucher', ME) - before).toBe(1);
-    // The rep listing stands — a failed sibling leaves no state alone, and
-    // the view's own read answered with the same listing the harness holds.
-    expect(h.drive.profileKarma).toStrictEqual(held);
+    expect(h.drive.profileKarma).toBe(held);
   });
 
-  it('the escrow (readEscrow) — one request, the membership read keeps the rep listing it held', async () => {
+  it('the escrow (readEscrow) — one request, the membership read keeps what it held', async () => {
     const h = harness();
     await h.drive.refreshOwnKarma();
     const held = h.drive.profileKarma;
@@ -433,7 +431,7 @@ describe('every other loop that follows `next` ends at a page with no `next`', (
     const before = h.node.count('vouchCooldowns', ME);
     await h.drive.loadMembershipState();
     expect(h.node.count('vouchCooldowns', ME) - before).toBe(1);
-    expect(h.drive.profileKarma).toStrictEqual(held);
+    expect(h.drive.profileKarma).toBe(held);
   });
 
   it('a send\'s landing read answered with a page that names no next — one request, the send stays pending', async () => {
