@@ -120,9 +120,10 @@ async function computePostIdForTx(txId: string): Promise<string> {
 }
 
 function harness(opts: Opts = {}): Harness {
-  if (opts.rememberChain !== null) {
-    localStorage.setItem('notis.posts.chain', opts.rememberChain ?? CHAIN);
-  }
+  // The seam's `rememberedChain` is the App's one path to the chain the
+  // post-cache module stored (WEB_INTERFACE → The extension → "The post
+  // cache"). The harness defaults to `CHAIN`; `rememberChain: null` opts out.
+  const chainForSeam = opts.rememberChain === null ? null : (opts.rememberChain ?? CHAIN);
   const signCalls: string[] = [];
   const currentKey: { hex: string | null } = { hex: opts.withIdentity === false ? null : PUB };
   let changeListener: ((id: { pubKeyHex: string } | null) => void) | null = null;
@@ -269,7 +270,7 @@ function harness(opts: Opts = {}): Harness {
     : {
         storage: window.localStorage as WaitingStorage,
         locks: fakeLockManager(),
-        rememberedChain: (): string | null => window.localStorage.getItem('notis.posts.chain'),
+        rememberedChain: (): string | null => chainForSeam,
       };
 
   const ledger = new PendingLedger(currentKey.hex);

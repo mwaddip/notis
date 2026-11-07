@@ -131,9 +131,11 @@ interface Harness {
 }
 
 function harness(opts: Opts = {}): Harness {
-  if (opts.rememberChain !== undefined) {
-    localStorage.setItem('notis.posts.chain', opts.rememberChain);
-  }
+  // The seam's `rememberedChain` is the App's one path to the chain the
+  // post-cache module stored (WEB_INTERFACE → The extension → "The post
+  // cache"). `rememberChain` sets it; `seamChain` is a surface that proves
+  // nothing else — `localStorage[notis.posts.chain]` — is read.
+  const chainForSeam = opts.seamChain ?? opts.rememberChain ?? null;
   const signCalls: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
@@ -292,8 +294,7 @@ function harness(opts: Opts = {}): Harness {
     : {
         storage: window.localStorage as WaitingStorage,
         locks: fakeLockManager(),
-        rememberedChain: (): string | null =>
-          opts.seamChain !== undefined ? opts.seamChain : window.localStorage.getItem('notis.posts.chain'),
+        rememberedChain: (): string | null => chainForSeam,
       };
 
   const ledger = new PendingLedger(PUB);
@@ -646,11 +647,10 @@ describe('invite, claim and the invites line do not read the waiting view', () =
         },
       };
 
-      localStorage.setItem('notis.posts.chain', CHAIN);
       const waitingSeam = {
         storage: window.localStorage as WaitingStorage,
         locks: fakeLockManager(),
-        rememberedChain: (): string | null => window.localStorage.getItem('notis.posts.chain'),
+        rememberedChain: (): string | null => CHAIN,
       };
       const ledger = new ledgerMod.PendingLedger(PUB);
       const app = new appMod.App(
@@ -953,10 +953,10 @@ describe('a page no node answers with no tip run names a chain takes the chain f
   // module's `rememberedChain` and handed to the App through the waiting seam.
   // The App reaches the name through the seam alone, so the web build (which
   // is handed no seam) reads no storage key under its feet.
-  it.fails('withdraw, no tip run: the seam\'s rememberedChain answers the chain, with localStorage[notis.posts.chain] empty; the button is enabled', async () => {
+  it('withdraw, no tip run: the seam\'s rememberedChain answers the chain, with localStorage[notis.posts.chain] empty; the button is enabled', async () => {
     const h = harness({
-      // seamChain sets the seam's `rememberedChain` directly; `rememberChain`
-      // is left unset so `localStorage[notis.posts.chain]` stays empty.
+      // seamChain feeds the seam's `rememberedChain` without touching
+      // `localStorage[notis.posts.chain]`, which stays empty.
       seamChain: CHAIN,
       cachedRoots: [ownRootHeld()],
       cachedThread: () => ownThread(),
