@@ -776,7 +776,7 @@ function openRemembered(cache: ReturnType<typeof createPostCache>): Promise<void
 }
 
 describe("post-cache — a post checked before any tip run names a chain is kept until one does", () => {
-  it.fails("a first session: no remembered name; a put answers getMany before any open, and open('X') writes the entry into X with the meta total equal to the sum of the stored entries' sizes", async () => {
+  it("a first session: no remembered name; a put answers getMany before any open, and open('X') writes the entry into X with the meta total equal to the sum of the stored entries' sizes", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -797,7 +797,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(metaTotal).toBeGreaterThan(0);
   });
 
-  it.fails("a chain change: remembered 'A' holds an entry; openRemembered opens A; a put of P; open('B'): a second cache on B holds P and not A's entry, and databases() no longer lists notis.posts.A", async () => {
+  it("a chain change: remembered 'A' holds an entry; openRemembered opens A; a put of P; open('B'): a second cache on B holds P and not A's entry, and databases() no longer lists notis.posts.A", async () => {
     const idb = new IDBFactory();
     const lsA = fakeLs();
     const c = clock();
@@ -825,7 +825,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(gotP.has(aOld.id)).toBe(false);
   });
 
-  it.fails("the same chain: remembered 'X', openRemembered, a put of P, open('X') — exactly one entry for P and the meta total equals the sum of the stored entries' sizes", async () => {
+  it("the same chain: remembered 'X', openRemembered, a put of P, open('X') — exactly one entry for P and the meta total equals the sum of the stored entries' sizes", async () => {
     const idb = new IDBFactory();
     const lsX = fakeLs();
     const c = clock();
@@ -846,7 +846,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(metaTotal).toBe(storedSum);
   });
 
-  it.fails("nothing carried after naming: a put of P before any open, open('X'), a put of Q, open('Y') — a second cache on Y holds neither P nor Q", async () => {
+  it("nothing carried after naming: a put of P before any open, open('X'), a put of Q, open('Y') — a second cache on Y holds neither P nor Q", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -866,7 +866,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(await second.thread(Q.id)).toBeNull();
   });
 
-  it.fails("a withdrawal before naming: a put of P, a withdrawal of P, open('X') — X holds P's withdrawn row with no text", async () => {
+  it("a withdrawal before naming: a put of P, a withdrawal of P, open('X') — X holds P's withdrawn row with no text", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -882,7 +882,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect((got.get(P.id)!.row as WithdrawnJson).kind).toBe('withdrawn');
   });
 
-  it.fails("a refresh before naming: a put of P, a refresh with other counts, open('X') — X holds the refreshed row", async () => {
+  it("a refresh before naming: a put of P, a refresh with other counts, open('X') — X holds the refreshed row", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -899,7 +899,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(r2.authorName).toBe('alice');
   });
 
-  it.fails("reads with no database open: kept entries answer getMany, thread (a kept parent and child walked), roots and byAuthor in their orders", async () => {
+  it("reads with no database open: kept entries answer getMany, thread (a kept parent and child walked), roots and byAuthor in their orders", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -927,7 +927,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(a1.map((h) => h.row.id)).toEqual([q.id, p.id]);
   });
 
-  it.fails("the cap: kept entries past POST_CACHE_BYTES evict the least recently seen and never an own one", async () => {
+  it("the cap: kept entries past POST_CACHE_BYTES evict the least recently seen and never an own one", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -946,7 +946,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect((await cache.getMany([other.id])).has(other.id)).toBe(false);
   });
 
-  it.fails("no indexedDB: a put before naming keeps nothing — every read answers empty after it", async () => {
+  it("no indexedDB: a put before naming keeps nothing — every read answers empty after it", async () => {
     const ls = fakeLs();
     const c = clock();
     const cache = createPostCache({ indexedDB: null, localStorage: ls, now: c.tick });
@@ -959,7 +959,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(await cache.byAuthor(P.author, 10)).toEqual([]);
   });
 
-  it.fails("a named open the factory refuses: the kept entries are gone after it — a read answers empty", async () => {
+  it("a named open the factory refuses: the kept entries are gone after it — a read answers empty", async () => {
     const ls = fakeLs();
     const c = clock();
     const bad = {

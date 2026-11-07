@@ -113,6 +113,7 @@ function recordingCache(): { cache: PostCache; puts: Array<{ id: string; row: Po
   const withdraws: Array<{ id: string; row: WithdrawnJson }> = [];
   const cache: PostCache = {
     open: async () => {},
+    openRemembered: async () => {},
     put: async (entry) => { puts.push({ id: entry.id, row: entry.row }); },
     withdraw: async (id, row) => { withdraws.push({ id, row }); },
     thread: async (): Promise<CachedThread | null> => null,

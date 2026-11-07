@@ -545,7 +545,12 @@ landings read. The web build is handed no verifier, sends no `tx` and shows ever
 
 **The post cache** (`WEB_INTERFACE → The extension → "The post cache"`): `src/extension/post-cache.ts`, IndexedDB at the
 extension page's origin, the database `notis.posts.<chain>` — `chain` the tip run's (`TipRun.chain`, the hash of
-block 1 the client's chain stands on), the last name remembered in `localStorage` under `notis.posts.chain`. **One chain's database at
+block 1 the client's chain stands on), the last name remembered in `localStorage` under `notis.posts.chain`. **Two
+opens, told apart** (`WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"`):
+`openRemembered()` opens the remembered database at load without naming the chain — a put before the first
+`open(chain)` is kept in memory, within `POST_CACHE_BYTES` by the same rule the stored entries follow, beside its write
+to that database where one opened; the first tip run's `open(chain)` writes the kept entries into the chain's database
+and clears them. **One chain's database at
 a time**: once a chain's database opens, every other `notis.posts.*` database `indexedDB.databases()` lists is deleted,
 the open not waiting on the deletes, and the module's connection closes on `versionchange`. An entry holds the
 transaction's bytes, the row as the node last gave it, the author and the parent as the transaction states them, its

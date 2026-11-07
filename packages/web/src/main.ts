@@ -6,7 +6,7 @@ import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createPostsVerifier } from './extension/posts-verifier';
-import { createPostCache, rememberedChain } from './extension/post-cache';
+import { createPostCache } from './extension/post-cache';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam } from './view/settings';
@@ -65,8 +65,10 @@ if (isExtension && BUILD_NETWORK !== null) {
   // and `checkPosts` from the web bundle.
   postsVerifier = createPostsVerifier();
   postCache = createPostCache();
-  const chain = rememberedChain();
-  if (chain !== null) void postCache.open(chain);
+  // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does".
+  // The module opens the remembered chain's database here, without naming the
+  // chain — the chain is named by the first tip run, through `open(chain)`.
+  void postCache.openRemembered();
 
   // WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path" — the extension build starts the mesh client with the build's

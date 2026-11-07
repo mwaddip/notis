@@ -104,6 +104,17 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   let total = 0;
   let pending: Promise<void> = Promise.resolve();
 
+  // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does".
+  // `chainNamed` is false until `open(chain)` has run — the first tip run's
+  // naming — and true thereafter; while it is false and `idb` holds a factory,
+  // every `put` keeps its entry in memory beside its write to the database the
+  // remembered name opened, where one did. The kept entries follow the same
+  // eviction rule as the stored ones; the named open writes them into the
+  // opened database and clears the map.
+  let chainNamed = false;
+  const keptEntries = new Map<string, Entry>();
+  let keptTotal = 0;
+
   function remember(chain: string): void {
     if (ls === null) return;
     try { ls.setItem(CHAIN_KEY, chain); } catch { /* storage refused — fall silent */ }
@@ -118,7 +129,14 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     }
   }
 
-  function openInternal(chain: string): Promise<void> {
+  /** Open the database for `chain` physically — the `IDBFactory.open`, the
+   *  `versionchange` wiring, the delete of every other `notis.posts.*`, and
+   *  the running total's read. Shared by `open(chain)` — the tip run's
+   *  naming — and `openRemembered()`, which opens the remembered chain's
+   *  database without naming it (WEB_INTERFACE → The extension → "The post
+   *  cache", → "A post checked before any tip run names a chain is kept
+   *  until one does"). */
+  function openPhysical(chain: string): Promise<void> {
     if (idb === null) {
       // No IndexedDB — the module runs without a cache. Remember the chain
       // all the same, so a later browser that has one opens on it.
@@ -173,6 +191,41 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       req.onerror = (): void => resolve();
       req.onblocked = (): void => resolve();
     });
+  }
+
+  /** The tip run's naming — `PostCache.open(chain)`
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  The chain is marked named, the database is opened, every kept entry
+   *  reaches the opened database — through the running total and the eviction
+   *  rule exactly as a put moves them — and the kept entries clear, whether
+   *  the open landed on a database or not. Rewriting an entry already in the
+   *  remembered chain's database is a refresh of itself, so the total is not
+   *  moved twice. A later `open` naming another chain carries nothing. */
+  async function openInternal(chain: string): Promise<void> {
+    chainNamed = true;
+    await openPhysical(chain);
+    if (db !== null) {
+      const snapshot = [...keptEntries.values()];
+      for (const e of snapshot) await writeEntryToDb(e);
+    }
+    keptEntries.clear();
+    keptTotal = 0;
+  }
+
+  /** Open the remembered chain's database without naming it
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  Read at load, before the first tip run returns and where none does. A
+   *  put before the first `open(chain)` is kept in memory beside its write to
+   *  this database, where one opened. */
+  async function openRememberedInternal(): Promise<void> {
+    if (ls === null) return;
+    let chain: string | null = null;
+    try {
+      const v = ls.getItem(CHAIN_KEY);
+      chain = v === null || v === '' ? null : v;
+    } catch { chain = null; }
+    if (chain === null) return;
+    await openPhysical(chain);
   }
 
   /** List the factory's databases and delete every `notis.posts.*` whose
@@ -368,28 +421,25 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     });
   }
 
-  async function putInternal(entry: {
-    id: string;
-    txBytes: Uint8Array;
-    row: PostJson;
-    author: string;
-    parent: string | null;
-    own: boolean;
-  }): Promise<void> {
+  /** Write a prepared Entry into the opened database, through the running
+   *  total and the eviction rule exactly as a put moves them. The entry's
+   *  `lastSeen` is kept — a put sets `lastSeen` to `now()` when building the
+   *  Entry, while the kept-to-db replay at a named open keeps the kept
+   *  entry's own last-seen (WEB_INTERFACE → The extension → "The post cache",
+   *  → "A post checked before any tip run names a chain is kept until one does"). */
+  async function writeEntryToDb(e: Entry): Promise<void> {
     if (db === null) return;
-    const row = stripTx(entry.row);
-    const size = entrySize(entry.txBytes, row);
-    const prior = await readEntry(entry.id);
+    const prior = await readEntry(e.id);
     const priorSize = prior ? prior.size : 0;
-    const delta = size - priorSize;
+    const delta = e.size - priorSize;
     // A single entry larger than the cap is dropped — eviction would empty
     // the cache without ever fitting it (WEB_INTERFACE → The extension →
     // "The post cache").
-    if (size > POST_CACHE_BYTES && priorSize === 0) return;
+    if (e.size > POST_CACHE_BYTES && priorSize === 0) return;
     let victims: Array<{ id: string; size: number }> = [];
     if (total + delta > POST_CACHE_BYTES) {
       const needed = total + delta - POST_CACHE_BYTES;
-      victims = await collectVictims(needed, entry.id);
+      victims = await collectVictims(needed, e.id);
       const freed = victims.reduce((s, v) => s + v.size, 0);
       if (total + delta - freed > POST_CACHE_BYTES) {
         // Still does not fit — the store is full of `own` entries. Drop
@@ -398,7 +448,65 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
         return;
       }
     }
-    const e: Entry = {
+    // A refresh keeps `own` where the prior had it — a bound row for the
+    // reader's own post refreshes it and leaves the mark alone.
+    const toWrite: Entry = { ...e, own: e.own || (prior ? prior.own : false) };
+    const freed = victims.reduce((s, v) => s + v.size, 0);
+    const nextTotal = total + delta - freed;
+    const applied = await run((entries, meta) => {
+      for (const v of victims) entries.delete(v.id);
+      entries.put(toWrite);
+      meta.put({ key: META_KEY, bytes: nextTotal });
+    });
+    if (applied === null) return;
+    total = nextTotal;
+  }
+
+  /** Keep an Entry in memory before any tip run names a chain
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  The kept entries are held to `POST_CACHE_BYTES` by the same rule the
+   *  stored entries follow: least recently seen evicted first, the reader's
+   *  own never, the entry being kept never, and a put that still does not
+   *  fit is dropped. */
+  function putKept(e: Entry): void {
+    const prior = keptEntries.get(e.id);
+    const priorSize = prior?.size ?? 0;
+    const delta = e.size - priorSize;
+    if (e.size > POST_CACHE_BYTES && priorSize === 0) return;
+    const victims: Array<{ id: string; size: number }> = [];
+    if (keptTotal + delta > POST_CACHE_BYTES) {
+      const needed = keptTotal + delta - POST_CACHE_BYTES;
+      const sorted = [...keptEntries.values()].sort((a, b) => a.lastSeen - b.lastSeen);
+      let freed = 0;
+      for (const v of sorted) {
+        if (v.own) continue;
+        if (v.id === e.id) continue;
+        victims.push({ id: v.id, size: v.size });
+        freed += v.size;
+        if (freed >= needed) break;
+      }
+      if (keptTotal + delta - freed > POST_CACHE_BYTES) return;
+    }
+    const freed = victims.reduce((s, v) => s + v.size, 0);
+    for (const v of victims) keptEntries.delete(v.id);
+    // A refresh keeps `own` where the prior had it — a bound row for the
+    // reader's own post refreshes it and leaves the mark alone.
+    const toKeep: Entry = { ...e, own: e.own || (prior ? prior.own : false) };
+    keptEntries.set(e.id, toKeep);
+    keptTotal = keptTotal + delta - freed;
+  }
+
+  async function putInternal(entry: {
+    id: string;
+    txBytes: Uint8Array;
+    row: PostJson;
+    author: string;
+    parent: string | null;
+    own: boolean;
+  }): Promise<void> {
+    const row = stripTx(entry.row);
+    const size = entrySize(entry.txBytes, row);
+    const built: Entry = {
       id: entry.id,
       txBytes: entry.txBytes,
       row,
@@ -406,22 +514,31 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
       parent: entry.parent,
       lastSeen: now(),
       size,
-      // A refresh keeps `own` where the prior had it — a bound row for the
-      // reader's own post refreshes it and leaves the mark alone.
-      own: entry.own || (prior ? prior.own : false),
+      own: entry.own,
     };
-    const freed = victims.reduce((s, v) => s + v.size, 0);
-    const nextTotal = total + delta - freed;
-    const applied = await run((entries, meta) => {
-      for (const v of victims) entries.delete(v.id);
-      entries.put(e);
-      meta.put({ key: META_KEY, bytes: nextTotal });
-    });
-    if (applied === null) return;
-    total = nextTotal;
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does".
+    if (!chainNamed && idb !== null) putKept(built);
+    if (db === null) return;
+    await writeEntryToDb(built);
+  }
+
+  /** Empty a kept entry's text and keep the entry
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  An id not kept is nothing. */
+  function withdrawKept(id: string, row: WithdrawnJson): void {
+    const prior = keptEntries.get(id);
+    if (prior === undefined) return;
+    const newSize = entrySize(new Uint8Array(0), row);
+    const delta = newSize - prior.size;
+    // The parent/author on the entry remain the transaction's — the
+    // withdrawn row does not restate them.
+    const next: Entry = { ...prior, txBytes: new Uint8Array(0), row, lastSeen: now(), size: newSize };
+    keptEntries.set(id, next);
+    keptTotal += delta;
   }
 
   async function withdrawInternal(id: string, row: WithdrawnJson): Promise<void> {
+    if (keptEntries.has(id)) withdrawKept(id, row);
     if (db === null) return;
     const prior = await readEntry(id);
     if (prior === null) return;
@@ -478,6 +595,16 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
    *  (WEB_INTERFACE → The extension → "The post cache"). An id not held is
    *  absent from the map. */
   async function getManyInternal(ids: readonly string[]): Promise<Map<string, HeldPost>> {
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does":
+    // while no database is open, the kept entries answer the read.
+    if (db === null) {
+      const out = new Map<string, HeldPost>();
+      for (const id of ids) {
+        const e = keptEntries.get(id);
+        if (e !== undefined) out.set(id, { row: e.row, author: e.author, parent: e.parent });
+      }
+      return out;
+    }
     const entries = await readEntries(ids);
     const out = new Map<string, HeldPost>();
     for (const [id, e] of entries) out.set(id, { row: e.row, author: e.author, parent: e.parent });
@@ -492,8 +619,30 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
    *  row carries no text, and refresh never restores text or rewrites the
    *  withdrawal; an id not held is nothing; an empty list and no database
    *  are nothing. */
+  /** Refresh a kept entry's row and last-seen, as a refresh does a stored
+   *  one (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  A withdrawn kept entry is left as it is. */
+  function refreshKept(rows: readonly PostJson[]): void {
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      const prior = keptEntries.get(row.id);
+      if (prior === undefined) continue;
+      if (isWithdrawn(prior.row)) continue;
+      const stripped = stripTx(row);
+      const newSize = entrySize(prior.txBytes, stripped);
+      const delta = newSize - prior.size;
+      const next: Entry = { ...prior, row: stripped, lastSeen: now(), size: newSize };
+      keptEntries.set(row.id, next);
+      keptTotal += delta;
+    }
+  }
+
   async function refreshInternal(rows: readonly PostJson[]): Promise<void> {
-    if (db === null || rows.length === 0) return;
+    if (rows.length === 0) return;
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does":
+    // a refresh moves a kept entry as it moves a stored one.
+    refreshKept(rows);
+    if (db === null) return;
     // Read current entries in one transaction, decide the new entries, then
     // write them in one `run`.
     const prior = await readEntries(rows.map((r) => r.id));
@@ -566,7 +715,14 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
    *  index cannot reach the roots — the store cursor is the one path
    *  (WEB_INTERFACE → The extension → "A failed listing draws the cache"). */
   function rootsInternal(limit: number): Promise<HeldPost[]> {
-    if (db === null || limit <= 0) return Promise.resolve([]);
+    if (limit <= 0) return Promise.resolve([]);
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does":
+    // while no database is open, roots answer from the kept entries.
+    if (db === null) {
+      const collected: Entry[] = [];
+      for (const e of keptEntries.values()) if (e.parent === null) collected.push(e);
+      return Promise.resolve(sliceToHeld(collected, limit));
+    }
     return new Promise<HeldPost[]>((resolve) => {
       const collected: Entry[] = [];
       let tx: IDBTransaction;
@@ -589,7 +745,13 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   }
 
   function byAuthorInternal(author: string, limit: number): Promise<HeldPost[]> {
-    if (db === null || limit <= 0) return Promise.resolve([]);
+    if (limit <= 0) return Promise.resolve([]);
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does".
+    if (db === null) {
+      const collected: Entry[] = [];
+      for (const e of keptEntries.values()) if (e.author === author) collected.push(e);
+      return Promise.resolve(sliceToHeld(collected, limit));
+    }
     return new Promise<HeldPost[]>((resolve) => {
       const collected: Entry[] = [];
       let tx: IDBTransaction;
@@ -612,7 +774,41 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   }
 
   async function threadInternal(id: string): Promise<CachedThread | null> {
-    if (db === null) return null;
+    // WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does":
+    // while no database is open, thread walks kept parents and children.
+    if (db === null) {
+      const subject = keptEntries.get(id);
+      if (subject === undefined) return null;
+      const ancestors: Entry[] = [];
+      const visited = new Set<string>([id]);
+      let cur: Entry | undefined = subject;
+      while (cur !== undefined && cur.parent !== null && !visited.has(cur.parent)) {
+        const next = keptEntries.get(cur.parent);
+        if (next === undefined) break;
+        visited.add(next.id);
+        ancestors.push(next);
+        cur = next;
+      }
+      ancestors.reverse();
+      const descendants: Entry[] = [];
+      const queue: string[] = [id];
+      const seen = new Set<string>([id]);
+      while (queue.length > 0) {
+        const parentId = queue.shift()!;
+        for (const e of keptEntries.values()) {
+          if (e.parent !== parentId) continue;
+          if (seen.has(e.id)) continue;
+          seen.add(e.id);
+          descendants.push(e);
+          queue.push(e.id);
+        }
+      }
+      return {
+        post: subject.row,
+        ancestors: ancestors.map((e) => e.row),
+        descendants: descendants.map((e) => e.row),
+      };
+    }
     const subject = await readEntry(id);
     if (subject === null) return null;
     // Walk parent links up through held entries; stop at the first parent not
@@ -664,6 +860,9 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
   return {
     open(chain: string): Promise<void> {
       return serial(() => openInternal(chain));
+    },
+    openRemembered(): Promise<void> {
+      return serial(() => openRememberedInternal());
     },
     put(entry): Promise<void> {
       return serial(() => putInternal(entry));

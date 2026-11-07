@@ -287,6 +287,7 @@ describe('app-post-cache — a thread read that answers does not call thread()',
     let threadCalls = 0;
     const counted: PostCache = {
       open: (c) => cache.open(c),
+      openRemembered: () => cache.openRemembered(),
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => { threadCalls++; return cache.thread(i); },
@@ -509,6 +510,7 @@ describe('app-post-cache — a cached thread goes through putThreadRows', () => 
     const gate = new Promise<void>((r) => { release = r; });
     const wrapped: PostCache = {
       open: (c) => inner.open(c),
+      openRemembered: () => inner.openRemembered(),
       put: (e) => inner.put(e),
       withdraw: (i, r) => inner.withdraw(i, r),
       thread: async (i) => { await gate; return inner.thread(i); },
@@ -543,6 +545,7 @@ describe('app-post-cache — the cache opens under the chain the tip run names',
     const opens: string[] = [];
     const wrapped: PostCache = {
       open: (c) => { opens.push(c); return cache.open(c); },
+      openRemembered: () => cache.openRemembered(),
       put: (e) => cache.put(e),
       withdraw: (i, r) => cache.withdraw(i, r),
       thread: (i) => cache.thread(i),
@@ -724,6 +727,7 @@ describe('app-post-cache — a listing read before a node change draws nothing',
     const gate = new Promise<void>((res) => { release = res; });
     const wrapped: PostCache = {
       open: (c) => inner.open(c),
+      openRemembered: () => inner.openRemembered(),
       put: (e) => inner.put(e),
       withdraw: (i, w) => inner.withdraw(i, w),
       thread: (i) => inner.thread(i),
@@ -798,7 +802,7 @@ describe('app-post-cache — the web build keeps the line and no row', () => {
 // entry to the chain's database.
 
 describe("app-post-cache — a feed read's bound slots before a tip run names a chain are carried to the chain the first tip run names", () => {
-  it.fails("the resolver binds two slots before any tip run; startVerification names chain X; a second cache over the same factory opened on X holds every bound id", async () => {
+  it("the resolver binds two slots before any tip run; startVerification names chain X; a second cache over the same factory opened on X holds every bound id", async () => {
     const { prefs } = await import('../src/prefs');
     prefs.node = 'http://x';
     const idb = new IDBFactory();

@@ -234,6 +234,7 @@ function harness(opts: Opts = {}): Harness {
   const cachedAuthors = opts.cachedAuthors ?? new Map<string, string>();
   const postCache: PostCache = {
     open: async () => {},
+    openRemembered: async () => {},
     put: async () => {},
     withdraw: async () => {},
     thread: async () => null,

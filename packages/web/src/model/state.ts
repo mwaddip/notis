@@ -469,14 +469,26 @@ export interface CachedThread {
  *  still checks every row — the cache never answers for the check and carries
  *  no `has`. The cache is read only when the node's read fails. */
 export interface PostCache {
-  /** Open the database named for `chain`; a second call with another name
-   *  closes the first. The last name is kept in `localStorage` under
-   *  `notis.posts.chain` and opens the cache before the first tip run
-   *  returns and where none does. */
+  /** The tip run's naming — the chain is marked named, the database named
+   *  for `chain` is opened, and every kept entry reaches the opened database
+   *  through the running total and the eviction rule
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  A second call with another name closes the first. The last name is kept
+   *  in `localStorage` under `notis.posts.chain`. */
   open(chain: string): Promise<void>;
+  /** Open the remembered chain's database without naming the chain — the App
+   *  calls it at load, before the first tip run returns and where none does
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
+   *  A put before the first `open(chain)` is kept in memory beside its write
+   *  to this database, where one opened. */
+  openRemembered(): Promise<void>;
   /** Put, or refresh, one checked row. `own` marks the reader's own post —
    *  eviction never takes an `own` entry. A refresh of a held id replaces its
-   *  row and last-seen and adjusts the running total by the difference. */
+   *  row and last-seen and adjusts the running total by the difference. A put
+   *  before the first `open(chain)` is kept in memory as well, within
+   *  `POST_CACHE_BYTES` by the same rule — least recently seen evicted first,
+   *  the reader's own never — where the module has an `indexedDB` factory
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   put(entry: {
     id: string;
     txBytes: Uint8Array;
@@ -486,17 +498,22 @@ export interface PostCache {
     own: boolean;
   }): Promise<void>;
   /** A withdrawn row for a held id: the entry's text goes, the entry stays
-   *  (the node's word, and a lie costs a re-fetch). An id not held is nothing. */
+   *  (the node's word, and a lie costs a re-fetch). An id not held is
+   *  nothing. A withdrawal of a kept id empties the kept entry's text as it
+   *  empties a stored one (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   withdraw(id: string, row: WithdrawnJson): Promise<void>;
   /** The subject, its held ancestors and its held descendants — or `null`
    *  when the subject is not held. The walk stops at the first parent not
-   *  held; descendants are collected through the parent index. */
+   *  held; descendants are collected through the parent index. While no
+   *  database is open, the walk reads the kept entries
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   thread(id: string): Promise<CachedThread | null>;
   /** The ids held, each with its row and the author and parent the
    *  transaction states them. An id not held is absent from the map, so no
    *  key is a placeholder. One read-only transaction over the entries store.
    *  An empty list, no database or a transaction the browser refuses answers
-   *  an empty map. */
+   *  an empty map. While no database is open, the kept entries answer the
+   *  read (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   getMany(ids: readonly string[]): Promise<Map<string, HeldPost>>;
   /** Refresh the rows held for the given ids. For each row whose id is
    *  held, the entry's row (stored without `tx`) and `lastSeen` are
@@ -504,7 +521,8 @@ export interface PostCache {
    *  running total moves by the sum of the size differences in the same
    *  transaction. An id not held is nothing. An entry whose row is a
    *  `WithdrawnJson` is left as it is — the node's word, and a lie costs a
-   *  re-fetch. */
+   *  re-fetch. A refresh of a kept id replaces its row and last-seen as it
+   *  does a stored one (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   refresh(rows: readonly PostJson[]): Promise<void>;
   /** The entries held with no parent — the feed's cache fallback on a failed
    *  first page (WEB_INTERFACE → The extension → "A failed listing draws the
@@ -512,14 +530,17 @@ export interface PostCache {
    *  `withdrawnAtHeight`, confirmed — ties by id, then the rows with
    *  `blockHeight: null`, ties by id; at most `limit`. One read-only
    *  transaction over the entries store. A `limit` of zero or less, no
-   *  database or a transaction the browser refuses answers an empty list. */
+   *  database or a transaction the browser refuses answers an empty list.
+   *  While no database is open, the kept entries answer by the same order
+   *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   roots(limit: number): Promise<HeldPost[]>;
   /** The entries held for `author`, through the author index — the author
    *  window's cache fallback on a failed first page (WEB_INTERFACE → The
    *  extension → "A failed listing draws the cache"). The entry's `author`
    *  is the transaction's, so the window carries every post the author
    *  committed, roots and replies alike. Ordered and capped as `roots`;
-   *  absorbs the same failures. */
+   *  absorbs the same failures. While no database is open, the kept entries
+   *  answer by the same order (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"). */
   byAuthor(author: string, limit: number): Promise<HeldPost[]>;
 }
 
