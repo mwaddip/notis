@@ -89,7 +89,6 @@ interface CreditsTrap { resolve: (v: CreditsResult) => void; reject: (e: unknown
 interface Opts {
   withSeam?: boolean;
   rememberChain?: string;
-  seamChain?: string;
   karma?: KarmaBehavior;
   credits?: CreditsBehavior;
   threadThrows?: boolean;
@@ -131,11 +130,10 @@ interface Harness {
 }
 
 function harness(opts: Opts = {}): Harness {
-  // The seam's `rememberedChain` is the App's one path to the chain the
-  // post-cache module stored (WEB_INTERFACE → The extension → "The post
-  // cache"). `rememberChain` sets it; `seamChain` is a surface that proves
-  // nothing else — `localStorage[notis.posts.chain]` — is read.
-  const chainForSeam = opts.seamChain ?? opts.rememberChain ?? null;
+  // `rememberChain` is the chain the harness's seam answers from its
+  // `rememberedChain` — the App's one path to the chain the post-cache
+  // module stored (WEB_INTERFACE → The extension → "The post cache").
+  const chainForSeam = opts.rememberChain ?? null;
   const signCalls: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
@@ -955,9 +953,7 @@ describe('a page no node answers with no tip run names a chain takes the chain f
   // is handed no seam) reads no storage key under its feet.
   it('withdraw, no tip run: the seam\'s rememberedChain answers the chain, with localStorage[notis.posts.chain] empty; the button is enabled', async () => {
     const h = harness({
-      // seamChain feeds the seam's `rememberedChain` without touching
-      // `localStorage[notis.posts.chain]`, which stays empty.
-      seamChain: CHAIN,
+      rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
       cachedThread: () => ownThread(),
     });
