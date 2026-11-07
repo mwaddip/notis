@@ -37,16 +37,15 @@ import { ClientError } from './client-error.js';
  *
  * Answers whether it admitted the transaction: net forwards an admitted
  * transaction and penalises nothing on a refusal (NET_INTERFACE → Stage 2 →
- * "A Stage 2 refusal records nothing"). Every refusal is a `false` the
- * handler returns from: a conflict with a pooled entry's input answers
- * `Relayed tx dropped, input spent by a pending entry: <txid>` and false
- * (NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
- * "A pooled spender's conflict is the pool's refusal"); the missing-input
- * refusal is counted, not logged
- * (NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
- * "A relayed transaction refused for a missing input is counted, not
- * logged"); every other refusal logs `Relayed tx rejected: <error>`. Any
- * other throw reaches net, which logs it as a handler defect.
+ * "A Stage 2 refusal records nothing"). A conflict with a pooled entry's
+ * input answers `Relayed tx dropped, input spent by a pending entry: <txid>`
+ * and false (NODE_INTERFACE → Net Integration → Relay handlers
+ * (mempool-based) → "A pooled spender's conflict is the pool's refusal");
+ * the missing-input refusal is counted, not logged (NODE_INTERFACE → Net
+ * Integration → Relay handlers (mempool-based) → "A relayed transaction
+ * refused for a missing input is counted, not logged"); every other refusal
+ * but a held one logs one line naming its reason. Any other throw reaches
+ * net, which logs it as a handler defect.
  */
 export function handleRelayedTx(
   tx: UtxoTransaction,

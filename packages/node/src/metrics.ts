@@ -39,11 +39,9 @@ export function noteHttpRequest(): void {
   httpRequestsTotal++;
 }
 
-// NODE_INTERFACE → Admin Listener → "relayed_txs_input_missing_total":
-// every relayed transaction `onTx` refuses for a missing input — the
-// handler's one write site (NODE_INTERFACE → Net Integration → Relay
-// handlers (mempool-based) → "A relayed transaction refused for a missing
-// input is counted, not logged").
+// NODE_INTERFACE → Admin Listener: the handler's one write site for
+// NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
+// "A relayed transaction refused for a missing input is counted, not logged".
 export function noteRelayedTxInputMissing(): void {
   relayedTxsInputMissingTotal++;
 }
