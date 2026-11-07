@@ -1566,9 +1566,10 @@ chain or owed one:
 | **the node key** (2026-11-03) | **no committed byte and no consensus verdict** — a node's libp2p identity persists in its key file (NET_INTERFACE → The node key), and testnet's seed names notis.fun's peer id (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"): a node on this build reaches its seed only where notis.fun answers under that key, so notis.fun deploys first, its key file already on the box at `/var/lib/dagsocial/dagsocial.key`. **Owes no reset** |
 | **the relay's pending view** (2026-11-07) | **no committed byte and no consensus verdict** — the relay judges a transaction against the pending view (MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is judged against the pending view, as a submitted one is"), so a node on this build admits and relays on a child whose parent it pools, where an earlier build refuses it; block application is unchanged. A peer of an earlier build still refuses that child, so each box takes this build for the chains it receives: both boxes deploy, notis.fun first. **Owes no reset** |
 
-**Outstanding against the live node: the relay's pending view.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
 whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, the usernames
-row owes none, the node key row is deployed (2026-11-03), and so is the mesh row (2026-11-04).
+row owes none, the node key row is deployed (2026-11-03), so is the mesh row (2026-11-04), and so is the relay's
+pending view row (2026-11-07).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
