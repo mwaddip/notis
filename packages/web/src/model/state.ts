@@ -476,8 +476,9 @@ export interface PostCache {
    *  A second call with another name closes the first. The last name is kept
    *  in `localStorage` under `notis.posts.chain`. */
   open(chain: string): Promise<void>;
-  /** Open the remembered chain's database without naming the chain — the App
-   *  calls it at load, before the first tip run returns and where none does
+  /** Open the remembered chain's database without naming the chain —
+   *  `main.ts` calls it at load in the extension build alone, before the
+   *  first tip run returns and where none does
    *  (WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does").
    *  A put before the first `open(chain)` is kept in memory beside its write
    *  to this database, where one opened. */
