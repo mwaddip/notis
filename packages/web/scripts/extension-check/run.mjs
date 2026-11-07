@@ -5816,7 +5816,6 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // first tip run's `open(A)` replays the kept entries into A's and
   // deletes this one.
   const PREP_UNUSED_REMEMBERED_CHAIN = 'deadbeef'.repeat(8);
-  const PREP_UNUSED_REMEMBERED_DB = 'notis.posts.' + PREP_UNUSED_REMEMBERED_CHAIN;
   // R's root post ids on the node, read for the prep's intersection with
   // the cache and for W1's author-window press (a card renders no
   // data-author; R's root is picked by id).
@@ -5848,7 +5847,6 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   let prepChainHeld = null;
   let prepChainMoveTimedOut = false;
   let prepCornerTitle = null;
-  let prepFirstDatabases = null;
   let prepCached = 0;
   let prepCachedIds = [];
   let prepRCachedRootIds = [];
@@ -5860,15 +5858,6 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     prepPage = trackPage(await openFreshExtensionPage(bcx));
     const pCx = prepPage.cx;
     await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
-    // The first `indexedDB.databases()` reading, taken right after
-    // `#feed` appears: the module's `openRemembered` ran at load, and
-    // the foreign name's database is listed. prepDetail names whether
-    // the foreign name shows here, so a red names which half failed.
-    prepFirstDatabases = await pCx.eval(`(async () => {
-      if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return [];
-      const dbs = await indexedDB.databases();
-      return dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
-    })()`).catch(() => []);
     // Wait for the corner's tip run to settle — the title names a tip once
     // the client's chain is seated. Either shape is acceptable: step 17's
     // "verified across N nodes · tip N" (both relays' upstreams answered)
@@ -6066,9 +6055,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   const prepPostNamed = prepPostResult.ok === true
     ? (prepPostResult.postId ?? 'ok')
     : (prepPostResult.reason ?? 'unknown');
-  const prepFirstListedForeign = Array.isArray(prepFirstDatabases)
-    && prepFirstDatabases.includes(PREP_UNUSED_REMEMBERED_DB);
-  const prepDetail = `prep: d-gone=${prepDGone}, foreign-set=${prepForeignSet} (read-back=${JSON.stringify(prepForeignReadBack)}), first-databases-listed-foreign=${prepFirstListedForeign} (listed=${JSON.stringify(prepFirstDatabases)}), corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepForeignError !== null ? `, foreign-error=${JSON.stringify(prepForeignError)}` : ''}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepDetail = `prep: d-gone=${prepDGone}, foreign-set=${prepForeignSet} (read-back=${JSON.stringify(prepForeignReadBack)}), corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepForeignError !== null ? `, foreign-error=${JSON.stringify(prepForeignError)}` : ''}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {
