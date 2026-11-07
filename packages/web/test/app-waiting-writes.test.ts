@@ -869,4 +869,50 @@ describe('with no waiting view the composer foot reads the failed-read line', ()
   });
 });
 
+// The two reads of the seam's `rememberedChain` on the write path — the
+// composer's affordability (WEB_INTERFACE → Invariants → "Affordability is
+// known before the attempt") and the submit flow's `chain()` through
+// `submitDeps.waiting.chain` (WEB_INTERFACE → The wallet → "The view and every
+// waiting write carry the chain's name") — are the two the submit flow and
+// the composer take where no tip run has named a chain. Each is held by one
+// case here: drop the seam read from `readAffordability` and case 1 goes red;
+// drop it from `submitDeps` and case 2 goes red.
+describe('a composer opened while no node answers and no tip run has named a chain takes the chain from the seam', () => {
+  it('seam rememberedChain answers the chain of the recorded rep base; post is affordable', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    // No resolveTipRunVerified — the seam names the chain.
+    primeBases(h);
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await flush();
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    expect(karmaText(ctrl.el)).not.toBe("can't read your rep right now");
+    const ta = ctrl.el.querySelector('textarea') as HTMLTextAreaElement;
+    ta.value = 'a thread';
+    ta.dispatchEvent(new Event('input'));
+    expect(postBtnOf(ctrl.el).disabled).toBe(false);
+  });
+});
+
+describe('a post pressed with no node answering and no tip run runs the chain from the seam', () => {
+  it('seam rememberedChain names the chain; the press writes a waiting record under that chain', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    // No resolveTipRunVerified — the seam names the chain.
+    primeBases(h);
+    h.setReadsNoAnswer(true);
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    expect(h.postPosts()).toBe(0);
+    const subs = h.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.stage).toBe('waiting');
+    expect(subs[0]!.txId).not.toBeNull();
+    const entries = h.drive.ledger.all();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.kind).toBe('post');
+    expect(entries[0]!.waiting).toBe(true);
+  });
+});
+
 void computePostIdForTx; // keep the helper available for future tests
