@@ -148,9 +148,9 @@ describe('relay-chain', () => {
     expect(minerConfirmedIds).not.toContain(firstChangeBoxId);
 
     // ---- both posts stand on the miner, pending — a gossip arrival ----
-    // NODE_INTERFACE → Relay handlers (mempool-based) → "A relayed
-    // transaction refused for a missing input is counted, not logged": a
-    // peer that pools the parent admits the child and relays it on.
+    // MEMPOOL_INTERFACE → getBoxWithPending →
+    // "A relayed transaction is judged against the pending view, as a submitted one is":
+    // a peer that pools the parent admits the child and relays it on.
     await waitPostsPending(mesh.nodes, [thread1Res.postId, thread2Res.postId]);
 
     // ---- confirm both on the miner, bounded in blocks ----
@@ -168,10 +168,10 @@ describe('relay-chain', () => {
     // ---- on every node ----
     // NODE_INTERFACE → Posts — a confirmed row carries `blockHeight` and
     // `blockIndex`, and a block's apply order fixes the two; the parent
-    // of a chain rides the earlier slot (CONSENSUS_INTERFACE → The apply
-    // order). The second spend's change is re-read on each node and
-    // asserted equal to the derived candidate id, as the suite does for
-    // every change it builds on.
+    // of a chain rides the earlier slot (NODE_INTERFACE → Block
+    // finalization). The second spend's change is re-read on each node
+    // and asserted equal to the derived candidate id, as the suite does
+    // for every change it builds on.
     const thread2ChangeBoxId = thread2.outputs[0]!.boxId;
     let firstHeight: number | null = null;
     let firstIndex: number | null = null;
