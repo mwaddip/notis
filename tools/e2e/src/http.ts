@@ -111,6 +111,46 @@ export async function getKarma(
   return page;
 }
 
+async function fetchKarmaPendingPage(
+  node: NodeProcess,
+  userId: string,
+  after: string | undefined,
+): Promise<KarmaPage> {
+  const qs = `pending=1${after !== undefined ? `&after=${encodeURIComponent(after)}` : ''}`;
+  const res = await fetch(`${node.url}/karma/${userId}?${qs}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  const page = data as KarmaPage;
+  // TYPES_INTERFACE → KarmaBox — `income` is `true` or absent, never `false`.
+  for (const b of page.boxes) {
+    if ('income' in b && b.income !== true) {
+      throw new Error(`karma box ${b.boxId} carries income=${JSON.stringify(b.income)}`);
+    }
+  }
+  return page;
+}
+
+// NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as
+// admission spends from it": the owner's confirmed karma boxes no pooled
+// transaction spends, beside the pending karma outputs to the owner no pooled
+// transaction spends — the view a client chaining its spends builds on. Every
+// page followed through `next` and merged; `total`, `effective` and
+// `boxCount` range over the whole set and so stay the first page's.
+export async function getKarmaPending(
+  node: NodeProcess,
+  userId: string,
+): Promise<KarmaPage> {
+  const first = await fetchKarmaPendingPage(node, userId, undefined);
+  const boxes: KarmaPageBox[] = [...first.boxes];
+  let cursor: string | null = first.next;
+  while (cursor !== null) {
+    const page: KarmaPage = await fetchKarmaPendingPage(node, userId, cursor);
+    boxes.push(...page.boxes);
+    cursor = page.next;
+  }
+  return { ...first, boxes, next: null };
+}
+
 export async function hasKarma(
   node: NodeProcess,
   userId: string,
