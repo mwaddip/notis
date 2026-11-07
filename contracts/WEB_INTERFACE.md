@@ -937,9 +937,6 @@ profile answers to.
 `build-extension.sh` after the package's tests, as the release workflow's linux job does, so a module both builds share
 that pulls extension code into the web bundle fails the pull request, never the release.
 
-> ⚠ **AHEAD OF CODE (2026-11-07).** The ci workflow's `@dagsocial/web` job runs neither script yet, and `app.ts` imports
-> `rememberedChain` from the post cache's module, which carries `notis.posts.` into the web bundle.
-
 ## Reading a node's answer
 
 **A node's answer is a claim of its route's shape, and a client takes nothing else.** Every client of the node's HTTP
