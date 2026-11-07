@@ -130,9 +130,20 @@
 //     --verified-{tip,figures,names} is passed with --r-key — the relays are
 //     up and R's identity is loaded. W1 and W2 open one fresh page under
 //     `down` on both relays; W3 presses the corner on the same page with
-//     both relays honest; W4 opens another fresh page under `down`, replaces
-//     R's karma box on the chain through a withdraw the harness builds and
-//     submits, then sets both relays honest.
+//     both relays honest; W4 opens another fresh page under `down`, presses
+//     two root posts from the composer whose builders chain on the rep
+//     queue, replaces R's karma box on the chain through a withdraw the
+//     harness builds and submits, then sets both relays honest.
+//   --waiting-only: iterate on the waiting-writes block alone. Runs steps
+//     1 and 2 (seed list check and R's import), brings up the two tip
+//     relays in front of A (RLB's upstream is A too, since B is not
+//     needed), skips steps 3–20 and the verified-tip / figures / names
+//     blocks, then runs the waiting-writes block and the [diag]
+//     liveness line, and ends — 13-uncancelled and the mesh block are
+//     recorded NOT RUN. Requires --r-key and refuses combination with
+//     --verified-{tip,figures,names}, --light or --mesh. **The full run
+//     is the record**; this flag is for turning the block over fast
+//     while a defect of it is being tracked down.
 //   --light: L1·L2·L3·L4·L5·L6·L7·L8·L9·L10·L11·L12·L13·L14. The light read,
 //     the resolve, the post check, the post cache and the chain's name
 //     (WEB_INTERFACE → The extension → "The light read", "The resolve", "The
@@ -165,6 +176,7 @@
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--mesh --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--waiting-only] \
 //     [--public <origin+base> --web-dist <dir>]
 
 import { spawn } from 'node:child_process';
@@ -251,6 +263,16 @@ const LIGHT = args.get('light') === true;
 // api:<HTTP base>}` — the harness prints the VITE_NODES to rebuild with
 // when the shape disagrees. Absent, every step reads NOT RUN by name.
 const MESH = args.get('mesh') === true;
+// --waiting-only: iterate on the waiting-writes block alone. The harness
+// runs steps 1 and 2 (the seed list check and R's import — the only
+// earlier state the block needs), brings up the two tip relays in front
+// of A (both relays' upstream is A, since B is not needed), skips steps
+// 3–20 and the verified-tip / figures / names blocks, then runs the
+// waiting-writes block (prep · W1 · W2 · W3 · W4) and the `[diag]`
+// liveness line, and ends — 13-uncancelled and the mesh block read
+// NOT RUN. The full run is the record; this flag is for turning the
+// block over fast while a defect of it is being tracked down.
+const WAITING_ONLY = args.get('waiting-only') === true;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -421,6 +443,20 @@ if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
 // apis in front. The builds differ and a run takes one.
 if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
   console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
+  process.exit(2);
+}
+
+// --waiting-only needs --r-key (the block signs with R and reads R's
+// listings) and refuses combination with any of the three verified
+// blocks, --light or --mesh: the flag runs the waiting-writes block
+// alone, under the relays build, in front of A alone — a combined run
+// is the full one and `--waiting-only` is dropped.
+if (WAITING_ONLY && !R_KEY) {
+  console.error('--waiting-only requires --r-key — the waiting-writes block signs with R and reads R\'s listings');
+  process.exit(2);
+}
+if (WAITING_ONLY && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH)) {
+  console.error('--waiting-only cannot be combined with --verified-tip, --verified-figures, --verified-names, --light or --mesh — the flag runs the waiting-writes block alone; a combined run is the full one with the flag dropped');
   process.exit(2);
 }
 
@@ -5403,13 +5439,17 @@ async function runNamesStep30(rName) {
 //        POSTs forward to upstream in press order (the like before the
 //        post, per the rep queue's seq), both are admitted (each txId
 //        shows in a node's pool or chain) and the post lands in the feed.
-//   W4 — a fresh page under `down` on both relays: two likes pressed; then
-//        R's karma box is replaced on the chain by a withdraw the harness
-//        builds and submits through the node's HTTP write path (the same
-//        key as the page's, but no page sees it). Both relays set honest:
-//        the flush's first like is refused by the node (the input box
-//        no longer stands), and the second ends unsent — *not sent: the
-//        one before it was refused.* — with no POST for it going out.
+//   W4 — a fresh page under `down` on both relays: two root posts from
+//        the composer, each waiting on no node answer (the second's
+//        builder spends the first's change — one chain on the rep
+//        queue). R's karma box is then replaced on the chain by a
+//        withdraw the harness builds and submits through the node's
+//        HTTP write path (the same key as the page's, but no page sees
+//        it). Both relays set honest: the flush's first post is
+//        refused by the node (the input box no longer stands) and its
+//        pending card's stage line reads the rejection, and the second
+//        post ends unsent — its pending card reads *not sent: the one
+//        before it was refused.* — with no POST for it going out.
 // ---------------------------------------------------------------------------
 
 const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4'];
@@ -5848,11 +5888,13 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         })()`, true);
         await sleep(1500);
         // Inside the opened author window, the `posts` button opens
-        // @posts:<R>.
+        // @posts:<R>. `.find` answers `undefined`, never `null`, when
+        // no element matches — a `=== null` check mistakes the miss
+        // for a hit.
         const openedAuthor = await w1Cx.eval(`(() => {
           const btn = [...document.querySelectorAll('button')]
             .find((b) => (b.getAttribute('aria-label') ?? '') === "open this author's posts");
-          if (btn === null) return false;
+          if (!btn) return false;
           btn.click();
           return true;
         })()`, true);
@@ -5907,10 +5949,13 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         const id = c.getAttribute('data-post-id');
         if (!cached.has(id)) continue;
         if (rRoots.has(id)) continue;
+        // .find answers undefined on a miss, never null — a truthy
+        // check reads the miss without stranding the press on an
+        // absent button.
         const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-        if (likeBtn !== null) { found = { id, btn: likeBtn }; break; }
+        if (likeBtn) { found = { id, btn: likeBtn }; break; }
       }
-      if (found === null) return { ok: false, reason: 'no non-R cached card with the like word' };
+      if (!found) return { ok: false, reason: 'no non-R cached card with the like word' };
       found.btn.click();
       return { ok: true, id: found.id };
     })()`, true);
@@ -6129,15 +6174,21 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     w1Page = null;
   }
 
-  // ----- W4 — a fresh page under `down` on both relays: two likes pressed
-  // from cached cards; then R's karma box is replaced on the chain by a
-  // withdraw the harness builds and submits through the node's HTTP write
-  // path, signed with Node's crypto over the shared `computeTxId`. Both
-  // relays are then set `honest`: the flush's first like is refused by the
-  // node (the input box the client selected is no longer held), and the
-  // second ends unsent — *not sent: the one before it was refused.*
-  // (WEB_INTERFACE → The wallet → "A refusal ends what it strands") —
-  // with no POST for it going out.
+  // ----- W4 — a fresh page under `down` on both relays: two root posts
+  // from the composer, each waiting on no node answer. The second post's
+  // builder spends the first's change (WEB_INTERFACE → The wallet →
+  // "The reader's spends run one at a time, per ledger"; → "The waiting
+  // view"), so the two writes form one chain on the rep queue. Then R's
+  // karma box is replaced on the chain by a withdraw the harness builds
+  // and submits through the node's HTTP write path, signed with Node's
+  // crypto over the shared `computeTxId`. Both relays are set `honest`:
+  // the flush's first post is refused by the node (the input box the
+  // builder selected is no longer held) and its pending card's stage
+  // line reads the rejection, and the second post is stranded with its
+  // stage line reading *not sent: the one before it was refused.* with
+  // no POST going out for it (WEB_INTERFACE → The wallet → "A refusal
+  // ends what it strands"; `app.ts` `applyRejectedOutcome` sets the
+  // submission's reason and the pending card's stage line reads it).
   let w4Page = null;
   try {
     setBothRelayModes('down');
@@ -6147,88 +6198,67 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const w4Cx = w4Page.cx;
     try {
       await w4Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W4', 30000);
-      // Two targets R has not liked — cards that carry the `like` word,
-      // taken from anywhere in the page, not just the feed: a card
-      // renders no data-author (`src/view/card.ts`), so non-R is tested
-      // against `prepRRootIds`, and the picker's net is widened over
-      // `#feed` and any open pane. The feed alone may hold one non-R
-      // unliked root (step 4 liked the other); a thread opened on the
-      // W4 page draws its cached replies (the prep populated them),
-      // and non-R replies become targets too. The picker walks the
-      // cached non-R roots trying each thread until two likes stand
-      // or every root is tried.
-      const pickPressable = async () => w4Cx.eval(`(() => {
-        const rRoots = new Set(${JSON.stringify(prepRRootIds)});
-        const cards = [...document.querySelectorAll('.card[data-post-id]')];
-        const seen = new Set();
-        const pressable = [];
+      // Press one root post from the composer under `down`. The composer
+      // opens, the text is typed, post is pressed, the card falls under
+      // `.card.pending` with the composer-text in its body. Each
+      // lookup reports what it found so a red names the element.
+      const pressRootPost = async (content) => {
+        const opened = await w4Cx.eval(`(() => {
+          const b = document.querySelector('[data-composer-open="@feed"]');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`, true) === true;
+        if (!opened) return { opened: false };
+        const ready = await w4Cx.waitFor(
+          `document.querySelector('.composer textarea')`,
+          'composer opened W4', 15000,
+        ).then(() => true, () => false);
+        if (!ready) return { opened, ready: false };
+        const filled = await w4Cx.eval(`(() => {
+          const ta = document.querySelector('.composer textarea');
+          if (!ta) return false;
+          ta.value = ${JSON.stringify(content)};
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`, true) === true;
+        if (!filled) return { opened, ready, filled: false };
+        const enabled = await w4Cx.waitFor(
+          `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+          'composer post enabled W4', 30000,
+        ).then(() => true, () => false);
+        if (!enabled) return { opened, ready, filled, enabled: false };
+        const clicked = await w4Cx.eval(`(() => {
+          const b = document.querySelector('.composer .btn-primary');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`, true) === true;
+        return { opened, ready, filled, enabled, clicked };
+      };
+      const firstPostContent = 'ww-w4-first-post-' + Date.now();
+      const secondPostContent = 'ww-w4-second-post-' + Date.now();
+      const firstPress = await pressRootPost(firstPostContent);
+      await sleep(5000);
+      const secondPress = await pressRootPost(secondPostContent);
+      await sleep(5000);
+      // Both pending cards read 'waiting for a node' before the outside
+      // spend fires; a sanity read of the stage lines keyed by content.
+      const stageOf = (content) => w4Cx.eval(`(() => {
+        const cards = [...document.querySelectorAll('.card.pending')];
         for (const c of cards) {
-          const id = c.getAttribute('data-post-id');
-          if (id === null || seen.has(id)) continue;
-          if (rRoots.has(id)) continue;
-          const likeBtn = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-          if (likeBtn === null) continue;
-          seen.add(id);
-          pressable.push({ id });
+          if ((c.textContent ?? '').includes(${JSON.stringify(content)})) {
+            return c.querySelector('.stage span')?.textContent ?? null;
+          }
         }
-        return pressable;
+        return null;
       })()`);
-      let pressable = await pickPressable();
-      if (pressable.length < 2) {
-        // Try opening each cached root's thread in turn: the cache's
-        // replies draw beneath the pane's error line (the fallback for
-        // a thread the cache holds, under `down`). Break as soon as
-        // the picker reaches two.
-        const roots = await w4Cx.eval(`(() => {
-          const cached = new Set(${JSON.stringify(prepCachedIds)});
-          return [...document.querySelectorAll('#feed .card[data-post-id]')]
-            .map((c) => c.getAttribute('data-post-id'))
-            .filter((id) => id !== null && cached.has(id));
-        })()`);
-        for (const rootId of (roots ?? [])) {
-          try {
-            await w4Cx.eval(`(() => {
-              const c = document.querySelector('#feed [data-post-id="${rootId}"]');
-              const s = c?.querySelector('button.strip');
-              if (s === null || s === undefined) return false;
-              s.click();
-              return true;
-            })()`, true);
-          } catch {}
-          await sleep(2500);
-          pressable = await pickPressable();
-          if (pressable.length >= 2) break;
-        }
-      }
-      // Press each pick in one eval that re-finds the card and its `like`
-      // word under the id — the DOM may redraw between the picker and
-      // the press, so each click does its own lookup.
-      const pressLike = async (id) => w4Cx.eval(`(() => {
-        const c = document.querySelector('[data-post-id="${id}"]');
-        if (c === null) return false;
-        const b = [...c.querySelectorAll('button.word')].find((b) => (b.textContent ?? '').trim() === 'like');
-        if (b === null || b === undefined) return false;
-        b.click();
-        return true;
-      })()`, true);
-      let firstLikeId = null;
-      let firstPressed = false;
-      let secondLikeId = null;
-      let secondPressed = false;
-      if (pressable.length >= 1) {
-        firstLikeId = pressable[0].id;
-        firstPressed = await pressLike(firstLikeId) === true;
-        await sleep(2000);
-      }
-      if (pressable.length >= 2) {
-        secondLikeId = pressable[1].id;
-        secondPressed = await pressLike(secondLikeId) === true;
-        await sleep(2000);
-      }
-      // Replace R's karma box on the chain through the node's HTTP write
-      // path — the harness holds R's key — before the relays come back.
-      // The withdraw's answer is awaited for a few seconds, then the
-      // chain is polled until R's first karma box id changes.
+      const firstStageWaiting = await stageOf(firstPostContent);
+      const secondStageWaiting = await stageOf(secondPostContent);
+      // Replace R's karma box on the chain through the node's HTTP
+      // write path — the harness holds R's key — before the relays
+      // come back. The withdraw's answer is awaited, then the chain
+      // is polled until R's first karma box id changes.
       const preKarma = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json()).catch(() => null);
       const preFirstBoxId = (Array.isArray(preKarma?.boxes) ? preKarma.boxes[0]?.boxId : null) ?? null;
       const spent = await spendRKarmaBoxOutside();
@@ -6236,67 +6266,52 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       if (spent.ok && preFirstBoxId !== null) {
         replaced = await waitForRBoxReplaced(preFirstBoxId, 240000);
       }
-      // Both relays back to `honest`; the next corner tick on this page
-      // (or a press of the corner) is an answered read that fires the
-      // flush.
+      // Both relays back to `honest`; a press of the corner is an
+      // answered read that fires the flush.
       setBothRelayModes('honest');
       await pressCorner(w4Cx);
-      // Wait for the first flush outcome: either the first like's
-      // rejection shows in the feed as the card's report line, or the
-      // relay's log shows the forwarded POST /likes for the first like
-      // followed by none for the second. The App's `applyRejectedOutcome`
-      // writes "not sent: the one before it was refused." for a stranded
-      // ledger write, and the client never re-sends it.
+      // Poll for the first-post flush outcome: the forwarded POST /posts
+      // count, and both pending cards' stage lines. The App's
+      // `applyRejectedOutcome` for a post writes the rejection reason
+      // onto the submission and re-renders the pending card, so the
+      // `.stage` text replaces 'waiting for a node' with the reason.
       const bound = 180000;
       const t0 = Date.now();
-      let firstLikeForwarded = 0;
-      let secondLikeForwarded = 0;
-      let rejectionLine = null;
-      let strandedLine = null;
+      let firstPostForwarded = 0;
+      let firstStage = firstStageWaiting;
+      let secondStage = secondStageWaiting;
       while (Date.now() - t0 < bound) {
         const aNew = tipRelays.a.log.slice(w4LogAIdx);
         const bNew = tipRelays.b.log.slice(w4LogBIdx);
-        const merged = [...aNew, ...bNew]
+        const forwardedPosts = [...aNew, ...bNew]
           .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
-          .filter((e) => e.url === '/likes' || (e.url ?? '').startsWith('/likes?'));
-        // The first like's forward reaches the node; the node's answer is
-        // the rejection; the second like's forward never leaves (the
-        // write is stranded).
-        firstLikeForwarded = merged.length;
-        // A like's rejection lands in the report line of every list that
-        // holds the post (`src/app.ts` → `applyRejectedOutcome` →
-        // `setReportForPost`): the feed's `#feed > .report` when the
-        // feed holds it, and a column's `.region > .report` when a
-        // thread the post is in is in front. Not inside the card.
-        const reportLines = await w4Cx.eval(`(() => {
-          const feedRep = document.querySelector('#feed > .report')?.textContent ?? null;
-          const colReps = [...document.querySelectorAll('#panes .region > .report')].map((r) => r.textContent ?? null);
-          return { feed: feedRep, columns: colReps };
-        })()`).catch(() => ({ feed: null, columns: [] }));
-        const allReportTexts = [reportLines?.feed ?? null, ...(reportLines?.columns ?? [])]
-          .filter((s) => typeof s === 'string' && s.trim() !== '');
-        rejectionLine = allReportTexts.find((s) => s.includes('like rejected') || s.includes('not sent'))
-          ?? allReportTexts[0] ?? null;
-        strandedLine = allReportTexts.find((s) => s.includes('not sent: the one before it was refused')) ?? null;
-        if (firstLikeForwarded >= 1 && rejectionLine !== null && (secondLikeId === null || strandedLine !== null)) break;
+          .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
+        firstPostForwarded = forwardedPosts.length;
+        firstStage = await stageOf(firstPostContent);
+        secondStage = await stageOf(secondPostContent);
+        const firstMoved = typeof firstStage === 'string' && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
+        const secondStranded = typeof secondStage === 'string' && secondStage.includes('not sent: the one before it was refused');
+        if (firstPostForwarded >= 1 && firstMoved && secondStranded) break;
         await sleep(1500);
       }
-      // After the flush, assert the second like never forwards: the
-      // stranding rule drops it before any POST goes.
+      // After the flush, the second post never forwarded: the stranding
+      // rule drops it before any POST goes.
       await sleep(3000);
       const afterNewA = tipRelays.a.log.slice(w4LogAIdx);
       const afterNewB = tipRelays.b.log.slice(w4LogBIdx);
-      const allLikePosts = [...afterNewA, ...afterNewB]
+      const allPostPosts = [...afterNewA, ...afterNewB]
         .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
-        .filter((e) => e.url === '/likes' || (e.url ?? '').startsWith('/likes?'));
-      secondLikeForwarded = Math.max(0, allLikePosts.length - 1);
-      const strandedTextOk = secondLikeId === null
-        || (typeof strandedLine === 'string' && strandedLine.includes('not sent: the one before it was refused'));
-      const firstRefused = typeof rejectionLine === 'string' && rejectionLine.trim() !== '';
-      const twoPressed = firstPressed && secondPressed;
-      const w4Ok = spent.ok && replaced !== null && twoPressed && firstLikeForwarded >= 1 && firstRefused && strandedTextOk && secondLikeForwarded === 0;
+        .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
+      const secondPostForwarded = Math.max(0, allPostPosts.length - 1);
+      const firstRefused = typeof firstStage === 'string' && firstStage.trim() !== ''
+        && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
+      const strandedTextOk = typeof secondStage === 'string'
+        && secondStage.includes('not sent: the one before it was refused');
+      const twoPressed = firstPress?.clicked === true && secondPress?.clicked === true;
+      const w4Ok = spent.ok && replaced !== null && twoPressed
+        && firstPostForwarded >= 1 && firstRefused && strandedTextOk && secondPostForwarded === 0;
       record('W4', w4Ok,
-        `pressable cards=${pressable.length} (≥2 expected); first pressed=${firstPressed} (id=${(firstLikeId ?? '').slice(0, 8)}…), second pressed=${secondPressed} (id=${(secondLikeId ?? '').slice(0, 8)}…); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first like forwarded POST count=${firstLikeForwarded} (≥1 expected); first like's rejection line=${JSON.stringify(rejectionLine)} (non-empty expected); second like forwarded POST count=${secondLikeForwarded} (0 expected — stranded); second like's stranding line=${JSON.stringify(strandedLine)} (expect 'not sent: the one before it was refused.')`);
+        `first post pressed=${JSON.stringify(firstPress)}; second post pressed=${JSON.stringify(secondPress)}; first stage while waiting=${JSON.stringify(firstStageWaiting)}, second stage while waiting=${JSON.stringify(secondStageWaiting)} (both expect 'waiting for a node'); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first post forwarded POST count=${firstPostForwarded} (≥1 expected); first post's stage after flush=${JSON.stringify(firstStage)} (non-empty rejection expected, not 'waiting for a node'); second post forwarded POST count=${secondPostForwarded} (0 expected — stranded); second post's stage after flush=${JSON.stringify(secondStage)} (expect 'not sent: the one before it was refused.')`);
     } finally {
       await closeBlockPage(w4Page);
     }
@@ -9142,6 +9157,71 @@ async function main() {
   const cx2 = await openSession(p2.webSocketDebuggerUrl);
   await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
 
+  // --waiting-only: iterate on the waiting-writes block alone. Steps 1
+  // and 2 brought up R's identity; everything between here and the
+  // waiting-writes block reads NOT RUN. 13-uncancelled and the mesh
+  // block also read NOT RUN (the flag ends after waiting-writes), and
+  // the [diag] line prints just before 13-uncancelled's NOT RUN.
+  if (WAITING_ONLY) {
+    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+      record(s, 'NOT RUN', '--waiting-only skips the earlier steps');
+    }
+    markVerifiedTipNotRun('--waiting-only skips the verified-tip block');
+    markVerifiedFiguresNotRun('--waiting-only skips the verified-figures block');
+    markVerifiedNamesNotRun('--waiting-only skips the verified-names block');
+    markLightNotRun('--waiting-only skips the light block');
+    markMeshNotRun('--waiting-only skips the mesh block');
+    const wBcx = await openBrowserSession();
+    try {
+      let wPage = await findExt('index.html');
+      if (!wPage) throw new Error('--waiting-only: no extension page');
+      const wCx = await openSession(wPage.webSocketDebuggerUrl);
+      try { await waitingWritesSteps(wCx, wBcx, wPage.id); } finally { try { wCx.s.close(); } catch {} }
+      // The liveness diagnostic — the same line a full run prints
+      // before 13-uncancelled runs; a --waiting-only run ends after it.
+      try {
+        const liveList = await jsonList();
+        const probes = [];
+        for (const t of liveList) {
+          const url = (t.url ?? '').slice(0, 80);
+          const entry = { type: t.type ?? '?', url };
+          if (!t.webSocketDebuggerUrl) { entry.live = 'no-ws'; probes.push(entry); continue; }
+          let probeSock = null;
+          try {
+            probeSock = new WebSocket(t.webSocketDebuggerUrl);
+            await new Promise((res, rej) => {
+              probeSock.onopen = res;
+              probeSock.onerror = rej;
+              setTimeout(() => rej(new Error('open timeout')), 2000);
+            });
+            let nextId = 0;
+            const pending = new Map();
+            probeSock.onmessage = (ev) => {
+              const m = JSON.parse(ev.data);
+              if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+            };
+            const probeCall = (method, params = {}) => new Promise((res, rej) => {
+              const id = ++nextId;
+              const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+              pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+              probeSock.send(JSON.stringify({ id, method, params }));
+            });
+            const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+            entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
+          } catch { entry.live = 'hung'; } finally { try { probeSock?.close(); } catch {} }
+          probes.push(entry);
+        }
+        console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
+      } catch (e) {
+        console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
+      }
+      record('13-uncancelled', 'NOT RUN', '--waiting-only skips the browser-context arm');
+    } finally {
+      try { wBcx.s.close(); } catch {}
+    }
+    return;
+  }
+
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
@@ -10468,6 +10548,60 @@ async function main() {
   // fresh-page openings sit after it.
   await runVerifiedBlocks(bcx, { skipMesh: true });
 
+  // ------- Liveness diagnostic — for every target `/json/list` reports
+  // (page, service_worker, worker, browser), name its type, the first 80
+  // chars of its URL, and whether `Runtime.evaluate('1+1')` on a fresh
+  // CDP session answers within 3 s: `live`, `hung`, or `no-ws`. Printed
+  // as one line; `13-uncancelled` reads from the same list and the diag
+  // names each page's state at the moment just before it runs, so main
+  // can tell a hung page (a product defect) from a harness one. The
+  // probe opens no permanent state — each session is closed after its
+  // probe, and `13-uncancelled` opens its own.
+  try {
+    const liveList = await jsonList();
+    const probes = [];
+    for (const t of liveList) {
+      const url = (t.url ?? '').slice(0, 80);
+      const entry = { type: t.type ?? '?', url };
+      if (!t.webSocketDebuggerUrl) {
+        entry.live = 'no-ws';
+        probes.push(entry);
+        continue;
+      }
+      let probeSock = null;
+      try {
+        probeSock = new WebSocket(t.webSocketDebuggerUrl);
+        await new Promise((res, rej) => {
+          probeSock.onopen = res;
+          probeSock.onerror = rej;
+          setTimeout(() => rej(new Error('open timeout')), 2000);
+        });
+        let nextId = 0;
+        const pending = new Map();
+        probeSock.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+        };
+        const probeCall = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nextId;
+          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          probeSock.send(JSON.stringify({ id, method, params }));
+        });
+        const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+        entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
+      } catch {
+        entry.live = 'hung';
+      } finally {
+        try { probeSock?.close(); } catch {}
+      }
+      probes.push(entry);
+    }
+    console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
+  } catch (e) {
+    console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
+  }
+
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
   // `Target.createBrowserContext` context (per `--load-extension`'s default
@@ -10577,9 +10711,15 @@ async function teardownLightRelays() {
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
-  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) return;
+  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY)) return;
+  // The verified blocks run RLB in front of B; under --waiting-only B is
+  // not needed, so RLB's upstream is A too. The seed list the extension
+  // was built with still names both bases, and the client reads both —
+  // every read reaches A either way, and the corner's tip run can
+  // verify with two nodes answering the same chain.
+  const rlbUpstream = WAITING_ONLY ? NODE.replace(/\/+$/, '') : B_ORIGIN;
   const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
-  const rlb = await startTipRelay(B_ORIGIN, RLB_PORT);
+  const rlb = await startTipRelay(rlbUpstream, RLB_PORT);
   tipRelays.a = rla;
   tipRelays.b = rlb;
   console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);
