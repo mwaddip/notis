@@ -1739,11 +1739,6 @@ stands behind and its held stake, whether it holds a name — and the waiting vi
 node's answer of the view reads that answer, and a press there waits as any flow does (→ "A write no node answers
 waits"). The web build keeps no waiting view: its controls read the node's answer alone.
 
-> ⚠ **AHEAD OF CODE (2026-11-07).** `withdraw` and the `send` row on a page no node answers, the `your vouch` row's `—`
-> before a rep view is read (→ The author window), and `withdraw`'s title with no view (→ The withdraw control); until
-> then `withdraw` renders disabled with *"… this key has none"* and the `send` row stays hidden there, the composer alone
-> reads the waiting view, and the `your vouch` row reads *"vouching comes with membership"* before any read.
-
 **The waiting store keeps every waiting write as a record of its own**, per identity — `notis.waiting.<pubKeyHex>.…`
 in `localStorage` — never one list rewritten whole, so no page's write drops another's; a flow builds on the view and
 records its write under one lock per identity (`navigator.locks`), so two pages build in turn, the second on the
