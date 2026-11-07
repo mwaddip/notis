@@ -97,5 +97,6 @@ export function resetForTests(): void {
   powVerificationsTotal = 0;
   powVerificationFailuresTotal = 0;
   httpRequestsTotal = 0;
+  postBodiesPulledTotal = 0;
   relayedTxsInputMissingTotal = 0;
 }
