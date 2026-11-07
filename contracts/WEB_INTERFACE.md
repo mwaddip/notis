@@ -479,7 +479,8 @@ nodes answering; and two nodes under one operator and one DNS zone answer for on
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
 `genesisId` where one is pinned (`NIPOPOW_INTERFACE → verifyProof`), the tool's `genesisHash` for that proof. It is
 non-null whenever the client's chain is seated, under `verified` and under `thin` alike: naming a chain takes a proof that verifies,
-not a second witness. It names the post cache (→ "The post cache") and nothing else reads it.
+not a second witness. It names the post cache (→ "The post cache") and the waiting view
+(→ The wallet → "The waiting view"), and nothing else reads it.
 
 **The verified figures.** The extension proves what a node lists for the loaded key — the node the client routes the
 run to, which answers each of its reads — **the plain
@@ -1635,7 +1636,9 @@ its line the spend's own *… not sent:* and the floor's sentence, *vouch not se
 *invite not sent: …*, *burn not sent: …*; a post the rule refuses is a client refusal (→ "Nothing retries"), the
 composer's *not enough rep to post right now.* **What a surface offers reads the number the `rep` row shows** (→ The profile window): the
 composer's `post` (→ Invariants → "Affordability is known before the attempt"), the invite form and its bond's
-maximum (→ The profile window), `burn` (→ The username row), the `your vouch` row (→ The author window). **`like`
+maximum (→ The profile window), `burn` (→ The username row), the `your vouch` row (→ The author window) — in the
+extension, `post` reads the waiting view where the composer's read gets no answer (→ "A page no node answers offers
+what can wait"). **`like`
 stays live at the floor**: a press the row's number refuses answers *like not sent: the last N rep is for posting.*
 in the report line a like's rejection takes, `N` being `KARMA_MINIMUM`, and moves no count; a press it admits
 takes its overlay at once, and a refusal from the flow's own read undoes the overlay with the same line. *The last N
@@ -1722,6 +1725,24 @@ outputs declare the view's height, never above a height a node answered, so no o
 not reached. **A flow with no waiting view ends as a transport failure** — there is nothing on this browser to build
 from. **The view and every waiting write carry the chain's name** (→ The extension → "The chain's name"), and a view of
 another chain answers nothing.
+
+**A page no node answers offers what can wait.** In the extension, a control drawn from the reader's own view —
+`/karma?pending=1` for rep, `/credits?pending=1` for credits — reads the waiting view of the chain the client names
+(→ "The waiting view") where the page's read of that view has ended with no answer and the page holds no node's answer
+of it: `withdraw`, enabled while the waiting rep view holds a box (→ The withdraw control); the `send` row, standing
+while the waiting credits view holds a box (→ The wallet window). The composer's `post` reads it where its own read at
+the open gets no answer (→ Invariants → "Affordability is known before the attempt"). With no waiting view each reads
+as on any failed read. **The rows read `—`**: the `rep` row and the `balance` row show a node's answer, never the client's (→ The
+profile window → "The `rep` row is the rep view's `effective` alone"). **The invite form, `vouch` and `claim` are not
+offered there**: each reads what only a node answers — the key's membership and the invites it has, the vouches it
+stands behind and its held stake, whether it holds a name — and the waiting view holds none of it. A page holding a
+node's answer of the view reads that answer, and a press there waits as any flow does (→ "A write no node answers
+waits"). The web build keeps no waiting view: its controls read the node's answer alone.
+
+> ⚠ **AHEAD OF CODE (2026-11-07).** `withdraw` and the `send` row on a page no node answers, the `your vouch` row's `—`
+> before a rep view is read (→ The author window), and `withdraw`'s title with no view (→ The withdraw control); until
+> then `withdraw` renders disabled with *"… this key has none"* and the `send` row stays hidden there, the composer alone
+> reads the waiting view, and the `your vouch` row reads *"vouching comes with membership"* before any read.
 
 **The waiting store keeps every waiting write as a record of its own**, per identity — `notis.waiting.<pubKeyHex>.…`
 in `localStorage` — never one list rewritten whole, so no page's write drops another's; a flow builds on the view and
@@ -1948,7 +1969,9 @@ the credits view's spendable sum in every state; a balance every box of which pr
 listing's spendable sum, reads exactly as it reads on the web.
 
 **The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
-line, *sent* — so a send of the whole balance still reads its ending. The
+line, *sent* — so a send of the whole balance still reads its ending; in the extension on a page no node answers, a
+box of the waiting credits view, the balance reading `—` above it (→ The wallet → "A page no node answers offers what
+can wait"). The
 send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — on a line
 of its own, and beneath it the amount in $NOTIS beside the boxed `send` on one line — a short field, since an amount is
 never long, and the box the primary action's, green as `new post` is (`HOUSE_STYLE → Interaction`). **An identity input takes a key or a handle, and a handle is resolved at
@@ -2192,7 +2215,9 @@ re-renders the row to `vouch` and says so — *"that vouch was already withdrawn
 happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
 vouch, one line each: *"vouching comes with membership"*, *"your stake from an unvouch is held until
 block N"*, *"this is you"*, and while the rep view's `effective` is under `VOUCH_MIN_BALANCE` *"the last N rep is for
-posting"*, `N` being `KARMA_MINIMUM` (→ The wallet → "The floor is the client's to know"). With no identity loaded the window is the
+posting"*, `N` being `KARMA_MINIMUM` (→ The wallet → "The floor is the client's to know"). While no rep view has
+been read, the row on another key's window reads `—` and offers no action: membership is the view's to answer, so no
+reason that reads it stands before it does (→ The wallet → "A page no node answers offers what can wait"). With no identity loaded the window is the
 read surface exactly — key, name, endorsers, posts, and no `your vouch` row.
 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
@@ -2222,7 +2247,9 @@ withdrawn state).
 **The client withholds one gate: a key with no rep box cannot sign a withdrawal.** The transaction
 spends and returns one karma box, so with an empty spendable view the button renders disabled with the
 reason as its `title` — *"needs one rep box to sign with; this key has none"* (`HOUSE_STYLE →
-Interaction`). The maturity bind, liveness and authorship are the node's to refuse.
+Interaction`); in the extension on a page no node answers, the view is the waiting rep view (→ The wallet → "A page no
+node answers offers what can wait"). With no view read, and none waiting, its `title` is *"can't read your rep right
+now"*. The maturity bind, liveness and authorship are the node's to refuse.
 
 **The flight runs in the slot.** The second press replaces the `withdraw` button with the stage line —
 `submitting…`, then `submitted`, the like count staying beside it — and the ledger holds a `withdraw` entry:
