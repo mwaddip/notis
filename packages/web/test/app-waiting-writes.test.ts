@@ -522,6 +522,34 @@ describe('a waiting post is drawn as pending across a reload', () => {
     expect(subs[0]!.stage).toBe('waiting');
   });
 
+  it('a waiting post drawn after a reload stands once while the listing fails', async () => {
+    const h1 = harness({ rememberChain: CHAIN });
+    await resolveTipRunVerified(h1);
+    primeBases(h1);
+    h1.setReadsNoAnswer(true);
+    h1.drive.openComposer(null);
+    await h1.drive.submitComposer(null, 'a thread');
+    await flush();
+    const waiting1 = h1.drive.ledger.all().find((e) => e.waiting === true)!;
+    const postId = waiting1.postId!;
+    // A fresh App over the same localStorage: the submission is hydrated as
+    // waiting, and the cache's roots carry the same post (its onCachePost
+    // ran at the wait in h1). The feed's first page fails, the cache draws,
+    // and the card must stand once — the submission's card alone.
+    document.body.innerHTML = '';
+    const h2 = harness({ rememberChain: CHAIN });
+    const row = confirmedPost(postId, PUB);
+    const held: HeldPost = { row, author: PUB, parent: null };
+    const cache = (h2.app as unknown as { postCache: PostCache }).postCache;
+    cache.roots = async (): Promise<HeldPost[]> => [held];
+    h2.setReadsNoAnswer(true);
+    await resolveTipRunVerified(h2);
+    await h2.drive.loadFeed();
+    await flush();
+    const cards = document.querySelectorAll(`.card[data-post-id="${postId}"]`);
+    expect(cards).toHaveLength(1);
+  });
+
   it('the drawn card goes on as submitted when the send pass sends it', async () => {
     const h1 = harness({ rememberChain: CHAIN });
     await resolveTipRunVerified(h1);

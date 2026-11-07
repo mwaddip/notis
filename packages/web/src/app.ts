@@ -2174,14 +2174,18 @@ export class App {
 
   /** Read the post cache's roots for a failed feed first page; write them
    *  through the feed's own row path, under the same generation guard the
-   *  fetch used (WEB_INTERFACE → The extension → "A failed listing draws
-   *  the cache"). `liveRows` filters a withdrawn entry and a row whose
-   *  withdrawal the client saw land (→ Reading the feed and threads → "A
-   *  withdrawal the client has seen land is final on every write of rows"),
-   *  and `keeper` keeps a like that landed since the read began; `next` is
-   *  `null` — no page beyond the cache; nothing is asked of a node for the
-   *  rows. A read with no cache or one the cache does not hold is nothing —
-   *  the failed read's error line stands. */
+   *  fetch used (WEB_INTERFACE → The extension → "The post cache" →
+   *  "A failed listing draws the cache"). `liveRows` filters a withdrawn
+   *  entry and a row whose withdrawal the client saw land (→ Reading the
+   *  feed and threads → "A withdrawal the client has seen land is final on
+   *  every write of rows"); a row whose id a standing submission card holds
+   *  is dropped as the node's pending rows are (`standingCardIds`), so the
+   *  reader's own waiting post is not drawn twice after a reload — once
+   *  from its submission, once from its own entry in the cache. `keeper`
+   *  keeps a like that landed since the read began; `next` is `null` — no
+   *  page beyond the cache; nothing is asked of a node for the rows. A read
+   *  with no cache or one the cache does not hold is nothing — the failed
+   *  read's error line stands. */
   private async applyCachedRoots(feed: FeedState, gen: number, since: number): Promise<void> {
     if (this.postCache === null) return;
     let held: HeldPost[];
@@ -2192,7 +2196,8 @@ export class App {
     }
     if (gen !== this.readerGen) return;
     if (held.length === 0) return;
-    const rows = held.map((h) => h.row);
+    const standing = this.standingCardIds();
+    const rows = held.map((h) => h.row).filter((r) => !standing.has(r.id));
     feed.posts = this.liveRows(rows).map(this.keeper(feed.posts, since));
     feed.next = null;
     this.indexRows(rows);
@@ -4178,8 +4183,10 @@ export class App {
   /** Read the post cache's entries for an author whose first page failed;
    *  write them through the author window's own row path, under the same
    *  generation guard the fetch used (WEB_INTERFACE → The extension →
-   *  "A failed listing draws the cache"). Same filtering and `next: null`
-   *  rules as `applyCachedRoots`. */
+   *  "The post cache" → "A failed listing draws the cache"). Same
+   *  filtering and `next: null` rules as `applyCachedRoots` — including
+   *  dropping rows whose id a standing submission card holds, so the
+   *  reader's own waiting post is not drawn twice. */
   private async applyCachedAuthor(f: FeedState, key: string, gen: number, since: number): Promise<void> {
     if (this.postCache === null) return;
     let held: HeldPost[];
@@ -4190,7 +4197,8 @@ export class App {
     }
     if (gen !== this.readerGen) return;
     if (held.length === 0) return;
-    const rows = held.map((h) => h.row);
+    const standing = this.standingCardIds();
+    const rows = held.map((h) => h.row).filter((r) => !standing.has(r.id));
     f.posts = this.liveRows(rows).map(this.keeper(f.posts, since));
     f.next = null;
     this.indexRows(rows);
