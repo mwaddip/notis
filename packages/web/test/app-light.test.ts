@@ -398,6 +398,7 @@ describe('an answer that lands between a read\'s cache read and its write', () =
     let heldRelease: (() => void) | null = null;
     const cache: PostCache = {
       open: realCache.open.bind(realCache),
+      openRemembered: realCache.openRemembered.bind(realCache),
       put: realCache.put.bind(realCache),
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
@@ -666,6 +667,7 @@ describe('load older appends slots and resolves them', () => {
     let heldRelease: (() => void) | null = null;
     const cache: PostCache = {
       open: realCache.open.bind(realCache),
+      openRemembered: realCache.openRemembered.bind(realCache),
       put: realCache.put.bind(realCache),
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
@@ -726,6 +728,7 @@ describe('load older appends slots and resolves them', () => {
     let heldRelease: (() => void) | null = null;
     const cache: PostCache = {
       open: realCache.open.bind(realCache),
+      openRemembered: realCache.openRemembered.bind(realCache),
       put: realCache.put.bind(realCache),
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),
@@ -974,6 +977,7 @@ describe('no cache: rows are slots and fill from the resolver alone', () => {
     const la = light('a');
     const rejecting: PostCache = {
       open: async () => {},
+      openRemembered: async () => {},
       put: async () => {},
       withdraw: async () => {},
       thread: async () => null,

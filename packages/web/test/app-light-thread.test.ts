@@ -436,6 +436,7 @@ describe('threadMore appends slots and resolves them', () => {
     let heldRelease: (() => void) | null = null;
     const cache: PostCache = {
       open: realCache.open.bind(realCache),
+      openRemembered: realCache.openRemembered.bind(realCache),
       put: realCache.put.bind(realCache),
       withdraw: realCache.withdraw.bind(realCache),
       thread: realCache.thread.bind(realCache),

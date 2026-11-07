@@ -5547,25 +5547,25 @@ async function runNamesStep30(rName) {
 // shell's seed list reaches each at its api base alone — and switches both
 // relays' modes between steps the same way the verified blocks do.
 //
-//   W1 — the verified-tip block's 19c and 19b seated D's chain in the post
-//        cache (WEB_INTERFACE → The extension → "The post cache" — "One
-//        chain's database at a time": opening another closes every
-//        previous), so the block first re-reads A's chain with both relays
-//        `honest` and D gone: a fresh page whose corner settles on A's
-//        tip and whose `localStorage['notis.posts.chain']` has moved to
-//        A's block-1 hash (the App's `postCache.open(chain)` writes it
-//        from a tip run naming the chain) and whose
-//        `indexedDB.databases()` lists A's database. Without this wait
-//        the reload re-opens the previously-remembered database and
-//        A's never fills; a timeout names the chain the page still
-//        held and ends W1 FAIL before `down` is set. The page is then
-//        reloaded — with A's database open from the start, the
-//        reload's feed reads check every bound row and the puts land.
-//        A's `notis.posts.<A>` `entries` store is counted until it is
-//        at least three. A strip-press on a cached non-R root then
-//        opens one thread so its reads of the subject and its
-//        descendants write into the cache too, widening W4's set of
-//        non-R cards R has not liked. The page is then closed. Then a
+//   W1 — the prep seats a 64-hex chain name that is not A's and not any
+//        chain the run uses in the extension's
+//        `localStorage['notis.posts.chain']` through the main() page, so
+//        the prep page's `postCache.openRemembered()` opens that name's
+//        database at load (WEB_INTERFACE → The extension → "A post
+//        checked before any tip run names a chain is kept until one does").
+//        With both relays `honest` and D gone, the prep page's corner
+//        settles on A's tip and `postCache.open(chain)` names A — the
+//        foreign name's database is deleted and the kept entries the
+//        feed's first reads made replay into A's. The prep waits for
+//        `localStorage['notis.posts.chain']` to hold A's block-1 hash
+//        and `indexedDB.databases()` to list A's database; a timeout
+//        names the chain the page still held and ends W1 FAIL before
+//        `down` is set. A's `notis.posts.<A>` `entries` store is then
+//        counted on the same page, polled until it is at least three.
+//        A strip-press on a cached non-R root then opens one thread so
+//        its reads of the subject and its descendants write into the
+//        cache too, widening W4's set of non-R cards R has not liked.
+//        The page is then closed. Then a
 //        second fresh page under `down` on both relays: the feed and
 //        R's author-posts window each read a transport failure on
 //        their first page; the cache fallback draws the roots the
@@ -5780,29 +5780,27 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   };
 
   try {
-  // ----- Preparation — the verified-tip block's 19c and 19b seated D's
-  // chain (WEB_INTERFACE → The extension → "The post cache" — "One chain's
-  // database at a time": opening another closes every previous), so the
-  // remembered chain is D's and its cache is empty. With both tip relays
-  // honest and D gone (the verified-tip block's cleanup stops it), open a
-  // fresh page and let the tip run re-seat A's chain — the chain's name is
-  // non-null under `verified` and under `thin` alike, "naming a chain
-  // takes a proof that verifies, not a second witness" (→ "The chain's
-  // name"), so the seat lands whether the second relay's upstream answers
-  // or not. **A page's puts land only in the database open at load**: the
-  // rows the initial feed read checked write to D's database and the seat
-  // on A then deletes that database, and a `↻` is a re-read of the same
-  // listing whose posts the App already holds — so the re-read checks
-  // nothing and puts nothing. **A reload fills A's cache at once**: with
-  // the remembered chain's database open from the start, the reload's
-  // feed reads check every bound row and the puts land. After the reload
-  // A's `notis.posts.<A>` `entries` store (`src/extension/post-cache.ts`,
-  // `STORE = 'entries'`) is counted from the page and polled until it is
-  // at least three. Less than three at the bound records W1 FAIL before
-  // `down` is set. A strip-press on a cached non-R root then opens one
-  // thread: its reads of the subject and its descendants write into the
-  // cache beside the feed, widening W4's set of non-R cards R has not
-  // liked.
+  // ----- Preparation — a 64-hex chain name that is not A's block-1 hash
+  // and not any chain the run uses is seated in the extension's
+  // `localStorage['notis.posts.chain']` through the main() page, so the
+  // prep page's `postCache.openRemembered()` opens that name's database
+  // at load (WEB_INTERFACE → The extension →
+  // "A post checked before any tip run names a chain is kept until one does").
+  // With both tip relays honest and D gone (the verified-tip block's
+  // cleanup stops it), the prep page's tip run names A — the chain's
+  // name is non-null under `verified` and under `thin` alike, "naming a
+  // chain takes a proof that verifies, not a second witness"
+  // (→ "The chain's name"), so the seat lands whether the second relay's
+  // upstream answers or not. The puts the feed's first reads made before
+  // the tip run named A are kept in memory by the module, and
+  // `postCache.open(chain)` replays them into A's database as it deletes
+  // the foreign name's. A's `notis.posts.<A>` `entries` store
+  // (`src/extension/post-cache.ts`, `STORE = 'entries'`) is then counted
+  // on the same page, polled until it is at least three; less than three
+  // at the bound records W1 FAIL before `down` is set. A strip-press on
+  // a cached non-R root then opens one thread: its reads of the subject
+  // and its descendants write into the cache beside the feed, widening
+  // W4's set of non-R cards R has not liked.
   setBothRelayModes('honest');
   const prepDGone = (await currentHeight(D_ORIGIN)) === null;
   const prepABlock1 = await block1HashOn(NODE);
@@ -5811,6 +5809,13 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     : null;
   const prepCachedTarget = 3;
   const prepCachedBoundMs = 60000;
+  // A 64-hex name that is not A's block-1 hash and not any chain the run
+  // uses — the foreign remembered chain name the prep seats. The prep
+  // page's `openRemembered` opens its database, every put a cold feed
+  // makes is kept in memory beside its write to that database, and the
+  // first tip run's `open(A)` replays the kept entries into A's and
+  // deletes this one.
+  const PREP_UNUSED_REMEMBERED_CHAIN = 'deadbeef'.repeat(8);
   // R's root post ids on the node, read for the prep's intersection with
   // the cache and for W1's author-window press (a card renders no
   // data-author; R's root is picked by id).
@@ -5821,12 +5826,27 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     const rows = Array.isArray(j?.posts) ? j.posts : [];
     prepRRootIds = rows.map((p) => (typeof p?.id === 'string' ? p.id : null)).filter((id) => id !== null);
   } catch {}
+  // Seat the foreign chain name in the extension's localStorage from the
+  // already-open main() page, so the prep page's `openRemembered` reads
+  // it at load.
+  let prepForeignSet = false;
+  let prepForeignReadBack = null;
+  let prepForeignError = null;
+  try {
+    prepForeignReadBack = await cx.eval(`(() => {
+      try {
+        localStorage.setItem('notis.posts.chain', ${JSON.stringify(PREP_UNUSED_REMEMBERED_CHAIN)});
+        return localStorage.getItem('notis.posts.chain');
+      } catch (e) { return null; }
+    })()`);
+    prepForeignSet = prepForeignReadBack === PREP_UNUSED_REMEMBERED_CHAIN;
+  } catch (e) {
+    prepForeignError = e?.stack ?? String(e);
+  }
   let prepChainDb = null;
   let prepChainHeld = null;
   let prepChainMoveTimedOut = false;
   let prepCornerTitle = null;
-  let prepReloaded = false;
-  let prepCornerAfterReload = null;
   let prepCached = 0;
   let prepCachedIds = [];
   let prepRCachedRootIds = [];
@@ -5836,7 +5856,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   let prepPage = null;
   try {
     prepPage = trackPage(await openFreshExtensionPage(bcx));
-    let pCx = prepPage.cx;
+    const pCx = prepPage.cx;
     await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root prep', 30000);
     // Wait for the corner's tip run to settle — the title names a tip once
     // the client's chain is seated. Either shape is acceptable: step 17's
@@ -5851,14 +5871,11 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       90000,
     );
     prepCornerTitle = reached.last?.title ?? null;
-    // Wait for the page to move to A's database before the reload: the
-    // App writes `localStorage['notis.posts.chain']` from
-    // `postCache.open(chain)` only once a tip run names the chain, and
-    // `indexedDB.databases()` lists A's database only once the open
-    // completes. A reload before this re-opens the previously-remembered
-    // database (D's, from the verified-tip block), so A's never fills.
-    // A timeout names the chain the page still held and ends W1 FAIL
-    // before `down` is set.
+    // Wait for the page to move to A's database: the App writes
+    // `localStorage['notis.posts.chain']` from `postCache.open(chain)`
+    // only once a tip run names the chain, and `indexedDB.databases()`
+    // lists A's database only once the open completes. A timeout names
+    // the chain the page still held and ends W1 FAIL before `down` is set.
     const chainMoveBoundMs = 60000;
     const chainMovedStart = Date.now();
     let chainMoveSnap = { remembered: null, lists: [] };
@@ -5888,35 +5905,14 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     prepChainHeld = chainMoveSnap?.remembered ?? null;
     if (!chainMoved) {
       prepChainMoveTimedOut = true;
-      // Skip the reload and the count: without the chain move, the
-      // reload re-opens the previously-remembered database and the
-      // count stays zero. prepDetail names the chain the page held,
-      // and `prepCached < prepCachedTarget` records W1 FAIL with it.
+      // Skip the count: without the chain move, the kept entries have
+      // not been replayed and the count stays zero. prepDetail names
+      // the chain the page held, and `prepCached < prepCachedTarget`
+      // records W1 FAIL with it.
     } else {
-    // Reload the page: with A's database open from the start, the
-    // reload's feed reads check every bound row and the puts land.
-    // The target id stays the same across Page.reload; narrow findExt
-    // to it so a bare match in /json/list cannot return another page.
-    await pCx.call('Page.reload');
-    await sleep(3500);
-    const reloadedList = await jsonList();
-    const reloadedPage = reloadedList.find((t) => t.id === prepPage.targetId) ?? null;
-    if (reloadedPage?.webSocketDebuggerUrl) {
-      try { pCx.s.close(); } catch {}
-      pCx = await openSession(reloadedPage.webSocketDebuggerUrl);
-      prepPage.cx = pCx;
-    }
-    prepReloaded = true;
-    await pCx.waitFor(`!!document.querySelector('.corner')`, 'corner after reload', 30000);
-    await pCx.waitFor(`!!document.querySelector('#feed')`, 'feed root after reload', 30000);
-    await pCx.waitFor(
-      `document.querySelectorAll('#feed .card[data-post-id]').length >= 1`,
-      'feed cards after reload', 60000,
-    ).catch(() => {});
-    prepCornerAfterReload = (await readCorner(pCx))?.title ?? null;
-    // Count entries in A's `notis.posts.<chain>` database from the page
-    // — the one source that answers whether a row stands. Poll under a
-    // bound until it is at least `prepCachedTarget`.
+    // Count entries in A's `notis.posts.<chain>` database on the prep
+    // page — the one source that answers whether a row stands. Poll
+    // under a bound until it is at least `prepCachedTarget`.
     if (prepChainDb !== null) {
       const t0 = Date.now();
       while (Date.now() - t0 < prepCachedBoundMs) {
@@ -6059,7 +6055,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   const prepPostNamed = prepPostResult.ok === true
     ? (prepPostResult.postId ?? 'ok')
     : (prepPostResult.reason ?? 'unknown');
-  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepDetail = `prep: d-gone=${prepDGone}, foreign-set=${prepForeignSet} (read-back=${JSON.stringify(prepForeignReadBack)}), corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepForeignError !== null ? `, foreign-error=${JSON.stringify(prepForeignError)}` : ''}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {

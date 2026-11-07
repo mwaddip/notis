@@ -757,3 +757,254 @@ describe('post-cache — roots and byAuthor', () => {
     expect(await cache.byAuthor('aa'.repeat(32), 10)).toEqual([]);
   });
 });
+
+// WEB_INTERFACE → The extension → "A post checked before any tip run names a
+// chain is kept until one does": where the browser gives the page IndexedDB,
+// the module keeps each such entry in memory — within `POST_CACHE_BYTES`, by
+// the eviction rule — beside its write to the database the remembered name
+// opened, where one did; a withdrawal or a refresh in that time moves the
+// kept entry as it moves a stored one, and while no database is open every
+// read answers the kept entries. The first tip run that names a chain writes
+// them into that chain's database, the remembered chain's or another's, and
+// the module keeps none after.
+
+/** Call `openRemembered` on a cache that does not expose it yet — the method
+ *  is the rule's addition. The cast fails at runtime against a module that
+ *  carries no such method. */
+function openRemembered(cache: ReturnType<typeof createPostCache>): Promise<void> {
+  return (cache as unknown as { openRemembered(): Promise<void> }).openRemembered();
+}
+
+describe("post-cache — a post checked before any tip run names a chain is kept until one does", () => {
+  it("a first session: no remembered name; a put answers getMany before any open, and open('X') writes the entry into X with the meta total equal to the sum of the stored entries' sizes", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    const r = row('r');
+    await cache.put({ id: r.id, txBytes: new Uint8Array([1, 2, 3]), row: r, author: r.author, parent: null, own: false });
+    const got = await cache.getMany([r.id]);
+    expect(got.size).toBe(1);
+    expect(got.get(r.id)!.author).toBe(r.author);
+    await cache.open('X');
+    const other = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await other.open('X');
+    expect(await other.thread(r.id)).not.toBeNull();
+    const metaTotal = await readMetaTotal(idb, 'X');
+    const storedSum = await sumStoredSizes(idb, 'X');
+    expect(metaTotal).toBe(storedSum);
+    expect(metaTotal).toBeGreaterThan(0);
+  });
+
+  it("a chain change: remembered 'A' holds an entry; openRemembered opens A; a put of P; open('B'): a second cache on B holds P and not A's entry, and databases() lists no notis.posts.A", async () => {
+    const idb = new IDBFactory();
+    const lsA = fakeLs();
+    const c = clock();
+    // Seed A: a seeding cache opens A and puts an entry; the chain is
+    // remembered in lsA. The seeding cache's connection closes on
+    // versionchange when another cache deletes A later.
+    const seeder = createPostCache({ indexedDB: idb, localStorage: lsA, now: c.tick });
+    await seeder.open('A');
+    const aOld = row('aOld');
+    await seeder.put({ id: aOld.id, txBytes: new Uint8Array([9]), row: aOld, author: aOld.author, parent: null, own: false });
+    expect(lsA.map.get('notis.posts.chain')).toBe('A');
+    // The main cache shares the remembered-name ls and the factory.
+    const main = createPostCache({ indexedDB: idb, localStorage: lsA, now: c.tick });
+    await openRemembered(main);
+    const P = row('p');
+    await main.put({ id: P.id, txBytes: new Uint8Array([1, 2]), row: P, author: P.author, parent: null, own: false });
+    await main.open('B');
+    const names = (await idb.databases()).map((d) => d.name).sort();
+    expect(names).not.toContain('notis.posts.A');
+    expect(names).toContain('notis.posts.B');
+    const second = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await second.open('B');
+    const gotP = await second.getMany([P.id, aOld.id]);
+    expect(gotP.has(P.id)).toBe(true);
+    expect(gotP.has(aOld.id)).toBe(false);
+  });
+
+  it("the same chain: remembered 'X', openRemembered, a put of P, open('X') — exactly one entry for P and the meta total equals the sum of the stored entries' sizes", async () => {
+    const idb = new IDBFactory();
+    const lsX = fakeLs();
+    const c = clock();
+    const seeder = createPostCache({ indexedDB: idb, localStorage: lsX, now: c.tick });
+    await seeder.open('X');
+    expect(lsX.map.get('notis.posts.chain')).toBe('X');
+    const main = createPostCache({ indexedDB: idb, localStorage: lsX, now: c.tick });
+    await openRemembered(main);
+    const P = row('p');
+    await main.put({ id: P.id, txBytes: new Uint8Array([4, 5, 6]), row: P, author: P.author, parent: null, own: false });
+    await main.open('X');
+    const second = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await second.open('X');
+    const got = await second.getMany([P.id]);
+    expect(got.has(P.id)).toBe(true);
+    const metaTotal = await readMetaTotal(idb, 'X');
+    const storedSum = await sumStoredSizes(idb, 'X');
+    expect(metaTotal).toBe(storedSum);
+  });
+
+  it("nothing carried after naming: a put of P before any open, open('X'), a put of Q, open('Y') — a second cache on Y holds neither P nor Q", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    const P = row('p');
+    await cache.put({ id: P.id, txBytes: new Uint8Array([1]), row: P, author: P.author, parent: null, own: false });
+    await cache.open('X');
+    const afterX = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await afterX.open('X');
+    expect(await afterX.thread(P.id)).not.toBeNull();
+    const Q = row('q');
+    await cache.put({ id: Q.id, txBytes: new Uint8Array([2]), row: Q, author: Q.author, parent: null, own: false });
+    await cache.open('Y');
+    const second = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await second.open('Y');
+    expect(await second.thread(P.id)).toBeNull();
+    expect(await second.thread(Q.id)).toBeNull();
+  });
+
+  it("a withdrawal before naming: a put of P, a withdrawal of P, open('X') — X holds P's withdrawn row with no text", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    const P = row('p');
+    await cache.put({ id: P.id, txBytes: new Uint8Array([1, 2]), row: P, author: P.author, parent: null, own: false });
+    await cache.withdraw(P.id, tomb('p'));
+    await cache.open('X');
+    const second = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await second.open('X');
+    const got = await second.getMany([P.id]);
+    expect(got.has(P.id)).toBe(true);
+    expect((got.get(P.id)!.row as WithdrawnJson).kind).toBe('withdrawn');
+  });
+
+  it("a refresh before naming: a put of P, a refresh with other counts, open('X') — X holds the refreshed row", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    const P = row('p', { likeCount: 0 });
+    await cache.put({ id: P.id, txBytes: new Uint8Array([3]), row: P, author: P.author, parent: null, own: false });
+    await cache.refresh([row('p', { likeCount: 7, authorName: 'alice' })]);
+    await cache.open('X');
+    const second = createPostCache({ indexedDB: idb, localStorage: fakeLs(), now: c.tick });
+    await second.open('X');
+    const got = await second.getMany([P.id]);
+    const r2 = got.get(P.id)!.row as PostJson;
+    expect(r2.likeCount).toBe(7);
+    expect(r2.authorName).toBe('alice');
+  });
+
+  it("reads with no database open: kept entries answer getMany, thread (a kept parent and child walked), roots and byAuthor in their orders", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    const A1 = 'aa'.repeat(32);
+    const A2 = 'cc'.repeat(32);
+    const p = row('p', { author: A1, blockHeight: 10 });
+    const q = row('q', { author: A1, parentRefs: [p.id], blockHeight: 20 });
+    const r2 = row('r2', { author: A2, blockHeight: 15 });
+    await cache.put({ id: p.id, txBytes: new Uint8Array([1]), row: p, author: A1, parent: null, own: false });
+    await cache.put({ id: q.id, txBytes: new Uint8Array([2]), row: q, author: A1, parent: p.id, own: false });
+    await cache.put({ id: r2.id, txBytes: new Uint8Array([3]), row: r2, author: A2, parent: null, own: false });
+    const got = await cache.getMany([p.id, q.id]);
+    expect(got.size).toBe(2);
+    const t = await cache.thread(q.id);
+    expect(t).not.toBeNull();
+    expect(t!.ancestors.map((a) => a.id)).toEqual([p.id]);
+    expect(t!.descendants).toEqual([]);
+    const t2 = await cache.thread(p.id);
+    expect(t2!.descendants.map((d) => d.id)).toEqual([q.id]);
+    const roots = await cache.roots(10);
+    expect(roots.map((h) => h.row.id)).toEqual([r2.id, p.id]);
+    const a1 = await cache.byAuthor(A1, 10);
+    expect(a1.map((h) => h.row.id)).toEqual([q.id, p.id]);
+  });
+
+  it("the cap: kept entries past POST_CACHE_BYTES evict the least recently seen and never an own one", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    const third = Math.floor(POST_CACHE_BYTES / 3);
+    const big = new Uint8Array(third);
+    const own1 = row('own1');
+    const own2 = row('own2');
+    const other = row('other');
+    await cache.put({ id: own1.id, txBytes: big, row: own1, author: own1.author, parent: null, own: true });
+    await cache.put({ id: other.id, txBytes: big, row: other, author: other.author, parent: null, own: false });
+    await cache.put({ id: own2.id, txBytes: big, row: own2, author: own2.author, parent: null, own: true });
+    expect((await cache.getMany([own1.id])).has(own1.id)).toBe(true);
+    expect((await cache.getMany([own2.id])).has(own2.id)).toBe(true);
+    expect((await cache.getMany([other.id])).has(other.id)).toBe(false);
+  });
+
+  it("the cap: with two non-own kept entries the older evicts first, the newer stands", async () => {
+    const idb = new IDBFactory();
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    // Three puts under the file's clock() — two non-own and one `own`, in
+    // that order, each about a third of POST_CACHE_BYTES. Slightly under a
+    // third so the three fit and a fourth put is the one that needs an
+    // eviction; the row JSON is tens of hundreds of bytes — negligible
+    // beside the Uint8Array.
+    const third = Math.floor(POST_CACHE_BYTES / 3) - 2000;
+    const big = new Uint8Array(third);
+    const older = row('older');
+    const newer = row('newer');
+    const own1 = row('own1');
+    const extra = row('extra');
+    await cache.put({ id: older.id, txBytes: big, row: older, author: older.author, parent: null, own: false });
+    await cache.put({ id: newer.id, txBytes: big, row: newer, author: newer.author, parent: null, own: false });
+    await cache.put({ id: own1.id, txBytes: big, row: own1, author: own1.author, parent: null, own: true });
+    // A fourth put needs room: the older non-own is gone, the newer
+    // non-own, the own entry and the new one stand, all read with no
+    // database open.
+    await cache.put({ id: extra.id, txBytes: big, row: extra, author: extra.author, parent: null, own: false });
+    expect((await cache.getMany([older.id])).has(older.id)).toBe(false);
+    expect((await cache.getMany([newer.id])).has(newer.id)).toBe(true);
+    expect((await cache.getMany([own1.id])).has(own1.id)).toBe(true);
+    expect((await cache.getMany([extra.id])).has(extra.id)).toBe(true);
+  });
+
+  it("no indexedDB: a put before naming keeps nothing — every read answers empty after it", async () => {
+    const ls = fakeLs();
+    const c = clock();
+    const cache = createPostCache({ indexedDB: null, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    const P = row('p');
+    await cache.put({ id: P.id, txBytes: new Uint8Array([1]), row: P, author: P.author, parent: null, own: false });
+    expect((await cache.getMany([P.id])).size).toBe(0);
+    expect(await cache.thread(P.id)).toBeNull();
+    expect(await cache.roots(10)).toEqual([]);
+    expect(await cache.byAuthor(P.author, 10)).toEqual([]);
+  });
+
+  it("a named open the factory refuses: the kept entries are gone after it — a read answers empty", async () => {
+    const ls = fakeLs();
+    const c = clock();
+    const bad = {
+      open: (): IDBOpenDBRequest => { throw new Error('refused'); },
+      databases: () => Promise.resolve([]),
+      deleteDatabase: () => undefined as unknown as IDBOpenDBRequest,
+    } as unknown as IDBFactory;
+    const cache = createPostCache({ indexedDB: bad, localStorage: ls, now: c.tick });
+    await openRemembered(cache);
+    const P = row('p');
+    await cache.put({ id: P.id, txBytes: new Uint8Array([1]), row: P, author: P.author, parent: null, own: false });
+    expect((await cache.getMany([P.id])).has(P.id)).toBe(true);
+    await cache.open('X');
+    expect((await cache.getMany([P.id])).size).toBe(0);
+    expect(await cache.thread(P.id)).toBeNull();
+    expect(await cache.roots(10)).toEqual([]);
+  });
+});

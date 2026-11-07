@@ -753,6 +753,14 @@ by post id and holds the transaction's bytes; the row as the node last gave it �
 author and the parent as the transaction states them; when it was last seen; its size in bytes; and whether it is the
 reader's own — indexed by parent, by author and by last seen. **Only `bound` rows enter**, at the answer that checked
 them, and the reader's own post at its submit — the signed transaction the client built, through the same check.
+**A post checked before any tip run names a chain is kept until one does**: where the browser gives the page IndexedDB,
+the module keeps each such entry in memory — within `POST_CACHE_BYTES`, by the eviction rule below — beside its write
+to the database the remembered name opened, where one did; a withdrawal or a refresh in that time moves the kept entry
+as it moves a stored one, and while no database is open every read answers the kept entries. The first tip run that
+names a chain writes them into that chain's database, the remembered chain's or another's, and the module keeps none
+after. The posts a page checks before its first tip run are the chain's that run names: the chain's name scopes a
+reset, not a post's place on the chain, which is the node's word before the check as after it. An entry written once a
+tip run has named the chain stays with that chain, and a later run naming another carries none of it.
 **A list is read against it first** (→ "The light read"): a row whose entry holds the post's text is drawn from the
 entry and not asked for, and each listing refreshes its held entries' rows — the node's figures as the listing gave
 them — and their last-seen. **An entry without text is not held**: a placeholder's, or one a withdrawal emptied under
