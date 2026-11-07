@@ -5761,6 +5761,22 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     if (i >= 0) blockPages.splice(i, 1);
     try { page.cx?.s.close(); } catch {}
     await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+    // Wait until the target is gone from `/json/list` — Chrome takes a
+    // moment to finish closing after `Target.closeTarget` returns, and
+    // a later `findExt('index.html')` can return the half-closed page
+    // (its CDP session is unresponsive, so `Page.enable` on it stalls
+    // to the 60 s wall). Bounded; a page that never leaves the list
+    // is noted in the log but no error — the top-level finally has
+    // already called close.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 10000) {
+      try {
+        const list = await jsonList();
+        if (!list.some((t) => t.id === page.targetId)) return;
+      } catch {}
+      await sleep(200);
+    }
+    console.log(`[diag] closeBlockPage: target ${page.targetId.slice(0, 8)}… still in /json/list after 10s`);
   };
 
   try {
@@ -6337,34 +6353,39 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   try {
     if (w1Page === null) throw new Error('no page for W3 — W1/W2 did not open one');
     const w3Cx = w1Page.cx;
+    const w3HonestAt = Date.now();
     setBothRelayModes('honest');
     const w3LogAIdx = tipRelays.a.log.length;
     const w3LogBIdx = tipRelays.b.log.length;
+    const w3CornerPresses = [];
+    w3CornerPresses.push(Date.now() - w3HonestAt);
     await pressCorner(w3Cx);
-    // The flush may run on this corner tick's answered reads; wait for
-    // both expected POSTs (likes and posts) in either relay's log,
-    // whichever the client routes to. No `rtk proxy` is needed — the log
-    // is read via array access, not shell output.
+    // The flush may run on this corner tick's answered reads; poll the
+    // relays' logs for the full bound and record every forwarded POST
+    // with its arrival time (ms after the honest switch), status, edit
+    // and upstream. The assertion stays `≥1 like POST, ≥1 post POST,
+    // like before post`; the detail widens so a red names each POST's
+    // position relative to the honest switch and to the corner press.
     const bound = 300000;
     const t0 = Date.now();
     let forwardedLikes = 0;
     let forwardedPosts = 0;
     let likeFirstAt = null;
     let postFirstAt = null;
+    let likeArrivals = [];
+    let postArrivals = [];
     while (Date.now() - t0 < bound) {
       const aNew = tipRelays.a.log.slice(w3LogAIdx);
       const bNew = tipRelays.b.log.slice(w3LogBIdx);
       const merged = [...aNew, ...bNew].filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts');
-      forwardedLikes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?'))).length;
-      forwardedPosts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?'))).length;
-      if (likeFirstAt === null) {
-        const first = merged.find((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
-        if (first) likeFirstAt = first.at;
-      }
-      if (postFirstAt === null) {
-        const first = merged.find((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
-        if (first) postFirstAt = first.at;
-      }
+      const likes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
+      const posts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
+      forwardedLikes = likes.length;
+      forwardedPosts = posts.length;
+      if (likeFirstAt === null && likes.length > 0) likeFirstAt = likes[0].at;
+      if (postFirstAt === null && posts.length > 0) postFirstAt = posts[0].at;
+      likeArrivals = likes.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
+      postArrivals = posts.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
       if (forwardedLikes >= 1 && forwardedPosts >= 1 && likeFirstAt !== null && postFirstAt !== null) break;
       await sleep(1000);
     }
@@ -6386,10 +6407,88 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       const nodes = [...document.querySelectorAll('.card .card-content')];
       return nodes.some((n) => (n.textContent ?? '').includes(${JSON.stringify(w2PostContent)}));
     })()`).catch(() => false);
+    // Read each live extension page's waiting store (every
+    // notis.waiting.<R>.* record with seq, kind, txId, spent, change),
+    // the pending cards' stage text, the like overlays, the report
+    // lines of the feed and every open column, and
+    // document.visibilityState. Without this a red only names the
+    // counts; with it a red names which half of the flow did not move.
+    const collectW3Diag = async (pcx) => pcx.eval(`(() => {
+      const prefix = 'notis.waiting.' + ${JSON.stringify(R_JSON.pubKeyHex)} + '.';
+      const waiting = [];
+      let seqVal = null;
+      let baseRep = null;
+      let baseCredits = null;
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k || !k.startsWith(prefix)) continue;
+          const tail = k.slice(prefix.length);
+          const raw = localStorage.getItem(k);
+          if (tail.startsWith('w.')) {
+            try {
+              const r = JSON.parse(raw);
+              waiting.push({
+                seq: r?.seq ?? null,
+                kind: r?.kind ?? null,
+                ledger: r?.ledger ?? null,
+                txId: typeof r?.txId === 'string' ? r.txId.slice(0, 8) : null,
+                spent: Array.isArray(r?.spent) ? r.spent.map((s) => typeof s === 'string' ? s.slice(0, 8) : null) : [],
+                change: r?.change?.boxId ? String(r.change.boxId).slice(0, 8) : null,
+                content: typeof r?.content === 'string' ? r.content.slice(0, 32) : null,
+              });
+            } catch { waiting.push({ key: tail, parseErr: true }); }
+          } else if (tail === 'seq') { try { seqVal = JSON.parse(raw); } catch {} }
+          else if (tail === 'base.rep') { try { baseRep = JSON.parse(raw); } catch {} }
+          else if (tail === 'base.credits') { try { baseCredits = JSON.parse(raw); } catch {} }
+        }
+      } catch {}
+      const pending = [...document.querySelectorAll('.card.pending')].map((c) => ({
+        id: c.getAttribute('data-post-id'),
+        stage: c.querySelector('.stage span')?.textContent ?? null,
+        textStart: (c.textContent ?? '').slice(0, 60),
+      }));
+      const overlays = [...document.querySelectorAll('.card .liked')].map((o) => ({
+        id: o.closest('[data-post-id]')?.getAttribute('data-post-id'),
+        settled: o.classList.contains('settled'),
+        count: o.querySelector('.n')?.textContent ?? null,
+      }));
+      const feedReport = document.querySelector('#feed > .report')?.textContent ?? null;
+      const colReports = [...document.querySelectorAll('#panes .region > .report')].map((r) => r.textContent ?? null);
+      return {
+        waiting,
+        seq: seqVal,
+        baseRep: baseRep ? { height: baseRep.height, era: baseRep.era, effective: baseRep.effective } : null,
+        baseCredits: baseCredits ? { height: baseCredits.height, era: baseCredits.era } : null,
+        pending,
+        overlays,
+        feedReport,
+        colReports,
+        visibility: document.visibilityState,
+      };
+    })()`).catch((e) => ({ error: String(e?.message ?? e) }));
+    const diagsByPage = {};
+    diagsByPage['pressed(' + w1Page.targetId.slice(0, 8) + ')'] = await collectW3Diag(w3Cx);
+    try {
+      const list = await jsonList();
+      for (const t of list) {
+        if (t.type !== 'page') continue;
+        if (typeof t.url !== 'string' || !t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)) continue;
+        if (t.id === w1Page.targetId) continue;
+        if (!t.webSocketDebuggerUrl) continue;
+        try {
+          const cx = await openSession(t.webSocketDebuggerUrl);
+          diagsByPage['other(' + t.id.slice(0, 8) + ')'] = await collectW3Diag(cx);
+          try { cx.s.close(); } catch {}
+        } catch (e) {
+          diagsByPage['other(' + t.id.slice(0, 8) + ')'] = { error: String(e?.message ?? e) };
+        }
+      }
+    } catch {}
     const orderedOk = likeFirstAt !== null && postFirstAt !== null && likeFirstAt <= postFirstAt;
     const w3Ok = forwardedLikes >= 1 && forwardedPosts >= 1 && orderedOk && postLanded;
     record('W3', w3Ok,
-      `forwarded likes POST=${forwardedLikes} (expect ≥1), posts POST=${forwardedPosts} (expect ≥1), press order like@${likeFirstAt}·post@${postFirstAt} (expect like before post)=${orderedOk}, post landed in feed under /posts?author=R=${postLanded}, DOM feed shows the content=${feedShowsConfirmed}`);
+      `honest@${w3HonestAt} corner-presses(msAfterHonest)=${JSON.stringify(w3CornerPresses)}; forwarded likes POST=${forwardedLikes} (expect ≥1), posts POST=${forwardedPosts} (expect ≥1); like arrivals=${JSON.stringify(likeArrivals)}, post arrivals=${JSON.stringify(postArrivals)}; press order like@${likeFirstAt}·post@${postFirstAt} (expect like before post)=${orderedOk}; post landed in feed under /posts?author=R=${postLanded}, DOM feed shows the content=${feedShowsConfirmed}; pages=${JSON.stringify(diagsByPage)}`);
   } catch (e) {
     record('W3', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
@@ -10755,7 +10854,16 @@ async function main() {
   // the next CDP call in a same-browser session, so the arm sits last where
   // a freeze cannot shadow any other step.
   {
-    let extPageAfter16 = await findExt('index.html');
+    // Open the observer on `main()`'s page by its target id, never on
+    // the first `index.html` the browser lists — a block-leftover that
+    // is still closing can land in the list first, and opening a CDP
+    // session on it stalls `Page.enable` out to the 60 s wall. The id
+    // is the same one `diagBeforeThirteenUncancelled` labels `main()`.
+    let extPageAfter16 = null;
+    try {
+      const list = await jsonList();
+      extPageAfter16 = list.find((t) => t.id === page.id && typeof t.webSocketDebuggerUrl === 'string') ?? null;
+    } catch {}
     let cxObserver = null;
     let openBeforeArm = null;
     try {
