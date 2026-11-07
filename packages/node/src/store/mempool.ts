@@ -915,7 +915,7 @@ export function getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'cr
 }
 
 /**
- * Submission's answer to rule 3 of NODE_INTERFACE → Karma transition rules →
+ * Admission's answer to rule 3 of NODE_INTERFACE → Karma transition rules →
  * "An identity holds at most two karma boxes": the ids of the owner's unmarked
  * karma boxes under `getBoxWithPending`'s view
  * (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending → "It is the unmarked
@@ -926,9 +926,10 @@ export function getBoxTotalWithPending(owner: Uint8Array, boxType: 'karma' | 'cr
  * pinned to `karma`. The confirmed half additionally filters out the income
  * mark; a pooled karma output is unmarked by rule 2 of
  * NODE_INTERFACE → Karma transition rules → "No karma output carries the
- * mark", so the pool rows need no further filter. Admission wires this as
- * the engine's `getOwnKarmaBoxIds`; the relay's `getOwnKarmaBoxIds` reads
- * the confirmed set alone.
+ * mark", so the pool rows need no further filter. Admission — the HTTP
+ * routes and the relay alike — wires this as the engine's
+ * `getOwnKarmaBoxIds` (MEMPOOL_INTERFACE → getBoxWithPending → "A relayed
+ * transaction is judged against the pending view, as a submitted one is").
  */
 export function getOwnKarmaBoxIdsWithPending(ownerId: string): string[] {
   const db = getDb();

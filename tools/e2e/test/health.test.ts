@@ -36,8 +36,9 @@ const COUNTER_KEYS = [
   'posts_validated_total',
   'pow_verifications_total',
   'pow_verification_failures_total',
-  'post_bodies_pulled_total',
   'http_requests_total',
+  'post_bodies_pulled_total',
+  'relayed_txs_input_missing_total',
 ] as const;
 
 function karmaBoxes(

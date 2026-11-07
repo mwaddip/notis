@@ -10,7 +10,6 @@ import {
   getPendingPostAuthor,
   getIdentityRecord,
   insertPost,
-  getBox,
   getBoxProvenance,
   nextBlockHeight,
   MempoolFullError,
@@ -21,24 +20,32 @@ import {
   getUsername,
   getUsernameByOwner,
 } from '../store/index.js';
-import { getHeldEntry } from '../store/mempool.js';
+import { getBoxWithPending, getHeldEntry } from '../store/mempool.js';
+import { noteRelayedTxInputMissing } from '../metrics.js';
 import { admitTx } from './admit-tx.js';
-import { admissionHeld, admissionOwed, relayGetOwnKarmaBoxIds } from './karma-admission.js';
+import { admissionHeld, admissionOwed, admissionGetOwnKarmaBoxIds } from './karma-admission.js';
 import { ClientError } from './client-error.js';
 
 /**
  * The gossip registration's transaction handler, wired at startup to
- * `net.onTx` (NODE_INTERFACE → Relay handlers): validates the relayed
- * transaction read-only, then admits it — for a post transaction, with the
- * packet's body as the pending row in the same store transaction.
+ * `net.onTx` (NODE_INTERFACE → Net Integration → Relay handlers
+ * (mempool-based)): judges the relayed transaction against the pending view
+ * (MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is judged
+ * against the pending view, as a submitted one is"), then admits it — for
+ * a post transaction, with the packet's body as the pending row in the same
+ * store transaction.
  *
  * Answers whether it admitted the transaction: net forwards an admitted
  * transaction and penalises nothing on a refusal (NET_INTERFACE → Stage 2 →
- * "A Stage 2 refusal records nothing"). Every refusal is a `false` the
- * handler logs and returns from: a transaction the rules refuse, a full
- * pool, an input a pending entry spends, and each policy refusal admission
- * throws as a `ClientError`. Any other throw reaches net, which logs it as
- * a handler defect.
+ * "A Stage 2 refusal records nothing"). A conflict with a pooled entry's
+ * input answers `Relayed tx dropped, input spent by a pending entry: <txid>`
+ * and false (NODE_INTERFACE → Net Integration → Relay handlers
+ * (mempool-based) → "A pooled spender's conflict is the pool's refusal");
+ * the missing-input refusal is counted, not logged (NODE_INTERFACE → Net
+ * Integration → Relay handlers (mempool-based) → "A relayed transaction
+ * refused for a missing input is counted, not logged"); every other refusal
+ * but a held one logs one line naming its reason. Any other throw reaches
+ * net, which logs it as a handler defect.
  */
 export function handleRelayedTx(
   tx: UtxoTransaction,
@@ -84,12 +91,22 @@ export function handleRelayedTx(
     return true;
   };
   const deps = {
-    getBox,
+    // MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is
+    // judged against the pending view, as a submitted one is": the
+    // same two reads the HTTP routes wire — a chained arrival at this
+    // node is admitted on the parent this node already pools, and a box
+    // a pooled entry spends raises `PendingSpendConflictError` at the
+    // input read.
+    getBox: getBoxWithPending,
     insertBox: () => {},
     consumeBox: () => {},
     getKarmaValue: admissionHeld,
     getKarmaOwed: admissionOwed(decayCfg),
-    getOwnKarmaBoxIds: relayGetOwnKarmaBoxIds,
+    // NODE_INTERFACE → Karma transition rules →
+    // "`getOwnKarmaBoxIds(owner)` answers rule 3": the same answer
+    // submission wires, under the pending view
+    // (MEMPOOL_INTERFACE → getOwnKarmaBoxIdsWithPending).
+    getOwnKarmaBoxIds: admissionGetOwnKarmaBoxIds,
     verifySignature: relayVerifySignature,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
@@ -122,16 +139,36 @@ export function handleRelayedTx(
   // it — tip + 1 (NODE_INTERFACE → validateTx).
   const currentHeight = nextBlockHeight();
   const validationStart = performance.now();
-  const result = validateTx(deps, tx, txIdHex, currentHeight);
-  if (!result.valid) {
-    // Boxes referenced by relayed txs may not have arrived yet via header sync.
-    // The tx will be included in the ordering block that carries the boxes.
-    // Only log at debug level — this is expected during normal operation.
-    if (result.error?.includes('Missing or invalid owner signature') || result.error?.includes('not found')) {
-      // silently skip — tx will arrive via block sync
-    } else {
-      console.warn(`Relayed tx rejected: ${result.error}`);
+  let result;
+  try {
+    result = validateTx(deps, tx, txIdHex, currentHeight);
+  } catch (err) {
+    // MEMPOOL_INTERFACE → getBoxWithPending: the pending view throws
+    // `PendingSpendConflictError` where `validateTx` reads an input a pooled
+    // entry spends. The handler answers it as the conflict gate's — one
+    // line, `false` — never as a throw out of the handler
+    // (NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
+    // "A pooled spender's conflict is the pool's refusal"). Caught ahead of
+    // `ClientError` so the conflict is never read as a policy refusal.
+    if (err instanceof PendingSpendConflictError) {
+      console.warn(`Relayed tx dropped, input spent by a pending entry: ${txIdHex}`);
+      return false;
     }
+    throw err;
+  }
+  if (!result.valid) {
+    // NODE_INTERFACE → Net Integration → Relay handlers (mempool-based) →
+    // "A relayed transaction refused for a missing input is counted, not
+    // logged": the engine's `Input box not found or already spent: <id>`
+    // over the pending view — the answer to a copy of a transaction a
+    // block already carried, and to a child whose parent this node does
+    // not pool — writes no line and adds one to
+    // `relayed_txs_input_missing_total` (NODE_INTERFACE → Admin Listener).
+    if (result.error?.startsWith('Input box not found or already spent: ')) {
+      noteRelayedTxInputMissing();
+      return false;
+    }
+    console.warn(`Relayed tx rejected: ${result.error}`);
     return false;
   }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;

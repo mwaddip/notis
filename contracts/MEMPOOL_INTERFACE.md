@@ -176,9 +176,10 @@ refuses those — so the path should never trip it, and it is defended anyway.
 **The conflict gate runs before the capacity gate.** An arrival spending a box a pooled entry spends is refused
 (`PendingSpendConflictError`, 409) before it can displace anything: a full credit class would otherwise evict its
 cheapest resident for an arrival that is then refused — or, where that resident is the conflicting entry itself,
-replace it, which this pool never does (→ No replacement semantics). The relay reaches the gate with such an
-arrival, since it validates against the confirmed set alone (→ getBoxWithPending). Admission asks both gates first, and
-writes nothing then (→ assertPoolAdmits).
+replace it, which this pool never does (→ No replacement semantics). Admission — the routes' and the relay's alike —
+meets such an arrival first, where `validateTx` reads the input through the pending view (→ getBoxWithPending); the
+gate is what the reorg's re-insertion meets, since it reaches the store directly, and it stands behind admission's
+read. Admission asks both gates first, and writes nothing then (→ assertPoolAdmits).
 
 **One SQLite transaction.** The eviction a full credit class makes, the entry's row and its input and output rows
 commit together or not at all (`ARCHITECTURE → "Single-transaction atomic writes"`); inside a caller's transaction —
@@ -199,8 +200,8 @@ would throw for `tx` at that moment — `PendingSpendConflictError` for an input
 `MempoolFullError` for a full class the arrival cannot enter (→ Size cap; → Eviction, inside the credit class only) —
 and writes nothing: a displacement it finds open is the insert's to make. `admitTx` calls it after the correctness gates
 and the floor and before the cost gate (→ The cost gate), so a transaction the pool would refuse never costs the
-speculative block — on the gossip relay above all, which validates against the confirmed set alone (→ getBoxWithPending)
-and reaches the conflict gate here.
+speculative block — a full class above all, since admission's input read meets a pooled spender before this call does
+(→ getBoxWithPending).
 
 **One statement of each gate.** `insertUtxoTx` runs the same two checks through the same code and acts on their
 answer — refusing, or displacing the cheapest resident — and it alone runs on the reorg path, which reaches the store
@@ -319,14 +320,18 @@ box**: for a box a pooled entry spends the view throws `PendingSpendConflictErro
 up in the pool from one spent on chain (`WEB_INTERFACE → The wallet → "Nothing retries a rejection"`); `null` is the
 answer for a box that exists nowhere. **Three point reads**, in that order: the box's `mempool_inputs` row, present
 being the conflict; the confirmed set; the box's `mempool_outputs` row, with the bytes of the entry it names, decoded
-for that one box (→ Schema). **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
-it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
-enters the pool only while its predecessor is confirmed or already pooled, and the fill selects it only
-after its predecessor (→ Block Creator Integration), the order the ordering rule at apply requires
-(`NODE_INTERFACE → Block finalization`). The relay path validates against the confirmed set alone (`getBox`), which is
-stricter and orders the same way. ⛔ **Never block application's.** Apply resolves inputs against the
-confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared
-pool would be a fork.
+for that one box (→ Schema). **Admission's `getBox` — the HTTP routes' and the relay's — and nothing else's.** Both
+validate against it, so a transaction spending the change of one still in the pool is admitted however it arrives —
+and a child therefore enters the pool only while its predecessor is confirmed or already pooled, and the fill selects
+it only after its predecessor (→ Block Creator Integration), the order the ordering rule at apply requires
+(`NODE_INTERFACE → Block finalization`). **A relayed transaction is judged against the pending view, as a submitted
+one is.** A chain admitted at one node leaves it a link at a time, each relayed as it is admitted, and a peer that
+pools the parent admits the child and relays it on. Judged against the confirmed set alone, the child of a parent
+still pooled is refused at every peer, and on a node that does not mine, every link from that child on waits in its
+pool until expiry. A peer that holds neither the parent nor its output refuses the child as a missing input
+(`NODE_INTERFACE → Relay handlers (mempool-based)`). ⛔ **Never block application's.** Apply resolves inputs against
+the confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared pool would
+be a fork.
 
 ### getOwnKarmaBoxIdsWithPending
 
@@ -336,15 +341,14 @@ getOwnKarmaBoxIdsWithPending(ownerId: string): string[]
 
 `getBoxWithPending`'s view, asked by owner: the ids of the owner's **unmarked** karma boxes among the
 confirmed set and the pooled transactions' outputs, less every box a pooled transaction spends. It is
-submission's `getOwnKarmaBoxIds` — rule 3 of `NODE_INTERFACE → Karma transition rules → "An identity
-holds at most two karma boxes"` — and nothing else's. An owner with a pooled karma spend holds that
+admission's `getOwnKarmaBoxIds`, the routes' and the relay's — rule 3 of `NODE_INTERFACE → Karma transition rules →
+"An identity holds at most two karma boxes"` — and nothing else's. An owner with a pooled karma spend holds that
 spend's change, and none where it returned no change; an owner with nothing pooled holds their
 confirmed own box. So a transaction that chains on a pooled spend names its change, and one that names
 the income box alone is admitted exactly where the pool's entries ahead of it leave the owner no own
 box. **It is the unmarked rows of the set `getBoxesPageWithPending` reads for karma**, over that read's one statement
 of the set — a pooled karma output is unmarked by rule 2, so the marked row is the confirmed income box alone — and
-decodes no entry. The relay answers the same rule over
-the confirmed set, as it resolves inputs.
+decodes no entry.
 
 ### getBoxesPageWithPending
 

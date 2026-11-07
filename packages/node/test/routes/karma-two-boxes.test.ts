@@ -525,10 +525,12 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The relay — handleRelayedTx reads over the confirmed set
+  // The relay — handleRelayedTx reads over the pending view
+  // (MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is judged
+  // against the pending view, as a submitted one is")
   // -------------------------------------------------------------------------
 
-  describe('handleRelayedTx — the relay reads the confirmed set', () => {
+  describe('handleRelayedTx — "An identity holds at most two karma boxes" under the pending view', () => {
     it('a relayed spend naming the income box alone while the own box is confirmed is not pooled', () => {
       const own = seedKarma(liker.pub, 10n, 1);
       const income = seedKarma(liker.pub, 5n, 2, true);
@@ -547,6 +549,38 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
       const entries = getPendingEntries(100);
       expect(entries).toHaveLength(1);
       expect(computeTxId(decodeTx(entries[0]!.utxoTxBytes!))).toBe(computeTxId(tx));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The relay's mirror of the route block above: a pooled like leaves the
+  // owner holding the change and the income box under the pending view
+  // (MEMPOOL_INTERFACE → getBoxWithPending; NODE_INTERFACE → Karma transition
+  // rules → "`getOwnKarmaBoxIds(owner)` answers rule 3").
+  // -------------------------------------------------------------------------
+
+  describe('handleRelayedTx — a pooled like leaves the owner with change + income', () => {
+    it('a relayed like naming the pooled change is admitted', () => {
+      const own = seedKarma(liker.pub, 10n, 1);
+      seedKarma(liker.pub, 5n, 2, true);
+      const first = buildLikeFromInputs(liker, [own], postId);
+      expect(handleRelayedTx(first, undefined, 'peer-X')).toBe(true);
+      const change = pendingChangeBox(first);
+      const postB = insertTargetPost('beta');
+      const second = buildLikeFromInputs(liker, [change], postB);
+      expect(handleRelayedTx(second, undefined, 'peer-X')).toBe(true);
+      expect(getPendingEntries(100)).toHaveLength(2);
+    });
+
+    it('a relayed like naming the income box alone is refused', () => {
+      const own = seedKarma(liker.pub, 10n, 1);
+      const income = seedKarma(liker.pub, 5n, 2, true);
+      const first = buildLikeFromInputs(liker, [own], postId);
+      expect(handleRelayedTx(first, undefined, 'peer-X')).toBe(true);
+      const postB = insertTargetPost('beta');
+      const second = buildLikeFromInputs(liker, [income], postB);
+      expect(handleRelayedTx(second, undefined, 'peer-X')).toBe(false);
+      expect(getPendingEntries(100)).toHaveLength(1);
     });
   });
 

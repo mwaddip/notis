@@ -159,8 +159,8 @@ export interface UtxoEngineDeps {
    * transaction whose inputs do not include every id this reader answers: the
    * owner's own box, or none. Block application answers over the overlay — the
    * body as applied so far — so a second spend in one body names the first's
-   * change rather than the pre-body own box. Admission answers over the
-   * pending view, the relay over the confirmed set.
+   * change rather than the pre-body own box. Admission — the HTTP routes and
+   * the relay alike — answers over the pending view.
    */
   getOwnKarmaBoxIds: (owner: Uint8Array) => string[];
   /**
@@ -438,8 +438,8 @@ function checkTransitions(
       // among the inputs. The reader answers over the state its caller judges
       // against (NODE_INTERFACE → "`getOwnKarmaBoxIds(owner)` answers rule 3"):
       // block application reads over the overlay, so a second spend in one
-      // body names the first's change; admission reads over the pending view;
-      // the relay reads over the confirmed set.
+      // body names the first's change; admission — the HTTP routes and the
+      // relay alike — reads over the pending view.
       const ownIds = deps.getOwnKarmaBoxIds(inputKarma.owner);
       const inputIdSet = new Set<string>();
       for (const b of inputs) if (b.id !== undefined) inputIdSet.add(b.id);
