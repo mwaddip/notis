@@ -790,3 +790,134 @@ describe('app-post-cache — the web build keeps the line and no row', () => {
     expect(f.posts.length).toBe(0);
   });
 });
+
+// WEB_INTERFACE → The extension → "A post checked before any tip run names a
+// chain is kept until one does": a feed read whose slots the resolver binds
+// before any tip run writes to the cache through `offerBoundToCache`; the
+// first tip run naming a chain opens the cache on it and carries every kept
+// entry to the chain's database.
+
+describe("app-post-cache — a feed read's bound slots before a tip run names a chain are carried to the chain the first tip run names", () => {
+  it.fails("the resolver binds two slots before any tip run; startVerification names chain X; a second cache over the same factory opened on X holds every bound id", async () => {
+    const { prefs } = await import('../src/prefs');
+    prefs.node = 'http://x';
+    const idb = new IDBFactory();
+    const map = new Map<string, string>();
+    const ls = {
+      getItem: (k: string): string | null => (map.has(k) ? map.get(k)! : null),
+      setItem: (k: string, v: string): void => { map.set(k, v); },
+      removeItem: (k: string): void => { map.delete(k); },
+    };
+    const cache = createPostCache({ indexedDB: idb, localStorage: ls });
+    const r1 = row('r1', { content: 'first', blockHeight: 10 });
+    const r2 = row('r2', { content: 'second', blockHeight: 20 });
+    const lightRow1 = { kind: 'light' as const, id: r1.id, parentRefs: [], status: 'confirmed' as const, blockHeight: 10, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null };
+    const lightRow2 = { kind: 'light' as const, id: r2.id, parentRefs: [], status: 'confirmed' as const, blockHeight: 20, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null };
+    // A resolver that records the ids it is asked for and lets the test bind
+    // rows through `onBound` and end the call by hand.
+    const resolverCalls: Array<{ ids: string[]; onBound: (posts: Array<{ row: PostJson; check: Extract<PostCheck, { status: 'bound' }> }>) => void; settle: (ends: Map<string, ResolveEnd>) => void }> = [];
+    const resolver: PostResolver = {
+      resolve(ids, onBound): Promise<Map<string, ResolveEnd>> {
+        return new Promise((s) => {
+          resolverCalls.push({ ids: [...ids], onBound, settle: s });
+        });
+      },
+    };
+    // A posts verifier that answers `bound` with the row's own txBytes.
+    const postsVerifier: PostsVerifier = {
+      check: (rows) => rows.map((r) => {
+        const rr = r as PostJson;
+        return { status: 'bound' as const, id: rr.id, txBytes: new Uint8Array([1, 2, 3]), author: rr.author, parent: rr.parentRefs[0] ?? null };
+      }),
+    };
+    // A tip verifier the test releases by hand — the resolver's bound rows
+    // must reach the cache before the tip run names a chain, so the run is
+    // held until the puts have had a chance to land.
+    let releaseTipRun!: (run: TipRun) => void;
+    const tipRunPromise = new Promise<TipRun>((r) => { releaseTipRun = r; });
+    const tipVerifier: TipVerifier = {
+      run: (): Promise<TipRun> => tipRunPromise,
+    };
+    // A feed API that answers one page of two light rows, every other read
+    // the empty page.
+    const feedCalls: Array<{ light: boolean | undefined; author: string | undefined }> = [];
+    const api: Api = {
+      feed: async (_page, _viewer, author, _roots, light): Promise<FeedResult> => {
+        feedCalls.push({ light, author });
+        if (feedCalls.length === 1) {
+          return { posts: [lightRow1, lightRow2], next: null, pending: [], pendingCount: 0 };
+        }
+        return { posts: [], next: null, pending: [], pendingCount: 0 };
+      },
+      thread: async () => null,
+      post: async () => null,
+      status: async () => status(),
+      currentBlock: async (): Promise<BlockCurrent> => ({ height: 10, hash: null }),
+      karma: async () => ({
+        userId: ME, total: '0', effective: '0', boxes: [], boxCount: 0, next: null,
+        lastActivityBlock: 0, lastDecayBlock: 0, lifetimeLikesReceived: '0',
+        memberSinceBlock: 0, memberBar: 1, memberVouches: 0, memberLikes: '0',
+        invitesUsed: 0, member: false, invitesAvailable: null, height: 10,
+      }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
+      credits: async () => ({ userId: ME, total: '0', boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
+    };
+    const identity = {
+      current: () => null, sign: async () => ({ signature: '00' }),
+      draft: async () => ({ pubKeyHex: '' }), create: async () => ({ pubKeyHex: '' }),
+      discardDraft: () => {}, inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: '' }),
+      importFile: async () => ({ pubKeyHex: '' }), exportFile: async () => '',
+      unlock: async () => {}, lock: async () => {}, forget: async () => {}, backedUp: () => false, onChange: () => {},
+    };
+    const app = new App(
+      api, {} as unknown as WriteClient, identity, new PendingLedger(null),
+      undefined, undefined, tipVerifier, null, null, postsVerifier, cache, resolver,
+    );
+    const appbar = document.createElement('div');
+    const feedEl = document.createElement('section'); feedEl.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feedEl, panes);
+    app.mount(appbar, feedEl, panes);
+    const drive = app as unknown as { loadFeed(): Promise<void> };
+    // A feed read whose slots the resolver binds, BEFORE any tip run.
+    await drive.loadFeed();
+    await settle();
+    expect(resolverCalls.length).toBe(1);
+    const call = resolverCalls[0]!;
+    // Bind both ids — `onBound` fires `offerBoundToCache`, which starts a put
+    // on the cache. End the call with `bound` for each.
+    call.onBound([
+      { row: r1, check: { status: 'bound', id: r1.id, txBytes: new Uint8Array([1, 2, 3]), author: r1.author, parent: null } },
+      { row: r2, check: { status: 'bound', id: r2.id, txBytes: new Uint8Array([4, 5, 6]), author: r2.author, parent: null } },
+    ]);
+    // Both rows were bound — an id a node bound carries no end entry in the
+    // resolve's map (WEB_INTERFACE → The extension → "The resolve").
+    const ends = new Map<string, ResolveEnd>();
+    call.settle(ends);
+    await settle();
+    // Now release the held tip run — it names chain X, so the cache opens on
+    // X and the kept entries are carried to X's database.
+    releaseTipRun({
+      verdict: { kind: 'verified', nodes: 2, height: 10 },
+      anchor: {} as unknown as import('@dagsocial/nipopow-client').Anchor,
+      chain: 'X',
+    });
+    await settle();
+    // A second cache over the same factory opened on X holds every bound id.
+    const secondMap = new Map<string, string>();
+    const secondLs = {
+      getItem: (k: string): string | null => (secondMap.has(k) ? secondMap.get(k)! : null),
+      setItem: (k: string, v: string): void => { secondMap.set(k, v); },
+      removeItem: (k: string): void => { secondMap.delete(k); },
+    };
+    const second = createPostCache({ indexedDB: idb, localStorage: secondLs });
+    await second.open('X');
+    expect(await second.thread(r1.id)).not.toBeNull();
+    expect(await second.thread(r2.id)).not.toBeNull();
+  });
+});
