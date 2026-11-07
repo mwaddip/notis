@@ -333,10 +333,6 @@ pool until expiry. A peer that holds neither the parent nor its output refuses t
 the confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared pool would
 be a fork.
 
-> ⚠ **AHEAD OF CODE (2026-11-07).** The relay handler (`packages/node/src/services/handle-tx.ts`) resolves inputs
-> through `getBox` and rule 3 through `relayGetOwnKarmaBoxIds`, both over the confirmed set; this section's admission
-> reads, and `getOwnKarmaBoxIdsWithPending`'s below, lead it.
-
 ### getOwnKarmaBoxIdsWithPending
 
 ```

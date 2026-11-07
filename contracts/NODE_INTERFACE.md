@@ -2273,9 +2273,6 @@ boxes and pooled transactions' outputs, less every box a pooled transaction spen
 (`MEMPOOL_INTERFACE → getBoxWithPending`), so the own box of an owner with a pooled spend is that
 spend's change, and an owner whose pooled spend returned no change holds none.
 
-> ⚠ **AHEAD OF CODE (2026-11-07).** The relay's `getOwnKarmaBoxIds` is `relayGetOwnKarmaBoxIds`
-> (`packages/node/src/services/karma-admission.ts`), over the confirmed set; this rule leads it.
-
 ### Vouch transition rules
 
 - **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast** — what remains of their
@@ -5871,11 +5868,6 @@ not fail the API request.
   registrations — this one and `setPipeline`'s — hand the intake's `CorruptChainStateError` to
   `failStopIfCorruptChain`: the apply funnel re-throws it, and the registration is its outer frame
   ("What the funnel's totality catch is FOR").
-
-> ⚠ **AHEAD OF CODE (2026-11-07).** `handleRelayedTx` (`packages/node/src/services/handle-tx.ts`) validates over the
-> confirmed set (`getBox`, `relayGetOwnKarmaBoxIds`), has no answer for a `PendingSpendConflictError` thrown inside
-> `validateTx`, writes no line for *Input box not found or already spent* or *Missing or invalid owner signature*, and
-> counts neither; `/stats` serves no `relayed_txs_input_missing_total`. The `onTx` bullet leads it.
 
 ### Ordering block apply-time authorization
 
