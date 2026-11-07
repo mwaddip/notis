@@ -332,7 +332,7 @@ describe('the relay judges the transaction against the pending view', () => {
     metrics.resetForTests();
   });
 
-  it.fails('a relayed post whose input is the change of a pooled post by the same author is pooled, and its post row is pending', async () => {
+  it('a relayed post whose input is the change of a pooled post by the same author is pooled, and its post row is pending', async () => {
     const { author, karmaBox } = await storeWithKarma(2n * POST_PRICE_THREAD + KARMA_MINIMUM);
     const warned: string[] = [];
     const logged: string[] = [];
@@ -361,7 +361,7 @@ describe('the relay judges the transaction against the pending view', () => {
     expect(childPost!.content).toBe('child thread');
   });
 
-  it.fails('a relayed credit transfer spending the change of a pooled transfer by the same sender is pooled', async () => {
+  it('a relayed credit transfer spending the change of a pooled transfer by the same sender is pooled', async () => {
     const { sender, box } = await storeWithCredit();
     const warned: string[] = [];
     const logged: string[] = [];
@@ -414,7 +414,7 @@ describe('the relay judges the transaction against the pending view', () => {
     expect(after).toBe(before + 1);
   });
 
-  it.fails('a relayed transaction whose input exists but whose owner signature is not in the map logs one line and pools nothing', async () => {
+  it('a relayed transaction whose input exists but whose owner signature is not in the map logs one line and pools nothing', async () => {
     const { sender, box } = await storeWithCredit();
     const tx = makeCreditTx(sender, [box], 1n);
     // Strip the signature — the input exists, the owner's entry is gone.

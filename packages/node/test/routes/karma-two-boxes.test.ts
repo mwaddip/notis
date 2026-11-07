@@ -560,7 +560,7 @@ describe('admission under "An identity holds at most two karma boxes"', () => {
   // -------------------------------------------------------------------------
 
   describe('handleRelayedTx — a pooled like leaves the owner with change + income', () => {
-    it.fails('a relayed like naming the pooled change is admitted', () => {
+    it('a relayed like naming the pooled change is admitted', () => {
       const own = seedKarma(liker.pub, 10n, 1);
       seedKarma(liker.pub, 5n, 2, true);
       const first = buildLikeFromInputs(liker, [own], postId);

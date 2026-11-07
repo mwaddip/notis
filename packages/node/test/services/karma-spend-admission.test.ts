@@ -54,6 +54,7 @@ import {
   getKarmaValue as storeKarmaValue,
   getPost as storeGetPost,
   getHeldEntry,
+  insertBlockTopology,
 } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import { createInvite } from '../../src/services/invites.js';
@@ -367,7 +368,7 @@ const miningConfig = makeTestConfig({
   maxPeers: 50,
 });
 
-/** Insert a post with the given content; returns its id. */
+/** Insert a post with the given content, with the topology row the relay's like-marker pin reads (NODE_INTERFACE → Karma transition rules); returns its id. */
 function insertNamedPost(content: string): string {
   const commit = {
     contentHash: computeContentHash(content),
@@ -378,6 +379,7 @@ function insertNamedPost(content: string): string {
   };
   const postId = fixturePostId(commit);
   insertPost(postId, fixtureTxId(commit), commit, content);
+  insertBlockTopology(postId, [], Buffer.from(AUTHOR).toString('hex'), 0);
   return postId;
 }
 
@@ -745,7 +747,7 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
   // -------- The relay --------
 
-  it.fails('handleRelayedTx refuses a third chained like at the floor, naming the floor, and the pool holds what it held', async () => {
+  it('handleRelayedTx refuses a third chained like at the floor, naming the floor, and the pool holds what it held', async () => {
     const target1 = postId;
     const target2 = insertNamedPost('relay-second');
     const target3 = insertNamedPost('relay-third');
@@ -778,6 +780,7 @@ describe('admission\'s held and owed are the engine\'s two inputs', () => {
 
     // The pool is unchanged — the refusal left no row.
     expect(getPendingEntries(100).length).toBe(beforePool);
+    void logged;
     expect(warned.some((l) => l.includes('Relayed tx rejected:') && l.includes('below the floor of 10'))).toBe(true);
   });
 });
