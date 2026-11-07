@@ -745,8 +745,8 @@ pressed once A has mined past the anchor, so its first check reads `unchecked`, 
 may stand beside a clay one, and an omission is the one lie the rule leaves uncaught (27b's header). Each lie arm has
 the relays set back to `honest` and reads the honest state again.
 **The waiting-writes block** (`WEB_INTERFACE → The wallet → "A write no node answers waits"`, `→ "Waiting writes go
-out at the first answer"`, `→ "A refusal ends what it strands"`, `→ "A waiting write is drawn as pending"`;
-`→ The extension → "A failed listing draws the cache"`) runs after the three verified blocks in the relays build,
+out at the first answer"`, `→ "A refusal ends what it strands"`, `→ "A waiting write is drawn as pending"`,
+`→ "A page no node answers offers what can wait"`; `→ The extension → "A failed listing draws the cache"`) runs after the three verified blocks in the relays build,
 whenever any of `--verified-{tip,figures,names}` is passed with `--r-key` — the two tip relays stand, and R's identity
 is loaded. `--waiting-only` turns the block over fast: steps 1 and 2 bring up R, the two tip relays come up in front of
 A (RLB's upstream is A too, since B is not needed), steps 3–20 and the three verified blocks read `NOT RUN`, the block
@@ -784,7 +784,11 @@ primitives and signs with Node crypto (the same key as the page's, no page sees 
 through `/posts/:id` since a withdraw spent against an already-withdrawn post is refused with 400. Both relays set
 honest: the flush's first post is refused by the node (the input box no longer stands) and its pending card's stage
 line reads the rejection, the second post ends unsent — its pending card reads *not sent: the one before it was
-refused.* — with no `POST` going out for it. **The `[diag]` liveness line** runs just before `13-uncancelled` (and
+refused.* — with no `POST` going out for it. **W5** a fresh page under `down` on both relays: the step writes nothing
+and asserts what the page offers — the withdraw control enabled on a cached R root in a pane with its confirm row and
+`keep`, the `@profile` window's rep row `—` and no invite form, the cached non-R card's author window with `your vouch`
+reading `—` and no `vouch` word, and the `@wallet` window's balance row `—`; neither relay's log carries a `POST` for
+the step's span. **The `[diag]` liveness line** runs just before `13-uncancelled` (and
 before `13-uncancelled` NOT RUN under `--waiting-only`): for every target `/json/list` reports it names the type, the
 first 80 chars of URL, and whether a fresh CDP session's `Runtime.evaluate('1+1')` answers within 3 s — `live`, `hung`
 or `no-ws`; an extension page is labelled `main()` when its target id matches the id `main()` opened, and
