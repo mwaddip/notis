@@ -797,12 +797,12 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(metaTotal).toBeGreaterThan(0);
   });
 
-  it("a chain change: remembered 'A' holds an entry; openRemembered opens A; a put of P; open('B'): a second cache on B holds P and not A's entry, and databases() no longer lists notis.posts.A", async () => {
+  it("a chain change: remembered 'A' holds an entry; openRemembered opens A; a put of P; open('B'): a second cache on B holds P and not A's entry, and databases() lists no notis.posts.A", async () => {
     const idb = new IDBFactory();
     const lsA = fakeLs();
     const c = clock();
-    // Seed A: a scratch cache opens A and puts an entry; the chain is
-    // remembered in lsA. The scratch cache's connection closes on
+    // Seed A: a seeding cache opens A and puts an entry; the chain is
+    // remembered in lsA. The seeding cache's connection closes on
     // versionchange when another cache deletes A later.
     const seeder = createPostCache({ indexedDB: idb, localStorage: lsA, now: c.tick });
     await seeder.open('A');
