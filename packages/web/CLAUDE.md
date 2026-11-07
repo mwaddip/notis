@@ -746,17 +746,16 @@ A (RLB's upstream is A too, since B is not needed), steps 3–20 and the three v
 runs, and the `[diag]` liveness line prints before `13-uncancelled` and the mesh block read `NOT RUN` too. The flag
 needs `--r-key`, refuses combination with `--verified-{tip,figures,names}`, `--light` or `--mesh`, and parses as a
 boolean so steps 3–20 are actually skipped; **a full run is the record**. The relays take a `down` mode beside the
-figures and names modes (every request's connection destroyed, the client reads a transport failure). **Prep**: the
-verified-tip block's 19c and 19b seated D's chain in the post cache (one chain's database at a time), so with D gone
-and both relays `honest` a fresh page runs its tip run, and `localStorage['notis.posts.chain']` is polled until it
-holds A's block-1 hash (the App's `postCache.open(chain)` writes it from a tip run naming the chain); a timeout names
-the chain the page still held and ends W1 FAIL before `down` is set. **The page is then reloaded**, because the measured
-fact the prep exists for is that rows a page checked before its cache database opened are not offered to the cache
-again in that page — the feed's initial reads whose puts land in the previously-remembered database are not revisited
-when the seat on A then deletes that database, and a `↻` is a re-read of the same listing whose rows the App already
-holds, so the re-read checks nothing and puts nothing. With A's database open from the reload's start, the reload's
-feed reads check every bound row and the puts land; A's `notis.posts.<A>` `entries` store is counted from the page and
-polled until `count()` ≥ 3. A strip-press on a cached non-R root opens one thread so its reads of the subject and its
+figures and names modes (every request's connection destroyed, the client reads a transport failure). **Prep**: a
+64-hex chain name that is not A's block-1 hash and not any chain the run uses is seated in the extension's
+`localStorage['notis.posts.chain']` through the main() page, so the prep page's `postCache.openRemembered()` opens
+that name's database at load (`WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"`).
+With D gone and both relays `honest`, the prep page's tip run names A — `localStorage['notis.posts.chain']` is polled
+until it holds A's block-1 hash and `indexedDB.databases()` lists A's database, which `postCache.open(A)` writes and
+opens — and the kept entries the feed's first reads made (every put before the first tip run named a chain, held in
+memory beside its write to the foreign name's database) replay into A's; a timeout names the chain the page still held
+and ends W1 FAIL before `down` is set. A's `notis.posts.<A>` `entries` store is then counted on the same page, polled
+until `count()` ≥ 3. A strip-press on a cached non-R root opens one thread so its reads of the subject and its
 descendants write into the cache too, widening W4's set. A prep post from the composer, polled on its pending card's
 stage line until it reads `submitted`, records the rep view the following presses need (`WaitingStore.base.rep`),
 since without a base no waiting view stands and every press would end as a transport failure. **W1** a second fresh
