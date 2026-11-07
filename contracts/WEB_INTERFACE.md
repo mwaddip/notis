@@ -761,10 +761,6 @@ names a chain writes them into that chain's database, the remembered chain's or 
 after. The posts a page checks before its first tip run are the chain's that run names: the chain's name scopes a
 reset, not a post's place on the chain, which is the node's word before the check as after it. An entry written once a
 tip run has named the chain stays with that chain, and a later run naming another carries none of it.
-
-> ⚠ **AHEAD OF CODE (2026-11-07).** The kept entries; until then a put with no database open is dropped, and a put
-> into the remembered chain's database goes with it when the first tip run names another.
-
 **A list is read against it first** (→ "The light read"): a row whose entry holds the post's text is drawn from the
 entry and not asked for, and each listing refreshes its held entries' rows — the node's figures as the listing gave
 them — and their last-seen. **An entry without text is not held**: a placeholder's, or one a withdrawal emptied under
