@@ -204,6 +204,7 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, listKey: strin
       opts.onWithdraw = (id, control) => handlers.pressWithdraw(listKey, id, control);
       opts.withdraw = ctx.withdrawState(row.id);
       opts.canWithdraw = ctx.canSignWithdraw;
+      opts.withdrawReason = ctx.withdrawReason;
     }
   }
   return opts;

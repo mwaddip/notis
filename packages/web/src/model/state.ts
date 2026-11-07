@@ -174,9 +174,14 @@ export interface RenderCtx {
   // The author's own controls (WEB_INTERFACE → The withdraw control). withdrawState
   // is 'pending' from the ledger's entry (durable across a reload), 'waiting' for
   // an entry a node has not answered — drawn as pending with the waiting line —
-  // else the transient flight; canSignWithdraw is the spendable view non-empty.
+  // else the transient flight; canSignWithdraw is the gate — a held view with a
+  // box, or on a page no node answers the waiting view with a box
+  // (WEB_INTERFACE → The wallet → "A page no node answers offers what can wait");
+  // withdrawReason is the title when canSignWithdraw is false (WEB_INTERFACE →
+  // The withdraw control).
   withdrawState: (postId: string) => 'pending' | 'waiting' | Flight | null;
   canSignWithdraw: boolean;
+  withdrawReason: string;
   // The reader's own name (WEB_INTERFACE → The identity display).
   ownName: UsernameResult | null;
   ownNameLoaded: boolean;
@@ -203,6 +208,12 @@ export interface RenderCtx {
   // wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
+  // The send row stands on a page no node answers while the waiting credits
+  // view holds a box — the wallet's form is built on it, the balance line
+  // still reads `—` above it (WEB_INTERFACE → The wallet → "A page no node
+  // answers offers what can wait"). False in the web build and wherever the
+  // node's answer stands.
+  waitingSpendable: boolean;
   // The plain /credits listing read beside the view where the App holds a
   // figures verifier — the listing the verified-figures run proves and the
   // balance line reads through `plainShown` and `boxCount`. Null in a build

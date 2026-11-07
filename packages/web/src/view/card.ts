@@ -260,7 +260,10 @@ function withdrawArea(post: PostJson, opts: CardOpts): { el: HTMLElement; offere
   wb.textContent = 'withdraw';
   if (opts.canWithdraw === false) {
     (wb as HTMLButtonElement).disabled = true;
-    const reason = 'needs one rep box to sign with; this key has none';
+    // WEB_INTERFACE → The withdraw control, → The wallet → "A page no node
+    // answers offers what can wait": the title is the App's to name — a
+    // held view with no box, or no view read at all, each with its own line.
+    const reason = opts.withdrawReason ?? '';
     wb.title = reason;
     wb.setAttribute('aria-label', reason);
     return { el: wb, offered: false };

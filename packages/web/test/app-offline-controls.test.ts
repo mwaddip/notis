@@ -282,7 +282,11 @@ function harness(opts: Opts = {}): Harness {
   const feedEl = document.createElement('section'); feedEl.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
   document.body.append(appbar, feedEl, panes);
-  app.mount(appbar, feedEl, panes);
+  // `start` runs the mount AND `rereadReaderState`/`loadFeed`, so a fresh
+  // App's first reads of the reader's own state settle on their own — the
+  // page's own-view read's outcome gates the waiting view
+  // (WEB_INTERFACE → The wallet → "A page no node answers offers what can wait").
+  app.start(appbar, feedEl, panes);
 
   return {
     app,
@@ -376,7 +380,7 @@ const claimFormEl = (): HTMLElement | null =>
 // -------------------------------------------------------------------------
 
 describe('a page no node answers: withdraw and the send row read the waiting view', () => {
-  it.fails('withdraw, extension: a rep base with a box; the button is enabled', async () => {
+  it('withdraw, extension: a rep base with a box; the button is enabled', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
@@ -392,7 +396,7 @@ describe('a page no node answers: withdraw and the send row read the waiting vie
     expect(wb!.disabled).toBe(false);
   });
 
-  it.fails('withdraw, no waiting view: no base recorded — the button is disabled with title "can\'t read your rep right now"', async () => {
+  it('withdraw, no waiting view: no base recorded — the button is disabled with title "can\'t read your rep right now"', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
@@ -462,7 +466,7 @@ describe('a page no node answers: withdraw and the send row read the waiting vie
     expect(wb!.title).toBe('needs one rep box to sign with; this key has none');
   });
 
-  it.fails('withdraw, a node answered non-2xx with a status: the waiting view is not read — disabled with "can\'t read your rep right now"', async () => {
+  it('withdraw, a node answered non-2xx with a status: the waiting view is not read — disabled with "can\'t read your rep right now"', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
@@ -485,7 +489,7 @@ describe('a page no node answers: withdraw and the send row read the waiting vie
 // -------------------------------------------------------------------------
 
 describe('a page no node answers: the send row reads the waiting credits view', () => {
-  it.fails('send, extension: a credits base with a box — the wallet shows the send row with the form, the balance reads "—"', async () => {
+  it('send, extension: a credits base with a box — the wallet shows the send row with the form, the balance reads "—"', async () => {
     const h = harness({ rememberChain: CHAIN });
     await resolveTipRunVerified(h);
     primeRepBase(h, [{ boxId: BOX, value: 227n }]);
@@ -563,7 +567,7 @@ describe('invite, claim and the invites line do not read the waiting view', () =
 // -------------------------------------------------------------------------
 
 describe('the `your vouch` row reads `—` on another key while no rep view has been read', () => {
-  it.fails('extension build: another key reads muted `—`; the reader\'s own reads "this is you"', async () => {
+  it('extension build: another key reads muted `—`; the reader\'s own reads "this is you"', async () => {
     const h = harness({ rememberChain: CHAIN });
     await resolveTipRunVerified(h);
     primeRepBase(h, [{ boxId: BOX, value: 227n }]);
@@ -581,7 +585,7 @@ describe('the `your vouch` row reads `—` on another key while no rep view has 
     expect(own!.textContent).toContain('this is you');
   });
 
-  it.fails('web build (no seam): the row on another key reads `—` too', async () => {
+  it('web build (no seam): the row on another key reads `—` too', async () => {
     const h = harness({ withSeam: false });
     h.drive.openAuthor(AUTHOR, { from: 'feed' });
     await flush();
@@ -594,7 +598,7 @@ describe('the `your vouch` row reads `—` on another key while no rep view has 
 // -------------------------------------------------------------------------
 
 describe('the web build: no seam, no waiting view', () => {
-  it.fails('withdraw is disabled with "can\'t read your rep right now"', async () => {
+  it('withdraw is disabled with "can\'t read your rep right now"', async () => {
     const h = harness({
       withSeam: false,
       cachedRoots: [ownRootHeld()],
@@ -622,7 +626,7 @@ describe('the web build: no seam, no waiting view', () => {
 // -------------------------------------------------------------------------
 
 describe('a node change drops the waiting arm; a node that answers later lands and takes over', () => {
-  it.fails('a node change: the controls read the waiting view again only once the new node\'s read ends with no answer', async () => {
+  it('a node change: the controls read the waiting view again only once the new node\'s read ends with no answer', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],
@@ -644,7 +648,7 @@ describe('a node change drops the waiting arm; a node that answers later lands a
     expect(withdrawBtn()!.disabled).toBe(true);
   });
 
-  it.fails('a node answers later: a node answer of no box disables withdraw though the base holds one', async () => {
+  it('a node answers later: a node answer of no box disables withdraw though the base holds one', async () => {
     const h = harness({
       rememberChain: CHAIN,
       cachedRoots: [ownRootHeld()],

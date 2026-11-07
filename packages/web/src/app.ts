@@ -36,6 +36,7 @@ import { readBuildContext } from './wallet/reads';
 import { isNoAnswer } from './api/errors';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { WaitingStore, type WaitingStorage, type WaitingWrite } from './wallet/waiting';
+import type { RepBuildContext } from './wallet/builders';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
 import { rememberedChain } from './extension/post-cache';
 import type { LockManager } from './locks';
@@ -394,6 +395,12 @@ export class App {
   // (WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
   // `effective` alone"); the row shows its `effective`.
   private profileKarma: KarmaResult | null = null;
+  // The page's read of the rep view ended with no answer — the gate the
+  // waiting view enables and the control reads
+  // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+  // wait"). Set by the own-view read's outcome in `loadMembershipState`,
+  // dropped with the rest of the reader's state.
+  private repNoAnswer = false;
   // The plain /karma listing read beside the view where the App holds a
   // figures verifier, or where the tick has a grant standing — the listing
   // the verified-figures run proves and the row's line reads for `plainShown`
@@ -532,6 +539,12 @@ export class App {
   // identity owes before that send — which the row draws into whichever form
   // stands (→ "The `send` row").
   private walletCredits: CreditsResult | null = null;
+  // The page's read of the credits view ended with no answer — the gate the
+  // waiting view enables for the send row
+  // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+  // wait"). Set by the own-view read's outcome in `refreshWalletCredits`,
+  // dropped with the rest of the reader's state.
+  private creditsNoAnswer = false;
   // The plain /credits listing read beside the view where the App holds a
   // figures verifier, or where the tick has a credits grant standing — the
   // listing the verified-figures run proves and the balance line reads for
@@ -1046,6 +1059,7 @@ export class App {
       inviteFlight: this.inviteFlight,
       withdrawState: (postId) => this.withdrawState(postId),
       canSignWithdraw: this.canSignWithdraw(),
+      withdrawReason: this.withdrawReason(),
       ownName: this.ownName,
       ownNameLoaded: this.ownNameLoaded,
       nameClay: (key, name) => this.nameClay(key, name),
@@ -1053,13 +1067,17 @@ export class App {
       pendingUsername: this.usernameInFlight !== null
         ? { ...this.usernameInFlight, waiting: false }
         : this.pendingUsernameEntryWithWaiting(),
-      canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
+      // The claim form reads the node's held view alone — never the waiting
+      // view (WEB_INTERFACE → The wallet → "A page no node answers offers
+      // what can wait").
+      canSignClaim: this.profileKarma !== null && this.profileKarma.boxes.length > 0,
       canAffordBurn: this.canAffordBurn(),
       // The wallet's balance row (WEB_INTERFACE → The wallet window → "The
       // `balance` row"). status carries the tip the row's spendable-at-height
       // filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
       credits: this.walletCredits,
+      waitingSpendable: this.waitingSpendable(),
       creditsPlain: this.walletCreditsPlain,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
@@ -1129,9 +1147,56 @@ export class App {
 
   /** The profile's `/karma` listing is non-empty — the courtesy gate the
    *  withdraw button reads, directly off `profileKarma.boxes`; the node's
-   *  refusal is the truth (WEB_INTERFACE → The withdraw control). */
+   *  refusal is the truth (WEB_INTERFACE → The withdraw control). On a page
+   *  no node answers the gate reads the waiting view instead
+   *  (→ The wallet → "A page no node answers offers what can wait"). */
   private canSignWithdraw(): boolean {
-    return this.profileKarma !== null && this.profileKarma.boxes.length > 0;
+    if (this.profileKarma !== null) return this.profileKarma.boxes.length > 0;
+    const view = this.waitingRepView();
+    return view !== null && view.spendable.length > 0;
+  }
+
+  /** The withdraw button's title when `canSignWithdraw` is false — the App
+   *  names it, the card renders it (WEB_INTERFACE → The withdraw control,
+   *  → The wallet → "A page no node answers offers what can wait"). An
+   *  empty string when the button is enabled (the card reads the title
+   *  only on the disabled branch). */
+  private withdrawReason(): string {
+    if (this.profileKarma !== null) {
+      return this.profileKarma.boxes.length > 0
+        ? ''
+        : 'needs one rep box to sign with; this key has none';
+    }
+    const view = this.waitingRepView();
+    if (view === null) return "can't read your rep right now";
+    return view.spendable.length > 0 ? '' : 'needs one rep box to sign with; this key has none';
+  }
+
+  /** The waiting rep view the gate reads — the base of the chain the client
+   *  names (the verified tip's, else the remembered one) advanced by every
+   *  waiting write of rep on it. `null` while no waiting view enables the
+   *  gate: no seam, no no-answer, or a base of another chain
+   *  (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+   *  wait", → "The waiting view"). */
+  private waitingRepView(): RepBuildContext | null {
+    const store = this.waitingStore;
+    if (store === null || !this.repNoAnswer) return null;
+    const chain = this.tipChain ?? rememberedChain();
+    if (chain === null) return null;
+    return store.repView(chain);
+  }
+
+  /** The waiting credits view the send row reads — `true` when a waiting
+   *  view holds a box, `false` while no seam, no no-answer, or no base of
+   *  the chain stands (WEB_INTERFACE → The wallet → "A page no node answers
+   *  offers what can wait"). */
+  private waitingSpendable(): boolean {
+    const store = this.waitingStore;
+    if (store === null || !this.creditsNoAnswer || this.walletCredits !== null) return false;
+    const chain = this.tipChain ?? rememberedChain();
+    if (chain === null) return false;
+    const view = store.creditView(chain);
+    return view !== null && view.spendable.length > 0;
   }
 
   /** The invite form is shown while the floor would stand over the minimum
@@ -2946,6 +3011,12 @@ export class App {
     this.profileKarma = null;
     this.profileKarmaPlain = null;
     this.profileKarmaPlainStamp = null;
+    // The waiting view's gate drops with the reader's state: the new node's
+    // first read decides anew, and the gate is off while that read is in
+    // flight (WEB_INTERFACE → The wallet → "A page no node answers offers
+    // what can wait").
+    this.repNoAnswer = false;
+    this.creditsNoAnswer = false;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -3731,6 +3802,11 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return null;
     if (key === cur.pubKeyHex) return { kind: 'reason', text: 'this is you' };
+    // While no rep view has been read, membership is the view's to answer
+    // and no reason that reads it stands before it does (WEB_INTERFACE →
+    // The author window, → The wallet → "A page no node answers offers
+    // what can wait"). The row reads `—`.
+    if (this.profileKarma === null) return { kind: 'em' };
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
     const cooldownBlocks = networkNumbers(BUILD_NETWORK, this.state.status)?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
@@ -3760,42 +3836,54 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
-    // The plain promise resolves to `null` on failure, so `Promise.all`
-    // rejects only on a view, vouch, escrow, bonds or name read, and a
-    // failed read leaves the last-known state.
+    // Each read's outcome stands on its own: a failed read leaves its state
+    // alone, a successful one is held. The rep view read's own outcome
+    // sets `repNoAnswer` inside `readOwnKarma` so a sibling rejection does
+    // not hide it (WEB_INTERFACE → The wallet → "A page no node answers
+    // offers what can wait").
     const plainPromise: Promise<KarmaResult | null> = this.figuresVerifier !== null
       ? this.readOwnKarmaPlain(cur.pubKeyHex).then((k) => k, () => null)
       : Promise.resolve(null);
+    const results = await Promise.allSettled([
+      this.readOwnKarma(cur.pubKeyHex),
+      this.client.status(),
+      this.readVouchSet(cur.pubKeyHex),
+      this.readEscrow(cur.pubKeyHex),
+      this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
+      this.client.usernameByOwner(cur.pubKeyHex),
+      plainPromise,
+    ]);
+    if (gen !== this.readerGen) return;
     let karmaTaken = false;
     let karmaPlain: KarmaResult | null = null;
-    try {
-      const [karma, status, vouched, escrow, bonds, ownName, plain] = await Promise.all([
-        this.readOwnKarma(cur.pubKeyHex),
-        this.client.status(),
-        this.readVouchSet(cur.pubKeyHex),
-        this.readEscrow(cur.pubKeyHex),
-        this.client.bonds(cur.pubKeyHex, { limit: PAGE_LIMIT_DEFAULT }),
-        this.client.usernameByOwner(cur.pubKeyHex),
-        plainPromise,
-      ]);
-      if (gen !== this.readerGen) return;
-      this.bumpTip(karma.height);
-      karmaTaken = this.holdKarma(karma, order);
-      if (this.newerRead('status', order)) this.state.status = status;
-      this.bumpTip(status.blockHeight);
-      if (this.newerRead('vouches', order)) {
-        this.vouched = vouched;
-        this.escrowHeldUntil = escrow;
-      }
-      if (this.newerRead('bonds', order)) this.bondsView = bonds;
-      if (this.newerRead('name', order)) {
-        this.ownName = ownName;
-        this.ownNameLoaded = true;
-      }
-      karmaPlain = plain;
-    } catch {
-      return; // a failed read leaves the last-known state; the ↻ retries
+    const karmaR = results[0];
+    if (karmaR.status === 'fulfilled') {
+      this.bumpTip(karmaR.value.height);
+      karmaTaken = this.holdKarma(karmaR.value, order);
     }
+    const statusR = results[1];
+    if (statusR.status === 'fulfilled') {
+      if (this.newerRead('status', order)) this.state.status = statusR.value;
+      this.bumpTip(statusR.value.blockHeight);
+    }
+    const vouchedR = results[2];
+    const escrowR = results[3];
+    if (vouchedR.status === 'fulfilled' && escrowR.status === 'fulfilled'
+        && this.newerRead('vouches', order)) {
+      this.vouched = vouchedR.value;
+      this.escrowHeldUntil = escrowR.value;
+    }
+    const bondsR = results[4];
+    if (bondsR.status === 'fulfilled' && this.newerRead('bonds', order)) {
+      this.bondsView = bondsR.value;
+    }
+    const nameR = results[5];
+    if (nameR.status === 'fulfilled' && this.newerRead('name', order)) {
+      this.ownName = nameR.value;
+      this.ownNameLoaded = true;
+    }
+    const plainR = results[6];
+    if (plainR.status === 'fulfilled') karmaPlain = plainR.value;
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
@@ -3812,9 +3900,19 @@ export class App {
   /** Read the whole /credits for a key, following `next` to the end — the
    *  pending view the balance row shows (WEB_INTERFACE → The wallet → "The
    *  spendable views are the node's pending view"). `total` is the identity's
-   *  total on every page, so the first page's value stands. */
+   *  total on every page, so the first page's value stands. The read's own
+   *  outcome gates the send row's waiting arm on a page no node answers
+   *  (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+   *  wait"): a no-answer sets `creditsNoAnswer`, any answer clears it. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
-    return this.readCreditsFor(key, { pending: true });
+    try {
+      const r = await this.readCreditsFor(key, { pending: true });
+      this.setCreditsNoAnswer(false);
+      return r;
+    } catch (e) {
+      this.setCreditsNoAnswer(isNoAnswer(e));
+      throw e;
+    }
   }
 
   /** Read the whole plain /credits for a key — the listing the verified-
@@ -3847,9 +3945,39 @@ export class App {
    *  spendable views are the node's pending view", → The profile window →
    *  "The `rep` row is the rep view's `effective` alone"). Every field but
    *  `boxes` / `boxCount` / `next` is the identity's, the same on every page
-   *  (NODE_INTERFACE → UTXO queries), so the first page's values stand. */
+   *  (NODE_INTERFACE → UTXO queries), so the first page's values stand. The
+   *  read's own outcome gates the withdraw control and the `your vouch`
+   *  row's waiting arm on a page no node answers (WEB_INTERFACE → The
+   *  wallet → "A page no node answers offers what can wait"): a no-answer
+   *  sets `repNoAnswer`, any answer clears it. */
   private async readOwnKarma(key: string): Promise<KarmaResult> {
-    return this.readKarmaFor(key, { pending: true });
+    try {
+      const r = await this.readKarmaFor(key, { pending: true });
+      this.setRepNoAnswer(false);
+      return r;
+    } catch (e) {
+      this.setRepNoAnswer(isNoAnswer(e));
+      throw e;
+    }
+  }
+
+  /** Set `repNoAnswer` to `v` and re-render where the gate reads it — the
+   *  panes carry the withdraw control, and an author window's `your vouch`
+   *  row the `em` arm (WEB_INTERFACE → The wallet → "A page no node answers
+   *  offers what can wait"). */
+  private setRepNoAnswer(v: boolean): void {
+    if (this.repNoAnswer === v) return;
+    this.repNoAnswer = v;
+    this.renderPanes();
+  }
+
+  /** Set `creditsNoAnswer` to `v` and re-render the wallet's row in place —
+   *  the send row's gate reads it (WEB_INTERFACE → The wallet → "A page no
+   *  node answers offers what can wait"). */
+  private setCreditsNoAnswer(v: boolean): void {
+    if (this.creditsNoAnswer === v) return;
+    this.creditsNoAnswer = v;
+    this.renderCreditsRowInPlace();
   }
 
   /** Read the whole plain /karma for a key — the listing the verified-figures
