@@ -1001,6 +1001,131 @@ async function findWorker(chromePort = port) {
   return list.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.endsWith('/background.js'));
 }
 
+// The diagnostic line that runs just before `13-uncancelled`: for every
+// target `/json/list` reports (page, service_worker, worker, browser),
+// name its type, the first 80 chars of its URL, and whether a fresh CDP
+// session's `Runtime.evaluate('1+1')` answers within 3 s — `live`,
+// `hung`, or `no-ws`. An extension page gets a `label` comparing its
+// target id against the known `mainPageId` (what `main()` opened and
+// what the block reuses under `--waiting-only`): `main()` for that one,
+// `block-leftover` for any other. For every page that reads `hung`,
+// `probeHungPage` opens a fresh session, reads `document.visibilityState`
+// if the page answers, runs `Debugger.enable` then `Debugger.pause` and
+// collects the top 8 frames of the next `Debugger.paused` event (up to
+// 5 s), then `Debugger.resume`s and closes; one line per hung page.
+async function probeHungPage(wsUrl) {
+  let sock = null;
+  const result = { visibility: null, frames: [], reason: null };
+  try {
+    sock = new WebSocket(wsUrl);
+    await new Promise((res, rej) => {
+      sock.onopen = res;
+      sock.onerror = rej;
+      setTimeout(() => rej(new Error('open timeout')), 2000);
+    });
+    let nextId = 0;
+    const pending = new Map();
+    const events = [];
+    sock.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+      if (m.method) events.push(m);
+    };
+    const call = (method, params = {}, timeoutMs = 3000) => new Promise((res, rej) => {
+      const id = ++nextId;
+      const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout on ' + method)); }, timeoutMs);
+      pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+      sock.send(JSON.stringify({ id, method, params }));
+    });
+    try {
+      const vr = await call('Runtime.evaluate', { expression: 'document.visibilityState', returnByValue: true }, 2000);
+      result.visibility = vr?.result?.value ?? null;
+    } catch {}
+    try { await call('Debugger.enable', {}, 3000); } catch (e) { result.reason = 'Debugger.enable failed: ' + String(e?.message ?? e); return result; }
+    try { await call('Debugger.pause', {}, 3000); } catch (e) { result.reason = 'Debugger.pause failed: ' + String(e?.message ?? e); try { await call('Debugger.disable', {}, 2000); } catch {} return result; }
+    const paused = await new Promise((res) => {
+      const start = Date.now();
+      const check = setInterval(() => {
+        const ev = events.find((e) => e.method === 'Debugger.paused');
+        if (ev) { clearInterval(check); res(ev); return; }
+        if (Date.now() - start >= 5000) { clearInterval(check); res(null); }
+      }, 100);
+    });
+    if (paused) {
+      const frames = Array.isArray(paused.params?.callFrames) ? paused.params.callFrames.slice(0, 8) : [];
+      result.frames = frames.map((f) => ({
+        fn: f.functionName || '(anonymous)',
+        url: typeof f.url === 'string' ? f.url.slice(-60) : '',
+        at: `${f.location?.lineNumber ?? '?'}:${f.location?.columnNumber ?? '?'}`,
+      }));
+      result.reason = paused.params?.reason ?? null;
+    } else {
+      result.reason = 'no Debugger.paused within 5s';
+    }
+    try { await call('Debugger.resume', {}, 2000); } catch {}
+  } catch (e) {
+    result.reason = 'probe failed: ' + String(e?.message ?? e);
+  } finally {
+    try { sock?.close(); } catch {}
+  }
+  return result;
+}
+
+async function diagBeforeThirteenUncancelled(mainPageId) {
+  try {
+    const liveList = await jsonList();
+    const probes = [];
+    const hung = [];
+    for (const t of liveList) {
+      const url = (t.url ?? '').slice(0, 80);
+      const entry = { type: t.type ?? '?', url };
+      const isExtPage = t.type === 'page' && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`);
+      if (isExtPage) entry.label = t.id === mainPageId ? 'main()' : 'block-leftover';
+      if (!t.webSocketDebuggerUrl) {
+        entry.live = 'no-ws';
+        probes.push(entry);
+        continue;
+      }
+      let probeSock = null;
+      try {
+        probeSock = new WebSocket(t.webSocketDebuggerUrl);
+        await new Promise((res, rej) => {
+          probeSock.onopen = res;
+          probeSock.onerror = rej;
+          setTimeout(() => rej(new Error('open timeout')), 2000);
+        });
+        let nextId = 0;
+        const pending = new Map();
+        probeSock.onmessage = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+        };
+        const probeCall = (method, params = {}) => new Promise((res, rej) => {
+          const id = ++nextId;
+          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
+          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
+          probeSock.send(JSON.stringify({ id, method, params }));
+        });
+        const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+        entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
+      } catch {
+        entry.live = 'hung';
+      } finally {
+        try { probeSock?.close(); } catch {}
+      }
+      probes.push(entry);
+      if (entry.live === 'hung' && isExtPage) hung.push({ entry, wsUrl: t.webSocketDebuggerUrl });
+    }
+    console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
+    for (const { entry, wsUrl } of hung) {
+      const info = await probeHungPage(wsUrl);
+      console.log(`[diag] hung page stack: label=${entry.label} url=${JSON.stringify(entry.url)} visibility=${JSON.stringify(info.visibility)} pausedReason=${JSON.stringify(info.reason)} frames=${JSON.stringify(info.frames)}`);
+    }
+  } catch (e) {
+    console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
+  }
+}
+
 // The browser-level CDP session — the only one that can `Target.createTarget`,
 // `Target.closeTarget`, `Target.createBrowserContext`, and see `targetCreated`
 // / `targetDestroyed` events at the browser scope. Distinct from a per-target
@@ -1136,6 +1261,27 @@ async function pollKarma(target = 20, ms = 25000) {
 
 async function feedContains(id) {
   try { const j = await (await fetch(`${NODE}/posts/${id}`)).json(); return j && !j.kind; } catch { return false; }
+}
+
+// Pick one of R's root posts that still stands on the chain — a withdraw
+// spent against a tombstone (`kind !== undefined` on `/posts/:id`) is
+// refused with HTTP 400, so the harness's W4 spend takes a live one. The
+// node's answer is read page by page under `KARMA_LISTING_MAX`-shaped
+// queries; the first live id wins, else null.
+async function pickOwnLiveRootPostId() {
+  try {
+    const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`);
+    const j = await r.json();
+    const rows = Array.isArray(j?.posts) ? j.posts : [];
+    for (const row of rows) {
+      if (typeof row?.id !== 'string') continue;
+      // The listing itself carries no tombstone on root rows — confirm
+      // with `/posts/:id`, which answers `{ kind: 'withdrawn', … }` for
+      // a withdrawn post and `{ id, content, … }` for a live one.
+      if (await feedContains(row.id)) return row.id;
+    }
+  } catch {}
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -5488,8 +5634,11 @@ function forwardedPostCount(relay, pathOrPrefix) {
 // reason }` when the preconditions cannot be met.
 async function spendRKarmaBoxOutside() {
   if (!R_JSON) return { ok: false, reason: 'no --r-key loaded' };
-  const postId = await pickOwnRootPostId();
-  if (postId === null) return { ok: false, reason: "no R-authored root post to withdraw" };
+  // Pick a live root (not a tombstone): a withdraw spent against an
+  // already-withdrawn post is refused with 400, so the picker filters
+  // tombstones through `/posts/:id` per entry.
+  const postId = await pickOwnLiveRootPostId();
+  if (postId === null) return { ok: false, reason: "no live R-authored root post to withdraw (every one is a tombstone or none exists)" };
   let karmaR = null;
   let statusR = null;
   try {
@@ -5540,8 +5689,12 @@ async function spendRKarmaBoxOutside() {
   } catch (e) {
     return { ok: false, reason: `POST failed: ${e?.message ?? String(e)}` };
   }
-  let answer = null;
-  try { answer = await res.json(); } catch {}
+  // Read the body once as text, then try to parse — the node's refusal
+  // body names the cause (NODE_INTERFACE → Withdrawal) and a red
+  // without the body teaches nothing.
+  const bodyText = await res.text().catch(() => '');
+  let answer;
+  try { answer = JSON.parse(bodyText); } catch { answer = bodyText; }
   return { ok: res.ok, status: res.status, txId, boxId: spent.boxId, postId, answer };
 }
 
@@ -5662,6 +5815,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   let prepCachedIds = [];
   let prepRCachedRootIds = [];
   let prepThreadOpened = false;
+  let prepPostResult = { ok: false, reason: 'not attempted' };
   let prepError = null;
   let prepPage = null;
   try {
@@ -5812,6 +5966,73 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         await sleep(4000);
       }
     } catch {}
+    // Make one root post from the composer so the client records a rep
+    // waiting view (WEB_INTERFACE → The wallet → "A flow with no
+    // waiting view ends as a transport failure", → "The waiting store
+    // keeps every waiting write as a record of its own"): under
+    // `--waiting-only` each run starts from a fresh browser profile
+    // and no earlier step records one; in a full run the earlier
+    // steps do. The composer's 2xx is awaited by the stage line
+    // reading `submitted` on the pending card. Without this view W2's
+    // composer stays disabled and its like ends as a transport
+    // failure before the waiting arm engages.
+    const prepPostContent = 'ww-prep-' + Date.now();
+    try {
+      const opened = await pCx.eval(`(() => {
+        const b = document.querySelector('[data-composer-open="@feed"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`, true) === true;
+      if (!opened) { prepPostResult = { ok: false, reason: 'composer did not open' }; }
+      else {
+        const ready = await pCx.waitFor(
+          `document.querySelector('.composer textarea')`,
+          'composer opened prep', 15000,
+        ).then(() => true, () => false);
+        if (!ready) { prepPostResult = { ok: false, reason: 'composer textarea never appeared' }; }
+        else {
+          await pCx.eval(`(() => {
+            const ta = document.querySelector('.composer textarea');
+            if (!ta) return false;
+            ta.value = ${JSON.stringify(prepPostContent)};
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+          })()`, true);
+          const enabled = await pCx.waitFor(
+            `(() => { const b = document.querySelector('.composer .btn-primary'); return b !== null && !b.disabled; })()`,
+            'composer post enabled prep', 30000,
+          ).then(() => true, () => false);
+          if (!enabled) { prepPostResult = { ok: false, reason: 'composer post button never enabled (rep view not recorded yet)' }; }
+          else {
+            await pCx.eval(`(() => { const b = document.querySelector('.composer .btn-primary'); if (b) b.click(); })()`, true);
+            // Poll the pending card's stage line until it reads
+            // 'submitted' (write's 2xx landed; rep view recorded).
+            const t0 = Date.now();
+            const bound = 60000;
+            let landed = null;
+            while (Date.now() - t0 < bound) {
+              const snap = await pCx.eval(`(() => {
+                const cards = [...document.querySelectorAll('.card.pending')];
+                for (const c of cards) {
+                  if ((c.textContent ?? '').includes(${JSON.stringify(prepPostContent)})) {
+                    return { id: c.getAttribute('data-post-id'), stage: c.querySelector('.stage span')?.textContent ?? null };
+                  }
+                }
+                return null;
+              })()`).catch(() => null);
+              if (snap && snap.stage === 'submitted') { landed = snap; break; }
+              await sleep(1000);
+            }
+            prepPostResult = landed !== null
+              ? { ok: true, postId: landed.id }
+              : { ok: false, reason: 'post never read submitted within ' + bound + 'ms' };
+          }
+        }
+      }
+    } catch (e) {
+      prepPostResult = { ok: false, reason: `error: ${e?.message ?? String(e)}` };
+    }
     }
   } catch (e) {
     prepError = e?.stack ?? String(e);
@@ -5819,7 +6040,10 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     await closeBlockPage(prepPage);
   }
 
-  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
+  const prepPostNamed = prepPostResult.ok === true
+    ? (prepPostResult.postId ?? 'ok')
+    : (prepPostResult.reason ?? 'unknown');
+  const prepDetail = `prep: d-gone=${prepDGone}, corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, reloaded=${prepReloaded}, corner-after-reload=${JSON.stringify(prepCornerAfterReload)}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4']) {
@@ -6311,7 +6535,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       const w4Ok = spent.ok && replaced !== null && twoPressed
         && firstPostForwarded >= 1 && firstRefused && strandedTextOk && secondPostForwarded === 0;
       record('W4', w4Ok,
-        `first post pressed=${JSON.stringify(firstPress)}; second post pressed=${JSON.stringify(secondPress)}; first stage while waiting=${JSON.stringify(firstStageWaiting)}, second stage while waiting=${JSON.stringify(secondStageWaiting)} (both expect 'waiting for a node'); outside spend status=${spent.status ?? spent.reason}; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first post forwarded POST count=${firstPostForwarded} (≥1 expected); first post's stage after flush=${JSON.stringify(firstStage)} (non-empty rejection expected, not 'waiting for a node'); second post forwarded POST count=${secondPostForwarded} (0 expected — stranded); second post's stage after flush=${JSON.stringify(secondStage)} (expect 'not sent: the one before it was refused.')`);
+        `first post pressed=${JSON.stringify(firstPress)}; second post pressed=${JSON.stringify(secondPress)}; first stage while waiting=${JSON.stringify(firstStageWaiting)}, second stage while waiting=${JSON.stringify(secondStageWaiting)} (both expect 'waiting for a node'); outside spend status=${spent.status ?? spent.reason} body=${JSON.stringify(spent.answer ?? null)} postId=${(spent.postId ?? '').slice(0, 12)}… boxId=${(spent.boxId ?? '').slice(0, 12)}…; preFirstBoxId=${(preFirstBoxId ?? '').slice(0, 12)}…; R's karma box replaced=${replaced !== null} (new boxId=${(replaced ?? '').slice(0, 12)}…); first post forwarded POST count=${firstPostForwarded} (≥1 expected); first post's stage after flush=${JSON.stringify(firstStage)} (non-empty rejection expected, not 'waiting for a node'); second post forwarded POST count=${secondPostForwarded} (0 expected — stranded); second post's stage after flush=${JSON.stringify(secondStage)} (expect 'not sent: the one before it was refused.')`);
     } finally {
       await closeBlockPage(w4Page);
     }
@@ -9179,42 +9403,10 @@ async function main() {
       try { await waitingWritesSteps(wCx, wBcx, wPage.id); } finally { try { wCx.s.close(); } catch {} }
       // The liveness diagnostic — the same line a full run prints
       // before 13-uncancelled runs; a --waiting-only run ends after it.
-      try {
-        const liveList = await jsonList();
-        const probes = [];
-        for (const t of liveList) {
-          const url = (t.url ?? '').slice(0, 80);
-          const entry = { type: t.type ?? '?', url };
-          if (!t.webSocketDebuggerUrl) { entry.live = 'no-ws'; probes.push(entry); continue; }
-          let probeSock = null;
-          try {
-            probeSock = new WebSocket(t.webSocketDebuggerUrl);
-            await new Promise((res, rej) => {
-              probeSock.onopen = res;
-              probeSock.onerror = rej;
-              setTimeout(() => rej(new Error('open timeout')), 2000);
-            });
-            let nextId = 0;
-            const pending = new Map();
-            probeSock.onmessage = (ev) => {
-              const m = JSON.parse(ev.data);
-              if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-            };
-            const probeCall = (method, params = {}) => new Promise((res, rej) => {
-              const id = ++nextId;
-              const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
-              pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
-              probeSock.send(JSON.stringify({ id, method, params }));
-            });
-            const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
-            entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
-          } catch { entry.live = 'hung'; } finally { try { probeSock?.close(); } catch {} }
-          probes.push(entry);
-        }
-        console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
-      } catch (e) {
-        console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
-      }
+      // The diag's extension-page labels compare against the id of the
+      // page `main()` opened (same id as `wPage.id`, since findExt
+      // returns the one open one).
+      await diagBeforeThirteenUncancelled(page.id);
       record('13-uncancelled', 'NOT RUN', '--waiting-only skips the browser-context arm');
     } finally {
       try { wBcx.s.close(); } catch {}
@@ -10548,59 +10740,12 @@ async function main() {
   // fresh-page openings sit after it.
   await runVerifiedBlocks(bcx, { skipMesh: true });
 
-  // ------- Liveness diagnostic — for every target `/json/list` reports
-  // (page, service_worker, worker, browser), name its type, the first 80
-  // chars of its URL, and whether `Runtime.evaluate('1+1')` on a fresh
-  // CDP session answers within 3 s: `live`, `hung`, or `no-ws`. Printed
-  // as one line; `13-uncancelled` reads from the same list and the diag
-  // names each page's state at the moment just before it runs, so main
-  // can tell a hung page (a product defect) from a harness one. The
-  // probe opens no permanent state — each session is closed after its
-  // probe, and `13-uncancelled` opens its own.
-  try {
-    const liveList = await jsonList();
-    const probes = [];
-    for (const t of liveList) {
-      const url = (t.url ?? '').slice(0, 80);
-      const entry = { type: t.type ?? '?', url };
-      if (!t.webSocketDebuggerUrl) {
-        entry.live = 'no-ws';
-        probes.push(entry);
-        continue;
-      }
-      let probeSock = null;
-      try {
-        probeSock = new WebSocket(t.webSocketDebuggerUrl);
-        await new Promise((res, rej) => {
-          probeSock.onopen = res;
-          probeSock.onerror = rej;
-          setTimeout(() => rej(new Error('open timeout')), 2000);
-        });
-        let nextId = 0;
-        const pending = new Map();
-        probeSock.onmessage = (ev) => {
-          const m = JSON.parse(ev.data);
-          if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-        };
-        const probeCall = (method, params = {}) => new Promise((res, rej) => {
-          const id = ++nextId;
-          const timer = setTimeout(() => { pending.delete(id); rej(new Error('CDP timeout')); }, 3000);
-          pending.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
-          probeSock.send(JSON.stringify({ id, method, params }));
-        });
-        const answer = await probeCall('Runtime.evaluate', { expression: '1+1', returnByValue: true });
-        entry.live = answer?.result?.value === 2 ? 'live' : 'hung';
-      } catch {
-        entry.live = 'hung';
-      } finally {
-        try { probeSock?.close(); } catch {}
-      }
-      probes.push(entry);
-    }
-    console.log(`[diag] targets before 13-uncancelled: ${JSON.stringify(probes)}`);
-  } catch (e) {
-    console.log(`[diag] targets before 13-uncancelled: error ${e?.stack ?? String(e)}`);
-  }
+  // The diag line prints just before 13-uncancelled runs. See
+  // `diagBeforeThirteenUncancelled`'s comment for its shape and for the
+  // hung-page stack line that follows when a page reads `hung`. The
+  // page id is `main()`'s initial extension page, so `block-leftover`
+  // names a page some block opened and did not close.
+  await diagBeforeThirteenUncancelled(page.id);
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
