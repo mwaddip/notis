@@ -266,7 +266,11 @@ function harness(opts: Opts = {}): Harness {
 
   const waitingSeam = opts.withSeam === false
     ? undefined
-    : { storage: window.localStorage as WaitingStorage, locks: fakeLockManager() };
+    : {
+        storage: window.localStorage as WaitingStorage,
+        locks: fakeLockManager(),
+        rememberedChain: (): string | null => window.localStorage.getItem('notis.posts.chain'),
+      };
 
   const ledger = new PendingLedger(currentKey.hex);
   const app = new App(

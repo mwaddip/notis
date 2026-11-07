@@ -502,7 +502,11 @@ export class App {
   // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
   // waits". Non-null only when the extension build hands the App a seam and an
   // identity is loaded. Rebuilt in `onIdentityChange` beside the ledger.
-  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager } | null;
+  // The seam also carries the remembered-chain read (WEB_INTERFACE → The
+  // extension → "The post cache"): the extension wires it to the post cache's
+  // module, which keeps the last chain's name in `localStorage` under
+  // `notis.posts.chain`, so the web build reads no storage key here.
+  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null;
   private waitingStore: WaitingStore | null;
   // The send pass flags — one pass per ledger at a time
   // (WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer").
@@ -589,7 +593,7 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
     handNodeSeam?: HandNodeSeam | null,
-    waitingSeam?: { storage: WaitingStorage; locks: LockManager } | null,
+    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
