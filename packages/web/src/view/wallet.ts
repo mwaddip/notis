@@ -81,6 +81,11 @@ export interface WalletCtx {
   // for it (→ The wallet window → "The `balance` row").
   status: StatusResult | null;
   credits: CreditsResult | null; // /credits?pending=1 — the credits view (WEB_INTERFACE → The wallet)
+  // On a page no node answers, true when the waiting credits view holds a
+  // box — the send row stands, the form built on that, the balance line
+  // still reads `—` above it (WEB_INTERFACE → The wallet → "A page no node
+  // answers offers what can wait").
+  waitingSpendable: boolean;
   creditsPlain: CreditsResult | null; // /credits plain — read beside the view for a verifier run
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
@@ -355,11 +360,16 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
     // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
     // readCreditContext read one implementation of the rule.
     const spendable = c === null ? 0n : sumValues(spendableCreditBoxes(c.boxes, height));
+    // On a page no node answers the waiting credits view stands in — the
+    // send row stands with the form, the balance line still reads `—`
+    // (WEB_INTERFACE → The wallet → "A page no node answers offers what can
+    // wait").
+    const offerSend = spendable > 0n || ctx.waitingSpendable;
 
     // The form stands while a box is spendable and ends once none is — and the
     // press made on it ends with it, so the rest of the draw reads the state
     // without that press: no check's line, no answer.
-    if (spendable > 0n) {
+    if (offerSend) {
       if (form === null) {
         const made: SendForm = sendForm(handlers, read, (built) => {
           if (form === made) openConfirm(built);
@@ -472,8 +482,10 @@ function creditsRows(b: HTMLElement, handlers: WalletHandlers, read: () => Walle
     // The `send` row stands while a box is spendable, and while a send's own
     // line stands — its check, its flight, the pending line, *sent* — so a send
     // of the whole balance still reads its ending (WEB_INTERFACE → The wallet
-    // window → "The `send` row"). One predicate, read here.
-    sendRow.hidden = !(spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null);
+    // window → "The `send` row"); on a page no node answers, the waiting
+    // credits view with a box stands the row too (→ The wallet → "A page no
+    // node answers offers what can wait"). One predicate, read here.
+    sendRow.hidden = !(offerSend || ctx.pendingSend !== null || ctx.sendFlight !== null || ctx.sendCheck !== null);
   };
 
   return { update, resetSend: () => form?.reset() };

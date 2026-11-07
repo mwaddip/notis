@@ -73,6 +73,7 @@ export interface CardOpts {
   // survive a reload — else the transient flight in the slot.
   withdraw?: 'pending' | 'waiting' | Flight | null;
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
+  withdrawReason?: string;               // the title the App names when canWithdraw is false (WEB_INTERFACE → The withdraw control, → The wallet → "A page no node answers offers what can wait")
   // The post's link and where its press goes when the clipboard takes no
   // write — one option, so no card carries the copy glyph without the row its
   // refusal opens (WEB_INTERFACE → Links).
@@ -259,7 +260,10 @@ function withdrawArea(post: PostJson, opts: CardOpts): { el: HTMLElement; offere
   wb.textContent = 'withdraw';
   if (opts.canWithdraw === false) {
     (wb as HTMLButtonElement).disabled = true;
-    const reason = 'needs one rep box to sign with; this key has none';
+    // WEB_INTERFACE → The withdraw control, → The wallet → "A page no node
+    // answers offers what can wait": the title is the App's to name — a
+    // held view with no box, or no view read at all, each with its own line.
+    const reason = opts.withdrawReason ?? '';
     wb.title = reason;
     wb.setAttribute('aria-label', reason);
     return { el: wb, offered: false };

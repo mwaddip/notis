@@ -28,7 +28,7 @@
 // sets each figures mode on both tip relays and opens a fresh page per arm;
 // the verified-names block brings up a B of its own too, and each of its lie
 // arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
-// The waiting-writes block (W1 · W2 · W3 · W4) runs after the three verified
+// The waiting-writes block (W1 · W2 · W3 · W4 · W5) runs after the three verified
 // blocks in the relays build — the one whose seed list is RLA and RLB in
 // front of A and B — and covers WEB_INTERFACE → The wallet → "A write no node
 // answers waits", → "Waiting writes go out at the first answer", → "A
@@ -122,18 +122,26 @@
 //     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
 //     names"), so the block runs a B of its own and requires what
 //     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
-//   Waiting-writes block: W1·W2·W3·W4 (WEB_INTERFACE → The wallet → "A write
+//   Waiting-writes block: W1·W2·W3·W4·W5 (WEB_INTERFACE → The wallet → "A write
 //     no node answers waits", → "Waiting writes go out at the first answer",
 //     → "A refusal ends what it strands", → "A waiting write is drawn as
-//     pending"; → The extension → "A failed listing draws the cache"). Runs
-//     after the three verified blocks in the relays build, whenever any of
+//     pending", → "A page no node answers offers what can wait"; → The
+//     extension → "A failed listing draws the cache"). Runs after the three
+//     verified blocks in the relays build, whenever any of
 //     --verified-{tip,figures,names} is passed with --r-key — the relays are
 //     up and R's identity is loaded. W1 and W2 open one fresh page under
 //     `down` on both relays; W3 presses the corner on the same page with
 //     both relays honest; W4 opens another fresh page under `down`, presses
 //     two root posts from the composer whose builders chain on the rep
 //     queue, replaces R's karma box on the chain through a withdraw the
-//     harness builds and submits, then sets both relays honest.
+//     harness builds and submits, then sets both relays honest; W5 opens a
+//     fresh page under `down` on both relays and asserts the controls a page
+//     no node answers offers — the withdraw control enabled on a cached R
+//     root in a pane, with its confirm row and `keep`, the rep row's `—` and
+//     the invites row with no form, the balance row's `—`, and the `your
+//     vouch` row of a cached non-R card's author window reading `—` with no
+//     `vouch` word — the step writes nothing, and neither relay's log carries
+//     a POST for its span.
 //   --waiting-only: iterate on the waiting-writes block alone. Runs steps
 //     1 and 2 (seed list check and R's import), brings up the two tip
 //     relays in front of A (RLB's upstream is A too, since B is not
@@ -268,7 +276,7 @@ const MESH = args.get('mesh') === true;
 // earlier state the block needs), brings up the two tip relays in front
 // of A (both relays' upstream is A, since B is not needed), skips steps
 // 3–20 and the verified-tip / figures / names blocks, then runs the
-// waiting-writes block (prep · W1 · W2 · W3 · W4) and the `[diag]`
+// waiting-writes block (prep · W1 · W2 · W3 · W4 · W5) and the `[diag]`
 // liveness line, and ends — 13-uncancelled and the mesh block read
 // NOT RUN. The full run is the record; this flag is for turning the
 // block over fast while a defect of it is being tracked down.
@@ -5537,15 +5545,16 @@ async function runNamesStep30(rName) {
 }
 
 // ---------------------------------------------------------------------------
-// The waiting-writes block — W1 · W2 · W3 · W4
+// The waiting-writes block — W1 · W2 · W3 · W4 · W5
 //
 // WEB_INTERFACE → The wallet → "A write no node answers waits", → "Waiting
 // writes go out at the first answer", → "A refusal ends what it strands",
-// → "A waiting write is drawn as pending", and → The extension → "The post
-// cache" → "A failed listing draws the cache". The block uses the two tip
-// relays RLA and RLB the verified blocks set up (`setupTipRelays`) — the
-// shell's seed list reaches each at its api base alone — and switches both
-// relays' modes between steps the same way the verified blocks do.
+// → "A waiting write is drawn as pending", → "A page no node answers offers
+// what can wait", and → The extension → "The post cache" → "A failed listing
+// draws the cache". The block uses the two tip relays RLA and RLB the
+// verified blocks set up (`setupTipRelays`) — the shell's seed list reaches
+// each at its api base alone — and switches both relays' modes between steps
+// the same way the verified blocks do.
 //
 //   W1 — the prep seats a 64-hex chain name that is not A's and not any
 //        chain the run uses in the extension's
@@ -5596,9 +5605,23 @@ async function runNamesStep30(rName) {
 //        pending card's stage line reads the rejection, and the second
 //        post ends unsent — its pending card reads *not sent: the one
 //        before it was refused.* — with no POST for it going out.
+//   W5 — a fresh page under `down` on both relays: the step writes nothing
+//        and asserts what the page offers (WEB_INTERFACE → The wallet → "A
+//        page no node answers offers what can wait"). A strip-press on a
+//        cached R root (`prepRCachedRootIds`, as W1 picks R's card) opens
+//        its thread; the own card's `withdraw` control in that pane is
+//        enabled (`disabled === false`, no `title`); a press on it mounts
+//        the confirm row (`withdraw this post? the content goes; the
+//        replies stay.`, with `withdraw` and `keep`); a press on `keep`
+//        takes the row off. The `@profile` window's rep row reads `—`
+//        and its invites row holds no invite form; a cached non-R card's
+//        author button opens that author's window and its `your vouch`
+//        row reads `—` with no `vouch` word; the `@wallet` window's
+//        balance row reads `—`. Neither relay's log carries a POST
+//        forwarded or destroyed for the whole step's span.
 // ---------------------------------------------------------------------------
 
-const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4'];
+const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4', 'W5'];
 
 function markWaitingWritesNotRun(reason) {
   for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason);
@@ -6058,7 +6081,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   const prepDetail = `prep: d-gone=${prepDGone}, foreign-set=${prepForeignSet} (read-back=${JSON.stringify(prepForeignReadBack)}), corner=${JSON.stringify(prepCornerTitle)}, chain=${JSON.stringify(prepChainDb)} (expected ${JSON.stringify(prepExpectedDb)}), chain-held=${JSON.stringify(prepChainHeld)}, chain-move-timed-out=${prepChainMoveTimedOut}, cached=${prepCached} (≥${prepCachedTarget} expected${prepCachedIds.length > 0 ? `, ids=[${prepCachedIds.map((i) => (typeof i === 'string' ? i.slice(0, 8) + '…' : JSON.stringify(i))).join(', ')}]` : ''}), R-roots-cached=${prepRCachedRootIds.length} of ${prepRRootIds.length}, thread-opened=${prepThreadOpened}, prep-post=${JSON.stringify(prepPostNamed)}${prepForeignError !== null ? `, foreign-error=${JSON.stringify(prepForeignError)}` : ''}${prepError !== null ? `, error=${JSON.stringify(prepError)}` : ''}`;
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
-    for (const s of ['W2', 'W3', 'W4']) {
+    for (const s of ['W2', 'W3', 'W4', 'W5']) {
       record(s, 'NOT RUN', `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
     }
     return;
@@ -6637,12 +6660,273 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   } catch (e) {
     record('W4', false, `error: ${e?.stack ?? String(e)}`);
   }
+
+  // ----- W5 — a fresh page under `down` on both relays, writes nothing.
+  // Asserts the controls a page no node answers offers (WEB_INTERFACE →
+  // The wallet → "A page no node answers offers what can wait"): the
+  // withdraw control enabled on R's own card in a pane, with its confirm
+  // row and `keep`; the `@profile` window's rep row reading `—` and no
+  // invite form; a cached non-R card's author window with its `your vouch`
+  // row reading `—` and no `vouch` word; the `@wallet` window's balance
+  // row reading `—`. Neither relay's log carries a POST — forwarded or
+  // destroyed under `down` — for the step's span: the step writes nothing.
+  setBothRelayModes('down');
+  let w5Page = null;
+  try {
+    const w5LogAIdx = tipRelays.a.log.length;
+    const w5LogBIdx = tipRelays.b.log.length;
+    w5Page = trackPage(await openFreshExtensionPage(bcx));
+    const w5Cx = w5Page.cx;
+    await w5Cx.waitFor(`!!document.querySelector('#feed')`, 'feed root W5', 30000);
+    // The feed's cold first page reads a transport failure under `down`;
+    // the cache fallback draws its roots beneath the error line. Give
+    // the fallback a moment to settle before the strip press.
+    await w5Cx.waitFor(
+      `!!document.querySelector('#feed .error') && document.querySelectorAll('#feed .card').length >= 1`,
+      'feed error line and cached roots W5', 60000,
+    ).catch(() => {});
+    await sleep(2000);
+
+    // Record what the waiting store holds for R — the rep base, the
+    // credits base and the waiting writes. The withdraw gate reads the
+    // waiting rep view (base + waiting writes of rep), so a red names
+    // what the view stands on. `.find` answers `undefined` on a miss;
+    // a truthy check reads the miss without stranding a read.
+    const waitingSnapshot = await w5Cx.eval(`(() => {
+      const prefix = 'notis.waiting.' + ${JSON.stringify(R_JSON.pubKeyHex)} + '.';
+      let baseRep = null;
+      let baseCredits = null;
+      const waiting = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k || !k.startsWith(prefix)) continue;
+          const tail = k.slice(prefix.length);
+          const raw = localStorage.getItem(k);
+          if (tail === 'base.rep') { try { baseRep = JSON.parse(raw); } catch {} }
+          else if (tail === 'base.credits') { try { baseCredits = JSON.parse(raw); } catch {} }
+          else if (tail.startsWith('w.')) {
+            try {
+              const r = JSON.parse(raw);
+              waiting.push({ seq: r?.seq ?? null, kind: r?.kind ?? null, ledger: r?.ledger ?? null });
+            } catch {}
+          }
+        }
+      } catch {}
+      const baseRepBoxes = Array.isArray(baseRep?.spendable) ? baseRep.spendable.length : 0;
+      const baseCreditsBoxes = Array.isArray(baseCredits?.spendable) ? baseCredits.spendable.length : 0;
+      return {
+        baseRep: baseRep
+          ? { chain: typeof baseRep.chain === 'string' ? baseRep.chain.slice(0, 12) : null,
+              height: baseRep.height, effective: baseRep.effective, boxes: baseRepBoxes }
+          : null,
+        baseCredits: baseCredits
+          ? { chain: typeof baseCredits.chain === 'string' ? baseCredits.chain.slice(0, 12) : null,
+              height: baseCredits.height, boxes: baseCreditsBoxes }
+          : null,
+        waiting,
+      };
+    })()`);
+
+    // Press R's cached root's strip to open a thread. R's cards are picked
+    // by id against `prepRCachedRootIds` (W1's pattern — a card renders
+    // no `data-author`). Under `down` the thread read fails; the pane's
+    // cache fallback draws R's card as `confirmed`, so the card carries
+    // the withdraw control.
+    const stripPressed = await w5Cx.eval(`(() => {
+      const rCached = new Set(${JSON.stringify(prepRCachedRootIds)});
+      const card = [...document.querySelectorAll('#feed .card[data-post-id]')]
+        .find((c) => rCached.has(c.getAttribute('data-post-id'))
+          && c.querySelector('button.strip') !== null);
+      if (!card) return { ok: false, reason: 'no R-cached root card with a strip in the feed' };
+      card.querySelector('button.strip').click();
+      return { ok: true, id: card.getAttribute('data-post-id') };
+    })()`, true);
+
+    let paneId = stripPressed?.ok === true ? stripPressed.id : null;
+    let paneRendered = false;
+    if (paneId !== null) {
+      paneRendered = await w5Cx.waitFor(
+        `!!document.querySelector('#panes .region-body .card[data-post-id="${paneId}"]')`,
+        'R\'s card in a thread pane W5', 30000,
+      ).then(() => true, () => false);
+    }
+
+    // The withdraw control on R's own card. `button.withdraw-ctl` renders
+    // only on the reader's own confirmed live post; the disabled render
+    // sets `title` to the reason the App names. An enabled render has
+    // `disabled === false` and no `title` attribute (view/card.ts' control
+    // branch sets the title only on the disabled branch).
+    let withdrawShape = null;
+    if (paneRendered) {
+      withdrawShape = await w5Cx.eval(`(() => {
+        const card = document.querySelector('#panes .region-body .card[data-post-id="${paneId}"]');
+        if (!card) return { present: false, reason: 'card not in pane' };
+        const btn = card.querySelector('button.withdraw-ctl');
+        if (!btn) return { present: false, reason: 'no .withdraw-ctl on the card' };
+        return {
+          present: true,
+          disabled: btn.disabled === true,
+          title: btn.getAttribute('title'),
+        };
+      })()`);
+    }
+    const withdrawEnabled = withdrawShape?.present === true
+      && withdrawShape.disabled === false
+      && (withdrawShape.title === null || withdrawShape.title === '');
+
+    // Press withdraw — the confirm row mounts after the card's meta row
+    // (buildConfirmRow in view/card-rows.ts, `withdraw` and `keep`). Then
+    // press `keep` — the row leaves the document.
+    let confirmMounted = false;
+    let confirmGone = false;
+    if (withdrawEnabled) {
+      await w5Cx.eval(`(() => {
+        const card = document.querySelector('#panes .region-body .card[data-post-id="${paneId}"]');
+        card.querySelector('button.withdraw-ctl').click();
+      })()`, true);
+      confirmMounted = await w5Cx.waitFor(
+        `!!document.querySelector('.card-confirm button[aria-label="withdraw this post now"]') &&
+         !!document.querySelector('.card-confirm button[aria-label="keep this post"]')`,
+        'W5 confirm row mounted', 15000,
+      ).then(() => true, () => false);
+      if (confirmMounted) {
+        await w5Cx.eval(`(() => {
+          const keep = document.querySelector('.card-confirm button[aria-label="keep this post"]');
+          if (keep) keep.click();
+        })()`, true);
+        confirmGone = await w5Cx.waitFor(
+          `!document.querySelector('.card-confirm')`,
+          'W5 confirm row gone', 15000,
+        ).then(() => true, () => false);
+      }
+    }
+
+    // `@profile` — the rep row and the invites row. `renderKarmaField` in
+    // view/profile.ts puts a `span.inkmute` with `—` in `.karma-field`
+    // under `karma === null`; the invites row's update returns before the
+    // `.invites-form` slot is filled under the same `k === null` branch.
+    await raiseWindow(w5Cx, 'open profile');
+    await w5Cx.waitFor(`!!document.querySelector('.karma-field')`, 'profile karma field W5', 30000);
+    await sleep(1000);
+    const profileShape = await w5Cx.eval(`(() => {
+      const field = document.querySelector('.karma-field');
+      const mono = field ? field.querySelector('span.mono') : null;
+      const inkmutes = field ? [...field.querySelectorAll('span.inkmute')] : [];
+      const dash = inkmutes.find((s) => (s.textContent ?? '').trim() === '—');
+      const invitesField = document.querySelector('.invites-field');
+      const invitesLine = invitesField ? invitesField.querySelector('.invites-line') : null;
+      const invitesForm = invitesField ? invitesField.querySelector('.invites-form') : null;
+      const invitesBonds = invitesField ? invitesField.querySelector('.invites-bonds') : null;
+      return {
+        karmaMonoPresent: mono !== null,
+        karmaMonoText: mono ? mono.textContent : null,
+        karmaInkmuteText: dash ? '—' : (inkmutes[0] ? inkmutes[0].textContent : null),
+        invitesLineText: invitesLine ? invitesLine.textContent : null,
+        invitesFormChildren: invitesForm ? invitesForm.children.length : null,
+        invitesBondsChildren: invitesBonds ? invitesBonds.children.length : null,
+      };
+    })()`);
+    const repRowDash = profileShape.karmaInkmuteText === '—' && profileShape.karmaMonoPresent === false;
+    const invitesNoForm = profileShape.invitesFormChildren === 0;
+
+    // The cached non-R card's author window reads its `your vouch` row.
+    // `.find` answers `undefined` on a miss, read with a truthy check.
+    // The feed column stands beside `@profile`; the card there is still
+    // the one W1 picks from. A non-R card is any `prepCachedIds` id that
+    // is not in `prepRRootIds`.
+    const authorPress = await w5Cx.eval(`(() => {
+      const rRoots = new Set(${JSON.stringify(prepRRootIds)});
+      const cached = new Set(${JSON.stringify(prepCachedIds)});
+      const card = [...document.querySelectorAll('#feed .card[data-post-id]')]
+        .find((c) => {
+          const id = c.getAttribute('data-post-id');
+          if (!cached.has(id)) return false;
+          if (rRoots.has(id)) return false;
+          return c.querySelector('.who button.authorbtn') !== null;
+        });
+      if (!card) return { ok: false, reason: 'no non-R cached card with an authorbtn in the feed' };
+      card.querySelector('.who button.authorbtn').click();
+      return { ok: true, id: card.getAttribute('data-post-id') };
+    })()`, true);
+
+    let yourVouchShape = null;
+    if (authorPress?.ok === true) {
+      const yourVouchFound = await w5Cx.waitFor(
+        `[...document.querySelectorAll('.winbody .row label')].some((l) => (l.textContent ?? '').trim() === 'your vouch')`,
+        'author window your-vouch row W5', 30000,
+      ).then(() => true, () => false);
+      if (yourVouchFound) {
+        await sleep(500);
+        yourVouchShape = await w5Cx.eval(`(() => {
+          const rows = [...document.querySelectorAll('.winbody .row')];
+          const row = rows.find((r) => (r.querySelector('label')?.textContent ?? '').trim() === 'your vouch');
+          if (!row) return { present: false };
+          const field = row.querySelector('.field');
+          const inkmute = field ? field.querySelector('span.inkmute') : null;
+          const buttons = field ? [...field.querySelectorAll('button')] : [];
+          const vouchBtn = buttons.find((b) => (b.textContent ?? '').trim() === 'vouch');
+          return {
+            present: true,
+            fieldText: (field?.textContent ?? '').trim(),
+            inkmuteText: inkmute ? inkmute.textContent : null,
+            vouchBtn: !!vouchBtn,
+          };
+        })()`);
+      }
+    }
+    const yourVouchDash = yourVouchShape?.present === true
+      && yourVouchShape.inkmuteText === '—'
+      && yourVouchShape.vouchBtn === false;
+
+    // `@wallet` — the balance row's `—` under `credits === null`
+    // (view/wallet.ts' `line.replaceChildren(); ... if (c === null)
+    // line.appendChild(el('span', 'inkmute', '—'))`).
+    await raiseWindow(w5Cx, 'open wallet');
+    await w5Cx.waitFor(`!!document.querySelector('.credits-field')`, 'wallet credits field W5', 30000);
+    await sleep(1000);
+    const walletShape = await w5Cx.eval(`(() => {
+      const line = document.querySelector('.credits-line');
+      const inkmutes = line ? [...line.querySelectorAll('span.inkmute')] : [];
+      const gold = line ? line.querySelector('span.gold') : null;
+      const dash = inkmutes.find((s) => (s.textContent ?? '').trim() === '—');
+      return {
+        goldPresent: gold !== null,
+        goldText: gold ? gold.textContent : null,
+        inkmuteText: dash ? '—' : (inkmutes[0] ? inkmutes[0].textContent : null),
+      };
+    })()`);
+    const balanceRowDash = walletShape.inkmuteText === '—' && walletShape.goldPresent === false;
+
+    // Neither relay's log carries a POST for the step's span. Under `down`
+    // the relay destroys the socket and logs the attempt with
+    // `edit: 'down'`; the step writes nothing, so a POST of any edit is
+    // a write that should not have run.
+    const w5NewA = tipRelays.a.log.slice(w5LogAIdx);
+    const w5NewB = tipRelays.b.log.slice(w5LogBIdx);
+    const w5PostsA = w5NewA.filter((e) => e.method === 'POST');
+    const w5PostsB = w5NewB.filter((e) => e.method === 'POST');
+    const noPosts = w5PostsA.length === 0 && w5PostsB.length === 0;
+
+    const w5Ok = stripPressed?.ok === true && paneRendered
+      && withdrawEnabled && confirmMounted && confirmGone
+      && repRowDash && invitesNoForm
+      && authorPress?.ok === true && yourVouchDash
+      && balanceRowDash
+      && noPosts;
+    record('W5', w5Ok,
+      `base.rep=${JSON.stringify(waitingSnapshot.baseRep)} (expect a box to stand for withdraw to enable), base.credits=${JSON.stringify(waitingSnapshot.baseCredits)}, waiting writes=${JSON.stringify(waitingSnapshot.waiting)}; strip press=${JSON.stringify(stripPressed)}; pane rendered=${paneRendered}; withdraw shape=${JSON.stringify(withdrawShape)} (expect present=true, disabled=false, title empty); confirm mounted=${confirmMounted}, confirm gone after keep=${confirmGone}; @profile: ${JSON.stringify(profileShape)} (expect karma inkmute='—', no mono, invites form 0 children); author press=${JSON.stringify(authorPress)}; your vouch: ${JSON.stringify(yourVouchShape)} (expect inkmute='—', no 'vouch' word); @wallet: ${JSON.stringify(walletShape)} (expect inkmute='—', no gold); POSTs via RLA=${w5PostsA.length} (${w5PostsA.map((e) => (e.edit ? e.edit + ' ' : '') + e.method + ' ' + (e.url ?? '')).join(', ')}), POSTs via RLB=${w5PostsB.length} (${w5PostsB.map((e) => (e.edit ? e.edit + ' ' : '') + e.method + ' ' + (e.url ?? '')).join(', ')}) — expect 0/0`);
+  } catch (e) {
+    record('W5', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    await closeBlockPage(w5Page);
+  }
   } catch (e) {
     // A red inside the block must never stop the harness: the outer
     // catch holds the throw so the finally below runs the teardown
     // and the caller returns to the next block. Any unrecorded step
     // reads FAIL with the one reason.
-    for (const s of ['W1', 'W2', 'W3', 'W4']) {
+    for (const s of ['W1', 'W2', 'W3', 'W4', 'W5']) {
       if (!findings.some((f) => f.step === s)) record(s, false, `block threw: ${e?.stack ?? String(e)}`);
     }
   } finally {
