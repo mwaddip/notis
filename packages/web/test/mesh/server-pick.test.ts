@@ -33,7 +33,7 @@ function ocand(id: string, over: Partial<OrderCandidate> = {}): OrderCandidate {
     status: over.status ?? 'ok',
     readMs: over.readMs ?? null,
     meshUsable: over.meshUsable ?? false,
-    anchor: over.anchor ?? false,
+    firstContact: over.firstContact ?? false,
     api: over.api ?? null,
     meshBase: over.meshBase ?? `notis-mesh://${id}`,
   };
@@ -188,31 +188,31 @@ describe('orderServers', () => {
     expect(tip).toEqual([`notis-mesh://${idA}`]);
   });
 
-  it('before the first check ends, every anchor serves any need; others do not', () => {
+  it('before the first check ends, every first-contact node serves any need; others do not', () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need". A non-anchor's status alone
+    // ends a node the client started from serves any need". Another node's status alone
     // would allow nothing — until a check reads it.
     const nodes: OrderCandidate[] = [
-      ocand(idA, { status: 'new', meshUsable: true, anchor: true, api: 'https://a.example' }),
-      ocand(idB, { status: 'new', meshUsable: false, anchor: true, api: 'https://b.example' }),
-      ocand(idC, { status: 'new', meshUsable: true, anchor: false, api: 'https://c.example' }),
+      ocand(idA, { status: 'new', meshUsable: true, firstContact: true, api: 'https://a.example' }),
+      ocand(idB, { status: 'new', meshUsable: false, firstContact: true, api: 'https://b.example' }),
+      ocand(idC, { status: 'new', meshUsable: true, firstContact: false, api: 'https://c.example' }),
     ];
-    // Mesh anchor first (its meshBase), API-only anchor at its base,
-    // non-anchor dropped.
+    // Mesh first-contact node first (its meshBase), API-only one at its base,
+    // the other dropped.
     expect(orderServers(nodes, 'tip', false)).toEqual([
       `notis-mesh://${idA}`,
       'https://b.example',
     ]);
   });
 
-  it('a blacklisted anchor is never in the order, at any stage', () => {
+  it('a blacklisted first-contact node is never in the order, at any stage', () => {
     // MESH_INTERFACE → The client's node list → "Candidates" — a
     // `blacklisted` node is never one, the before-first-check branch
     // honours this too; and a blacklisted node is not need-allowed in
     // the after-first-check branch.
     const nodes: OrderCandidate[] = [
-      ocand(idA, { status: 'blacklisted', meshUsable: true, anchor: true, api: 'https://a.example' }),
-      ocand(idB, { status: 'ok', meshUsable: true, anchor: true, api: 'https://b.example' }),
+      ocand(idA, { status: 'blacklisted', meshUsable: true, firstContact: true, api: 'https://a.example' }),
+      ocand(idB, { status: 'ok', meshUsable: true, firstContact: true, api: 'https://b.example' }),
     ];
     expect(orderServers(nodes, 'tip', false)).toEqual([`notis-mesh://${idB}`]);
     expect(orderServers(nodes, 'tip', true)).toEqual([`notis-mesh://${idB}`]);

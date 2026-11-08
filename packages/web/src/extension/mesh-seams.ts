@@ -26,7 +26,7 @@ import { notisIdFromPeerId } from '@dagsocial/net/browser';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { MeshClient, MeshAnchor, StartMeshClientOptions } from '../mesh/index.js';
+import type { MeshClient, MeshContact, StartMeshClientOptions } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import type {
   FiguresVerifier,
@@ -163,12 +163,12 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
 
 /** The extension's bootstrap: starts the mesh client, kicks the first check
  *  without awaiting it, listens on `pagehide` to stop, re-adds a stored
- *  hand-added address as a by-hand anchor, and builds the seams. `main.ts`
+ *  hand-added address as a trusted by-hand node, and builds the seams. `main.ts`
  *  calls this with the real `startMeshClient`; tests pass a fake.
  *
  *  `window` is the page's own; a `pagehide` on it stops the client once. */
 export interface StartExtensionMeshOptions {
-  anchors: MeshAnchor[];
+  firstContact: MeshContact[];
   network: NetworkType;
   agentName: string;
   httpFetch: HttpFetch;
@@ -182,7 +182,7 @@ export async function startExtensionMesh(
   opts: StartExtensionMeshOptions,
 ): Promise<{ client: MeshClient; seams: MeshSeams }> {
   const client = await opts.startMeshClient({
-    anchors: opts.anchors,
+    firstContact: opts.firstContact,
     network: opts.network,
     profile: profileFor(opts.network),
     agentName: opts.agentName,
@@ -195,7 +195,7 @@ export async function startExtensionMesh(
   // Pagehide stops the client — one stop per page.
   const stopOnHide = (): void => { void client.stop(); };
   opts.window.addEventListener('pagehide', stopOnHide, { once: true });
-  // A stored hand-added address is re-added as a by-hand anchor after
+  // A stored hand-added address is re-added as a trusted by-hand node after
   // start, so `removeByHand` can later drop it.
   const stored = opts.storage.getItem(HAND_NODE_KEY);
   if (stored !== null) {

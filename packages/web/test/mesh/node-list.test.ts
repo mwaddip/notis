@@ -1,5 +1,5 @@
 // MESH_INTERFACE → The client's node list, → No anchor reached, → Discovery
-// (anchors: duplicates and the client's own key).
+// → "First contact" (duplicates and the client's own key).
 //
 // NET_INTERFACE → Handshake → "Ban policy" is the split the client's list
 // mirrors: a frame-tier failure (nothing proven about the peer) earns no
@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   NodeList,
-  type MeshAnchor,
+  type MeshContact,
   type FailureKind,
   type LieEvidence,
 } from '../../src/mesh/node-list.js';
@@ -138,15 +138,15 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(true);
   });
 
-  it('a hand-added trusted node is an anchor; untrusted is not', () => {
-    // MESH_INTERFACE → The client's node list → "A node added by hand"
-    // — "It is an anchor unless the reader adds it as an ordinary
+  it('a hand-added trusted node is a first-contact node; untrusted is not', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — your node,
+    // "the reader's trust assertion, unless the reader adds it as an ordinary
     // candidate".
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
     const list = new NodeList([], own, () => 0);
     list.addByHand(idA, [addr], true);
     const trustedEntry = list.entry(idA)!;
-    expect(trustedEntry.anchor).toBe(true);
+    expect(trustedEntry.firstContact).toBe(true);
     expect(trustedEntry.byHand).toBe(true);
     expect(trustedEntry.addrs).toEqual([addr]);
     expect(list.configuredAddrs(idA)).toEqual([addr]);
@@ -156,30 +156,30 @@ describe('node-list', () => {
     const addr2 = '/ip4/10.0.0.2/udp/4001/webrtc-direct/certhash/uEiB';
     list.addByHand(idB, [addr2], false);
     const untrustedEntry = list.entry(idB)!;
-    expect(untrustedEntry.anchor).toBe(false);
+    expect(untrustedEntry.firstContact).toBe(false);
     expect(untrustedEntry.byHand).toBe(true);
     expect(untrustedEntry.addrs).toEqual([addr2]);
     expect(list.configuredAddrs(idB)).toEqual([addr2]);
     list.success(idB);
-    // Untrusted hand-added node is not an anchor — anchorReached is
+    // Untrusted hand-added node is not a first-contact node — anchorReached is
     // true only because idA (trusted) is still ok.
     const list2 = new NodeList([], own, () => 0);
     list2.addByHand(idB, [addr2], false);
     list2.success(idB);
     expect(list2.anchorReached()).toBe(false);
 
-    // An existing non-anchor entry gets `anchor ||= trusted`: a later
-    // hand-add with `trusted: true` upgrades it to an anchor; a later
-    // hand-add with `trusted: false` on an existing anchor leaves it
-    // an anchor.
+    // An existing entry outside the first-contact list gets
+    // `firstContact ||= trusted`: a later hand-add with `trusted: true`
+    // upgrades it to a first-contact node; a later hand-add with
+    // `trusted: false` on an existing first-contact node leaves it one.
     const addr3 = '/ip4/10.0.0.3/udp/4001/webrtc-direct/certhash/uEiC';
     const list3 = new NodeList([], own, () => 0);
     list3.add(idC, [addr3]);
-    expect(list3.entry(idC)!.anchor).toBe(false);
+    expect(list3.entry(idC)!.firstContact).toBe(false);
     list3.addByHand(idC, [addr3], true);
-    expect(list3.entry(idC)!.anchor).toBe(true);
+    expect(list3.entry(idC)!.firstContact).toBe(true);
     list3.addByHand(idC, [addr3], false);
-    expect(list3.entry(idC)!.anchor).toBe(true);
+    expect(list3.entry(idC)!.firstContact).toBe(true);
   });
 
   it('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
@@ -200,7 +200,7 @@ describe('node-list', () => {
     expect(list.configuredAddrs(idA)).toEqual([addr]);
   });
 
-  it('a changed address revives an anchor', () => {
+  it('a changed address revives a first-contact node', () => {
     const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0);
     list.wrongKey(idA, a1, idB);
     list.wrongKey(idA, a2, idB);
@@ -227,17 +227,17 @@ describe('node-list', () => {
     expect(wait).toBeGreaterThanOrEqual(0);
   });
 
-  it("the client's own key is dropped and duplicate anchors are merged", () => {
-    const anchors: MeshAnchor[] = [
+  it("the client's own key is dropped and duplicate first-contact entries are merged", () => {
+    const firstContact: MeshContact[] = [
       { notisId: idA, addrs: [a1] },
       { notisId: idA, addrs: [a2] },
       { notisId: own, addrs: [a3] },
     ];
-    const list = new NodeList(anchors, own, () => 0);
+    const list = new NodeList(firstContact, own, () => 0);
     const es = list.entries();
     expect(es.length).toBe(1);
     expect(es[0]!.notisId).toBe(idA);
-    expect(es[0]!.anchor).toBe(true);
+    expect(es[0]!.firstContact).toBe(true);
     expect(es[0]!.addrs).toEqual([a1, a2]);
     expect(list.entry(own)).toBeUndefined();
   });
@@ -284,10 +284,10 @@ describe('node-list', () => {
     expect(list.anchorReached()).toBe(true);
   });
 
-  it("an anchor's api is kept on its entry; duplicate anchors' first api stands", () => {
+  it("a first-contact entry's api is kept on its entry; duplicate entries' first api stands", () => {
     // MESH_INTERFACE → The client's node list → "An entry may carry an
-    // API base" — the anchor's `api` lands on the entry and `entries()`
-    // surfaces it; two anchors with the same key keep the first api
+    // API base" — the entry's `api` lands on the entry and `entries()`
+    // surfaces it; two entries with the same key keep the first api
     // (the pairing of a base with a key is the list's word).
     const list = new NodeList(
       [
@@ -306,8 +306,8 @@ describe('node-list', () => {
     expect(list.entry(idC)!.api).toBeNull();
   });
 
-  it('a non-anchor entry added through `add` or `addByHand` has api null', () => {
-    // MESH_INTERFACE → The client's node list — the api is the anchor's
+  it('an entry added through `add` or `addByHand` has api null', () => {
+    // MESH_INTERFACE → The client's node list — the api is the list's
     // own; DHT- or hand-added entries carry none.
     const list = new NodeList([], own, () => 0);
     list.add(idA, [a1]);
@@ -340,17 +340,17 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it('removeByHand drops a hand-added entry; a build anchor is left alone', () => {
+  it('removeByHand drops a hand-added entry; a build node is left alone', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — the settings row's
-    // commit path. A build anchor (constructor's list) keeps its
-    // `fromAnchorList`, and `removeByHand` leaves it even when it was also
+    // commit path. A build node (constructor's list) keeps its
+    // `fromFirstContactList`, and `removeByHand` leaves it even when it was also
     // hand-added. A pure hand-added entry is dropped.
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     list.addByHand(idB, [a2], true);
     expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
     list.removeByHand(idB);
     expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
-    // `removeByHand` on a build anchor is a no-op, whether or not it was also
+    // `removeByHand` on a build node is a no-op, whether or not it was also
     // added by hand after start.
     list.addByHand(idA, [a2], true);
     list.removeByHand(idA);

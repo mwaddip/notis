@@ -20,7 +20,7 @@ export const POLICY_KEY = 'notis.signPolicy';
 export const SEED_KEY = 'notis.seed';
 
 /** The hand-added node's address, in `localStorage` — the address a node prints
- *  at start, held by the page and handed to the mesh client as an anchor at
+ *  at start, held by the page and handed to the mesh client as a trusted node at
  *  load (WEB_INTERFACE → The settings window → "In the extension the row adds a
  *  node by hand"; MESH_INTERFACE → Discovery → "A node added by hand"). */
 export const HAND_NODE_KEY = 'notis.node.hand';

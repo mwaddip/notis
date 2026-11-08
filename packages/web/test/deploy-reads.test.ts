@@ -60,8 +60,8 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
   // WEB_INTERFACE → The client is served from the node's own origin → "The
   // three later tags" — an entry is an API base or a node
   // `{ notisId, addrs, api }`. `BUILD_NODE_BASES` is each entry's effective
-  // base (a string's own, a node's `api`); `BUILD_ANCHORS` is the node
-  // entries as `MeshAnchor`. Any malformed entry refuses the whole list.
+  // base (a string's own, a node's `api`); `BUILD_NODES` is the node
+  // entries as `MeshContact`. Any malformed entry refuses the whole list.
   const NID = '68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09';
   const ADDR = `/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa`;
 
@@ -100,13 +100,13 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     expect(p.readNodesMeta()).toEqual([]);
   });
 
-  it('a node entry contributes its api to BUILD_NODE_BASES and the anchor to BUILD_ANCHORS', async () => {
+  it('a node entry contributes its api to BUILD_NODE_BASES and the node entry to BUILD_NODES', async () => {
     const entry = { notisId: NID, addrs: [ADDR], api: 'https://notis.fun/testnet/api' };
     setMeta('notis-nodes', JSON.stringify([entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual(['https://notis.fun/testnet/api']);
     expect(p.BUILD_NODE_BASES).toEqual(['https://notis.fun/testnet/api']);
-    expect(p.BUILD_ANCHORS).toEqual([{ notisId: NID, addrs: [ADDR], api: 'https://notis.fun/testnet/api' }]);
+    expect(p.BUILD_NODES).toEqual([{ notisId: NID, addrs: [ADDR], api: 'https://notis.fun/testnet/api' }]);
   });
 
   it("a node entry's api has its trailing / stripped", async () => {
@@ -114,15 +114,15 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify([entry]));
     const p = await importPrefs();
     expect(p.BUILD_NODE_BASES).toEqual(['https://notis.fun/testnet/api']);
-    expect(p.BUILD_ANCHORS[0]!.api).toBe('https://notis.fun/testnet/api');
+    expect(p.BUILD_NODES[0]!.api).toBe('https://notis.fun/testnet/api');
   });
 
-  it('mixed entries — a string alongside a node entry — each contributes to BUILD_NODE_BASES; only the node entry to BUILD_ANCHORS', async () => {
+  it('mixed entries — a string alongside a node entry — each contributes to BUILD_NODE_BASES; only the node entry to BUILD_NODES', async () => {
     const entry = { notisId: NID, addrs: [ADDR], api: 'https://b.example/api' };
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.BUILD_NODE_BASES).toEqual(['https://a.example/api', 'https://b.example/api']);
-    expect(p.BUILD_ANCHORS).toEqual([{ notisId: NID, addrs: [ADDR], api: 'https://b.example/api' }]);
+    expect(p.BUILD_NODES).toEqual([{ notisId: NID, addrs: [ADDR], api: 'https://b.example/api' }]);
   });
 
   it('a valid string entry alongside a node entry with a short notisId refuses the whole list', async () => {
@@ -130,7 +130,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry with an uppercase hex key refuses the whole list', async () => {
@@ -138,7 +138,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry with an address carrying /dns4/ refuses the whole list', async () => {
@@ -147,7 +147,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry with an address carrying /dns6/ refuses the whole list', async () => {
@@ -156,7 +156,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry with an address carrying /dnsaddr/ refuses the whole list', async () => {
@@ -165,7 +165,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry whose address lacks /p2p/<peer id> refuses the whole list', async () => {
@@ -174,7 +174,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
   it('a node entry with no http(s) api refuses the whole list', async () => {
@@ -182,14 +182,14 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 
-  it('a node entry with an empty addrs is an anchor reached at its api base alone', async () => {
+  it('a node entry with an empty addrs is a node reached at its api base alone', async () => {
     const entry = { notisId: NID, addrs: [], api: 'https://b.example/api' };
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
-    expect(p.BUILD_ANCHORS).toEqual([{ notisId: NID, addrs: [], api: 'https://b.example/api' }]);
+    expect(p.BUILD_NODES).toEqual([{ notisId: NID, addrs: [], api: 'https://b.example/api' }]);
     expect(p.BUILD_NODE_BASES).toEqual(['https://a.example/api', 'https://b.example/api']);
   });
 
@@ -202,7 +202,7 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     setMeta('notis-nodes', JSON.stringify(['https://a.example/api', entry]));
     const p = await importPrefs();
     expect(p.readNodesMeta()).toEqual([]);
-    expect(p.BUILD_ANCHORS).toEqual([]);
+    expect(p.BUILD_NODES).toEqual([]);
   });
 });
 

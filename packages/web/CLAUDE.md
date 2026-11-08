@@ -73,7 +73,7 @@ and the proxy reads a `sign` that ends without an answer as `refused`; every rea
 Web Lock `notis.prompt` (`navigator.locks`, which `install` takes; the tests pass `fakeLockManager()`), one prompt at a
 time and a record whose window is gone declined; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_ANCHORS`) and
+the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_NODES`) and
 `notis-public` link origin; one manifest template → two zips; **the chain it reads checked by the mesh client's own
 check, the verdict folded into the status corner**
 (`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep judged against

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshAnchor, StartMeshClientOptions } from '../../src/mesh/index.js';
+import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshContact, StartMeshClientOptions } from '../../src/mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { createMeshSeams, startExtensionMesh, parseHandNodeAddress, type StorageLike } from '../../src/extension/mesh-seams.js';
 import { HAND_NODE_KEY } from '../../src/extension/storage-keys.js';
@@ -218,12 +218,12 @@ describe('startExtensionMesh — the lifecycle', () => {
     });
     let startOpts: StartMeshClientOptions | null = null;
     const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });
-    const anchors: MeshAnchor[] = [];
+    const firstContact: MeshContact[] = [];
     const storage = fakeStorage();
     const addHandler = vi.fn();
     const window = { addEventListener: addHandler };
     await startExtensionMesh({
-      anchors, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      firstContact, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
       check, storage, window, startMeshClient,
     });
     expect(startMeshClient).toHaveBeenCalledTimes(1);
@@ -244,7 +244,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const startMeshClient = vi.fn(async (): Promise<MeshClient> => client);
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
       check, storage, window: { addEventListener: () => {} }, startMeshClient,
     });
     expect(addCalls).toEqual([PEER_HEX]);
@@ -271,11 +271,11 @@ describe('startExtensionMesh — the lifecycle', () => {
       .mockImplementationOnce(async (): Promise<MeshClient> => client1)
       .mockImplementationOnce(async (): Promise<MeshClient> => client2);
     const { seams: seams1 } = await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
       check, storage: fakeStorage(), window: window1, startMeshClient,
     });
     const { seams: seams2 } = await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
       check, storage: fakeStorage(), window: window2, startMeshClient,
     });
 

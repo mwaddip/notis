@@ -67,7 +67,8 @@ export function pickServer(
  * — every node the need allows reached over the mesh (`meshUsable`), the
  * fast set first, as `notis-mesh://<id>` bases, then the API bases of the
  * entries the need allows in the same order; before the first check ends,
- * every anchor, over its mesh base if connected else at its API base.
+ * every first-contact node, over its mesh base if connected else at its API
+ * base.
  * Duplicates dropped. A write and a resolve walk this order.
  *
  * Pure, browser-safe (`MESH_INTERFACE → Place in the workspace`): the
@@ -79,7 +80,7 @@ export interface OrderCandidate {
   status: NodeStatus;
   readMs: number | null;
   meshUsable: boolean;
-  anchor: boolean;
+  firstContact: boolean;
   /** The API base `(scheme)://(host)[:(port)]` with no trailing `/`. */
   api: string | null;
   /** The `notis-mesh://<id>` base, so the caller does not restate it. */
@@ -107,14 +108,15 @@ export function orderServers(
   };
 
   if (!firstCheckEnded) {
-    // Before the first check ends, every anchor serves any need: its
-    // mesh base if connected, else at its API base (`MESH_INTERFACE →
-    // The client's node list → "Before the first check ends an anchor
-    // serves any need"`). Non-anchors do not serve until a check has
-    // read them; a `blacklisted` anchor never — "A `blacklisted` node
-    // is never one [a candidate]" holds at every stage.
+    // Before the first check ends, every first-contact node serves any
+    // need: its mesh base if connected, else at its API base
+    // (`MESH_INTERFACE → The client's node list → "Before the first check
+    // ends a node the client started from serves any need"`). The others do
+    // not serve until a check has read them; a `blacklisted` node never —
+    // "A `blacklisted` node is never one [a candidate]" holds at every
+    // stage.
     for (const n of nodes) {
-      if (!n.anchor) continue;
+      if (!n.firstContact) continue;
       if (n.status === 'blacklisted') continue;
       if (n.meshUsable) push(n.id, n.meshBase);
       else if (n.api !== null) push(n.id, n.api);

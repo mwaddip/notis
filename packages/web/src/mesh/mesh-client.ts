@@ -3,7 +3,7 @@
 // the browser transports alone (`webRTCDirect`, `webRTC`,
 // `circuitRelayTransport`, `webSockets` for secure addresses only), the DHT
 // as a client on `dhtProtocol(network)`, and no `@libp2p/bootstrap`: it
-// dials its anchors itself, per address, with libp2p's own unexpected-peer
+// dials its first-contact nodes itself, per address, with libp2p's own unexpected-peer
 // classification routed to `NodeList.wrongKey` and every other dial
 // failure to `NodeList.failure`.
 //
@@ -64,7 +64,7 @@ import { headerFromJson } from './header-json.js';
 import { MeshConfigError, assertNoDns, assertApiBase } from './config.js';
 import {
   NodeList,
-  type MeshAnchor,
+  type MeshContact,
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
@@ -138,22 +138,22 @@ class HandshakeNoChainServiceError extends Error {
  * config refusals as a pure, synchronous function. One check, called from
  * `startMeshClient` as its first statement and reused by any caller (such as
  * the page) that wants to refuse a config before starting a libp2p node. A
- * `MeshConfigError` is thrown for a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor
- * or seed address, an ICE server that is not `stun:<IPv4>:<port>` /
+ * `MeshConfigError` is thrown for a `/dns4/`, `/dns6/`, `/dnsaddr/`
+ * first-contact or known-node address, an ICE server that is not `stun:<IPv4>:<port>` /
  * `stun:[<IPv6>]:<port>`, an `api` base that is not `http://` or `https://`
- * or has a trailing `/`, or an anchor that carries neither addrs nor api
+ * or has a trailing `/`, or an entry that carries neither addrs nor api
  * (`→ The client's node list → "An entry may carry an API base"`).
  */
 export function assertClientConfig(o: {
-  anchors: readonly MeshAnchor[];
-  seeds?: readonly MeshAnchor[];
+  firstContact: readonly MeshContact[];
+  seeds?: readonly MeshContact[];
 }): void {
-  for (const a of o.anchors) {
-    assertNoDns('anchor', a.addrs);
-    if (a.api !== undefined) assertApiBase('anchor', a.api);
+  for (const a of o.firstContact) {
+    assertNoDns('firstContact', a.addrs);
+    if (a.api !== undefined) assertApiBase('firstContact', a.api);
     if (a.addrs.length === 0 && (a.api === undefined || a.api === '')) {
       throw new MeshConfigError(
-        `anchor refused: ${a.notisId} carries neither addrs nor api`,
+        `firstContact refused: ${a.notisId} carries neither addrs nor api`,
       );
     }
   }
@@ -189,8 +189,8 @@ export function assertClientConfig(o: {
  *     trailing `/p2p/` the gater reads.
  *
  * `configuredAddrsOf(notisId)` reads the addresses the client's own
- * configuration names for a key — an anchor's given addresses and
- * those entered by hand, never one merged from the DHT or a seed —
+ * configuration names for a key — a first-contact node's given addresses
+ * and those entered by hand, never one merged from the DHT or a seed —
  * through `NodeList.configuredAddrs`. A peer id of a non-Notis key
  * type reads as the empty list and the address is refused.
  */
@@ -369,8 +369,8 @@ export interface MeshClient {
    * node its need allows" — picks a server by the read's `need` and the
    * fast set: a node reached over the mesh, as today; when none, an API
    * base of an entry the need allows, by the same need and speed; before
-   * the first check ends, any anchor over its connection if it holds
-   * one, else at its base. Sets `state.nodeId / transport / path` to the
+   * the first check ends, any first-contact node over its connection if
+   * it holds one, else at its base. Sets `state.nodeId / transport / path` to the
    * serving node. Returns the serving node's id beside the response and
    * the route it took so the caller can log it without a `state()` race.
    * Rejects as `MeshFetchError` of kind `transport` and triggers an
@@ -387,8 +387,8 @@ export interface MeshClient {
    * need" — every node the need allows reached over the mesh, the fast
    * set first, as `notis-mesh://<id>` bases, then the API bases of the
    * entries it allows in the same order; before the first check ends,
-   * every anchor (its mesh base if connected, else its API base).
-   * Duplicates dropped. A write and a resolve walk this order.
+   * every first-contact node (its mesh base if connected, else its API
+   * base). Duplicates dropped. A write and a resolve walk this order.
    */
   order(need: ReadNeed): string[];
   check(): Promise<void>;
@@ -401,13 +401,13 @@ export interface MeshClient {
    * `MeshConfigError` a key that is not 64 lowercase hex, an address
    * with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or an address
    * without `/webrtc-direct/`. Otherwise adds through `NodeList.addByHand`
-   * (anchor = trusted, byHand = true) and triggers an immediate check.
+   * (firstContact = trusted, byHand = true) and triggers an immediate check.
    */
   addByHand(notisId: string, addrs: string[], trusted: boolean): void;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. An entry that is also a build
-   * anchor is not removed: anchors are the client's own trust, not
+   * entry a reader added by hand. An entry that is also a build node
+   * is not removed: the build's nodes are the client's own list, not
    * something the settings row can take away. An id the list does
    * not hold is a no-op. Refuses with `MeshConfigError` an id that
    * is not 64 lowercase hex.
@@ -418,17 +418,17 @@ export interface MeshClient {
    * to a node its need allows" — the base a routed read of the
    * given need would use now: the first pick `read` makes, by the
    * same order — mesh first, the fast set at random, else an API
-   * base, else an anchor before the first check ends. `null` when
-   * no node is allowed for the need. Pure — the client's state
+   * base, else a first-contact node before the first check ends. `null`
+   * when no node is allowed for the need. Pure — the client's state
    * stays unchanged; no connection is opened; the random source
    * is read once.
    */
   base(need: ReadNeed): string | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — the
-   * addresses the client's own configuration names for the key: an
-   * anchor's given addresses and those entered by hand, never one
-   * merged from the DHT or a seed. The gater reads this list through
+   * addresses the client's own configuration names for the key: a
+   * first-contact node's given addresses and those entered by hand,
+   * never one merged from the DHT or a seed. The gater reads this list through
    * `NodeList.configuredAddrs` on every dial.
    */
   configuredAddrs(notisId: string): readonly string[];
@@ -452,14 +452,14 @@ export interface MeshClient {
 }
 
 export interface StartMeshClientOptions {
-  anchors: MeshAnchor[];
+  firstContact: MeshContact[];
   /**
-   * MESH_INTERFACE → Discovery → "Seeds" — contacts the client holds without
-   * trusting them. A seed is a candidate like any node the DHT finds; no answer
-   * from one makes `anchorReached` true. Addresses meet the same refusals as
-   * an anchor's.
+   * MESH_INTERFACE → Discovery → "Known nodes" — contacts the client holds
+   * without trusting them. A seed is a candidate like any node the DHT finds;
+   * no answer from one makes `anchorReached` true. Addresses meet the same
+   * refusals as a first-contact node's.
    */
-  seeds?: MeshAnchor[];
+  seeds?: MeshContact[];
   network: NetworkName;
   profile: NetworkProfile;
   /**
@@ -567,7 +567,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   iceHolder.current = () => client.iceConfiguration().iceServers;
   // MESH_INTERFACE → Transports → "A client dials a private address
   // only when its own configuration names it" — the gater reads the
-  // live node list, so a hand-add or an anchor update is visible
+  // live node list, so a hand-add or an update of the list is visible
   // to the next dial.
   configuredHolder.current = (notisId) => client.configuredAddrs(notisId);
   client.start();
@@ -716,14 +716,15 @@ class MeshClientImpl implements MeshClient {
     this.agentName = o.agentName;
     this.log = o.log;
     this.httpFetchFn = httpFetch;
-    this.nodeList = new NodeList(o.anchors, ownId, clock);
+    this.nodeList = new NodeList(o.firstContact, ownId, clock);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
-    // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
-    // any node the DHT finds. Added before the first check, so a seed
+    // MESH_INTERFACE → Discovery → "Known nodes" — a seed is a candidate
+    // like any node the DHT finds. Added before the first check, so a seed
     // is in the candidates `resolveTip` reads from the start;
-    // `NodeList.add` records them as non-anchor entries, so a seed's
-    // success leaves `anchorReached` false. The client's own key is
-    // dropped the same way an anchor list's own-key entry is.
+    // `NodeList.add` records them as entries outside the first-contact
+    // list, so a seed's success leaves `anchorReached` false. The client's
+    // own key is dropped the same way the first-contact list's own-key
+    // entry is.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
@@ -1003,7 +1004,8 @@ class MeshClientImpl implements MeshClient {
   }> {
     // MESH_INTERFACE → The client's node list → "A routed read goes to a
     // node its need allows", → "Over the mesh first", → "Before the first
-    // check ends an anchor serves any need". The mesh pick uses the strict
+    // check ends a node the client started from serves any need". The mesh
+    // pick uses the strict
     // read pick's non-null result over the same connection list the fetch
     // opens its stream on; the API fallback uses the entry's api base.
     const entries = this.nodeList.entries();
@@ -1050,13 +1052,13 @@ class MeshClientImpl implements MeshClient {
     }
 
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need". Status alone does not refuse
-    // here — but `blacklisted` always does (the "lie" row stays "never
-    // a candidate" at every stage).
+    // ends a node the client started from serves any need". Status alone
+    // does not refuse here — but `blacklisted` always does (the "lie" row
+    // stays "never a candidate" at every stage).
     const firstCheckEnded = this.state_.checks > 0;
     if (pickedId === null && !firstCheckEnded) {
       for (const e of entries) {
-        if (!e.anchor) continue;
+        if (!e.firstContact) continue;
         if (e.status === 'blacklisted') continue;
         if (this.pickReadyConnection(e.notisId) !== null) {
           pickedId = e.notisId;
@@ -1102,7 +1104,7 @@ class MeshClientImpl implements MeshClient {
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       meshUsable: this.pickReadyConnection(e.notisId) !== null,
-      anchor: e.anchor,
+      firstContact: e.firstContact,
       api: e.api,
       meshBase: meshBaseUrl(e.notisId),
     }));
@@ -1138,7 +1140,7 @@ class MeshClientImpl implements MeshClient {
    * MESH_INTERFACE → NAT — "the ICE configuration names no server"
    * when no public node is held. The derivation reads the current
    * (decorated) entries — a node moved to `blacklisted`, a new
-   * speed from the latest check, or a hand-added anchor's address
+   * speed from the latest check, or a hand-added node's address
    * all flow in at the next dial. The internal `assertIceServers`
    * holds the derived list to the IP-literal rule as the contract's
    * refusal (a derived server that is not an IP literal cannot
@@ -1162,7 +1164,7 @@ class MeshClientImpl implements MeshClient {
    * refusals: a key that is not 64 lowercase hex, an address with a
    * `/dns4/`, `/dns6/` or `/dnsaddr/` component (through `assertNoDns`),
    * and an address without a `/webrtc-direct/` component. A trusted
-   * node is an anchor (`anchor = true`); an untrusted one is a
+   * node is a first-contact node (`firstContact = true`); an untrusted one is a
    * candidate. `NodeList.addByHand` is also what writes the gater's
    * `configuredAddrs` list for the key.
    */
@@ -1182,7 +1184,7 @@ class MeshClientImpl implements MeshClient {
 
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. A build anchor is never removed:
+   * entry a reader added by hand. A build node is never removed:
    * the `NodeList.removeByHand` check guards that. Refuses with
    * `MeshConfigError` an id that is not 64 lowercase hex, then
    * delegates; an id the list does not hold is a no-op.
@@ -1198,8 +1200,8 @@ class MeshClientImpl implements MeshClient {
    * MESH_INTERFACE → The client's node list → "A routed read goes
    * to a node its need allows" — the base a routed read of the
    * given need would use now. Mirrors `read`'s pick: mesh first,
-   * the fast set at random, else an API base, else an anchor
-   * before the first check ends. `null` when no node is allowed.
+   * the fast set at random, else an API base, else a first-contact
+   * node before the first check ends. `null` when no node is allowed.
    */
   base(need: ReadNeed): string | null {
     const entries = this.nodeList.entries();
@@ -1229,7 +1231,7 @@ class MeshClientImpl implements MeshClient {
     const firstCheckEnded = this.state_.checks > 0;
     if (!firstCheckEnded) {
       for (const e of entries) {
-        if (!e.anchor) continue;
+        if (!e.firstContact) continue;
         if (e.status === 'blacklisted') continue;
         if (this.pickReadyConnection(e.notisId) !== null) {
           return meshBaseUrl(e.notisId);
@@ -1699,8 +1701,8 @@ class MeshClientImpl implements MeshClient {
     // so a reader can tell one check's state from the next". The
     // counter increments once per `runCheck`; it moves BEFORE the
     // routed tip read below so the read sees the first-check-ended
-    // branch of `order` and `read` (the before-first-check anchor
-    // fallback never fires from inside the check itself).
+    // branch of `order` and `read` (the before-first-check
+    // first-contact fallback never fires from inside the check itself).
     this.state_.checks += 1;
 
     // The routed tip read runs the classification so a failure or a lie
@@ -1744,15 +1746,15 @@ class MeshClientImpl implements MeshClient {
       this.state_.tip = null;
     }
 
-    // Agreement counts off the per-tip verdicts; anchors from the
-    // current entries so a hand-added trusted node counts.
-    const anchorIds = new Set<string>();
+    // Agreement counts off the per-tip verdicts; first-contact nodes from
+    // the current entries so a hand-added trusted node counts.
+    const firstContactIds = new Set<string>();
     for (const e of this.nodeList.entries()) {
-      if (e.anchor) anchorIds.add(e.notisId);
+      if (e.firstContact) firstContactIds.add(e.notisId);
     }
     const entries: AgreementEntry[] = [];
     for (const [id, verdict] of perNodeVerdict) {
-      entries.push({ verdict, anchor: anchorIds.has(id) });
+      entries.push({ verdict, anchor: firstContactIds.has(id) });
     }
     this.state_.agreement = agreementCounts(entries);
 
@@ -2043,7 +2045,7 @@ class MeshClientImpl implements MeshClient {
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) {
-            // The anchor's own list carries the addrs without the
+            // The first-contact list carries the addrs without the
             // `/p2p/<peer-id>` tail `withPeerId` adds for the dial;
             // reconcile by matching on the host-port prefix the two
             // forms share. `wrongKey` drops by exact string, so we
@@ -2480,7 +2482,7 @@ export function createDialProgressRecorder(): {
 
 /**
  * The dial list the client hands libp2p has a `/p2p/<peer-id>` tail on
- * every address (`withPeerId`). The anchor's own list carries the bare
+ * every address (`withPeerId`). The first-contact list carries the bare
  * address; `NodeList.wrongKey`/`recordAddrFailure` take the bare form.
  * This helper recovers the bare address matching one dialable address.
  */

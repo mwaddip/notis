@@ -12,15 +12,15 @@ import { MeshKeyError } from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
 
 /**
- * MESH_INTERFACE → Discovery → "Anchors" — a client starts from a list of
- * anchors, each `(notisId, addrs)` or `(notisId, addrs, api)`: a key it
- * trusts, the addresses that key was last reached at, and where the list
+ * MESH_INTERFACE → Discovery → "First contact" — a client starts from a list
+ * of first-contact nodes, each `(notisId, addrs)` or `(notisId, addrs, api)`:
+ * a key, the addresses that key was last reached at, and where the list
  * gives one, the API base the node answers at over HTTPS
- * (`→ The client's node list → "An entry may carry an API base"`). An anchor
+ * (`→ The client's node list → "An entry may carry an API base"`). An entry
  * with an `api` and no `addrs` is a node reached at its base alone; one with
  * neither is refused as `MeshConfigError`.
  */
-export interface MeshAnchor {
+export interface MeshContact {
   notisId: string;
   addrs: string[];
   api?: string;
@@ -57,7 +57,7 @@ export type NodeStatus = 'ok' | 'trailing' | 'retry' | 'behind' | 'blacklisted' 
 
 export interface NodeEntry {
   notisId: string;
-  anchor: boolean;
+  firstContact: boolean;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" —
    * true for an entry a reader has added through `addByHand`, carrying
@@ -135,17 +135,17 @@ function assertNotisId(id: string): void {
  */
 interface InternalEntry {
   notisId: string;
-  anchor: boolean;
+  firstContact: boolean;
   byHand: boolean;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
-   * entry the constructor's anchor list named, never cleared. A
-   * `removeByHand` leaves such an entry alone, so a build anchor
+   * entry the constructor's first-contact list named, never cleared. A
+   * `removeByHand` leaves such an entry alone, so a build node
    * added again by hand stays after a blank commit; one not in the
-   * build list is dropped (`anchor && !fromAnchorList` is the pure
-   * hand-added anchor case).
+   * build list is dropped (`firstContact && !fromFirstContactList` is the
+   * pure hand-added case).
    */
-  fromAnchorList: boolean;
+  fromFirstContactList: boolean;
   status: NodeStatus;
   failures: number;
   clockAtFailure: number;
@@ -154,8 +154,8 @@ interface InternalEntry {
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" —
    * the addresses the client's own configuration names for the key: an
-   * anchor's given addresses and those entered by hand, never one
-   * merged from the DHT or a seed. `configuredAddrs(id)` reads this
+   * first-contact node's given addresses and those entered by hand, never
+   * one merged from the DHT or a seed. `configuredAddrs(id)` reads this
    * list; `add(id, addrs)` leaves it unchanged.
    */
   configured: string[];
@@ -166,9 +166,9 @@ interface InternalEntry {
   /**
    * MESH_INTERFACE → The client's node list → "An entry may carry an API
    * base" — the HTTPS base where the client holds no connection to the
-   * key. Set from the anchor's `api` at construction or merged from a
-   * duplicate anchor's; `null` when the list gave none. The pairing of a
-   * base with a key is the list's word (→ Discovery → "Anchors").
+   * key. Set from the entry's `api` at construction or merged from a
+   * duplicate entry's; `null` when the list gave none. The pairing of a
+   * base with a key is the list's word (→ Discovery → "First contact").
    */
   api: string | null;
 }
@@ -177,29 +177,30 @@ export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
 
-  constructor(anchors: MeshAnchor[], ownId: string, clock: () => number) {
+  constructor(firstContact: MeshContact[], ownId: string, clock: () => number) {
     assertNotisId(ownId);
     this.clock = clock;
-    for (const a of anchors) {
+    for (const a of firstContact) {
       assertNotisId(a.notisId);
       // "the client's own key is none" (MESH_INTERFACE → Discovery).
       if (a.notisId === ownId) continue;
       const existing = this.entries_.get(a.notisId);
       if (existing) {
-        // "Two anchors with one key are one anchor" (MESH_INTERFACE → Discovery):
-        // the first entry stands; the rest's addresses merge into it. Both
-        // sets are anchor-given, so the merged addresses count as configured.
+        // Two entries with one key are one entry (MESH_INTERFACE → Discovery →
+        // "First contact"): the first entry stands; the rest's addresses merge
+        // into it. Both sets are list-given, so the merged addresses count as
+        // configured.
         // The api too — the first non-null stands, since the pairing of a
-        // base with a key is the list's word (→ Discovery → "Anchors").
+        // base with a key is the list's word (→ Discovery → "First contact").
         this.mergeAddrs(existing, a.addrs);
         this.mergeConfigured(existing, a.addrs);
         if (existing.api === null && a.api !== undefined) existing.api = a.api;
       } else {
         this.entries_.set(a.notisId, {
           notisId: a.notisId,
-          anchor: true,
+          firstContact: true,
           byHand: false,
-          fromAnchorList: true,
+          fromFirstContactList: true,
           status: 'new',
           failures: 0,
           clockAtFailure: 0,
@@ -228,9 +229,9 @@ export class NodeList {
     }
     this.entries_.set(id, {
       notisId: id,
-      anchor: false,
+      firstContact: false,
       byHand: false,
-      fromAnchorList: false,
+      fromFirstContactList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -252,8 +253,8 @@ export class NodeList {
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" —
    * the reader may add a node by its key and an address. A new entry
-   * gets `anchor = trusted`, `byHand = true`; an existing one merges
-   * the addresses, sets `byHand = true`, and `anchor ||= trusted`; a
+   * gets `firstContact = trusted`, `byHand = true`; an existing one merges
+   * the addresses, sets `byHand = true`, and `firstContact ||= trusted`; a
    * `blacklisted` one is unchanged. The addresses are added to
    * `configured` for the gater (→ Transports → "A client dials a
    * private address only when its own configuration names it"). The
@@ -268,14 +269,14 @@ export class NodeList {
       this.mergeAddrs(existing, addrs);
       this.mergeConfigured(existing, addrs);
       existing.byHand = true;
-      existing.anchor = existing.anchor || trusted;
+      existing.firstContact = existing.firstContact || trusted;
       return;
     }
     this.entries_.set(id, {
       notisId: id,
-      anchor: trusted,
+      firstContact: trusted,
       byHand: true,
-      fromAnchorList: false,
+      fromFirstContactList: false,
       status: 'new',
       failures: 0,
       clockAtFailure: 0,
@@ -292,17 +293,17 @@ export class NodeList {
 
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. An entry the constructor's anchor
-   * list named — the build anchor — is left alone: `fromAnchorList`
+   * entry a reader added by hand. An entry the constructor's first-contact
+   * list named — the build node — is left alone: `fromFirstContactList`
    * is true for it, and never cleared. An entry this method can drop
-   * is one `byHand === true && fromAnchorList === false`; anything
+   * is one `byHand === true && fromFirstContactList === false`; anything
    * else is a no-op. An id the list does not hold is a no-op.
    */
   removeByHand(id: string): void {
     assertNotisId(id);
     const e = this.entries_.get(id);
     if (!e) return;
-    if (e.fromAnchorList) return;
+    if (e.fromFirstContactList) return;
     if (!e.byHand) return;
     this.entries_.delete(id);
   }
@@ -310,8 +311,8 @@ export class NodeList {
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand"
    * — the addresses the client's own configuration names for the key:
-   * an anchor's given addresses and those entered by hand, never one
-   * merged from the DHT or a seed. An id the list does not hold reads
+   * a first-contact node's given addresses and those entered by hand, never
+   * one merged from the DHT or a seed. An id the list does not hold reads
    * as the empty list — the gater is a hot path where every dial asks
    * about addresses the list may never have seen.
    */
@@ -453,7 +454,7 @@ export class NodeList {
    */
   anchorReached(): boolean {
     for (const e of this.entries_.values()) {
-      if (e.anchor && (e.status === 'ok' || e.status === 'trailing' || e.status === 'behind')) return true;
+      if (e.firstContact && (e.status === 'ok' || e.status === 'trailing' || e.status === 'behind')) return true;
     }
     return false;
   }
@@ -462,8 +463,8 @@ export class NodeList {
    * Ordering: `ok`, `trailing`, `behind`, nodes not yet tried, then
    * `retry` nodes whose time has come; never a `blacklisted` node
    * (MESH_INTERFACE → The client's node list → "Candidates"). Inside a
-   * group the Map's insertion order answers "first known", with anchors
-   * in their given order first because the constructor inserts them
+   * group the Map's insertion order answers "first known", with first-contact
+   * nodes in their given order first because the constructor inserts them
    * before any `add`.
    *
    * "An entry the client holds no connection to is a candidate at its
@@ -516,7 +517,7 @@ export class NodeList {
   /**
    * Merge the given addresses into `configured`, respecting the same
    * dropped-address rule `mergeAddrs` holds: an address a key lied
-   * through does not return through a later anchor merge or hand-add.
+   * through does not return through a later merge or hand-add.
    */
   private mergeConfigured(e: InternalEntry, addrs: string[]): void {
     for (const addr of addrs) {
@@ -544,7 +545,7 @@ export class NodeList {
     const retryAtMs = e.status === 'retry' ? this.clampedRetryAt(e) : e.storedRetryAtMs;
     return {
       notisId: e.notisId,
-      anchor: e.anchor,
+      firstContact: e.firstContact,
       byHand: e.byHand,
       status: e.status,
       failures: e.failures,
