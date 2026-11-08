@@ -810,8 +810,8 @@ harness refuses any other seed list. Each relay passes every request through —
 (one row's text swapped), `drop` (no row answered), `hold` (answered at `release()`), `hang` (never answered), and
 beside them `list-down` (the list reads answer 503), `list-replay` (a recorded light page), `down` (every connection
 destroyed), with a switchable upstream. The steps: **L1** a cold feed under `hold` — slots with no text and no control
-in `inkMute`, one light list read and one batch of exactly those ids at `RA`, the cards in the same order at the
-release; **L2** a reload — one light list read, no batch; **L3** the reader's own new post named in no batch, and one
+in `inkMute`, one light list read at either relay and one batch of exactly those ids at `RA`, the cards in the same order at the
+release; **L2** a reload — one light list read at either relay, no batch; **L3** the reader's own new post named in no batch, and one
 deleted entry asked for in one batch of one id; **L4** the pointer — the feed's batch at `RA`, a thread's at `RB`;
 **L5** `drop` on `RA` — `RB` asked the same ids; **L6** `text` on `RA` — `RB` binds it, no clay; **L7** `text` on `RA`
 with `RB` `down` — that slot gone and *1 post withheld — it does not match its signature*; **L8** `drop` with `RB`
@@ -848,7 +848,10 @@ nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start lin
 run the harness.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
-starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A request's `close` fires when its body
+starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A list read goes to either relay**: the
+read client's base is the client's routed pick, at random among the fast set (`MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"`) —
+so a step counts a list read across both relays' logs and sets a list mode (`list-down`, `list-replay`) and the
+record flag on both. ⚠ **A request's `close` fires when its body
 has been read** (Node 22): a relay reads the client's going away from the response's `close` while it is not ended.
 ⚠ **A `//` comment inside a template passed to `cx.eval` carries no backtick** — one ends the string, and
 `node --check` passes it. ⚠ **A thread is opened the product's two ways and no other**: from a feed card's strip, or
