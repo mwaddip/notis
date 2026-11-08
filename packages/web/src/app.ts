@@ -4733,10 +4733,10 @@ export class App {
    *  away. The answer is the proven result's (recipientVerdict), never the
    *  node's word — a send goes only to a name proven `k` deep, so `young` is
    *  the refusal `send to a key instead` (NIPOPOW_INTERFACE → The trust model,
-   *  rule 4); a press left with no anchor to check against is *can't be
-   *  checked — the chain is not verified.*, and one whose check throws *can't
-   *  be checked.* A press that ends while the check runs takes the line with
-   *  it (endSendPress). */
+   *  rule 4); a press without a verified tip run — `TipRun.anchor` is `null`
+   *  on every verdict but `verified` — is *can't be checked — the chain is
+   *  not verified.*, and one whose check throws *can't be checked.* A press
+   *  that ends while the check runs takes the line with it (endSendPress). */
   private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
     const press = this.sendPress;
     const handle = '@' + name;
@@ -4745,32 +4745,33 @@ export class App {
     const result = await this.checkRecipient(verifier, name);
     // Past its press's end the row's check, if any, is a later press's.
     if (press === this.sendPress) this.sendCheck = null;
-    if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    if (result === 'not-verified') return { refusal: `${handle} can't be checked — the chain is not verified.` };
     if (result === 'threw') return { refusal: `${handle} can't be checked.` };
     return recipientVerdict(result, handle);
   }
 
-  /** The press's check: the typed handle against the anchor standing — with
-   *  none, the anchor a tip run writes — and a check that ends `unchecked` or
-   *  `young` once more against the anchor of one tip run (WEB_INTERFACE → The
-   *  extension → "The verified names"), the anchor standing being minutes old.
-   *  Answers the last check's result. */
-  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'no-anchor' | 'threw'> {
+  /** The press's check: the typed handle against the tip run's anchor
+   *  standing — with none, the anchor a tip run writes — and a check that
+   *  ends `unchecked` or `young` once more against the anchor of one tip
+   *  run (WEB_INTERFACE → The extension → "The verified names"), the anchor
+   *  standing being minutes old. Answers the last check's result. */
+  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'not-verified' | 'threw'> {
     const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
     const first = await this.checkHandle(verifier, name, anchor);
     if (typeof first !== 'object' || (first.status !== 'unchecked' && first.status !== 'young')) return first;
     return this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
   }
 
-  /** One check of a typed handle at the reading node: its result, `no-anchor`
-   *  with no anchor to check it against, or `threw` — a check is total, so a
-   *  rejection is the seam's own failure, logged. */
+  /** One check of a typed handle at the reading node: its result,
+   *  `not-verified` when `TipRun.anchor` is `null` (every verdict but
+   *  `verified`), or `threw` — a check is total, so a rejection is the
+   *  seam's own failure, logged. */
   private async checkHandle(
     verifier: NamesVerifier,
     name: string,
     anchor: Anchor | null,
-  ): Promise<NameResult | 'no-anchor' | 'threw'> {
-    if (anchor === null) return 'no-anchor';
+  ): Promise<NameResult | 'not-verified' | 'threw'> {
+    if (anchor === null) return 'not-verified';
     try {
       return await verifier.run(prefs.node, { name }, anchor);
     } catch (e) {
