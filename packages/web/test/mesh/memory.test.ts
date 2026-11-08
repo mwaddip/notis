@@ -32,6 +32,12 @@ const PROFILE = profileFor('devnet');
 const M = DEFAULT_M;
 const K = DEFAULT_K;
 const MK = M + K;
+// The helpers (`packages/nipopow/test/helpers.ts`) stamp block `h` at
+// `1_000_000 + 60_000 · (h − 1)` and the helpers' `devnetProfile` reads
+// `nowMs: 100_000_000` — well past every chain's tip. The memory
+// helpers take the wall clock from their caller
+// (`MESH_INTERFACE → The client's node list → "Two clocks"`).
+const NOW = 100_000_000;
 
 function nodeTip(verified: boolean, proof: NipopowProof | null): NodeTipResult {
   return {
@@ -73,7 +79,7 @@ describe('memory — continues', () => {
   it('a proof of the same chain one block on continues the kept one', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
     const next = proveWithReader(makeReader(buildMinedChain({ count: MK + 1 })), { m: M, k: K });
-    expect(continues(kept, next, PROFILE)).toBe(true);
+    expect(continues(kept, next, PROFILE, NOW)).toBe(true);
   });
 
   it('a fork from below the kept tip with less work above the fork does not', () => {
@@ -84,7 +90,7 @@ describe('memory — continues', () => {
     // below the kept chain's.
     const forkChain = buildMinedChain({ count: MK, stampIntervalMs: 60_001 });
     const forkProof = proveWithReader(makeReader(forkChain), { m: M, k: K });
-    expect(continues(kept, forkProof, PROFILE)).toBe(false);
+    expect(continues(kept, forkProof, PROFILE, NOW)).toBe(false);
   });
 
   it('a heavier fork from below the kept tip does', () => {
@@ -95,7 +101,7 @@ describe('memory — continues', () => {
       makeReader(buildMinedChain({ count: 100, stampIntervalMs: 60_001 })),
       { m: M, k: K },
     );
-    expect(continues(kept, heavier, PROFILE)).toBe(true);
+    expect(continues(kept, heavier, PROFILE, NOW)).toBe(true);
   });
 });
 
@@ -124,7 +130,7 @@ describe('memory — judgeByMemory', () => {
     );
     const node3 = nodeTip(true, cont2);
 
-    const r = judgeByMemory(kept, [node0, node1, node2, node3], PROFILE);
+    const r = judgeByMemory(kept, [node0, node1, node2, node3], PROFILE, NOW);
     expect(r.lost).toEqual([1]);
     expect(r.best).toBe(3);
     expect(r.foreign).toBe(false);
@@ -143,7 +149,7 @@ describe('memory — judgeByMemory', () => {
     expect(hashA).not.toBe(hashB);
     const proofA = proveWithReader(makeReader(chainA), { m: M, k: K });
     const proofB = proveWithReader(makeReader(chainB), { m: M, k: K });
-    const r = judgeByMemory(proofA, [nodeTip(true, proofB)], PROFILE);
+    const r = judgeByMemory(proofA, [nodeTip(true, proofB)], PROFILE, NOW);
     expect(r.foreign).toBe(true);
     expect(r.best).toBeNull();
     expect(r.lost).toEqual([]);
@@ -158,7 +164,7 @@ describe('memory — forkKey', () => {
     expect(blockHash(chainB.headers[0]!)).toBe(sharedHash);
     const proofA = proveWithReader(makeReader(chainA), { m: M, k: K });
     const proofB = proveWithReader(makeReader(chainB), { m: M, k: K });
-    const fk = forkKey(proofA, proofB, PROFILE);
+    const fk = forkKey(proofA, proofB, PROFILE, NOW);
     expect(fk).toBe(sharedHash);
   });
 });

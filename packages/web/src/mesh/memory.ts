@@ -24,18 +24,21 @@ import type { MeshContact, NodeEntry } from './node-list.js';
  * kept proof — the node's wins, or they tie". `incomparable` is not
  * `continues` (`foreign` in `judgeByMemory` speaks for it); the caller
  * uses the client's own `DEFAULT_M` and `DEFAULT_K`
- * (`NIPOPOW_INTERFACE → compareProofs`).
+ * (`NIPOPOW_INTERFACE → compareProofs`). The caller takes the wall
+ * clock (`MESH_INTERFACE → The client's node list → "Two clocks"`) —
+ * the verifier reads it against each header's stamp.
  */
 export function continues(
   kept: NipopowProof,
   proof: NipopowProof,
   profile: NetworkProfile,
+  now: number,
 ): boolean {
   const r = compareProofs(
     kept,
     proof,
     { m: DEFAULT_M, k: DEFAULT_K },
-    verifierProfile(profile, Date.now()),
+    verifierProfile(profile, now),
   );
   return r.verdict === 'b' || r.verdict === 'tie';
 }
@@ -54,8 +57,9 @@ export function judgeByMemory(
   kept: NipopowProof,
   nodes: readonly NodeTipResult[],
   profile: NetworkProfile,
+  now: number,
 ): { lost: number[]; best: number | null; foreign: boolean } {
-  const vp = verifierProfile(profile, Date.now());
+  const vp = verifierProfile(profile, now);
   const params = { m: DEFAULT_M, k: DEFAULT_K };
   const lost: number[] = [];
   const candidates: number[] = [];
@@ -101,12 +105,13 @@ export function forkKey(
   a: NipopowProof,
   b: NipopowProof,
   profile: NetworkProfile,
+  now: number,
 ): string | null {
   const r = compareProofs(
     a,
     b,
     { m: DEFAULT_M, k: DEFAULT_K },
-    verifierProfile(profile, Date.now()),
+    verifierProfile(profile, now),
   );
   if (r.verdict === 'incomparable') return null;
   return blockHash(r.lca);
