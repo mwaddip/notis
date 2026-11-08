@@ -91,10 +91,11 @@ export function judgeByMemory(
 }
 
 /**
- * MESH_INTERFACE → No anchor reached → "A disagreement is the reader's
- * question" — the fork the two proofs share: the lowercase hex
- * `blockHash` of `compareProofs`'s `lca`. `null` when the proofs are
- * `incomparable` (no common ancestor, or either proof invalid).
+ * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+ * question, never the client's choice" — the fork the two proofs
+ * share: the lowercase hex `blockHash` of `compareProofs`'s `lca`.
+ * `null` when the proofs are `incomparable` (no common ancestor, or
+ * either proof invalid).
  */
 export function forkKey(
   a: NipopowProof,
