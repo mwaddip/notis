@@ -257,6 +257,66 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(addCalls).toEqual([PEER_HEX]);
   });
 
+  it('a stored proof that does not decode is replaced by the next check\'s snapshot', async () => {
+    // startExtensionMesh's `continues` seam must decode each proof alone:
+    // a stored proof that does not decode answers `true` (the next
+    // snapshot's proof replaces it); a next proof that does not decode
+    // answers `false` (the kept one stands). A bare catch around
+    // `decode(kept), decode(next), compare(…)` swallows a bad stored proof
+    // and the store never recovers.
+    const { encodeNipopowProof } = await import('@dagsocial/nipopow');
+    const { proveWithReader } = await import('@dagsocial/nipopow');
+    const { buildMinedChain, makeReader } = await import('../../../nipopow/test/helpers.js');
+    const { DEFAULT_M, DEFAULT_K } = await import('@dagsocial/nipopow-client');
+    const next = proveWithReader(makeReader(buildMinedChain({ count: DEFAULT_M + DEFAULT_K })), { m: DEFAULT_M, k: DEFAULT_K });
+    const nextBytes = encodeNipopowProof(next);
+    const nextB64 = Buffer.from(nextBytes).toString('base64');
+    // The stored record's proof is base64 of random bytes — a valid
+    // base64 string, but `decodeNipopowProof` will throw on it.
+    const badBytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const badB64 = Buffer.from(badBytes).toString('base64');
+    // Devnet's profile pins no genesis, so any 64-hex value stays — the
+    // record is read, and `write` re-stamps the stored one as it goes.
+    const GENESIS = 'ab'.repeat(32);
+    const storage = fakeStorage({
+      'notis.mesh.memory.devnet': JSON.stringify({ genesis: GENESIS, proof: badB64, nodes: [], answeredForks: [] }),
+    });
+    let capturedOnChecked: ((s: import('../../src/mesh/index.js').MemorySnapshot) => void) | null = null;
+    // Devnet pins no genesis, so startExtensionMesh takes the chain from
+    // the client's state for the write's `genesis`; a `null` chain would
+    // make onChecked return early with no write.
+    const GENESIS_FOR_WRITE = GENESIS;
+    const client = fakeClient({
+      state: () => emptyState({ seated: true, chain: GENESIS_FOR_WRITE }),
+    });
+    const startMeshClient = vi.fn(async (opts: import('../../src/mesh/index.js').StartMeshClientOptions): Promise<MeshClient> => {
+      capturedOnChecked = opts.onChecked ?? null;
+      return client;
+    });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
+    });
+    expect(capturedOnChecked).not.toBeNull();
+    // Trigger the check-end callback with a snapshot carrying a decodable
+    // proof. The store's `continues` must answer `true` for the bad
+    // stored proof, and the new proof replaces it.
+    const snapshot: import('../../src/mesh/index.js').MemorySnapshot = {
+      proof: nextBytes,
+      nodes: [],
+      dropped: [],
+      answeredForks: [],
+      replace: false,
+    };
+    capturedOnChecked!(snapshot);
+    // The store's write is awaited inside a .catch; let it flush.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    const stored = storage.map.get('notis.mesh.memory.devnet');
+    expect(stored).toBeDefined();
+    const record = JSON.parse(stored!);
+    expect(record.proof).toBe(nextB64);
+  });
+
   it('two pages are two seams on two fake clients — pagehide on one stops only its client; the other\'s reads go on', async () => {
     // WEB_INTERFACE → The extension → "The page holds the extension's
     // reader" — "one per page, started at load and stopped at pagehide;

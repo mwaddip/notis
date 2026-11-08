@@ -229,17 +229,26 @@ export async function startExtensionMesh(
     storage: opts.storage,
     locks: opts.locks,
     network: opts.network,
+    // Each proof decodes alone: a stored proof that does not decode answers
+    // `true`, so the next snapshot's proof replaces it (MESH_INTERFACE →
+    // What the client remembers); a next proof that does not decode answers
+    // `false`, so the kept one stands. The comparison itself runs outside
+    // every catch — a decode that succeeded both ways carries no failure
+    // mode `proofContinues` is total against.
     continues: (kept, next) => {
+      let keptProof;
       try {
-        return proofContinues(
-          decodeNipopowProof(kept),
-          decodeNipopowProof(next),
-          profile,
-          Date.now(),
-        );
+        keptProof = decodeNipopowProof(kept);
+      } catch {
+        return true;
+      }
+      let nextProof;
+      try {
+        nextProof = decodeNipopowProof(next);
       } catch {
         return false;
       }
+      return proofContinues(keptProof, nextProof, profile, Date.now());
     },
   });
   // A record kept under another pinned genesis is cleared and the page
