@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@dagsocial/net": "workspace:*",
+    "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/nipopow-client": "workspace:*",
     "@dagsocial/node-reads": "workspace:*",
     "@dagsocial/types": "workspace:*",

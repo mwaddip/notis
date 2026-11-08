@@ -43,3 +43,14 @@ export const STUN_SERVERS_MAX: 3 = 3;
  * from `MAX_BLOCK_BODY_BYTES` and not from the header's own size.
  */
 export const BLOCK_READ_BYTES: 8_388_608 = 8_388_608;
+/**
+ * MESH_INTERFACE → The client's node list — "`REMEMBERED_NODES_MAX`
+ * | `16` | the most known nodes a client remembers — provisional:
+ * about 10 KB of memory, and the start-up dial set a check opens".
+ */
+export const REMEMBERED_NODES_MAX: 16 = 16;
+/**
+ * MESH_INTERFACE → The client's node list — "`ANSWERED_FORKS_MAX`
+ * | `16` | the most answered forks a client remembers".
+ */
+export const ANSWERED_FORKS_MAX: 16 = 16;

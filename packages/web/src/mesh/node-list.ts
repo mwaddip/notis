@@ -116,6 +116,15 @@ export interface NodeEntry {
    * string (the client's `assertClientConfig` does, as a `MeshConfigError`).
    */
   api: string | null;
+  /**
+   * MESH_INTERFACE → What the client remembers — "After each check it
+   * records every node naming a tip on its chain, `ok` or `trailing`,
+   * with the addresses it would dial ... the most recently seen first".
+   * The list's monotonic clock at the entry's latest `success` or
+   * `trailing`; `null` until one. Read by `nodesToRemember` to order
+   * the remembered nodes latest-first.
+   */
+  seenMs: number | null;
 }
 
 const NOTIS_ID_RE = /^[0-9a-f]{64}$/;
@@ -137,6 +146,7 @@ interface InternalEntry {
   notisId: string;
   firstContact: boolean;
   byHand: boolean;
+  seenMs: number | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
    * entry the constructor's first-contact list named, never cleared. A
@@ -200,6 +210,7 @@ export class NodeList {
           notisId: a.notisId,
           firstContact: true,
           byHand: false,
+          seenMs: null,
           fromFirstContactList: true,
           status: 'new',
           failures: 0,
@@ -231,6 +242,7 @@ export class NodeList {
       notisId: id,
       firstContact: false,
       byHand: false,
+      seenMs: null,
       fromFirstContactList: false,
       status: 'new',
       failures: 0,
@@ -276,6 +288,7 @@ export class NodeList {
       notisId: id,
       firstContact: trusted,
       byHand: true,
+      seenMs: null,
       fromFirstContactList: false,
       status: 'new',
       failures: 0,
@@ -330,6 +343,10 @@ export class NodeList {
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'ok';
+    // MESH_INTERFACE → What the client remembers — the list's monotonic
+    // clock at the entry's latest `success` or `trailing`, so
+    // `nodesToRemember` orders the remembered nodes latest-first.
+    e.seenMs = this.clock();
     // MESH_INTERFACE → The client's node list → "An entry keeps its last
     // failure's kind and message" — the entry keeps the diagnostic for
     // the page to show while the node is in `retry`; a success clears
@@ -405,6 +422,9 @@ export class NodeList {
     e.failures = 0;
     e.storedRetryAtMs = 0;
     e.status = 'trailing';
+    // MESH_INTERFACE → What the client remembers — the list's clock at
+    // the entry's latest `success` or `trailing`.
+    e.seenMs = this.clock();
   }
 
   wrongKey(id: string, addr: string, _answeredId: string | null): void {
@@ -566,6 +586,7 @@ export class NodeList {
       transport: null,
       path: null,
       api: e.api,
+      seenMs: e.seenMs,
     };
   }
 }

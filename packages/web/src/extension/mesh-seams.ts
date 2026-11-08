@@ -26,8 +26,9 @@ import { notisIdFromPeerId } from '@dagsocial/net/browser';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { MeshClient, MeshContact, StartMeshClientOptions } from '../mesh/index.js';
+import type { MeshClient, MeshContact, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
+export type { StorageLike };
 import type {
   FiguresVerifier,
   NamesVerifier,
@@ -45,14 +46,6 @@ export interface MeshSeams {
   namesVerifier: NamesVerifier;
   postResolver: PostResolver;
   handNodeSeam: HandNodeSeam;
-}
-
-/** The narrow storage shape the seam uses. `window.localStorage` fits; tests
- *  pass a fake. */
-export interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
 }
 
 export interface CreateMeshSeamsOptions {
