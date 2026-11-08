@@ -320,11 +320,15 @@ export function verdictS6NotContinued(m) {
   const first = m.firstSession;
   const second = m.secondSession;
   if (first === null || typeof first !== 'object') return 'FAIL';
-  if (typeof first.keptChainHash !== 'string') return 'FAIL';
   if (second === null || typeof second !== 'object') return 'FAIL';
   if (second.notContinued !== true) return 'FAIL';
   if (second.bannerText !== 'No node reached continues the chain you verified.') return 'FAIL';
   if (typeof second.chainName !== 'string') return 'FAIL';
+  // `second.chainName !== first.keptChainHash` catches a non-string
+  // `first.keptChainHash` too: `second.chainName` is a string by the
+  // guard above, and `'aaaa...' !== undefined` fires. A separate
+  // typeof-string guard on `first.keptChainHash` is redundant to this
+  // pair (mutation shows no case red).
   if (second.chainName !== first.keptChainHash) return 'FAIL';
   const fork = second.forkEntry;
   if (fork === null || typeof fork !== 'object') return 'FAIL';

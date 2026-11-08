@@ -447,6 +447,34 @@ describe("verdictS6NotContinued — a kept chain stands when no reachable node c
       },
     })).toBe('FAIL');
   });
+  // Shape-guards: every nested-object + typed-field check is held by
+  // a case, so a mutation that deletes one (one `if (…) return 'FAIL'`
+  // at a time) turns the matching case red.
+  it('firstSession missing (not an object) → FAIL', () => {
+    expect(verdictS6NotContinued({ ...PASS, firstSession: null })).toBe('FAIL');
+  });
+  it('firstSession.keptChainHash missing (not a string) → FAIL', () => {
+    expect(verdictS6NotContinued({ ...PASS, firstSession: {} })).toBe('FAIL');
+  });
+  it('secondSession missing (not an object) → FAIL', () => {
+    expect(verdictS6NotContinued({ ...PASS, secondSession: null })).toBe('FAIL');
+  });
+  it('secondSession.chainName missing (not a string) → FAIL', () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: { ...PASS.secondSession, chainName: null },
+    })).toBe('FAIL');
+  });
+  // Both chainName and keptChainHash the same non-string value — the
+  // equality check alone (`chainName !== keptChainHash`) does not fire
+  // (null !== null is false), so this case holds the typed-string
+  // guard on `chainName` alone.
+  it('chainName and keptChainHash the same non-string (both null) → FAIL', () => {
+    expect(verdictS6NotContinued({
+      firstSession: { keptChainHash: null },
+      secondSession: { ...PASS.secondSession, chainName: null },
+    })).toBe('FAIL');
+  });
 });
 
 describe('verdictS6Hostile — malformed + invalid blacklisted; lagging behind, not blacklisted', () => {
@@ -673,6 +701,57 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
     expect(verdictS7Question({
       ...PASS,
       disablePhase: { ...PASS.disablePhase, answerCalls: 2 },
+    })).toBe('FAIL');
+  });
+  // Shape-guards: every nested-object + typed-field check is held by
+  // a case, so a mutation that deletes one (one `if (…) return 'FAIL'`
+  // at a time) turns the matching case red.
+  it('onChainPhase missing (not an object) → FAIL', () => {
+    expect(verdictS7Question({ ...PASS, onChainPhase: null })).toBe('FAIL');
+  });
+  it('onChainPhase.lan1Status is neither ok nor trailing → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      onChainPhase: { ...PASS.onChainPhase, lan1Status: 'retry' },
+    })).toBe('FAIL');
+  });
+  it('onChainPhase.onChain below the one-node threshold → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      onChainPhase: { ...PASS.onChainPhase, onChain: 0 },
+    })).toBe('FAIL');
+  });
+  it('heavierPhase missing (not an object) → FAIL', () => {
+    expect(verdictS7Question({ ...PASS, heavierPhase: null })).toBe('FAIL');
+  });
+  it('heavierPhase.tipStillHeld false (the tip moved while the disagreement stood) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      heavierPhase: { ...PASS.heavierPhase, tipStillHeld: false },
+    })).toBe('FAIL');
+  });
+  it('disablePhase missing (not an object) → FAIL', () => {
+    expect(verdictS7Question({ ...PASS, disablePhase: null })).toBe('FAIL');
+  });
+  it('disablePhase.disagreementAfter true (the disagreement stood after the press) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: { ...PASS.disablePhase, disagreementAfter: true },
+    })).toBe('FAIL');
+  });
+  it('continuePhase missing (not an object) → FAIL', () => {
+    expect(verdictS7Question({ ...PASS, continuePhase: null })).toBe('FAIL');
+  });
+  it('continuePhase.answerCalls not 1 → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, answerCalls: 0 },
+    })).toBe('FAIL');
+  });
+  it('continuePhase.disagreementAfter true → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, disagreementAfter: true },
     })).toBe('FAIL');
   });
 });
