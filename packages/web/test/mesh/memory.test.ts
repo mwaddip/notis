@@ -70,13 +70,13 @@ function entry(over: Partial<NodeEntry>): NodeEntry {
 }
 
 describe('memory — continues', () => {
-  it.fails('a proof of the same chain one block on continues the kept one', () => {
+  it('a proof of the same chain one block on continues the kept one', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
     const next = proveWithReader(makeReader(buildMinedChain({ count: MK + 1 })), { m: M, k: K });
     expect(continues(kept, next, PROFILE)).toBe(true);
   });
 
-  it.fails('a fork from below the kept tip with less work above the fork does not', () => {
+  it('a fork from below the kept tip with less work above the fork does not', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: 100 })), { m: M, k: K });
     // A fork shares only block 1 — the stamp interval differs, so every
     // block from 2 up is a different header. The fork is at the floor
@@ -87,7 +87,7 @@ describe('memory — continues', () => {
     expect(continues(kept, forkProof, PROFILE)).toBe(false);
   });
 
-  it.fails('a heavier fork from below the kept tip does', () => {
+  it('a heavier fork from below the kept tip does', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
     // Same shared block 1 (the stamp interval differs), but the fork is
     // deeper than the kept chain.
@@ -100,7 +100,7 @@ describe('memory — continues', () => {
 });
 
 describe('memory — judgeByMemory', () => {
-  it.fails('losers listed, best is the heaviest continuing proof, refused nodes ignored', () => {
+  it('losers listed, best is the heaviest continuing proof, refused nodes ignored', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: 100 })), { m: M, k: K });
     // Node 0: refused.
     const node0 = nodeTip(false, null);
@@ -130,7 +130,7 @@ describe('memory — judgeByMemory', () => {
     expect(r.foreign).toBe(false);
   });
 
-  it.fails('foreign when every verified proof is incomparable', () => {
+  it('foreign when every verified proof is incomparable', () => {
     // `forceLevels: new Map([[1, 1]])` solves block 1 for level ≥ 1, so
     // its `powNonce` differs from the default and its hash does too —
     // two chains with different block 1 hashes and therefore no common
@@ -151,7 +151,7 @@ describe('memory — judgeByMemory', () => {
 });
 
 describe('memory — forkKey', () => {
-  it.fails('the hash of the highest header the two proofs share', () => {
+  it('the hash of the highest header the two proofs share', () => {
     const chainA = buildMinedChain({ count: MK });
     const chainB = buildMinedChain({ count: MK, stampIntervalMs: 60_001 });
     const sharedHash = blockHash(chainA.headers[0]!);
@@ -164,7 +164,7 @@ describe('memory — forkKey', () => {
 });
 
 describe('memory — nodesToRemember', () => {
-  it.fails('ok and trailing only, own key and blacklisted left out, private addresses dropped, capped, latest seen first', () => {
+  it('ok and trailing only, own key and blacklisted left out, private addresses dropped, capped, latest seen first', () => {
     const own = '0'.repeat(63) + '1';
     const idOf = (n: number): string => n.toString(16).padStart(64, '0');
     const addrPub = (ip: string): string => `/ip4/${ip}/udp/3456/webrtc-direct/certhash/uEiDXXXX/p2p/${'a'.repeat(52)}`;
@@ -193,7 +193,7 @@ describe('memory — nodesToRemember', () => {
     for (const n of out) expect(n.api).toBeUndefined();
   });
 
-  it.fails('entries with a public address come through — the NodeList itself drives seenMs', () => {
+  it('entries with a public address come through — the NodeList itself drives seenMs', () => {
     // A NodeList success sets `seenMs` to the list's clock. Two
     // successes at distinct times, then `nodesToRemember` reads the
     // list's `entries()`: the latest-seen comes first, both carry an

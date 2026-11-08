@@ -92,7 +92,7 @@ const idA = idOf(0xa);
 const idB = idOf(0xb);
 
 describe('mesh memory store', () => {
-  it.fails('a snapshot whose proof does not continue the stored one keeps the stored proof and merges the nodes', async () => {
+  it('a snapshot whose proof does not continue the stored one keeps the stored proof and merges the nodes', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const key = `notis.mesh.memory.devnet`;
@@ -120,7 +120,7 @@ describe('mesh memory store', () => {
     expect(stored!.nodes.map(n => n.notisId)).toEqual([idB, idA]);
   });
 
-  it.fails('replace writes the proof whatever it is', async () => {
+  it('replace writes the proof whatever it is', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const key = `notis.mesh.memory.devnet`;
@@ -146,7 +146,7 @@ describe('mesh memory store', () => {
     expect(b64ToAscii(stored!.proof)).toBe('reader-continue');
   });
 
-  it.fails('a key in dropped leaves the remembered nodes', async () => {
+  it('a key in dropped leaves the remembered nodes', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const key = `notis.mesh.memory.devnet`;
@@ -177,7 +177,7 @@ describe('mesh memory store', () => {
     expect(stored!.nodes.map(n => n.notisId)).toEqual([idB]);
   });
 
-  it.fails('two pages write in turn under the lock — the earlier page\'s older proof never overwrites the newer', async () => {
+  it('two pages write in turn under the lock — the earlier page\'s older proof never overwrites the newer', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     // `continues(kept, next)` reads whether `next`'s height — the first
@@ -216,7 +216,7 @@ describe('mesh memory store', () => {
     expect(b64ToAscii(stored!.proof)).toBe('Chi');
   });
 
-  it.fails('a damaged record reads null and is removed', () => {
+  it('a damaged record reads null and is removed', () => {
     const key = `notis.mesh.memory.devnet`;
     // Bad JSON.
     const s1 = fakeStorage({ [key]: '{not json' });
@@ -249,7 +249,7 @@ describe('mesh memory store', () => {
     expect(s4.map.has(key)).toBe(false);
   });
 
-  it.fails('a record under another genesis reads as none to write', async () => {
+  it('a record under another genesis reads as none to write', async () => {
     const storage = fakeStorage();
     const key = `notis.mesh.memory.devnet`;
     // Stored record is under g1 and carries nodes to merge in.
@@ -283,7 +283,7 @@ describe('mesh memory store', () => {
     expect(stored!.answeredForks).toEqual(['freshFork']);
   });
 
-  it.fails('nodes and answered forks capped at REMEMBERED_NODES_MAX and ANSWERED_FORKS_MAX', async () => {
+  it('nodes and answered forks capped at REMEMBERED_NODES_MAX and ANSWERED_FORKS_MAX', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const store = createMeshMemoryStore({
