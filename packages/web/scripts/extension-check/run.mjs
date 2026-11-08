@@ -386,6 +386,20 @@ const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
 // The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
 // on their own ports — only the HTTP listener is moved.
 const AP_ALT_HTTP_PORT = 19834;
+// The --mesh block's third public mesh node C' — spawned in M5 alone,
+// `MESH_ROLE=public` with its own WebRTC-direct listen port on loopback
+// and `MESH_STUN=off`, bootstrapped from the operator's A at --node-p2p
+// so it shares A's chain (MESH_INTERFACE → Discovery → "The DHT is
+// Notis's own" — a public mesh node answers the DHT's server-side
+// protocol). The extension's seed list does not name it: the first
+// fresh page reaches it through the DHT (`peer:discovery` →
+// `nodeList.add`, `src/mesh/mesh-client.ts` `handleDiscovery`), the
+// second through memory (MESH_INTERFACE → What the client remembers).
+const CP_HTTP_PORT = 19840;
+const CP_ADMIN_PORT = 19841;
+const CP_P2P_PORT = 19842;
+const CP_MESH_PORT = 19843;
+const CP_ORIGIN = `http://127.0.0.1:${CP_HTTP_PORT}`;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
@@ -8765,7 +8779,7 @@ async function lightSteps(cx, targetId = 'unknown') {
 // listen. The nodes' identity lines are read from each start line and
 // their notisId/multiaddrs checked against the extension's seed list.
 //
-// The four steps, each on its own fresh extension page:
+// The five steps, each on its own fresh extension page where asked:
 //   M1 — reads over the mesh: `verified across 2 nodes`, 0 HTTP requests
 //        to AP_ORIGIN or BP_ORIGIN (a mesh read is no HTTP request).
 //   M2 — the API base when no mesh node serves: both nodes restarted
@@ -8777,9 +8791,19 @@ async function lightSteps(cx, targetId = 'unknown') {
 //        bases alone, a `startTipRelay` in `hold-posts` mode in front of
 //        one base, the client's POST held past REQUEST_TIMEOUT_MS, the
 //        same bytes sent to the next node, the post landing once.
+//   M5 — a returning page reads through a node it remembers: a third
+//        public mesh node C' is spawned beside A' and B' and the build's
+//        seed list does not name it (WEB_INTERFACE → The extension →
+//        "What the extension remembers", MESH_INTERFACE → What the
+//        client remembers). A first fresh page reaches C' through the
+//        DHT and writes it into memory; A' and B' are stopped; a second
+//        fresh page reads through C' alone — `thin · one-node` (memory
+//        is no witness, MESH_INTERFACE → What the client remembers →
+//        "The agreement counts") and no HTTP request to A'/B' after the
+//        mark.
 // ---------------------------------------------------------------------------
 
-const MESH_STEPS = ['M1', 'M2', 'M3', 'M4'];
+const MESH_STEPS = ['M1', 'M2', 'M3', 'M4', 'M5'];
 
 // The pair of mesh nodes `setupMeshStack` sets up before the browser
 // launches when --mesh is given. Each holds the DB path (so a restart
@@ -8791,6 +8815,7 @@ const MESH_STEPS = ['M1', 'M2', 'M3', 'M4'];
 const meshNodes = {
   ap: null, // { identity, ports, dbPath, mesh: boolean, apHttp: number }
   bp: null, // { identity, ports, dbPath, mesh: boolean }
+  cp: null, // { identity, ports, dbPath, mesh: boolean } — M5 spawns it
 };
 
 // The M4 relay stood up only during M4 — a `startTipRelay` in front of A'
@@ -8812,6 +8837,9 @@ const AP_PORTS = {
 };
 const BP_PORTS = {
   http: BP_HTTP_PORT, admin: BP_ADMIN_PORT, p2p: BP_P2P_PORT, mesh: BP_MESH_PORT,
+};
+const CP_PORTS = {
+  http: CP_HTTP_PORT, admin: CP_ADMIN_PORT, p2p: CP_P2P_PORT, mesh: CP_MESH_PORT,
 };
 
 // The env one mesh node takes — mesh on or off, and (for B') the bootstrap
@@ -9080,6 +9108,7 @@ async function teardownMeshStack() {
     await stopChild('ap').catch(() => {});
     await stopChild('ap-m4').catch(() => {});
     await stopChild('bp').catch(() => {});
+    await stopChild('cp').catch(() => {});
   }
 }
 
@@ -9525,9 +9554,313 @@ async function runMeshStepM4(bcx) {
   }
 }
 
-// The mesh block's four steps, each on its own fresh extension page.
-// Precondition: `setupMeshStack` ran before the browser launched, so A'
-// and B' are up with mesh and the identity-line/shell check holds.
+// --- M5
+// WEB_INTERFACE → The extension → "What the extension remembers",
+// MESH_INTERFACE → What the client remembers — a client records every
+// node naming a tip on its chain at a check and seeds its next start
+// from them; the kept proof opens a fresh page as a first-time client
+// with that proof held. MESH_INTERFACE → Discovery → "Known nodes" — a
+// remembered node is a candidate like one the DHT finds, and the
+// candidate is dialled from the fresh page the same way.
+//
+// The build's seed list does not name C'. A first fresh page reaches
+// C' through the DHT: the browser's kad-dht client (`clientMode: true`,
+// `packages/net/src/mesh/reader-options.ts`) queries the server-mode
+// kad-dht at A' or B' (`clientMode: false`,
+// `packages/net/src/mesh/libp2p-options.ts`), whose routing tables
+// carry C' through identify (each of A'/B'/C' is a direct peer of the
+// operator's A, and the DHT walk converges on loopback), and the kad
+// query fires `peer:discovery` on the libp2p node, which
+// `handleDiscovery` (`src/mesh/mesh-client.ts`) feeds into
+// `nodeList.add`. The next check reads C''s tip (status `ok`) and
+// `onChecked` (`src/extension/mesh-seams.ts`) writes the memory record
+// — `nodesToRemember` keeps every `ok` and `trailing` entry (addresses
+// alone, latest first, at most `REMEMBERED_NODES_MAX`,
+// `src/mesh/memory.ts`), and the write runs under one Web Lock
+// `notis.mesh.memory` (`src/mesh/memory-store.ts`). A second fresh
+// page, started with A' and B' stopped, seeds its client from that
+// record and reaches C' as a known node; the verdict's `thin · one-
+// node` row holds because the kept proof names an old tip and is in no
+// count (MESH_INTERFACE → What the client remembers → "The agreement
+// counts": memory is no witness).
+//
+// The step runs in four parts:
+//   1 — a fresh page on A' and B': waits for the verdict to read
+//       `verified across N nodes` and polls the memory record at
+//       `localStorage['notis.mesh.memory.devnet']` through the page
+//       until its `nodes` list carries C''s notisId. A timeout fails
+//       the step naming what the record held.
+//   2 — A' and B' stopped by the PIDs setupMeshStack holds through
+//       `stopChild`, as M2 stops them before its restart.
+//   3 — a fresh page: the feed draws (a list read answered), the
+//       corner's title reads `only one node could be checked · tip N`
+//       (one node, C', on the chain), and no HTTP request to AP_ORIGIN
+//       or BP_ORIGIN lands after a mark set as the verdict read.
+//   4 — A' and B' back up without mesh, as M2 brings them back, so
+//       teardownMeshStack sees them under `vtChildren` at the run's
+//       end.
+//
+// A record from an earlier step stays in the page origin's
+// `localStorage` — M1 writes memory on its first check, and M2–M4 each
+// read a client whose seeds include A' and B' from that write; none of
+// M1–M4's assertions depends on an empty memory (M1 asserts the
+// verdict and a refresh land before memory would influence either, and
+// M2–M4 restart the two nodes the seed list names, so the seeds from
+// memory add no node the firstContact list lacks). M5 leaves that
+// cumulative memory as-is at its start; C' was not among the
+// remembered nodes at M4's end (M5 is the first step to spawn it), so
+// the first fresh page here starts with C' unseen.
+async function runMeshStepM5(bcx) {
+  let page1 = null;
+  let page2 = null;
+  try {
+    // Preamble: M4 left A' at AP_ALT_HTTP_PORT as `ap-m4` and B' as
+    // `bp`, both mesh off and the M4 relay already closed
+    // (`runMeshStepM4`). Restart A' on AP_HTTP_PORT with mesh on (the
+    // name `ap`); restart B' with mesh on; spawn C' with mesh on (the
+    // name `cp`). All three bootstrap from the operator's A at
+    // --node-p2p, so they share A's chain and each acts as a DHT
+    // server (MESH_INTERFACE → Discovery → "The DHT is Notis's own").
+    await stopChild('ap');
+    await stopChild('ap-m4');
+    await stopChild('bp');
+    await stopChild('cp');
+    const apLog = join(SCRATCH, 'ap.log');
+    const bpLog = join(SCRATCH, 'bp.log');
+    const cpLog = join(SCRATCH, 'cp.log');
+    const apLogOff = logOffset(apLog);
+    const bpLogOff = logOffset(bpLog);
+    const cpLogOff = logOffset(cpLog);
+    const cpDb = join(SCRATCH, 'cp.db');
+    for (const p of [cpDb, cpDb + '-shm', cpDb + '-wal']) {
+      try { rmSync(p, { force: true }); } catch {}
+    }
+    console.log(`[vm] M5: spawning A' http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT}`);
+    const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
+    if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M5 restart`);
+    console.log(`[vm] M5: spawning B' http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT}`);
+    const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
+    if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M5 restart`);
+    console.log(`[vm] M5: spawning C' http=${CP_HTTP_PORT} admin=${CP_ADMIN_PORT} p2p=${CP_P2P_PORT} mesh=${CP_MESH_PORT} db=${cpDb}`);
+    const cpSpawn = await spawnMeshNode('cp', meshNodeEnv({
+      ports: CP_PORTS, dbPath: cpDb, withMesh: true, bootstrap: NODE_P2P,
+    }));
+    const cpUp = await waitForHttpUp(CP_ORIGIN, 60000);
+    if (!cpUp) throw new Error(`C' did not answer at ${CP_ORIGIN} after M5 spawn`);
+    meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true, apHttp: AP_HTTP_PORT };
+    meshNodes.bp = { ...meshNodes.bp, identity: bpSpawn.identity, mesh: true };
+    meshNodes.cp = { identity: cpSpawn.identity, ports: CP_PORTS, dbPath: cpDb, mesh: true };
+    const cpNotisId = cpSpawn.identity.notisId.toLowerCase();
+    console.log(`[vm] M5: C' up notisId=${cpNotisId.slice(0, 16)}…, peerId=${cpSpawn.identity.peerId}`);
+
+    // Wait for each node to have its outbound handshake with A and to
+    // have applied an ordering block past the restart/spawn offset —
+    // the same wait M3 uses: a peer whose handshake completed is not
+    // yet a gossip peer (NET_INTERFACE → Postconditions, → Gossip
+    // Topics), and an applied-block line past the offset proves the
+    // gossip mesh for the ordering-block topic has formed on each
+    // node, so the three share A's chain for C''s tip and proof to
+    // place on it.
+    const aPeerId = nodeP2pPeerId();
+    if (!aPeerId) throw new Error(`could not read A's peer id from --node-p2p: ${NODE_P2P}`);
+    const apHandshake = await waitForOutboundHandshakeInLog(apLog, aPeerId, apLogOff, 180000);
+    if (!apHandshake) throw new Error(`A' did not complete outbound handshake with A within 180 s after M5 restart`);
+    const bpHandshake = await waitForOutboundHandshakeInLog(bpLog, aPeerId, bpLogOff, 180000);
+    if (!bpHandshake) throw new Error(`B' did not complete outbound handshake with A within 180 s after M5 restart`);
+    const cpHandshake = await waitForOutboundHandshakeInLog(cpLog, aPeerId, cpLogOff, 180000);
+    if (!cpHandshake) throw new Error(`C' did not complete outbound handshake with A within 180 s after M5 spawn`);
+    const apApplied = await waitForAppliedBlockInLog(apLog, apLogOff, 180000);
+    if (!apApplied) throw new Error(`A' did not receive a gossiped ordering block within 180 s after M5 restart`);
+    const bpApplied = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
+    if (!bpApplied) throw new Error(`B' did not receive a gossiped ordering block within 180 s after M5 restart`);
+    const cpApplied = await waitForAppliedBlockInLog(cpLog, cpLogOff, 180000);
+    if (!cpApplied) throw new Error(`C' did not receive a gossiped ordering block within 180 s after M5 spawn`);
+
+    // ---- M5 step 1: fresh page, verdict reads `verified across N
+    // nodes`, memory record lists C'. The build's seed list names A'
+    // and B'; C' enters the client's node list through DHT discovery
+    // and a later check (CHECK_INTERVAL_MS = 30 s) reads its tip to
+    // `ok`, after which `onChecked` writes the record. The poll bound
+    // covers CHECK_INTERVAL_MS a few times over so a check whose
+    // routing-table population lands between queries is caught by the
+    // next.
+    page1 = await openFreshExtensionPage(bcx);
+    await page1.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m5-1', 30000);
+    const verdict1 = await waitForCornerState(
+      page1.cx,
+      (r) => /^verified across \d+ nodes/.test(r.title ?? ''),
+      'verified across N nodes (M5 step 1)',
+      120000,
+    );
+    const memoryPollMs = 180000;
+    let recordHeld = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < memoryPollMs) {
+      recordHeld = await page1.cx.eval(`(() => {
+        const raw = localStorage.getItem('notis.mesh.memory.devnet');
+        if (raw === null) return { present: false };
+        try {
+          const rec = JSON.parse(raw);
+          const nodes = Array.isArray(rec && rec.nodes) ? rec.nodes : null;
+          return {
+            present: true,
+            genesis: (rec && typeof rec.genesis === 'string') ? rec.genesis : null,
+            nodes: nodes ? nodes.map((n) => (n && typeof n.notisId === 'string') ? n.notisId : null) : null,
+          };
+        } catch (e) {
+          return { present: true, parseError: String(e && e.message) };
+        }
+      })()`).catch(() => null);
+      if (recordHeld !== null
+          && recordHeld.present === true
+          && Array.isArray(recordHeld.nodes)
+          && recordHeld.nodes.some((id) => typeof id === 'string' && id.toLowerCase() === cpNotisId)) {
+        break;
+      }
+      await sleep(1000);
+    }
+    const memoryHasCp = recordHeld !== null
+      && recordHeld.present === true
+      && Array.isArray(recordHeld.nodes)
+      && recordHeld.nodes.some((id) => typeof id === 'string' && id.toLowerCase() === cpNotisId);
+    const titleStep1 = verdict1.last?.title ?? null;
+    const memoryNodeCount = (recordHeld !== null && Array.isArray(recordHeld.nodes)) ? recordHeld.nodes.length : null;
+    const memoryNodesPrefixes = (recordHeld !== null && Array.isArray(recordHeld.nodes))
+      ? recordHeld.nodes.map((id) => typeof id === 'string' ? id.slice(0, 16) + '…' : String(id))
+      : null;
+
+    // Close page 1 before stopping A' and B' — a page left open would
+    // carry its connections across the stop, and the next page builds
+    // its own client fresh regardless.
+    try { page1.cx.s.close(); } catch {}
+    await bcx.call('Target.closeTarget', { targetId: page1.targetId }).catch(() => {});
+    page1 = null;
+
+    if (!memoryHasCp) {
+      record('M5', false,
+        `step 1: memory record did not list C' (${cpNotisId.slice(0, 16)}…) within ${memoryPollMs / 1000} s — record present=${recordHeld?.present ?? false}, genesis=${recordHeld?.genesis ?? 'none'}, nodes count=${memoryNodeCount}, nodes=${JSON.stringify(memoryNodesPrefixes)}; step 1 corner title=${JSON.stringify(titleStep1)} (verdict timedOut=${verdict1.timedOut})`);
+      return;
+    }
+
+    // ---- M5 step 2: stop A' and B' by the PIDs vtChildren holds.
+    console.log(`[vm] M5 step 2: stopping A' and B' by PID`);
+    await stopChild('ap');
+    await stopChild('bp');
+
+    // ---- M5 step 3: fresh page under A'/B' down, reading through C'
+    // alone. The seed list names A' and B'; the mesh client dials
+    // them, the dials fail with no listener on their ports, and the
+    // entries move to `retry`. Memory seeds C' as a known node; a
+    // candidate dialled at page start reaches C' over WebRTC-direct,
+    // and C''s tip is placed on the chain the client seated from its
+    // kept proof. The agreement counts one node on the chain, the
+    // kept proof's old tip is in no count, so the verdict is
+    // `thin · one-node` (MESH_INTERFACE → What the client remembers
+    // → "The agreement counts").
+    page2 = await openFreshExtensionPage(bcx);
+    await page2.cx.waitFor(`!!document.querySelector('#feed')`, 'feed root m5-3', 30000);
+    const verdict3 = await waitForCornerState(
+      page2.cx,
+      (r) => (r.title ?? '').startsWith('only one node could be checked'),
+      'thin · one-node (M5 step 3)',
+      120000,
+    );
+    // Mark after the verdict settles — the first check has placed A'
+    // and B' in `retry` and routed reads go to the fast set, which is
+    // C' alone. Pre-mark HTTP to AP_ORIGIN/BP_ORIGIN is first-paint /
+    // first-check measurement (API-base tip reads against stopped
+    // servers), post-mark is the quiet window after routing settled.
+    const markIdx = page2.cx.events.length;
+    const httpPreMark = page2.cx.events.filter((ev) => {
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).length;
+    // Wait for the feed to draw — a list read answered. With A' and
+    // B' down, the read goes over the mesh to C'; the observable is
+    // the feed's `#feed .report` or a `.card` landing in the DOM.
+    const feedDrewStep3 = await (async () => {
+      const tf = Date.now();
+      while (Date.now() - tf < 60000) {
+        const has = await page2.cx.eval(`(() => {
+          const rep = document.querySelector('#feed .report');
+          const cards = document.querySelectorAll('#feed .card').length;
+          return rep !== null || cards > 0;
+        })()`).catch(() => false);
+        if (has) return true;
+        await sleep(250);
+      }
+      return false;
+    })();
+    // The feed read goes over libp2p (`notis-mesh://`) to C', which
+    // leaves no Network.requestWillBeSent entry; HTTP to A' or B'
+    // after the mark would mean a reader fell back to an API base. A
+    // short drain after the feed draws catches any trailing check's
+    // reads to A'/B' before the step closes.
+    await sleep(2000);
+    const postMarkRequests = page2.cx.events.filter((ev, i) => {
+      if (i < markIdx) return false;
+      if (ev.method !== 'Network.requestWillBeSent') return false;
+      const url = ev.params?.request?.url ?? '';
+      return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
+    }).map((ev) => {
+      const url = ev.params?.request?.url ?? '';
+      const host = url.startsWith(AP_ORIGIN) ? 'AP_ORIGIN' : 'BP_ORIGIN';
+      return { host, url };
+    });
+    const titleStep3 = verdict3.last?.title ?? null;
+    const titleOkStep3 = typeof titleStep3 === 'string' && titleStep3.startsWith('only one node could be checked');
+
+    try { page2.cx.s.close(); } catch {}
+    await bcx.call('Target.closeTarget', { targetId: page2.targetId }).catch(() => {});
+    page2 = null;
+
+    // ---- M5 step 4: A' and B' back up without mesh, as M2 restarts
+    // them. Mesh off is simpler than mesh on and matches M2's state;
+    // teardownMeshStack sees them under `vtChildren` either way.
+    console.log(`[vm] M5 step 4: bringing A' and B' back without mesh`);
+    await spawnPlainNode('ap', meshNodeEnv({
+      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P,
+    }), AP_ORIGIN);
+    await spawnPlainNode('bp', meshNodeEnv({
+      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+      bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
+    }), BP_ORIGIN);
+    meshNodes.ap.mesh = false;
+    meshNodes.bp.mesh = false;
+
+    const ok = !verdict1.timedOut && memoryHasCp
+      && !verdict3.timedOut && titleOkStep3 && feedDrewStep3 && postMarkRequests.length === 0;
+    const postMarkByHost = postMarkRequests.reduce((acc, r) => {
+      acc[r.host] = (acc[r.host] ?? 0) + 1;
+      return acc;
+    }, { AP_ORIGIN: 0, BP_ORIGIN: 0 });
+    record('M5', ok,
+      `C'=${cpNotisId.slice(0, 16)}…; step 1 verified title=${JSON.stringify(titleStep1)}, memory nodes count=${memoryNodeCount}, C' listed=${memoryHasCp}, nodes=${JSON.stringify(memoryNodesPrefixes)}; step 3 corner title=${JSON.stringify(titleStep3)} (expect "only one node could be checked · tip N"), feed drew=${feedDrewStep3}, HTTP to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint and first-check reads before the mesh connection to C' came up), after the mark=${postMarkRequests.length} by host=${JSON.stringify(postMarkByHost)} (expect 0 — one node on the chain, memory is no witness; MESH_INTERFACE → What the client remembers → "The agreement counts")`);
+  } catch (e) {
+    record('M5', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page1) {
+      try { page1.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page1.targetId }).catch(() => {});
+    }
+    if (page2) {
+      try { page2.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page2.targetId }).catch(() => {});
+    }
+  }
+}
+
+// The mesh block's five steps, each on its own fresh extension page
+// where asked. Precondition: `setupMeshStack` ran before the browser
+// launched, so A' and B' are up with mesh and the identity-line/shell
+// check holds. M5 spawns a third public mesh node C' inside the step.
 async function meshSteps(cx, bcx, targetId = 'unknown') {
   if (meshNodes.ap === null || meshNodes.bp === null) {
     markMeshFail(`setupMeshStack did not complete; target=${targetId}`);
@@ -9537,6 +9870,7 @@ async function meshSteps(cx, bcx, targetId = 'unknown') {
   await runMeshStepM2(bcx);
   await runMeshStepM3(bcx);
   await runMeshStepM4(bcx);
+  await runMeshStepM5(bcx);
 }
 
 // ---------------------------------------------------------------------------
