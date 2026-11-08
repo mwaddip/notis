@@ -199,7 +199,9 @@ export async function run(ctx) {
       log.records.push(`[fault:${NAME}:impostor-notis:spawn] ${impostorArgv.join(' ')}`);
 
       // 4. Poll state until pub1's entry has an address in droppedAddrs.
-      const stateText = await cdpPoll(ctx, browserUrl,
+      // The scenario's first page load carries `?clearMemory=1` so a
+      // prior scenario's kept proof does not seat this client.
+      const stateText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {

@@ -109,15 +109,34 @@ export function otherRejectSourcesIn(outDir, honestHosts, publisherPeerIdString)
   return out;
 }
 
+/**
+ * MESH_INTERFACE → Acceptance 6 — s6 step 1's second session must
+ * reach no honest node. Session 1 remembered every honest node it
+ * saw (`MESH_INTERFACE → What the client remembers`: `ok` and
+ * `trailing` entries join `nodes`, up to `REMEMBERED_NODES_MAX`), so
+ * blocking only the first-contact hosts (pub1, pub2) leaves every
+ * other honest address reachable through memory's known-nodes list.
+ * The drop list carries every honest host — every `role: 'public'`
+ * or `role: 'private'` host with a `mesh` entry — AND leaves the
+ * `role: 'hostile'` hosts alone, so the fork pair stays reachable
+ * for session 2's measurement.
+ */
 export function anchorBlockArgs(topology) {
   const ns = 'notismesh-browser';
   const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', BLOCK_TABLE];
   const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', BLOCK_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
-  const drops = publicMeshHosts(topology).map(({ host }) => [
-    'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', BLOCK_TABLE, 'out', 'ip', 'daddr', host.addr, 'drop',
+  const honest = [];
+  for (const [name, host] of Object.entries(topology.hosts)) {
+    if (host.role !== 'public' && host.role !== 'private') continue;
+    if (host.mesh === undefined) continue;
+    if (name === 'browser') continue;
+    honest.push({ name, addr: host.addr });
+  }
+  const drops = honest.map(({ addr }) => [
+    'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', BLOCK_TABLE, 'out', 'ip', 'daddr', addr, 'drop',
   ]);
   const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', BLOCK_TABLE];
-  return { addTable, addChain, drops, deleteTable };
+  return { addTable, addChain, drops, deleteTable, honestNames: honest.map((h) => h.name) };
 }
 
 export function applyFaults(log, topology) {
@@ -203,8 +222,12 @@ export async function run(ctx) {
       //      and is not the kept tip hash.
 
       // ----- (i) first session on the honest nodes -----
+      // Session 1 runs with `?clearMemory=1` so any memory a previous
+      // scenario or run left in the browser profile's `localStorage`
+      // is removed BEFORE the client reads memory; the first check
+      // then seats a chain from the kept proof it writes itself.
       writeStageDefault(ctx.outDir);
-      const firstSessionText = await cdpPoll(ctx, browserUrl,
+      const firstSessionText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {
@@ -289,17 +312,24 @@ export async function run(ctx) {
     });
 
     await rec.step(describe()[1], async () => {
-      // Remove the s6_block table so anchors reach again.
+      // MESH_INTERFACE → Acceptance 6 — the step's own preconditions:
+      // (1) remove the s6_block nft table so honest nodes reach
+      // again; (2) write the hostile-seeds variant so the page's
+      // config carries the pair + publisher + invalid as seeds along
+      // with the honest first-contact nodes; (3) open the page with
+      // `?clearMemory=1` so step 1's kept fork proof does not seat
+      // the client's chain here — this step measures what the pair's
+      // chain reads against a FRESH client that checks both chains
+      // and places the pair off.
       removeTable('notismesh-browser', BLOCK_TABLE);
-      // Drop the matching entry from `applied` so teardown does not
-      // try again.
       const idx = applied.findIndex((e) => e.table === BLOCK_TABLE);
       if (idx >= 0) applied.splice(idx, 1);
       log.records.push(`[fault:remove:${NAME}:browser-anchor-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
+      writeConfigVariant(ctx.outDir, variant);
       const malformedId = seedsByHost['hostile-malformed'];
       const invalidId = seedsByHost['hostile-invalid'];
       const laggingId = seedsByHost['hostile-lagging'];
-      const stateB = await cdpPoll(ctx, browserUrl,
+      const stateB = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {
@@ -329,20 +359,19 @@ export async function run(ctx) {
     await rec.step(describe()[2], async () => {
       // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a
       // block that fails its checks is blacklisted with its evidence,
-      // and the client does not forward it." Wait for the publisher's
-      // entry to reach `blacklisted` with evidence `gossip-block`
-      // (the client's topic validator rejects a bad block from the
-      // publisher), then read the honest mesh logs: every reject
-      // source they named is the publisher's peer id — the browser
-      // forwarded nothing it refused, so no honest mesh ever heard
-      // the bad block from the browser.
+      // and the client does not forward it." The step's own
+      // preconditions: write the hostile-seeds variant so the
+      // publisher is in `seeds`, and open the page with
+      // `?clearMemory=1` so step 1's kept fork proof does not seed
+      // this measurement.
+      writeConfigVariant(ctx.outDir, variant);
       const publisherId = seedsByHost['hostile-publisher'];
       if (typeof publisherId !== 'string') {
         const measurement = { reason: 'no hostile-publisher identity in identities.json' };
         return { verdict: verdictS6Publisher(measurement), measurement };
       }
       const publisherPeerIdString = peerIdStringOf(publisherId);
-      const stateC = await cdpPoll(ctx, browserUrl,
+      const stateC = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {

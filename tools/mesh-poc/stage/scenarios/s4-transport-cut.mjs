@@ -146,8 +146,10 @@ export async function run(ctx) {
       // through another node or over that node's secure WebSocket —
       // whichever ranks first". The predicate holds for either path:
       // nodeId is another public, OR nodeId is the blocked node with
-      // transport === 'wss'.
-      const state1 = await cdpPoll(ctx, browserUrl,
+      // transport === 'wss'. The scenario's first page load carries
+      // `?clearMemory=1` so a prior scenario's kept proof does not
+      // seat this client.
+      const state1 = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {

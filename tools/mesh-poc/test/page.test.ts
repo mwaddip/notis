@@ -4,7 +4,7 @@
 // config refusal path, and the bundle scan (no Node built-in). Each case
 // holds one guard the page keeps.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -1348,5 +1348,101 @@ describe("page/main.ts — the memory wiring", () => {
     // The record is keyed by the devnet network name (no genesis pin),
     // so the `genesis` field on disk is the network name.
     expect(parsed.genesis).toBe('devnet');
+  });
+
+  // MESH_INTERFACE → What the client remembers — the page honours one
+  // query parameter here: `?clearMemory=1` removes every
+  // `notis.mesh.memory.*` key from the origin's `localStorage` BEFORE
+  // the client reads any memory. A scenario that measures a client
+  // with no memory opens the page at `<url>?clearMemory=1`. The
+  // clear walks the real `Storage`'s `length` + `key(i)` index, so a
+  // test that passes `opts.storage` holds the keys it means to; the
+  // clear fires only when no custom storage is handed.
+  describe("?clearMemory=1", () => {
+    let originalLocation: Location | undefined;
+    let originalLocalStorage: Storage | undefined;
+    beforeEach(() => {
+      originalLocation = globalThis.location;
+      originalLocalStorage = globalThis.localStorage;
+    });
+    afterEach(() => {
+      if (originalLocation !== undefined) {
+        Object.defineProperty(globalThis, 'location', { value: originalLocation, configurable: true });
+      }
+      if (originalLocalStorage !== undefined) {
+        Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true });
+      }
+    });
+
+    function setLocation(search: string): void {
+      const loc = { ...originalLocation, search };
+      Object.defineProperty(globalThis, 'location', { value: loc, configurable: true });
+    }
+
+    function liveStorageOver(map: Map<string, string>): Storage {
+      return {
+        get length() { return map.size; },
+        key(i) { return Array.from(map.keys())[i] ?? null; },
+        getItem(k) { return map.get(k) ?? null; },
+        setItem(k, v) { map.set(k, v); },
+        removeItem(k) { map.delete(k); },
+        clear() { map.clear(); },
+      };
+    }
+
+    it('clears every notis.mesh.memory.<network> key on the real localStorage; leaves other keys', async () => {
+      const map = new Map<string, string>([
+        ['notis.mesh.memory.devnet', '{"genesis":"devnet"}'],
+        ['notis.mesh.memory.testnet', '{"genesis":"testnet"}'],
+        ['notis.posts.chain', 'a'.repeat(64)],
+        ['unrelated', 'kept'],
+      ]);
+      Object.defineProperty(globalThis, 'localStorage', { value: liveStorageOver(map), configurable: true });
+      setLocation('?clearMemory=1');
+      const { startMeshClient, captured } = buildStartCapture();
+      const root = document.createElement('div');
+      const { runMain } = await import('../page/main.js');
+      await runMain({
+        root,
+        fetch: await loadConfig(),
+        startMeshClient,
+        locks: fakeLocks(),
+        wallClock: () => 0,
+      });
+      expect(captured).toHaveLength(1);
+      expect(map.has('notis.mesh.memory.devnet'), 'devnet memory cleared').toBe(false);
+      expect(map.has('notis.mesh.memory.testnet'), 'testnet memory cleared').toBe(false);
+      expect(map.has('notis.posts.chain'), 'post cache name untouched').toBe(true);
+      expect(map.has('unrelated'), 'unrelated key untouched').toBe(true);
+    });
+
+    it('without ?clearMemory=1 the memory keys stay', async () => {
+      // A well-formed record so the store's `readRaw` keeps it; a
+      // malformed record is cleaned up on read, which would hide the
+      // test's point (that the clear only fires under the flag).
+      const wellFormed = JSON.stringify({
+        genesis: 'a'.repeat(64),
+        proof: btoa('x'),
+        nodes: [],
+        answeredForks: [],
+      });
+      const map = new Map<string, string>([
+        ['notis.mesh.memory.devnet', wellFormed],
+      ]);
+      Object.defineProperty(globalThis, 'localStorage', { value: liveStorageOver(map), configurable: true });
+      setLocation('');
+      const { startMeshClient, captured } = buildStartCapture();
+      const root = document.createElement('div');
+      const { runMain } = await import('../page/main.js');
+      await runMain({
+        root,
+        fetch: await loadConfig(),
+        startMeshClient,
+        locks: fakeLocks(),
+        wallClock: () => 0,
+      });
+      expect(captured).toHaveLength(1);
+      expect(map.has('notis.mesh.memory.devnet'), 'memory key stayed').toBe(true);
+    });
   });
 });

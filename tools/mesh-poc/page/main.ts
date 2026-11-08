@@ -106,6 +106,25 @@ export interface RunMainOptions {
 }
 
 export async function runMain(opts: RunMainOptions): Promise<void> {
+  const wallClock = opts.wallClock ?? (() => Date.now());
+  const storage = opts.storage ?? (globalThis.localStorage as StorageLike);
+  const locks = opts.locks ?? defaultLockManager();
+
+  // MESH_INTERFACE → What the client remembers — the page honours one
+  // query parameter here: `?clearMemory=1` removes every
+  // `notis.mesh.memory.*` key from the origin's `localStorage` BEFORE
+  // the client reads any memory, so a scenario that measures a client
+  // with no memory opens a page target at `<url>?clearMemory=1` and
+  // reads the fresh state. The page's other honoured query parameters
+  // (`?probe=`, `?reads=`) ride alongside unchanged. The walk reads
+  // the real `Storage`'s `length` + `key(i)` index, which the
+  // `StorageLike` seam does not expose — so the clear fires only on
+  // the default `globalThis.localStorage`; a test that passes
+  // `opts.storage` holds the keys it means to.
+  if (shouldClearMemory() && typeof opts.storage === 'undefined') {
+    clearMeshMemoryKeys(globalThis.localStorage);
+  }
+
   let config: PageConfig;
   try {
     config = await loadConfig(opts.fetch);
@@ -121,10 +140,6 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
     showError(opts.root, `config refused: ${messageOf(e)}`);
     return;
   }
-
-  const wallClock = opts.wallClock ?? (() => Date.now());
-  const storage = opts.storage ?? (globalThis.localStorage as StorageLike);
-  const locks = opts.locks ?? defaultLockManager();
 
   // MESH_INTERFACE → What the client remembers — "A client remembers,
   // per network, the nodes it found, the proof of the chain it
@@ -299,6 +314,28 @@ function readProbePath(): string | null {
   const params = new URLSearchParams(globalThis.location.search);
   const value = params.get('probe');
   return value === null || value === '' ? null : value;
+}
+
+function shouldClearMemory(): boolean {
+  if (typeof globalThis.location === 'undefined') return false;
+  const params = new URLSearchParams(globalThis.location.search);
+  return params.get('clearMemory') === '1';
+}
+
+/**
+ * Remove every `notis.mesh.memory.<key>` entry from `storage` — the
+ * real `Storage` interface exposes `length` + `key(i)`, so the clear
+ * walks the index. A `Storage` whose contents change mid-walk is
+ * handled by taking a snapshot of the keys to remove before any
+ * `removeItem` fires.
+ */
+function clearMeshMemoryKeys(storage: Storage): void {
+  const toRemove: string[] = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const k = storage.key(i);
+    if (typeof k === 'string' && k.startsWith('notis.mesh.memory.')) toRemove.push(k);
+  }
+  for (const k of toRemove) storage.removeItem(k);
 }
 
 function readReadsParams(): { n: number; need: ReadNeed } | null {

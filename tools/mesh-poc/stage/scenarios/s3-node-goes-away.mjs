@@ -137,8 +137,10 @@ export async function run(ctx) {
   // Initial state wait: use `cdpPoll` (one target held open across polls)
   // the same way s1 does, so a slow `cdpEval` cycle does not blow the
   // deadline before the page's first render lands. The predicate is
-  // identical to s1's "nodeId is non-null".
-  const initialStateJson = await cdpPoll(ctx, browserUrl,
+  // identical to s1's "nodeId is non-null". The scenario's first page
+  // load carries `?clearMemory=1` so a prior scenario's kept proof
+  // does not seat this client.
+  const initialStateJson = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
     "document.getElementById('state')?.textContent ?? null",
     "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
     60_000, 500,

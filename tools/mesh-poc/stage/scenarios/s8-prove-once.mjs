@@ -666,7 +666,9 @@ export async function run(ctx) {
         // 600 s cap: a check with black-holed hostile candidates
         // runs one dial deadline per candidate until retry backs
         // them off (`BLACK_HOLE_WAIT_MS` at the top of this file).
-        const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
+        // The scenario's first page load carries `?clearMemory=1` so
+        // a prior scenario's kept proof does not seat this client.
+        const value = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`, expression, S8_NOPROOFS_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
         const r = JSON.parse(value);
         if (r.base === null || r.final === null) {
           const m = { reason: 's8 step 1: tracker returned without base or final', state: r };

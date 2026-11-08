@@ -97,7 +97,9 @@ export async function run(ctx) {
         // id). The ICE record is captured alongside through
         // `cdp.mjs poll-ice`.
         const expectedNotisId = priv1Row.notisId;
-        const { value, iceRecord } = await cdpPollIce(ctx, browserUrl,
+        // The scenario's first page load carries `?clearMemory=1` so
+        // a prior scenario's kept proof does not seat this client.
+        const { value, iceRecord } = await cdpPollIce(ctx, `${browserUrl}?clearMemory=1`,
           "document.getElementById('state')?.textContent ?? null",
           `if (v === null) return false;
            try {

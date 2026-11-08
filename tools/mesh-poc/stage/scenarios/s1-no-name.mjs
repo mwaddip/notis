@@ -127,7 +127,11 @@ export async function run(ctx) {
   try {
     const step1 = await rec.step(describe()[0], async () => {
       const step1Start = Date.now();
-      const stateJson = await cdpPoll(ctx, browserUrl,
+      // The scenario's first page load carries `?clearMemory=1` so a
+      // prior scenario's kept proof does not seat this scenario's
+      // client; step 1 reads the client's reach from a fresh state
+      // (`MESH_INTERFACE → What the client remembers`).
+      const stateJson = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
         60_000, 500,

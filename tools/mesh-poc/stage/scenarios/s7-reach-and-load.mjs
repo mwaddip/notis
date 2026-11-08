@@ -55,7 +55,7 @@
 // > `stage/lib/hostile-fork-single.mjs` builder and the lan1 mining
 // > wiring. The step below records a `pending-wiring` measurement.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, openSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { FaultLog } from '../lib/fault-log.mjs';
@@ -153,7 +153,9 @@ export async function run(ctx) {
     // --- Step 1: spread + need ---
     await rec.step(describe()[0], async () => {
       writeStageDefault(ctx.outDir);
-      const olderServed = await driveReads(ctx, browserUrl, 20, 'older');
+      // The scenario's first page load carries `clearMemory=1` so a
+      // prior scenario's kept proof does not seat this client.
+      const olderServed = await driveReads(ctx, browserUrl, 20, 'older', { clearMemory: true });
       const tipServed = await driveReads(ctx, browserUrl, 10, 'tip');
       const m = { olderServed, tipServed };
       return { verdict: verdictS7Spread(m), measurement: m };
@@ -275,6 +277,15 @@ export async function run(ctx) {
       if (typeof lan1NotisId !== 'string') {
         throw new Error('s7 step 4: identities.json has no lan1 row');
       }
+      const lan1PeerRow = identities?.['lan1-peer'];
+      if (!lan1PeerRow || typeof lan1PeerRow.notisId !== 'string') {
+        throw new Error('s7 step 4: identities.json has no lan1-peer row');
+      }
+      const lan1HostCfg = ctx.topology.hosts.lan1;
+      const lan1PeerHostCfg = ctx.topology.hosts['lan1-peer'];
+      if (lan1HostCfg?.node?.p2pPort === undefined || lan1PeerHostCfg?.node?.p2pPort === undefined) {
+        throw new Error('s7 step 4: lan1 or lan1-peer has no node.p2pPort');
+      }
       const addedTables = [];
       const launchedPids = [];
       const removeAddedTable = (ns, table) => {
@@ -284,16 +295,18 @@ export async function run(ctx) {
       try {
         // ----- Phase (a): lan1 trusted and agreeing -----
         // byHand lan1 trusted; firstContact stays pub1 + pub2, so the
-        // honest chain seats the first check. Poll until lan1's entry
-        // has `yours: true`, status ok/trailing, and the agreement
-        // count has at least one honest node on-chain.
+        // honest chain seats the first check. Open with `?clearMemory=1`
+        // so a prior scenario's kept proof does not seed this phase.
+        // Poll until lan1's entry has `yours: true`, status
+        // ok/trailing, and the agreement count has at least one honest
+        // node on-chain.
         const phaseAVariant = buildByHandLanVariant(baseConfig, lan1Row, true);
         // buildByHandLanVariant clears firstContact; restore it so the
         // chain seats from the honest nodes first.
         phaseAVariant.firstContact = baseConfig.firstContact;
         phaseAVariant.seeds = [];
         writeConfigVariant(ctx.outDir, phaseAVariant);
-        const stateAText = await cdpPoll(ctx, browserUrl,
+        const stateAText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
           "document.getElementById('state')?.textContent ?? null",
           `if (v === null) return false;
            try {
@@ -316,16 +329,35 @@ export async function run(ctx) {
         };
 
         // ----- Phase (b): lan1 cut and mining a lighter fork -----
-        // Apply `buildForkCutArgs` on lan1; its p2p port drops in
-        // either direction so no block flows between lan1 and the
-        // honest nodes from this point. A miner at `MINER_PCT=1`
-        // inside lan1's namespace grows lan1's own fork.
-        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', { table: 'lan1_fork_cut' })) {
+        // Apply `buildForkCutArgs` on BOTH lan1 and lan1-peer with
+        // each other as accept-partner; after the apply, each host's
+        // p2p port drops every TCP packet except the partner's, so
+        // neither sees honest blocks but each keeps the other as its
+        // one Active peer (MINING_INTERFACE → The peer-readiness
+        // gate). A miner at `MINER_PCT=1` inside lan1's namespace
+        // grows lan1's own fork. The miner's stdout and stderr land
+        // in `stage/out/logs/s7-step4-miner-fork-lan1.log` — a
+        // `stdio: 'ignore'` miner leaves no evidence of why it
+        // produced no template, so the step's log file is the
+        // measurement a tester reads on a FAIL.
+        const lan1Partner = {
+          addr: lan1PeerHostCfg.addr,
+          p2pPort: lan1PeerHostCfg.node.p2pPort,
+        };
+        const lan1PeerPartner = {
+          addr: lan1HostCfg.addr,
+          p2pPort: lan1HostCfg.node.p2pPort,
+        };
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', { table: 'lan1_fork_cut', partner: lan1Partner })) {
           // argv shape: `sudo ip netns exec notismesh-lan1 nft add …`;
           // nftApply rebuilds the wrap, so slice past the first six.
           nftApply('notismesh-lan1', argv.slice(6));
         }
         addedTables.push({ ns: 'notismesh-lan1', table: 'lan1_fork_cut' });
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1-peer', { table: 'lan1_fork_cut', partner: lan1PeerPartner })) {
+          nftApply('notismesh-lan1-peer', argv.slice(6));
+        }
+        addedTables.push({ ns: 'notismesh-lan1-peer', table: 'lan1_fork_cut' });
         const minerScript = join(dirname(dirname(ctx.notisMain)), 'scripts', 'miner.mjs');
         const forkSpawn = buildForkMinerSpawn(ctx.topology, 'lan1', {
           minerScript,
@@ -333,17 +365,17 @@ export async function run(ctx) {
           invokingUser: ctx.invokingUser,
           miningSecret: 'stage-mining-secret',
         });
-        // Build the full outer argv: the first element of forkSpawn.argv
-        // is `sudo`; the rest is `ip netns exec … sudo -u <user> -- node <minerScript>`.
-        // `env` is the miner's own env (NODE_URL, MINER_PCT,
-        // MINING_SECRET), merged into the process's own env for the
-        // spawn.
+        const minerLogDir = join(ctx.outDir, 'logs');
+        mkdirSync(minerLogDir, { recursive: true });
+        const minerLogPath = join(minerLogDir, 's7-step4-miner-fork-lan1.log');
+        const minerFd = openSync(minerLogPath, 'a');
         const minerChild = nodeSpawn(forkSpawn.argv[0], forkSpawn.argv.slice(1), {
           env: { ...process.env, ...forkSpawn.env },
-          stdio: 'ignore',
+          stdio: ['ignore', minerFd, minerFd],
           detached: true,
         });
         minerChild.unref();
+        closeSync(minerFd);
         launchedPids.push(minerChild.pid);
 
         // Open a page (same browser profile — memory persists); poll
@@ -593,8 +625,8 @@ export async function run(ctx) {
 // through `client.read` after the first completed check and writes
 // `<pre id="reads">` with `{ need, served }`. The driver reads that
 // element and returns the served array.
-async function driveReads(ctx, baseUrl, n, need) {
-  const url = `${baseUrl}?reads=${n}&need=${need}`;
+async function driveReads(ctx, baseUrl, n, need, { clearMemory = false } = {}) {
+  const url = `${baseUrl}?reads=${n}&need=${need}${clearMemory ? '&clearMemory=1' : ''}`;
   const expression = `(function () {
     const el = document.querySelector('pre#reads');
     return el !== null ? el.textContent : null;
