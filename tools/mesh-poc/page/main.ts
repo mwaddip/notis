@@ -1,18 +1,26 @@
-// MESH_INTERFACE → Place in the workspace / Discovery / NAT — the
-// page's wiring: fetch `config.json` beside the page (the stage
-// writes it), take the profile from `NETWORK_PROFILES[network]`,
-// start the client, apply `config.byHand` through `addByHand` in its
-// given order, attach the hand-form, and call `render` on every
-// `onState`. The one injectable is `fetch` (config read);
-// `startMeshClient` is the real one — its first statement runs
-// `assertClientConfig`, which throws `MeshConfigError` for a
-// `/dns4/`, `/dns6/` or `/dnsaddr/` first-contact address before any libp2p node is
-// created.
+// MESH_INTERFACE → Place in the workspace / Discovery / NAT / What the
+// client remembers — the page's wiring: fetch `config.json` beside the
+// page (the stage writes it), take the profile from
+// `NETWORK_PROFILES[network]`, open the per-network memory store under
+// `localStorage` through `createMeshMemoryStore`, read the record at
+// start (seats the client's seeds and memory), start the client,
+// apply `config.byHand` through `addByHand` in its given order, attach
+// the hand-form, and call `render` on every `onState`. The one
+// injectable is `fetch` (config read); `startMeshClient` is the real
+// one — its first statement runs `assertClientConfig`, which throws
+// `MeshConfigError` for a `/dns4/`, `/dns6/` or `/dnsaddr/`
+// first-contact address before any libp2p node is created.
 //
 // MESH_INTERFACE → NAT → "A client's STUN list comes from the public
-// nodes it holds" — the client derives its STUN servers from its
-// node list. A config that still carries `stunServers` is refused in
-// words, so a stale stage writer shows itself.
+// nodes it holds" — the client derives its STUN servers from its node
+// list. A config that still carries `stunServers` is refused in words,
+// so a stale stage writer shows itself.
+//
+// MESH_INTERFACE → What the client remembers — the record's `genesis`
+// is the one the profile pins, or absent where it pins none; the store's
+// write merges nodes and forks under one lock. The `continues` seam
+// decodes both encoded proofs and runs `@dagsocial/web/mesh`'s own
+// `continues` against the client's profile and wall clock.
 //
 // A configuration that fails to load (network error, non-ok status,
 // unparseable JSON, missing field), a `MeshConfigError` from
@@ -21,11 +29,16 @@
 
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { startMeshClient } from '@dagsocial/web/mesh';
-import type { MeshContact } from '@dagsocial/web/mesh';
-import type { NetworkName } from '@dagsocial/web/mesh';
-import type { ReadNeed } from '@dagsocial/web/mesh';
+import { startMeshClient, continues, createMeshMemoryStore } from '@dagsocial/web/mesh';
+import type {
+  MeshContact,
+  MeshClient,
+  NetworkName,
+  ReadNeed,
+  StorageLike,
+} from '@dagsocial/web/mesh';
 import { MeshConfigError } from '@dagsocial/web/mesh';
+import { decodeNipopowProof } from '@dagsocial/nipopow';
 import { render } from './render.js';
 import { runProbe } from './probe.js';
 import { attachHandForm } from './form.js';
@@ -41,9 +54,10 @@ export interface PageConfig {
   network: NetworkName;
   firstContact: MeshContact[];
   /**
-   * MESH_INTERFACE → Discovery → "Known nodes" — contacts without trust. Optional;
-   * default none. A seed's addresses meet the same refusals as a first-contact
-   * node's, and no answer from a seed makes `anchorReached` true.
+   * MESH_INTERFACE → Discovery → "Known nodes" — contacts without
+   * trust. Optional; default none. A seed's addresses meet the same
+   * refusals as a first-contact node's, and a seed carries no trust
+   * assertion of its own.
    */
   seeds?: MeshContact[];
   /**
@@ -54,6 +68,15 @@ export interface PageConfig {
   byHand?: ByHandEntry[];
 }
 
+/**
+ * MESH_INTERFACE → What the client remembers — the lock manager shape
+ * the store takes. The page passes `navigator.locks` adapted to it;
+ * tests pass a fake that runs callbacks in order.
+ */
+export interface LockManagerLike {
+  request(name: string, fn: () => Promise<void>): Promise<void>;
+}
+
 export interface RunMainOptions {
   root: HTMLElement;
   fetch: typeof globalThis.fetch;
@@ -62,6 +85,24 @@ export interface RunMainOptions {
    * `startMeshClient`. Not meant for ordinary callers.
    */
   startMeshClient?: typeof startMeshClient;
+  /**
+   * MESH_INTERFACE → What the client remembers — the storage the
+   * memory store holds the record in. Defaults to
+   * `globalThis.localStorage`. Tests pass a fake.
+   */
+  storage?: StorageLike;
+  /**
+   * MESH_INTERFACE → What the client remembers — the lock manager the
+   * memory store serialises its writes under. Defaults to an adapter
+   * over `navigator.locks`. Tests pass a fake that runs callbacks in
+   * order.
+   */
+  locks?: LockManagerLike;
+  /**
+   * MESH_INTERFACE → What the client remembers — the wall clock the
+   * `continues` seam reads. Defaults to `Date.now`. Tests pass a fake.
+   */
+  wallClock?: () => number;
 }
 
 export async function runMain(opts: RunMainOptions): Promise<void> {
@@ -81,15 +122,79 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
     return;
   }
 
+  const wallClock = opts.wallClock ?? (() => Date.now());
+  const storage = opts.storage ?? (globalThis.localStorage as StorageLike);
+  const locks = opts.locks ?? defaultLockManager();
+
+  // MESH_INTERFACE → What the client remembers — "A client remembers,
+  // per network, the nodes it found, the proof of the chain it
+  // verified, and the forks the reader answered — keyed by the genesis
+  // the network's profile pins, or by the network's name where it pins
+  // none." The seam `continues` decodes both encoded proofs and runs
+  // `@dagsocial/web/mesh`'s `continues` against the profile and the
+  // page's wall clock; a proof that fails to decode is treated as not
+  // continuing, so a corrupted record cannot pin the kept proof to
+  // junk.
+  const store = createMeshMemoryStore({
+    storage,
+    locks,
+    network: config.network,
+    continues: (kept, next) => {
+      try {
+        const keptProof = decodeNipopowProof(kept);
+        const nextProof = decodeNipopowProof(next);
+        return continues(keptProof, nextProof, profile, wallClock());
+      } catch {
+        return false;
+      }
+    },
+  });
+
+  // MESH_INTERFACE → What the client remembers — "A record under
+  // another genesis reads as none to write": where the profile pins a
+  // genesis, the stored record's `genesis` must match, else the record
+  // is ignored; where the profile pins none (devnet), the stored record
+  // is taken as it stands.
+  const pinnedGenesis = pinnedGenesisHex(profile);
+  const record = store.read();
+  const useRecord = record !== null
+    && (pinnedGenesis === null || record.genesis === pinnedGenesis);
+
+  const seedsFromConfig = config.seeds ?? [];
+  const seedsFromRecord: MeshContact[] = useRecord ? record!.nodes : [];
+  // The record's nodes come in as the client's `seeds` — known nodes
+  // (`MESH_INTERFACE → Discovery → "Known nodes"`), one entry per key.
+  // A seed named by both the config and the record keeps the config's
+  // entry; `startMeshClient` and `NodeList.add` de-duplicate by key.
+  const seedsMerged = mergeSeeds(seedsFromConfig, seedsFromRecord);
+
   const startFn = opts.startMeshClient ?? startMeshClient;
-  let client;
+  let client: MeshClient;
   try {
     client = await startFn({
       firstContact: config.firstContact,
-      ...(config.seeds !== undefined ? { seeds: config.seeds } : {}),
+      ...(seedsMerged.length > 0 ? { seeds: seedsMerged } : {}),
       network: config.network,
       profile,
       agentName: 'notis-mesh-poc',
+      wallClock,
+      ...(useRecord
+        ? {
+            memory: {
+              proof: bytesFromBase64(record!.proof),
+              answeredForks: [...record!.answeredForks],
+            },
+          }
+        : {}),
+      onChecked: (snapshot) => {
+        // MESH_INTERFACE → What the client remembers — "A client
+        // remembers, per network ... keyed by the genesis the network's
+        // profile pins, or by the network's name where it pins none."
+        // `write` keys on genesis; a profile pinning none hands the
+        // network's name (the store's own key strips the fallback).
+        const genesisForWrite = pinnedGenesis ?? config.network;
+        void store.write(snapshot, genesisForWrite);
+      },
     });
   } catch (e) {
     if (e instanceof MeshConfigError) {
@@ -119,8 +224,8 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
     }
   }
 
-  client.onState((s) => render(s, opts.root));
-  render(client.state(), opts.root);
+  client.onState((s) => render(s, opts.root, { client }));
+  render(client.state(), opts.root, { client });
 
   attachHandForm({ root: opts.root, client });
 
@@ -139,6 +244,54 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   if (reads !== null) {
     void runReads({ client, n: reads.n, need: reads.need, root: opts.root });
   }
+}
+
+/**
+ * MESH_INTERFACE → What the client remembers — the genesis the record
+ * is keyed under: `profile.genesisId` where it is 64 hex, `null`
+ * otherwise. The fallback key (the network's name) is applied by the
+ * caller.
+ */
+function pinnedGenesisHex(profile: { genesisId?: string | null }): string | null {
+  const g = profile.genesisId;
+  if (typeof g !== 'string') return null;
+  if (!/^[0-9a-f]{64}$/.test(g)) return null;
+  return g;
+}
+
+function mergeSeeds(fromConfig: MeshContact[], fromRecord: MeshContact[]): MeshContact[] {
+  const seen = new Set<string>();
+  const out: MeshContact[] = [];
+  for (const n of fromConfig) {
+    if (seen.has(n.notisId)) continue;
+    seen.add(n.notisId);
+    out.push(n);
+  }
+  for (const n of fromRecord) {
+    if (seen.has(n.notisId)) continue;
+    seen.add(n.notisId);
+    out.push(n);
+  }
+  return out;
+}
+
+function defaultLockManager(): LockManagerLike {
+  return {
+    async request(name, fn) {
+      // `navigator.locks.request` takes a callback the browser awaits;
+      // its return value is what the callback resolves to. The store's
+      // callback resolves to `void`, so the outer `Promise<void>` is
+      // the natural fit.
+      await navigator.locks.request(name, () => fn());
+    },
+  };
+}
+
+function bytesFromBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 function readProbePath(): string | null {
@@ -190,9 +343,9 @@ function validateConfig(raw: unknown): PageConfig {
       'config.stunServers is refused: the client takes its STUN servers from the nodes it holds',
     );
   }
-  // MESH_INTERFACE → Discovery → "Known nodes" — optional, default none; when present
-  // it must be an array (its addresses are refused by `assertClientConfig`,
-  // not here).
+  // MESH_INTERFACE → Discovery → "Known nodes" — optional, default
+  // none; when present it must be an array (its addresses are refused
+  // by `assertClientConfig`, not here).
   const seedsRaw = o['seeds'];
   let seeds: MeshContact[] | undefined;
   if (seedsRaw !== undefined) {
