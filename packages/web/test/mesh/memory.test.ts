@@ -93,6 +93,14 @@ describe('memory — continues', () => {
     expect(continues(kept, forkProof, PROFILE, NOW)).toBe(false);
   });
 
+  it('the kept proof itself, served again, ties and continues it', () => {
+    // `compareProofs(kept, kept)` reaches `lca = tip`, `aAbove` and
+    // `bAbove` empty, scores 0n and 0n — verdict `'tie'`. A node
+    // serving exactly the kept chain therefore continues it.
+    const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
+    expect(continues(kept, kept, PROFILE, NOW)).toBe(true);
+  });
+
   it('a heavier fork from below the kept tip does', () => {
     const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
     // Same shared block 1 (the stamp interval differs), but the fork is
