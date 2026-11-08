@@ -168,7 +168,7 @@ describe('node-list', () => {
     expect(list3.entry(idC)!.yours).toBe(false);
   });
 
-  it.fails('removeByHand deletes an entry added by hand alone', () => {
+  it('removeByHand deletes an entry added by hand alone', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — a
     // hand-only entry (`byHand && !fromFirstContactList`) is deleted,
     // so its addresses no longer in the list and the gater refuses
@@ -183,7 +183,7 @@ describe('node-list', () => {
     expect(list.configuredAddrs(idA)).toEqual([]);
   });
 
-  it.fails('removeByHand leaves a first-contact entry in place, no longer yours', () => {
+  it('removeByHand leaves a first-contact entry in place, no longer yours', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — an entry
     // the first-contact list named stays after `removeByHand`, with
     // `yours = false` and `byHand = false`; `configuredAddrs` still
@@ -333,7 +333,7 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it.fails('removeByHand on a pure hand-added entry removes it; on a build node it clears yours and byHand', () => {
+  it('removeByHand on a pure hand-added entry removes it; on a build node it clears yours and byHand', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — the settings
     // row's commit path. A hand-only entry is removed. A build node
     // marked by hand stays with `yours = false` and `byHand = false`.

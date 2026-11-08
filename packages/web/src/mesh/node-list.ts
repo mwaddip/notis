@@ -335,16 +335,26 @@ export class NodeList {
 
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" / "Your node
-   * takes precedence" — clears `yours` on the entry. The entry stays
-   * in the list (the build node a reader marked and unmarked keeps its
-   * other state; a hand-added entry stays as an ordinary candidate).
-   * An id the list does not hold is a no-op.
+   * takes precedence" — the settings row's commit path. A hand-only
+   * entry (`byHand && !fromFirstContactList`) is deleted — its
+   * addresses no longer in the list, so the gater refuses the
+   * private one the reader entered. An entry the constructor's
+   * first-contact list named stays, with `yours = false` and
+   * `byHand = false`; `configuredAddrs` still answers the build
+   * addresses — the gater allows them. An id the list does not hold
+   * is a no-op.
    */
   removeByHand(id: string): void {
     assertNotisId(id);
     const e = this.entries_.get(id);
     if (!e) return;
-    e.yours = false;
+    if (e.fromFirstContactList) {
+      e.yours = false;
+      e.byHand = false;
+      return;
+    }
+    if (!e.byHand) return;
+    this.entries_.delete(id);
   }
 
   /**
