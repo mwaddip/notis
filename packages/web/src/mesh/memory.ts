@@ -117,11 +117,8 @@ export function forkKey(
  * records every node naming a tip on its chain, `ok` or `trailing`,
  * with the addresses it would dial — no private address, never its
  * own key — the most recently seen first, at most
- * `REMEMBERED_NODES_MAX`". `isPrivate` from `@libp2p/utils` reads the
- * first network component of an address; an address whose first
- * component carries no IP (a `/p2p-circuit/` one included) is kept,
- * not refused — a private IP there still gates its own dial through
- * the client's gater.
+ * `REMEMBERED_NODES_MAX`". An entry with no address the client would
+ * dial is dropped; `wouldDial` names the test an address is held to.
  */
 export function nodesToRemember(
   entries: readonly NodeEntry[],
@@ -135,7 +132,7 @@ export function nodesToRemember(
     if (e.notisId === ownId) continue;
     const addrs: string[] = [];
     for (const addr of e.addrs) {
-      if (addressIsPrivate(addr)) continue;
+      if (!wouldDial(addr)) continue;
       addrs.push(addr);
     }
     if (addrs.length === 0) continue;
@@ -152,12 +149,23 @@ export function nodesToRemember(
   return kept.slice(0, cap).map(k => k.contact);
 }
 
-function addressIsPrivate(addr: string): boolean {
+/**
+ * MESH_INTERFACE → What the client remembers — the test an address is
+ * held to before it is remembered: false for one `@libp2p/utils`'s
+ * `isPrivate` refuses as private (the first network component's IP is
+ * private, or `localhost`), and false for one `multiaddr()` cannot
+ * parse — an address the client would not dial is not one it hands
+ * its next start. `isPrivate` reads the first network component
+ * alone; an address whose first component carries no IP (a
+ * `/p2p-circuit/` one included) passes `isPrivate` and `wouldDial`
+ * with it, and the client's gater decides the dial.
+ */
+export function wouldDial(addr: string): boolean {
   let ma;
   try {
     ma = multiaddr(addr);
   } catch {
     return false;
   }
-  return isPrivate(ma);
+  return !isPrivate(ma);
 }

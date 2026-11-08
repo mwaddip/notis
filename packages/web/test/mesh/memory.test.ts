@@ -193,6 +193,28 @@ describe('memory — nodesToRemember', () => {
     for (const n of out) expect(n.api).toBeUndefined();
   });
 
+  it('an address that does not parse is dropped', () => {
+    const own = '0'.repeat(63) + '1';
+    const idA = 'a'.repeat(64);
+    const idB = 'b'.repeat(64);
+    // An entry whose one address `multiaddr()` cannot parse has no
+    // address the client would dial, so the entry is dropped. An
+    // entry with a parse-refused address beside a public one keeps
+    // the public one.
+    const entries: NodeEntry[] = [
+      entry({ notisId: idA, status: 'ok', addrs: ['not a multiaddr'], seenMs: 1000 }),
+      entry({
+        notisId: idB,
+        status: 'ok',
+        addrs: ['another-bad-one', '/ip4/4.4.4.4/udp/1/webrtc-direct'],
+        seenMs: 2000,
+      }),
+    ];
+    const out = nodesToRemember(entries, own, 16);
+    expect(out.map(n => n.notisId)).toEqual([idB]);
+    expect(out[0]!.addrs).toEqual(['/ip4/4.4.4.4/udp/1/webrtc-direct']);
+  });
+
   it('entries with a public address come through — the NodeList itself drives seenMs', () => {
     // A NodeList success sets `seenMs` to the list's clock. Two
     // successes at distinct times, then `nodesToRemember` reads the
