@@ -1020,3 +1020,333 @@ describe('page/build output', () => {
 
   afterAll(() => { /* leave dist-page/ in place for the next run */ });
 });
+
+// MESH_INTERFACE → Discovery → "A disagreement is the reader's question,
+// never the client's choice" — a standing disagreement displaces the
+// not-continued banner, carries the two tips, the fork and the two
+// buttons, each of which calls `client.answer` once per press.
+
+describe('page/render.ts — a standing disagreement', () => {
+  const Y_HASH = 'a'.repeat(64);
+  const O_HASH = 'b'.repeat(64);
+  const FORK = 'c'.repeat(64);
+
+  function stateWithDisagreement(which: 'memory' | 'heavier'): ClientState {
+    return emptyState({
+      notContinued: true,
+      disagreement: {
+        which,
+        yours: { height: 11, hash: Y_HASH },
+        other: which === 'memory' ? null : { height: 12, hash: O_HASH },
+        fork: FORK,
+      },
+    });
+  }
+
+  it('the heavier words sit under [data-role="disagreement-words"]', () => {
+    const root = document.createElement('div');
+    render(stateWithDisagreement('heavier'), root);
+    const words = root.querySelector('[data-role="disagreement-words"]');
+    expect(words, 'the words element is required').not.toBeNull();
+    expect(words!.textContent).toBe(
+      'another node serves a heavier chain than your node. Your node may be compromised.',
+    );
+  });
+
+  it('the memory words sit under [data-role="disagreement-words"]', () => {
+    const root = document.createElement('div');
+    render(stateWithDisagreement('memory'), root);
+    const words = root.querySelector('[data-role="disagreement-words"]');
+    expect(words!.textContent).toBe(
+      'your node serves a chain that does not continue the one you verified. It may be compromised.',
+    );
+  });
+
+  it('a standing disagreement displaces the not-continued banner', () => {
+    const root = document.createElement('div');
+    render(stateWithDisagreement('heavier'), root);
+    expect(root.querySelector('[data-role="banner"]'), 'no banner while a disagreement stands').toBeNull();
+    expect(root.querySelector('[data-role="disagreement"]'), 'the disagreement section stands').not.toBeNull();
+  });
+
+  it('the two buttons stand under [data-role="disagreement-buttons"]', () => {
+    const root = document.createElement('div');
+    render(stateWithDisagreement('heavier'), root);
+    const buttons = root.querySelector('[data-role="disagreement-buttons"]');
+    expect(buttons, 'the buttons section is required').not.toBeNull();
+    const cont = root.querySelector('[data-role="disagreement-continue"]') as HTMLButtonElement | null;
+    const disable = root.querySelector('[data-role="disagreement-disable"]') as HTMLButtonElement | null;
+    expect(cont, 'the continue button is required').not.toBeNull();
+    expect(disable, 'the disable button is required').not.toBeNull();
+    expect(cont!.textContent).toBe('continue on this node');
+    expect(disable!.textContent).toBe('disable it');
+  });
+
+  it('each button press calls client.answer once with its own decision', () => {
+    const calls: Array<'continue' | 'disable'> = [];
+    const client = { answer: (d: 'continue' | 'disable') => { calls.push(d); } };
+    const root = document.createElement('div');
+    render(stateWithDisagreement('heavier'), root, { client });
+    const cont = root.querySelector('[data-role="disagreement-continue"]') as HTMLButtonElement;
+    const disable = root.querySelector('[data-role="disagreement-disable"]') as HTMLButtonElement;
+    cont.click();
+    expect(calls).toEqual(['continue']);
+    disable.click();
+    expect(calls).toEqual(['continue', 'disable']);
+  });
+
+  it("with no client bound the buttons do nothing — a cold snapshot render carries no handler", () => {
+    const root = document.createElement('div');
+    // A client of `null` is the default `RenderOptions.client` the caller
+    // uses in a cold snapshot. The buttons still render, but a press is
+    // ignored — there is no client to answer the question.
+    render(stateWithDisagreement('heavier'), root);
+    const cont = root.querySelector('[data-role="disagreement-continue"]') as HTMLButtonElement;
+    // Click does not throw and no callback fires; the page stays open.
+    expect(() => cont.click()).not.toThrow();
+  });
+
+  it('the yours tip and the fork are named; other is named only for a heavier disagreement', () => {
+    const root = document.createElement('div');
+    render(stateWithDisagreement('heavier'), root);
+    const text = root.querySelector('[data-role="disagreement"]')!.textContent ?? '';
+    expect(text).toContain(Y_HASH);
+    expect(text).toContain(O_HASH);
+    expect(text).toContain(FORK);
+
+    const root2 = document.createElement('div');
+    render(stateWithDisagreement('memory'), root2);
+    const text2 = root2.querySelector('[data-role="disagreement"]')!.textContent ?? '';
+    expect(text2).toContain(Y_HASH);
+    expect(text2).not.toContain(O_HASH);
+    expect(text2).toContain(FORK);
+  });
+});
+
+// MESH_INTERFACE → What the client remembers — "A client remembers, per
+// network, the nodes it found, the proof of the chain it verified, and
+// the forks the reader answered". `runMain` opens the per-network
+// `localStorage` record, reads it at start as `seeds: record.nodes` +
+// `memory: { proof, answeredForks }`, hands `onChecked` to the client,
+// and the callback writes the snapshot under one lock. These cases
+// hold the wiring through a fake `startMeshClient` and a fake storage.
+
+describe("page/main.ts — the memory wiring", () => {
+  // The record, as the store writes it, is base64 of the encoded
+  // proof plus the per-network key. A malformed record's bytes never
+  // reach the client's verifier under these fakes — the cases hold
+  // the wiring, not the decode.
+  const G1 = 'a'.repeat(64);
+
+  function fakeStorage(initial: Record<string, string> = {}) {
+    const map = new Map<string, string>(Object.entries(initial));
+    return {
+      map,
+      getItem(k: string): string | null { return map.get(k) ?? null; },
+      setItem(k: string, v: string): void { map.set(k, v); },
+      removeItem(k: string): void { map.delete(k); },
+    };
+  }
+
+  // A no-op `startMeshClient` whose only job is to record what runMain
+  // passed and to wire `onChecked` into its own answer.
+  type StartArgs = Parameters<typeof import('../page/main.js')['runMain']>[0];
+  type StartMeshFn = NonNullable<StartArgs['startMeshClient']>;
+  type StartCapture = { opts: Parameters<StartMeshFn>[0]; triggerChecked: (snap: unknown) => void };
+
+  function buildStartCapture(): { startMeshClient: StartMeshFn; captured: StartCapture[] } {
+    const captured: StartCapture[] = [];
+    const startMeshClient: StartMeshFn = async (opts) => {
+      let latestChecked: ((snap: unknown) => void) | null = null;
+      if (typeof opts.onChecked === 'function') {
+        latestChecked = opts.onChecked as (snap: unknown) => void;
+      }
+      captured.push({
+        opts,
+        triggerChecked: (snap) => { latestChecked?.(snap); },
+      });
+      // The returned shape is `MeshClient`; the test does not touch
+      // most of its methods, so a minimal one that satisfies the
+      // seam's calls suffices (runMain reads `onState`, `state`,
+      // `addByHand` and leaves the rest alone).
+      const client = {
+        fetch: async () => new Response(''),
+        read: async () => ({ response: new Response(''), nodeId: '', route: 'mesh' as const }),
+        order: () => [],
+        check: async () => {},
+        state: () => ({
+          nodeId: null, transport: null, path: null, lastLeft: null,
+          tip: null, agreement: null, checks: 0,
+          traffic: emptyTraffic(), nodes: [], seated: false, proofs: null,
+          anchor: null, chain: null, notContinued: false, disagreement: null,
+        } as ClientState),
+        onState: () => () => {},
+        stop: async () => {},
+        addByHand: () => {},
+        removeByHand: () => {},
+        answer: () => {},
+        base: () => null,
+        configuredAddrs: () => [],
+        iceConfiguration: () => ({ iceServers: [] }),
+        toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
+        libp2p: {} as unknown as import('libp2p').Libp2p,
+      };
+      return client as unknown as MeshClient;
+    };
+    return { startMeshClient, captured };
+  }
+
+  function fakeLocks() {
+    const tails = new Map<string, Promise<void>>();
+    return {
+      async request(name: string, fn: () => Promise<void>): Promise<void> {
+        const prev = tails.get(name) ?? Promise.resolve();
+        let release!: () => void;
+        const held = new Promise<void>((r) => { release = r; });
+        const next = prev.then(() => held);
+        tails.set(name, next);
+        await prev;
+        try { await fn(); } finally {
+          release();
+          if (tails.get(name) === next) tails.delete(name);
+        }
+      },
+    };
+  }
+
+  async function loadConfig(opts: {
+    firstContact?: unknown[];
+    seeds?: unknown[];
+    byHand?: unknown[];
+    network?: string;
+  } = {}) {
+    const body = JSON.stringify({
+      network: opts.network ?? 'devnet',
+      firstContact: opts.firstContact ?? [],
+      ...(opts.seeds !== undefined ? { seeds: opts.seeds } : {}),
+      ...(opts.byHand !== undefined ? { byHand: opts.byHand } : {}),
+    });
+    return async () => new Response(body, { status: 200 });
+  }
+
+  it('devnet (profile pins no genesisId): the record is keyed by the network name', async () => {
+    const storage = fakeStorage();
+    const key = `notis.mesh.memory.devnet`;
+    // Seed a record with real base64 bytes (the page's `continues`
+    // seam catches a decode throw and answers false — the wiring does
+    // not need a verifiable proof, only a well-formed record).
+    const b64Bytes = btoa(String.fromCharCode(1, 2, 3, 4));
+    storage.setItem(key, JSON.stringify({
+      genesis: G1,
+      proof: b64Bytes,
+      nodes: [{ notisId: 'd'.repeat(64), addrs: [] }],
+      answeredForks: ['f'.repeat(64)],
+    }));
+    const { startMeshClient, captured } = buildStartCapture();
+    const root = document.createElement('div');
+    const { runMain } = await import('../page/main.js');
+    await runMain({
+      root,
+      fetch: await loadConfig({ firstContact: [{ notisId: 'e'.repeat(64), addrs: [] }] }),
+      startMeshClient,
+      storage,
+      locks: fakeLocks(),
+      wallClock: () => 0,
+    });
+    expect(captured).toHaveLength(1);
+    const opts = captured[0]!.opts;
+    expect(opts.network).toBe('devnet');
+    expect(opts.seeds, 'the record\'s nodes come in as seeds').not.toBeUndefined();
+    expect(opts.seeds).toEqual([{ notisId: 'd'.repeat(64), addrs: [] }]);
+    expect(opts.memory, 'the record\'s proof + forks come in as memory').not.toBeUndefined();
+    expect(opts.memory!.answeredForks).toEqual(['f'.repeat(64)]);
+    expect(opts.memory!.proof).toBeInstanceOf(Uint8Array);
+    expect(Array.from(opts.memory!.proof)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a profile that pins a genesis reads only a record whose genesis matches', async () => {
+    const storage = fakeStorage();
+    const key = `notis.mesh.memory.devnet`;
+    const b64Bytes = btoa('zzzz');
+    const otherGenesis = 'b'.repeat(64);
+    storage.setItem(key, JSON.stringify({
+      genesis: otherGenesis,
+      proof: b64Bytes,
+      nodes: [{ notisId: 'd'.repeat(64), addrs: [] }],
+      answeredForks: [],
+    }));
+    const { startMeshClient, captured } = buildStartCapture();
+    const root = document.createElement('div');
+    const { runMain } = await import('../page/main.js');
+    // The page reads `profile.genesisId`; devnet pins none, so the
+    // record IS used, which is this case's control. The other case
+    // (a profile pinning the different genesis) belongs on a network
+    // that pins one — testnet/mainnet. The wiring rule here is: when
+    // the stored `genesis` matches the profile's pin, the record is
+    // used; when it does not, it is ignored. devnet's path is "no
+    // pin, take the record as it stands" — exactly what this case
+    // measures.
+    await runMain({
+      root,
+      fetch: await loadConfig(),
+      startMeshClient,
+      storage,
+      locks: fakeLocks(),
+      wallClock: () => 0,
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.opts.memory, 'devnet pins no genesis — any stored record stands').not.toBeUndefined();
+  });
+
+  it('a malformed stored record (not valid JSON) is ignored; no memory, no seeds', async () => {
+    const storage = fakeStorage({ 'notis.mesh.memory.devnet': '{not json' });
+    const { startMeshClient, captured } = buildStartCapture();
+    const root = document.createElement('div');
+    const { runMain } = await import('../page/main.js');
+    await runMain({
+      root,
+      fetch: await loadConfig(),
+      startMeshClient,
+      storage,
+      locks: fakeLocks(),
+      wallClock: () => 0,
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.opts.memory).toBeUndefined();
+    expect(captured[0]!.opts.seeds).toBeUndefined();
+  });
+
+  it('onChecked writes the snapshot through the memory store under the lock', async () => {
+    const storage = fakeStorage();
+    const { startMeshClient, captured } = buildStartCapture();
+    const root = document.createElement('div');
+    const { runMain } = await import('../page/main.js');
+    await runMain({
+      root,
+      fetch: await loadConfig(),
+      startMeshClient,
+      storage,
+      locks: fakeLocks(),
+      wallClock: () => 0,
+    });
+    expect(captured).toHaveLength(1);
+    const snapshotBytes = new Uint8Array([9, 8, 7]);
+    captured[0]!.triggerChecked({
+      proof: snapshotBytes,
+      nodes: [{ notisId: 'c'.repeat(64), addrs: [] }],
+      dropped: [],
+      answeredForks: [],
+      replace: false,
+    });
+    // The write is async under the fake lock; await a microtask.
+    await new Promise((r) => setTimeout(r, 0));
+    const raw = storage.getItem('notis.mesh.memory.devnet');
+    expect(raw, 'the store wrote a record').not.toBeNull();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.proof).toBe(btoa(String.fromCharCode(9, 8, 7)));
+    expect(parsed.nodes).toEqual([{ notisId: 'c'.repeat(64), addrs: [] }]);
+    // The record is keyed by the devnet network name (no genesis pin),
+    // so the `genesis` field on disk is the network name.
+    expect(parsed.genesis).toBe('devnet');
+  });
+});
