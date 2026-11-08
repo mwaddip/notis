@@ -92,7 +92,7 @@ async function pump(): Promise<void> {
 type Opts = any;
 
 describe('startExtensionMesh — memory wiring', () => {
-  it.fails('a stored record seeds the client and hands it the kept proof and the answered forks', async () => {
+  it('a stored record seeds the client and hands it the kept proof and the answered forks', async () => {
     const storage = fakeStorage({
       [KEY('testnet')]: JSON.stringify({
         genesis: TESTNET_GENESIS,
@@ -119,7 +119,7 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(Array.from(captured!.memory!.proof)).toEqual(Array.from(PROOF_BYTES));
   });
 
-  it.fails('a record kept under another pinned genesis is cleared and the client starts with none', async () => {
+  it('a record kept under another pinned genesis is cleared and the client starts with none', async () => {
     const storage = fakeStorage({
       [KEY('testnet')]: JSON.stringify({
         genesis: OTHER_GENESIS,
@@ -144,7 +144,7 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(storage.map.has(KEY('testnet'))).toBe(false);
   });
 
-  it.fails('a damaged record is cleared and the client starts with none', async () => {
+  it('a damaged record is cleared and the client starts with none', async () => {
     const storage = fakeStorage({ [KEY('testnet')]: 'not { json' });
     let captured: StartMeshClientOptions | null = null;
     const startMeshClient = vi.fn(async (o: StartMeshClientOptions): Promise<MeshClient> => {
@@ -162,7 +162,7 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(storage.map.has(KEY('testnet'))).toBe(false);
   });
 
-  it.fails("each check's snapshot is written through the store under the lock, keyed by the pinned genesis", async () => {
+  it("each check's snapshot is written through the store under the lock, keyed by the pinned genesis", async () => {
     const storage = fakeStorage();
     const lockNames: string[] = [];
     const locks = {
@@ -201,7 +201,7 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(parsed.answeredForks).toEqual(['aa'.repeat(32)]);
   });
 
-  it.fails("on a network pinning no genesis the snapshot is keyed by the client's chain name, and none is written before a chain", async () => {
+  it("on a network pinning no genesis the snapshot is keyed by the client's chain name, and none is written before a chain", async () => {
     const storage = fakeStorage();
     let onChecked: ((s: MemorySnapshot) => void) | undefined;
     // The fake client lets the case move state().chain between fires.
@@ -236,7 +236,7 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(parsed.genesis).toBe(CHAIN);
   });
 
-  it.fails('a rejected write is logged and the check carries on', async () => {
+  it('a rejected write is logged and the check carries on', async () => {
     // A storage that throws on setItem makes the write under the lock reject.
     const storage: StorageLike = {
       getItem: () => null,

@@ -79,6 +79,10 @@ function fakeStorage(initial: Record<string, string> = {}): StorageLike & { map:
   };
 }
 
+function fakeLocks(): { request(name: string, fn: () => Promise<void>): Promise<void> } {
+  return { request: (_n, fn) => fn() };
+}
+
 const check: (rows: unknown[]) => PostCheck[] = (rows) => rows.map((): PostCheck => ({ status: 'unbound', reason: 'no-tx', verdict: 'no-tx' }));
 
 describe('parseHandNodeAddress', () => {
@@ -227,7 +231,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const window = { addEventListener: addHandler };
     await startExtensionMesh({
       firstContact, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, window, startMeshClient,
+      check, storage, locks: fakeLocks(), window, startMeshClient,
     });
     expect(startMeshClient).toHaveBeenCalledTimes(1);
     expect(startOpts!.network).toBe('devnet');
@@ -248,7 +252,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, window: { addEventListener: () => {} }, startMeshClient,
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
     });
     expect(addCalls).toEqual([PEER_HEX]);
   });
@@ -275,11 +279,11 @@ describe('startExtensionMesh — the lifecycle', () => {
       .mockImplementationOnce(async (): Promise<MeshClient> => client2);
     const { seams: seams1 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), window: window1, startMeshClient,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient,
     });
     const { seams: seams2 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), window: window2, startMeshClient,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient,
     });
 
     // Both seams read their own client's base.

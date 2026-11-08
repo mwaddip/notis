@@ -90,6 +90,11 @@ if (isExtension && BUILD_NETWORK !== null) {
     httpFetch: fetch.bind(globalThis),
     check: postsVerifier.check.bind(postsVerifier),
     storage: window.localStorage,
+    locks: {
+      async request(name: string, fn: () => Promise<void>): Promise<void> {
+        await navigator.locks.request(name, async () => { await fn(); });
+      },
+    },
     window,
     startMeshClient,
   });

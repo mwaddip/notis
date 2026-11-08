@@ -26,6 +26,9 @@ import { notisIdFromPeerId } from '@dagsocial/net/browser';
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import type { PostCheck } from '@dagsocial/nipopow-client';
+import { createMeshMemoryStore, type MemorySnapshot } from '../mesh/memory-store.js';
+import { continues as proofContinues } from '../mesh/memory.js';
+import { decodeNipopowProof } from '@dagsocial/nipopow';
 import type { MeshClient, MeshContact, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 export type { StorageLike };
@@ -167,6 +170,13 @@ export interface StartExtensionMeshOptions {
   httpFetch: HttpFetch;
   check: (rows: unknown[]) => PostCheck[];
   storage: StorageLike;
+  /**
+   * The Web Lock manager the memory store runs its read-then-write under
+   * (`WEB_INTERFACE → The extension → "What the extension remembers"`).
+   * `main.ts` wraps `navigator.locks` as it does for the waiting seam;
+   * Node tests pass a seam that runs `fn` straight through.
+   */
+  locks: { request(name: string, fn: () => Promise<void>): Promise<void> };
   window: Pick<Window, 'addEventListener'>;
   startMeshClient: (o: StartMeshClientOptions) => Promise<MeshClient>;
 }
@@ -174,13 +184,67 @@ export interface StartExtensionMeshOptions {
 export async function startExtensionMesh(
   opts: StartExtensionMeshOptions,
 ): Promise<{ client: MeshClient; seams: MeshSeams }> {
-  const client = await opts.startMeshClient({
+  const profile = profileFor(opts.network);
+  // WEB_INTERFACE → The extension → "What the extension remembers",
+  // MESH_INTERFACE → What the client remembers — one record per network,
+  // read at load and written after every check through one lock.
+  const store = createMeshMemoryStore({
+    storage: opts.storage,
+    locks: opts.locks,
+    network: opts.network,
+    continues: (kept, next) => {
+      try {
+        return proofContinues(
+          decodeNipopowProof(kept),
+          decodeNipopowProof(next),
+          profile,
+          Date.now(),
+        );
+      } catch {
+        return false;
+      }
+    },
+  });
+  // A record kept under another pinned genesis is cleared and the page
+  // starts as a first-time client (MESH_INTERFACE → What the client
+  // remembers — "A client remembers, per network, … keyed by the genesis
+  // the network's profile pins"). An unpinned profile reads the record
+  // without that check; `write` keeps the genesis coherent going forward.
+  let stored = store.read();
+  if (stored !== null && profile.genesisId !== '' && stored.genesis !== profile.genesisId) {
+    store.clear();
+    stored = null;
+  }
+  // The `onChecked` callback reads the mesh client back through this
+  // closure; the client is known once `startMeshClient` resolves.
+  let seatedClient: MeshClient | null = null;
+  const startOpts: StartMeshClientOptions = {
     firstContact: opts.firstContact,
     network: opts.network,
-    profile: profileFor(opts.network),
+    profile,
     agentName: opts.agentName,
     httpFetch: opts.httpFetch,
-  });
+    onChecked: (snapshot: MemorySnapshot) => {
+      const chain = seatedClient !== null ? seatedClient.state().chain : null;
+      const genesis = profile.genesisId !== '' ? profile.genesisId : chain;
+      if (genesis === null) return;
+      // A failed write is logged here — the store's inner work runs under
+      // the lock, and a rejection is surfaced where the page can see it,
+      // never thrown into the check path that fired it.
+      store.write(snapshot, genesis).catch((reason: unknown) => {
+        console.error('notis.mesh.memory: write rejected', reason);
+      });
+    },
+  };
+  if (stored !== null) {
+    startOpts.seeds = stored.nodes;
+    startOpts.memory = {
+      proof: base64ToBytes(stored.proof),
+      answeredForks: stored.answeredForks,
+    };
+  }
+  const client = await opts.startMeshClient(startOpts);
+  seatedClient = client;
   // The App starts at once — the first check never blocks a read
   // (WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path"). The check is kicked here.
@@ -190,9 +254,9 @@ export async function startExtensionMesh(
   opts.window.addEventListener('pagehide', stopOnHide, { once: true });
   // A stored hand-added address is re-added as a trusted by-hand node after
   // start, so `removeByHand` can later drop it.
-  const stored = opts.storage.getItem(HAND_NODE_KEY);
-  if (stored !== null) {
-    const parsed = parseHandNodeAddress(stored);
+  const handAddr = opts.storage.getItem(HAND_NODE_KEY);
+  if (handAddr !== null) {
+    const parsed = parseHandNodeAddress(handAddr);
     if ('notisId' in parsed) {
       try { client.addByHand(parsed.notisId, [parsed.addr], true); } catch { /* malformed; ignore */ }
     }
@@ -204,4 +268,17 @@ export async function startExtensionMesh(
     storage: opts.storage,
   });
   return { client, seams };
+}
+
+/**
+ * Base64 (standard, with padding) to bytes. The store keeps the kept
+ * proof as base64; the seam hands bytes to the mesh client, which decodes
+ * them again under its constructor's rules. `atob` sits in the DOM lib
+ * and under vitest alike (`MESH_INTERFACE → Place in the workspace`).
+ */
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
