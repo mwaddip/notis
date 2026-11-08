@@ -726,6 +726,11 @@ export class App {
       // a node by hand" — the hand-added-node seam is wired as a settings
       // handler only in the extension build (the web build is handed none).
       ...(this.handNodeSeam ? { handNode: this.handNodeSeam } : {}),
+      // WEB_INTERFACE → The settings window → "While it disagrees the row
+      // holds the question" — the row reads the latest verdict to decide
+      // whether the question stands. Wired in every build; the web build has
+      // no handNode seam, so the row's web branch ignores it.
+      verdict: () => this.tipVerdict,
     };
   }
 
@@ -2570,6 +2575,20 @@ export class App {
     this.moveView('@settings');
   }
 
+  /** The corner's press under *your-node* opens the settings window with the
+   *  `node` row in view, by the placement rule every window open follows, and
+   *  runs no verification (WEB_INTERFACE → The status corner → "while the
+   *  verdict reads *your-node* a press opens the settings window at its
+   *  `node` row"). */
+  private openSettingsAtNode(): void {
+    this.openSettings();
+    const held = this.bodies.get('@settings');
+    if (held === undefined) return;
+    const nodeRow = [...held.body.el.querySelectorAll<HTMLElement>('.row')]
+      .find((r) => r.querySelector('label')?.textContent === 'node');
+    nodeRow?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   private openWallet(): void {
     const res = openWindow(this.state.workspace, '@wallet', { from: 'feed' });
     this.saveLayout();
@@ -3260,8 +3279,34 @@ export class App {
             return null;
           }
         },
+        // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+        // answer" — "None goes out while the verdict reads *your-node*".
+        // Every waitable flow signs its write and keeps it waiting with no
+        // send while the last verdict is refused · *your-node*.
+        held: () => this.isYourNodeHeld(),
       },
     };
+  }
+
+  /** True while the last tip verdict reads `refused` · *your-node*: a
+   *  waitable flow keeps its write waiting, and `flushWaitingWrites` returns
+   *  at once (WEB_INTERFACE → The wallet → "Waiting writes go out at the
+   *  first answer"). */
+  private isYourNodeHeld(): boolean {
+    const v = this.tipVerdict;
+    return v !== undefined && v !== null && v.kind === 'refused' && v.reason === 'your-node';
+  }
+
+  /** Update the settings window's body in place — the body's own `update`
+   *  runs each row's draw against the state as it stands, so the `node` row
+   *  places and takes out the question itself and nothing else in the page
+   *  moves (WEB_INTERFACE → The settings window → "While it disagrees the
+   *  row holds the question", HOUSE_STYLE → Motion). A no-op where the
+   *  window is not open. */
+  private updateSettingsBodyInPlace(): void {
+    const held = this.bodies.get('@settings');
+    if (held === undefined) return;
+    held.body.update();
   }
 
   /** Build the waiting store for the loaded identity, or `null` when no seam
@@ -4913,8 +4958,15 @@ export class App {
     // A press re-reads at once — the corner is a control (WEB_INTERFACE → The
     // status corner, HOUSE_STYLE → Interaction). Where the build carries a
     // verifier, the press runs a verification too (WEB_INTERFACE → The
-    // extension → "The verified tip").
+    // extension → "The verified tip"). While the verdict reads *your-node*
+    // the press opens the settings window at its `node` row instead
+    // (WEB_INTERFACE → The status corner → "while the verdict reads
+    // *your-node* a press opens the settings window at its `node` row").
     btn.addEventListener('click', () => {
+      if (this.isYourNodeHeld()) {
+        this.openSettingsAtNode();
+        return;
+      }
       void this.cornerTick();
       this.startVerification();
     });
@@ -5051,6 +5103,12 @@ export class App {
         // under another chain triggers again so the pass re-reads tipChain.
         if (run.chain !== null && run.chain !== chainBefore) this.flushWaitingWrites();
         this.renderCornerNow();
+        // The settings window's `node` row reads the verdict to decide
+        // whether the question stands; the row's own update owns the
+        // question's placement and nothing else in the page moves
+        // (WEB_INTERFACE → The settings window → "While it disagrees the row
+        // holds the question", HOUSE_STYLE → Motion).
+        this.updateSettingsBodyInPlace();
         // WEB_INTERFACE → The extension → "The verified figures" — a run proves
         // a listing read after its anchor, so a `verified` run reads the
         // reader's listings first: /karma always, /credits while the wallet
@@ -5089,6 +5147,9 @@ export class App {
         this.figures = null;
         this.renderCreditsRowInPlace();
         this.renderProfileKarma();
+        // The settings window's `node` row reads the verdict — the row's
+        // own update takes the question out where a run ends without a verdict.
+        this.updateSettingsBodyInPlace();
         this.settleTipRunWaiters(null);
       },
     );
@@ -5486,6 +5547,10 @@ export class App {
     const store = this.waitingStore;
     if (store === null) return;
     if (this.tipChain === null) return;
+    // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+    // answer" — "None goes out while the verdict reads *your-node*". The
+    // pass runs at the first answered read after the verdict leaves.
+    if (this.isYourNodeHeld()) return;
     const cur = this.idm.current();
     if (cur === null) return;
     const keyAtPress = cur.pubKeyHex;

@@ -938,7 +938,7 @@ async function resolveTipRunYourNode(h: Harness): Promise<void> {
 describe('a waitable write under your-node is signed and kept waiting, no POST leaves', () => {
   // AssertionError: expected 1 to be +0 — the POST goes out; the verdict is
   // not read and the flow does not take the waiting arm.
-  it.fails('a root post under your-node waits: no POST, the submission reads stage waiting', async () => {
+  it('a root post under your-node waits: no POST, the submission reads stage waiting', async () => {
     const h = harness({ rememberChain: CHAIN });
     // A verified run first, so the chain is named and bases are primed.
     await resolveTipRunVerified(h);
@@ -965,7 +965,7 @@ describe('a waitable write under your-node is signed and kept waiting, no POST l
 describe('the send pass does not run while your-node stands, and runs at the first answered read after it leaves', () => {
   // AssertionError: expected 1 to be +0 — the flush runs under your-node;
   // flushWaitingWrites has no verdict gate.
-  it.fails('cornerTick while your-node does not flush; once the verdict leaves, the pass runs', async () => {
+  it('cornerTick while your-node does not flush; once the verdict leaves, the pass runs', async () => {
     const h = harness({ rememberChain: CHAIN });
     // Prime: verified first, then your-node, then press a post waiting.
     await resolveTipRunVerified(h);

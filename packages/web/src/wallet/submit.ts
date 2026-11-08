@@ -94,6 +94,14 @@ export interface WaitingDeps {
    *  transport failure (WEB_INTERFACE → The wallet → "A write no node answers
    *  waits"). */
   cachedAuthor(postId: string): Promise<string | null>;
+  /** True while the verdict reads `refused` · *your-node*: every waitable
+   *  flow signs its write and keeps it waiting with no send, the same record
+   *  and the same stage line *waiting for a node* (WEB_INTERFACE → The
+   *  wallet → "Waiting writes go out at the first answer" — "None goes out
+   *  while the verdict reads *your-node*"). The App hands
+   *  `held: () => <the last verdict is refused · your-node>`; the web build
+   *  hands none. */
+  held?(): boolean;
 }
 
 export interface SubmitDeps {
@@ -692,13 +700,20 @@ export async function submitSendFlow(
 
 /** True once the extension carries a waiting seam AND a verified tip has
  *  named a chain (WEB_INTERFACE → The wallet → "The view and every waiting
- *  write carry the chain's name"). Any other state runs today's path. */
-function activeWaiting(deps: SubmitDeps): { store: WaitingStore; chain: string; cachedAuthor: WaitingDeps['cachedAuthor'] } | null {
+ *  write carry the chain's name"). Any other state runs today's path.
+ *  `held` reads whether the verdict freezes writes right now; a flow takes
+ *  the waiting arm when `held` is true, as it does on `isNoAnswer`. */
+function activeWaiting(deps: SubmitDeps): { store: WaitingStore; chain: string; cachedAuthor: WaitingDeps['cachedAuthor']; held: () => boolean } | null {
   const w = deps.waiting;
   if (w === undefined) return null;
   const chain = w.chain();
   if (chain === null) return null;
-  return { store: w.store, chain, cachedAuthor: w.cachedAuthor };
+  return {
+    store: w.store,
+    chain,
+    cachedAuthor: w.cachedAuthor,
+    held: w.held ?? ((): boolean => false),
+  };
 }
 
 /** Run a flow under the identity's waiting lock when the arm is active, so
@@ -715,7 +730,9 @@ function runUnderLock<T>(deps: SubmitDeps, fn: () => Promise<T>): Promise<T> {
  *  error (WEB_INTERFACE → The wallet → "The waiting view"). When the arm is
  *  active the flow builds from `repView(chain)`: the base alone when nothing
  *  waits, the base advanced by every waiting write when some do, so a press
- *  never spends a box a waiting write spent. */
+ *  never spends a box a waiting write spent. `held` joins `isNoAnswer` here:
+ *  both route the flow to the waiting arm, so no POST goes out while the
+ *  verdict reads `refused` · *your-node*. */
 async function readsOrWaitingRep(deps: SubmitDeps, author: string): Promise<{ ctx: RepBuildContext; waiting: boolean }> {
   const active = activeWaiting(deps);
   try {
@@ -726,7 +743,7 @@ async function readsOrWaitingRep(deps: SubmitDeps, author: string): Promise<{ ct
     // Totality: the base was just recorded for this chain, so the view is
     // never null — the fallthrough keeps the recorded base, as `repView`
     // would answer.
-    return { ctx: advanced ?? ctx, waiting: false };
+    return { ctx: advanced ?? ctx, waiting: active.held() };
   } catch (e) {
     if (active === null || !isNoAnswer(e)) throw e;
     const view = active.store.repView(active.chain);
@@ -744,7 +761,7 @@ async function readsOrWaitingCredits(deps: SubmitDeps, author: string): Promise<
     if (active === null) return { ctx, waiting: false };
     active.store.recordBase('credits', ctx, active.chain);
     const advanced = active.store.creditView(active.chain);
-    return { ctx: advanced ?? ctx, waiting: false };
+    return { ctx: advanced ?? ctx, waiting: active.held() };
   } catch (e) {
     if (active === null || !isNoAnswer(e)) throw e;
     const view = active.store.creditView(active.chain);

@@ -162,7 +162,7 @@ async function seatYourNode(h: Harness): Promise<void> {
 describe('under your-node', () => {
   // AssertionError: expected undefined to be 'settings' — the corner's press
   // still runs the verification path and does not open @settings.
-  it.fails("the corner's press opens the settings window with the node row in view and runs no verification", async () => {
+  it("the corner's press opens the settings window with the node row in view and runs no verification", async () => {
     const h = harness();
     await seatYourNode(h);
     // The verifier has started exactly one run so far (the mount's).
@@ -186,7 +186,7 @@ describe('under your-node', () => {
 
   // TypeError: Cannot read properties of null (reading 'querySelectorAll') —
   // the settings window does not open and no .winbody stands.
-  it.fails('the question appears and leaves inside the node row alone', async () => {
+  it('the question appears and leaves inside the node row alone', async () => {
     const h = harness();
     await seatYourNode(h);
     // Open the settings window.
@@ -201,28 +201,27 @@ describe('under your-node', () => {
     const body = panes.querySelector<HTMLElement>('.winbody')!;
     const nodeRow = [...body.querySelectorAll<HTMLElement>('.row')]
       .find((r) => r.querySelector('label')?.textContent === 'node')!;
-    const removed: Node[] = [];
-    const observer = new MutationObserver((batch) => {
-      for (const rec of batch) for (const n of rec.removedNodes) removed.push(n);
-    });
+    // Each MutationRecord names its `target` — the parent from which the
+    // removal was made (still in the document when we inspect it after the
+    // batch, since nothing is replaced wholesale). We check that every
+    // removal's target is inside the node row.
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => { records.push(...batch); });
     observer.observe(panes, { subtree: true, childList: true });
     // Flip the verdict out of your-node: every tip run that returns a
     // non-your-node verdict ends the question.
-    const run = h.tipRuns[h.tipRuns.length - 1]!;
-    // Ask the App to run one more verification — stamp its verdict as
-    // verified and draw the settings body.
     (h.app as unknown as { startVerification: () => void }).startVerification();
     await flush();
     const run2 = h.tipRuns[h.tipRuns.length - 1]!;
     run2.resolve({ verdict: { kind: 'verified', nodes: 2, height: 101 }, anchor: anchorFor(101, 'bb'), chain: '00'.repeat(32) });
-    void run;
     await flush();
-    // Nothing in the panes but the node row's own contents was taken out.
-    observer.takeRecords().forEach((rec) => { for (const n of rec.removedNodes) removed.push(n); });
+    records.push(...observer.takeRecords());
     observer.disconnect();
-    for (const n of removed) {
-      // Every removed node must be inside the node row.
-      expect(nodeRow.contains(n) || n === nodeRow).toBe(true);
+    for (const rec of records) {
+      if (rec.removedNodes.length === 0) continue;
+      // Every removal's target — the parent from which a node left — stands
+      // inside the node row.
+      expect(nodeRow.contains(rec.target) || rec.target === nodeRow).toBe(true);
     }
     // The body, the bar and the other rows are the same nodes as before.
     expect(panes.querySelector<HTMLElement>('.winbody')).toBe(body);
