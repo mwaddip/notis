@@ -47,7 +47,7 @@ that it still applies and still holds.
 (`TYPES_INTERFACE → Identity`):
 
 - **the Notis spelling** — the 32-byte public key as 64 lowercase hex characters, the `UserId` spelling of the HTTP
-  API. The client shows it and an anchor lists it.
+  API. The client shows it and a node list names it.
 - **the peer id** — libp2p's identity multihash over its protobuf key encoding: `00 24 08 01 12 20` followed by the 32
   bytes.
 
@@ -84,17 +84,17 @@ refused, whatever certificate it holds.
 **The WebRTC-direct certificate persists** in the node's mesh state directory, and lives as long as the node's key:
 created at first start with a lifespan of `WEBRTC_CERT_LIFESPAN_MS`, never replaced while it is valid, its renewal
 timer re-arming in steps under Node's 2 147 483 647 ms limit, so a lifespan past that limit renews only at
-`notAfter` less libp2p's renewal threshold. Its hash is part of the address an anchor lists, so a certificate that
-changed — at a restart or at a renewal — would leave every anchor naming the node unreachable. **A state directory
+`notAfter` less libp2p's renewal threshold. Its hash is part of the address a node list carries, so a certificate that
+changed — at a restart or at a renewal — would leave every list naming the node unreachable. **A state directory
 whose certificate cannot be read stops the node at start**, naming the directory, and is left as it is, as a key file
 of another form is.
 
 **A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
 documentation ranges and the rest of its list). The client runs its own gater, the same in every runtime: it refuses
-every private address but those its own configuration names for a key — an anchor's, or one the reader entered by hand
+every private address but those its own configuration names for a key — a first-contact node's, or your node's
 (→ Discovery → "A node added by hand") — each for that key alone. A remote node cannot know what is on the reader's
-network, so a private address it offers — through the DHT, a peer list or a seed — is never dialled, and a page cannot
+network, so a private address it offers — through the DHT, a peer list or a known node's addresses — is never dialled, and a page cannot
 be made to probe its own network.
 
 **Plain `ws://` is no browser path**: a browser client's home is a secure context. **WebTransport is not used**:
@@ -174,26 +174,42 @@ does a node on their network: past that count they follow the chain by checks al
 
 ## Discovery
 
-**Anchors.** A client starts from a list of anchors, each `(notisId, addrs)`: a key it trusts and the addresses that
-key was last reached at — IP multiaddrs ending in the key's `/p2p/` peer id, a browser's carrying the WebRTC-direct
+**First contact.** A client starts from a list of first-contact nodes, each `(notisId, addrs)`: a key and the addresses
+that key was last reached at — IP multiaddrs ending in the key's `/p2p/` peer id, a browser's carrying the WebRTC-direct
 certificate's hash — and, where the list gives one, the API base the node answers at over HTTPS, `(notisId, addrs,
 api)` (→ The client's node list → "An entry may carry an API base"). The extension's are its build's seed list
-(`WEB_INTERFACE → The extension → "The seed list, the faucet's base and the network's name"`). **An address is a hint;
-the key is the identity.** A client refuses an anchor address with a
-`/dns4/`, `/dns6/` or `/dnsaddr/` component. Two anchors with one key are one anchor; the client's own key is none.
+(`WEB_INTERFACE → The extension → "The seed list, the faucet's base and the network's name"`). For a client that has
+never connected, the list is the way in and the distribution channel its one trust point; **after the first check a
+first-contact node is a node like any other** — no count, row, weight or word names it. **An address is a hint;
+the key is the identity.** A client refuses a first-contact address with a
+`/dns4/`, `/dns6/` or `/dnsaddr/` component. Two entries with one key are one entry; the client's own key is none.
 
-**Seeds.** A client may also start from seeds — `(notisId, addrs)` contacts it holds without trusting them, such as a
-peer list it was handed or the nodes it knew before. A seed is a candidate like any node the DHT finds: it is not an
-anchor, and no answer from it makes `anchorReached` true. The same refusals hold for a seed's addresses as for an
-anchor's.
+**Known nodes.** A client also starts from known nodes — `(notisId, addrs)` contacts it holds without trusting them: the
+nodes it remembers (→ What the client remembers), or a peer list it was handed. A known node is a candidate like any
+node the DHT finds. The same refusals hold for a known node's addresses as for a first-contact node's.
 
-**A node added by hand.** The reader may add a node by its key and an address, a private one included. It is an anchor
-unless the reader adds it as an ordinary candidate; its address passes the client's gater for that key alone (→
-Transports → "A client dials a private address only when its own configuration names it"). A key that is not 64
-lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or one without `/webrtc-direct/` is
-refused. A private node prints its local WebRTC-direct address with its key, for its operator to hand over, and
-announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read from its `/p2p/`
-id (`WEB_INTERFACE → The settings window`).
+**A node added by hand.** The reader may add a node by its key and an address, a private one included: **your node**,
+the reader's trust assertion, unless the reader adds it as an ordinary candidate. Its address passes the client's gater
+for that key alone (→ Transports → "A client dials a private address only when its own configuration names it"). A key
+that is not 64 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or one without
+`/webrtc-direct/` is refused. A private node prints its local WebRTC-direct address with its key, for its operator to
+hand over, and announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read
+from its `/p2p/` id (`WEB_INTERFACE → The settings window`).
+
+**Your node takes precedence** while it agrees with the evidence: once its proof has verified and its tip is placed,
+its chain is the client's chain, and a routed read goes to it first among the nodes the read's need allows. **It
+disagrees** when another node's tip lies off its chain and that node's proof beats its own and continues the kept proof,
+or when its own proof does not continue the kept proof (→ What the client remembers); a node behind on the same chain
+does not. **A disagreement is the reader's question, never the client's choice.** Until the reader answers, the client's
+chain does not move — no switch, no extension by gossip — and its state names what disagreed, the two tips and their
+fork, the highest header `compareProofs` finds in both. The answers: *continue on this node* — the client takes its
+chain, the kept proof becomes its proof, and the fork is recorded, so the same competing branch growing asks nothing
+more (at most `ANSWERED_FORKS_MAX` forks kept); *disable it* — the reader switches it off until switching it on, and the
+client takes the best chain by the rules every other node is held to. A new disagreement asks again.
+
+> ⚠ **AHEAD OF CODE (2026-11-08).** `@dagsocial/web`'s mesh client starts from `anchors` (`MeshAnchor`), seats
+seeds as untrusted entries the extension never passes, counts a hand-added trusted node as an anchor, and has no
+precedence, disagreement or answer.
 
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
@@ -230,12 +246,13 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 | a malformed answer, a proof that fails verification, or a gossiped block refused as a lie (→ Block gossip), over a link authenticated to the key | a lie | `blacklisted` for good, the evidence kept |
 | the same at an entry's API base | the host, not the key — HTTPS authenticates a name, never a node key | `retry`, as a transport failure; never `blacklisted` |
 
-**An entry may carry an API base.** An anchor the list gives one is read there, over HTTPS, wherever the client holds
-no connection to its key — always, for an anchor the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
+**An entry may carry an API base.** A first-contact entry the list gives one is read there, over HTTPS, wherever the
+client holds no connection to its key — always, for one the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
 routed read goes to a node its need allows"). It is one entry whichever way it answers — one witness in every count —
 and the pairing of a base with a key is the list's word. A read at an API base holds no connection and dials nothing.
 
-**The client's chain.** The client holds its chain's last `k` headers and block 1's. A check's proofs settle it — the
+**The client's chain.** The client holds its chain's last `k` headers and block 1's — from the start when it remembers a
+chain, seated from the kept proof as a check's winner seats one (→ What the client remembers). A check's proofs settle it — the
 winner's suffix and its first header — and a switch to another winner replaces it the same way; a winner whose tip the
 client's chain already holds is no switch, and the chain stands. A gossiped block whose parent is the client's tip
 extends it; one whose parent is held below the tip, or not held at all, runs a check at once. A fill — a check's reading
@@ -293,23 +310,28 @@ client holds a chain, its own tip's proof from a node at its tip, handed to `res
 as does a proof that shares no block with it — `incomparable`, which only a network pinning no `genesisId` reaches
 (`NIPOPOW_INTERFACE → compareProofs`). Every node naming a tip takes that tip's verdict. **A tip whose proof verified and lost keeps its verdict** while the
 client's chain stands: a node naming it again is placed off the chain with no proof read, until it names another tip or
-the chain switches. A check that places every tip reads no proof.
+the chain switches. A check that places every tip reads no proof. **The kept proof is a contestant in every check that
+reads proofs**: a node's verified proof that does not continue it is placed off the chain and keeps that verdict, and the
+chain settles to the best of the rest (→ What the client remembers).
 
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
 knows nothing finer. Among the nodes a read may go to and the client holds a connection to, the fast set is each node
 whose speed is within `FAST_SET_FACTOR` times the fastest's plus `FAST_SET_SLACK_MS` — every one of them while none has
-a speed — and the read goes to one of the fast set at random. **Over the mesh first**: a read goes to an API base only
+a speed — and the read goes to one of the fast set at random; your node, while it takes precedence, before the fast set
+(→ Discovery → "A node added by hand"). **Over the mesh first**: a read goes to an API base only
 when no node its need allows is reached over the mesh, and among the API bases by the same need and speed. **Before the
-first check ends an anchor serves any need**, over its connection or at its API base, since a verdict never blocks a
+first check ends a node the client started from serves any need** — first contact, its known nodes and your node —
+over its connection or at its API base, since a verdict never blocks a
 read. With none, it fails as a transport failure. The client's
 state names the node and path the latest routed read went to; how many checks it has completed, so a reader can tell
 one check's state from the next; and, after a check, a node that was `ok` or `trailing` before it and is neither after
 it, with its latest event.
 
 **The client's order for a need** is every node the need allows reached over the mesh, the fast set first, then the API
-bases of the entries it allows, in the same order — before the first check ends, every anchor. **A write goes to one
+bases of the entries it allows, in the same order — before the first check ends, every node the client started from,
+your node first. **A write goes to one
 node at a time**: a `POST` the caller hands the client goes to the first node of the order for the tip and, when it ends
 with no answer — a transport failure or `REQUEST_TIMEOUT_MS` — the same bytes go to the next; the first answer of any
 status is the write's (`WEB_INTERFACE → The extension → "The mesh is the extension's first path"`).
@@ -327,25 +349,47 @@ status is the write's (`WEB_INTERFACE → The extension → "The mesh is the ext
 | `FAST_SET_FACTOR` | `2` | a node is in the fast set within twice the fastest's speed … |
 | `FAST_SET_SLACK_MS` | `50` | … plus 50 ms |
 | `STUN_SERVERS_MAX` | `3` | the most STUN servers a client's ICE configuration names |
+| `REMEMBERED_NODES_MAX` | `16` | the most known nodes a client remembers — provisional: about 10 KB of memory, and the start-up dial set a check opens |
+| `ANSWERED_FORKS_MAX` | `16` | the most answered forks a client remembers |
 | `BLOCK_READ_BYTES` | `8_388_608` | 8 MiB, the cap on a fill's `GET /blocks/:height` — the header and two 67-byte list entries, a transaction's id and a post's, for every 32 bytes of a body at `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE → Size caps`) stay within it; a block's whole JSON is read for its header, so a fill of full blocks costs more than a proof — `net`'s header sync carries headers alone |
 
 These are local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
 the constants register (`CONSTANTS → Scope`).
 
-## No anchor reached
+## What the client remembers
 
-`anchorReached` is true while at least one anchor's latest event leaves it `ok`, `trailing` or `behind` — a tip placed
-on the client's chain, or a valid proof that is behind — and false otherwise: at start, and whenever every anchor's
-latest event is a failure or a lie. An anchor that is behind was still reached. While it is false the client treats
-every node it reaches as unverified: the stage's page says, in these words, `No anchor reached. Nothing shown here is
-verified.`, and the extension's verdict reads `thin` · *no-anchor* (`WEB_INTERFACE → The extension → "The verified
-tip"`).
+**A client remembers, per network, the nodes it found, the proof of the chain it verified, and the forks the reader
+answered** (→ Discovery → "A node added by hand") — keyed by the genesis the network's profile pins, or by the network's
+name where it pins none. After each check it records every node naming a tip on its chain, `ok` or `trailing`, with
+the addresses it would dial — no private address, never its own key — the most recently seen first, at most
+`REMEMBERED_NODES_MAX`; a node blacklisted in the session leaves the list. At its next start they are its known nodes
+(→ Discovery → "Known nodes").
+
+**The kept proof** is the last proof the client verified of the chain it holds — a check's winner, a switch, its own
+tip's proof. **It moves forward only**: a proof is kept only where it does not lose to the one kept, under
+`compareProofs` at the client's own `m` and `k` (`NIPOPOW_INTERFACE → compareProofs`); the reader's *continue* is the one
+exception. At start the kept proof is verified again, and one that no longer verifies is dropped. **A node's chain
+continues the kept one** when `compareProofs(kept, node's)` does not answer the kept proof — the node's wins, or they
+tie: work, not height, so a heavier fork from below the kept tip is a deep reorg, and proof of work takes it. **When
+every verified proof shares no block with the kept one** — which only a network pinning no `genesisId` reaches — the
+kept proof is dropped and the client starts as a first-time client. **When no node continues it** — no node names a tip
+on the client's chain and one or more name one off it — the client keeps its own chain and says so: the stage's page in
+these words, `No node reached continues the chain you verified.`, and the extension's verdict `thin` · *not-continued*
+(`WEB_INTERFACE → The extension → "The verified tip"`).
+
+**What memory cannot stop**: an adversary holding every node a client reaches can extend the kept tip at its own
+hashrate; a client with no memory takes the best chain among what first contact reaches (`NIPOPOW_INTERFACE → The
+trust model`).
 
 **The agreement counts.** After each check the stage's page shows, and the extension's verdict reads, how many nodes name a tip on the client's chain within its
-last `k` headers — `On this chain` — how many of those are anchors, and how many name one off those headers — `Not on
+last `k` headers — `On this chain` — and how many name one off those headers — `Not on
 this chain's last 20 blocks`: on another chain, or further back than they reach, which the client cannot tell apart. The
 counts say what the nodes name, never that each verified: a node counts without serving a proof of its own, since a
-proof carries no challenge and any node can serve one it copied. A node that answered no tip is in no count.
+proof carries no challenge and any node can serve one it copied. A node that answered no tip is in no count. **Memory is
+no witness**: the kept proof names an old tip, and is in no count.
+
+> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client keeps nothing between sessions, carries `anchorReached` and
+`onChainAnchors`, and the extension's verdict has the row `no-anchor`.
 
 ## The IP certificate
 
@@ -368,7 +412,7 @@ nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile
 The mesh holds when every step of the eight scenarios passes on what it measured; a step that did not run reads
 `skipped`, never a pass.
 
-1. **No name, no hosted page.** The client reads a node's API by key from anchors alone, over WebRTC-direct, with the
+1. **No name, no hosted page.** The client reads a node's API by key from its first-contact nodes alone, over WebRTC-direct, with the
    browser's own resolver set to resolve no name at all; the mesh's answers equal the node's direct HTTP answers byte
    for byte; the browser host's DNS log holds no query — anything there went around the browser's resolver; and every
    ICE server the page's peer connections are built with is named by IP. The browser's own services resolve names
@@ -384,22 +428,25 @@ The mesh holds when every step of the eight scenarios passes on what it measured
 4. **A transport is cut.** UDP to one public node: the client stays connected, through another node or over that
    node's secure WebSocket — whichever ranks first. UDP to all: the client gets in through the secure WebSocket; a
    renewal replaces the certificate with no request dropped.
-5. **Impersonation.** A node with its own key and a copy of an anchor's certificate, at the anchor's address: refused
-   at the link, that address dropped, the anchor not blacklisted.
-6. **Hostile nodes.** With every anchor out of reach, `anchorReached` is false and the page says so. A node naming a tip
+5. **Impersonation.** A node with its own key and a copy of a first-contact node's certificate, at that node's address:
+   refused at the link, that address dropped, the node not blacklisted.
+6. **Hostile nodes.** A page with an honest kept chain whose reachable nodes all serve the hostile chain keeps its own and says
+   no node continues it. A node naming a tip
    of its own that answers malformed proofs, and one that answers failing proofs, are blacklisted with their evidence; a
    node naming the chain's tip is placed there and its proof is never read; a node on a lighter chain is `behind`. A
    mesh node publishing a block that fails its checks is blacklisted with its evidence, and the client does not forward
    it.
 7. **Reach and load.** Reads that may go to several nodes spread across them; a read that needs the tip goes to an
    `ok` node alone; a node slowed well past the others serves no read. A node on the browser's own network, named only
-   by a seed, is never dialled; added by hand, it is reached at its private address, and `anchorReached` reads true from
-   it alone when the reader trusts it and false when the reader does not. The page shows the agreement counts.
+   by a seed, is never dialled; added by hand, it is reached at its private address and takes precedence; a hostile node serving a heavier chain
+   that continues the page's memory raises the question, and each answer does what it says. The page shows the agreement counts.
 8. **Prove once, follow by gossip.** After the first check, no proof is read across five checks while every node names a
    tip on the client's chain; a block mined on a node reaches the browser by gossip and moves the
    client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
    its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
    browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read.
+
+> ⚠ **AHEAD OF CODE (2026-11-08).** Scenarios 6 and 7 measure `anchorReached` on the stage.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.

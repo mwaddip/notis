@@ -358,8 +358,14 @@ light client:
    walk with the level-0 sweep, the fork's proof carrying every header it has, `m = 24`, 1 000 trials a cell), a
    fork of 40 blocks against the honest chain's 50, both at one target, won about 14% of comparisons at the anchor's
    target and 39% at the floor's. **While a network's hashrate is low, a client's protection is the nodes it asks**
-   (rule 3): a seed list of nodes run by operators the client trusts — the extension's is its build's, each node by
-   its key (`WEB_INTERFACE → The extension → "The seed list, the faucet's base and the network's name"`).
+   (rule 3), **the chain it verified before** — a returning client refuses a chain that loses to the proof it kept
+   (`MESH_INTERFACE → What the client remembers`) — **and the reader's own node**, which takes precedence and whose
+   disagreement with the rest is the reader's question (`MESH_INTERFACE → Discovery → "A node added by hand"`). A
+   client that has never connected has its build's first-contact list alone (`WEB_INTERFACE → The extension → "The
+   seed list, the faucet's base and the network's name"`).
+
+> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client keeps no proof between sessions and gives the reader's node no
+precedence.
 
 ---
 

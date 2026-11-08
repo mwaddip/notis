@@ -5747,14 +5747,14 @@ operator to hand to whoever lists the node.
 
 **The mesh state directory is named for the store**, as the key file is: `DB_PATH` with its extension replaced by
 `.mesh` — `dagsocial.db` → `dagsocial.mesh` — holding the WebRTC-direct certificate's datastore and the ACME account and
-certificate (`NET_INTERFACE → The mesh`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses an
-anchor names.
+certificate (`NET_INTERFACE → The mesh`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses a
+node list names.
 
 **The node's mesh endpoint forwards to its own public listener**: `httpBase` is `http://127.0.0.1:<PORT>`, never
 `ADMIN_PORT`'s listener, and no setting names another (`MESH_INTERFACE → The node endpoint`).
 
 **A mesh node prints its identity line** once its addresses are announced and at every change of them: one JSON line,
-`{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses an anchor lists and, for a private node, the
+`{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses a node list carries and, for a private node, the
 local WebRTC-direct addresses its operator hands over (`MESH_INTERFACE → Discovery → "A node added by hand"`).
 
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
