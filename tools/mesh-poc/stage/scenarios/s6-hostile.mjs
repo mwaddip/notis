@@ -1,18 +1,29 @@
-// MESH_INTERFACE → Acceptance 6 — "Hostile nodes. With every anchor out
-// of reach, `anchorReached` is false and the page says so. A node
-// naming a tip of its own that answers malformed proofs, and one that
-// answers failing proofs, are blacklisted with their evidence; a node
-// naming the chain's tip is placed there and its proof is never read;
-// a node on a lighter chain is `behind`. A mesh node publishing a
-// block that fails its checks is blacklisted with its evidence, and
-// the client does not forward it."
+// MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
+// whose reachable nodes all serve the hostile chain keeps its own and
+// says no node continues it. A node naming a tip of its own that
+// answers malformed proofs, and one that answers failing proofs, are
+// blacklisted with their evidence; a node naming the chain's tip is
+// placed there and its proof is never read; a node on a lighter
+// chain is `behind`. A mesh node publishing a block that fails its
+// checks is blacklisted with its evidence, and the client does not
+// forward it."
 //
 // Three sub-steps:
-//   (a) Config variant: pub1 + pub2 as anchors + hostile seeds.
-//       Browser firewalled from both anchor IPs. Expected:
-//       `anchorReached === false` and the page's banner reads the
-//       contract's words exactly.
-//   (b) Anchors reachable, hostile seeds kept. Expected:
+//   (a) Two sessions on the same browser profile.
+//       Session 1: first-contact = pub1 + pub2. The page seats its
+//       kept proof in `localStorage` (one record per network, keyed
+//       by the profile's genesis pin or the network's name where it
+//       pins none — `MESH_INTERFACE → What the client remembers`).
+//       Session 2: the browser's nft table drops every honest address,
+//       and the page config names the `hostile-fork` host as a known
+//       node (the hostile-fork host syncs the honest chain from pub1
+//       and is then cut by `stage/lib/hostile-fork-single.mjs`'s nft
+//       rules, a miner at `MINER_PCT=1` running inside its namespace).
+//       Expected: `notContinued === true`, the banner reads
+//       `No node reached continues the chain you verified.`, the
+//       chain name is the kept one, and the hostile-fork entry is
+//       `behind` with a real tip hash (positive evidence it answered).
+//   (b) Honest nodes reachable, hostile seeds kept. Expected:
 //       - hostile-malformed → `blacklisted` with evidence `malformed`
 //       - hostile-invalid → `blacklisted` with evidence `proof-invalid`
 //       - hostile-lagging → `behind`, never blacklisted
@@ -22,6 +33,13 @@
 //       as the reject source — no line sources the block from the
 //       browser's peer id, so `the client forwarded nothing it
 //       refused` holds.
+//
+// > AHEAD OF CODE: step 1's two-session drive (seat the kept proof,
+// > then reach the second session with the hostile-fork host) rests
+// > on the new `stage/lib/hostile-fork-single.mjs` builder and a
+// > `up.mjs` wiring for the `hostile-fork` host that is still owed.
+// > The step below measures the second-session state as the contract
+// > reads now; main threads this when the stage stands.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -36,7 +54,7 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's6';
 const BLOCK_TABLE = 's6_block';
-const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
+const NOT_CONTINUED_WORDS = 'No node reached continues the chain you verified.';
 // MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
 // weighs it" — the node's journal writes one JSON line per penalty,
 // shape { event: peer_penalised, peer_id, kind, detail }
@@ -54,8 +72,8 @@ const ORDERING_BLOCK_DETAIL_RE = /ordering block/;
 
 export function describe() {
   return [
-    'anchors unreachable: anchorReached is false, page shows the contract words',
-    'anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted',
+    'honest nodes unreachable: kept chain stands, page says no node continues it',
+    'hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted',
     'the publisher is blacklisted for gossip-block; the client forwarded nothing',
   ];
 }
@@ -169,6 +187,25 @@ export async function run(ctx) {
 
   try {
     await rec.step(describe()[0], async () => {
+      // MESH_INTERFACE → What the client remembers — "A page with an
+      // honest kept chain whose reachable nodes all serve the hostile
+      // chain keeps its own and says no node continues it." Two
+      // sessions on the same browser profile:
+      //   (i) first-contact = pub1 + pub2. The page seats its kept
+      //       proof; the first session's chain hash is read from
+      //       `state.chain` once the first check settles.
+      //   (ii) the browser's nft table drops every honest address, and
+      //        the page config names the `hostile-fork` host as a
+      //        known node. The second session reads `notContinued`,
+      //        the banner, `state.chain` (== the kept one), and the
+      //        hostile-fork entry's status + tip hash.
+      // AHEAD OF CODE: this step reads what the measurement is for
+      // the restated verdict (`verdictS6NotContinued`). The two-
+      // session CDP drive and the hostile-fork host spawn land with
+      // `stage/lib/hostile-fork-single.mjs`'s integration into
+      // `up.mjs`, which main threads when the stage stands. Until
+      // then the step records `skipped` on a dry run and a
+      // `pending-wiring` measurement on a live run.
       const a = anchorBlockArgs(ctx.topology);
       runFault(log, 'browser-anchor-block-add-table', a.addTable);
       applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
@@ -176,55 +213,7 @@ export async function run(ctx) {
       for (let i = 0; i < a.drops.length; i += 1) {
         runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
       }
-      // MESH_INTERFACE → Acceptance 6 — with every anchor out of reach,
-      // `anchorReached` is false and the page says so. Positive
-      // evidence: at least one seed left `new` for `ok`, `behind` or
-      // `blacklisted` inside the window. The predicate below holds for
-      // the banner + anchorReached=false AND at least one seed
-      // classified past `new`.
-      const hostileIds = Object.values(seedsByHost).filter((v) => typeof v === 'string');
-      const hostileIdsJson = JSON.stringify(hostileIds);
-      const bannerText = await cdpPoll(ctx, browserUrl,
-        `(function(){
-           const banner = document.querySelector('[data-role="banner"]');
-           const state = document.getElementById('state');
-           if (banner === null || state === null) return null;
-           return JSON.stringify({ banner: banner.textContent, state: state.textContent });
-         })()`,
-        `if (v === null) return false;
-         try {
-           const obj = JSON.parse(v);
-           const s = JSON.parse(obj.state);
-           if (s.anchorReached !== false || obj.banner !== ${JSON.stringify(NO_ANCHOR_WORDS)}) return false;
-           const hostileIds = ${hostileIdsJson};
-           const terminal = ['ok', 'behind', 'blacklisted'];
-           return hostileIds.some((id) => {
-             const e = s.nodes?.find((n) => n.notisId === id);
-             return e !== undefined && terminal.includes(e.status);
-           });
-         } catch (_e) { return false; }`,
-        120_000, 1000,
-      );
-      const bannerObj = JSON.parse(bannerText);
-      const stateA = JSON.parse(bannerObj.state);
-      // Find the first seed that answered — positive evidence the page
-      // reached nodes, so the "no anchor" verdict is not vacuous.
-      const terminal = new Set(['ok', 'behind', 'blacklisted']);
-      let answeredSeed = null;
-      for (const id of hostileIds) {
-        const e = stateA.nodes?.find((n) => n.notisId === id);
-        if (e !== undefined && terminal.has(e.status)) {
-          answeredSeed = { id, status: e.status };
-          break;
-        }
-      }
-      const m = {
-        anchorReached: stateA.anchorReached,
-        bannerText: bannerObj.banner,
-        seedAnswered: answeredSeed !== null,
-        seedId: answeredSeed?.id ?? null,
-        seedStatus: answeredSeed?.status ?? null,
-      };
+      const m = { reason: 'pending-wiring: two-session drive and hostile-fork host owed' };
       return { verdict: verdictS6NotContinued(m), measurement: m };
     });
 

@@ -255,10 +255,10 @@ describe('s5 (impersonation)', () => {
 });
 
 describe('s6 (hostile)', () => {
-  it('describe() lists three steps: anchors unreachable, hostile seeds judged, publisher blacklisted', () => {
+  it('describe() lists three steps: honest nodes unreachable + kept chain stands, hostile seeds judged, publisher blacklisted', () => {
     const names = s6.describe();
     expect(names.length).toBe(3);
-    expect(names[0]).toMatch(/anchors unreachable/);
+    expect(names[0]).toMatch(/honest nodes unreachable/);
     expect(names[1]).toMatch(/hostile seeds/);
     expect(names[2]).toMatch(/publisher/);
   });
@@ -344,13 +344,14 @@ describe('s6 (hostile)', () => {
 });
 
 describe('s7 (reach and load)', () => {
-  it('describe() lists four steps: spread + need, slowed node, local node, counts', () => {
+  it('describe() lists five steps: spread + need, slowed node, local node, the heavier question, counts', () => {
     const names = s7.describe();
-    expect(names.length).toBe(4);
+    expect(names.length).toBe(5);
     expect(names[0]).toMatch(/spread/);
     expect(names[1]).toMatch(/delayed|slowed/);
     expect(names[2]).toMatch(/lan1/);
-    expect(names[3]).toMatch(/agreement|counts/);
+    expect(names[3]).toMatch(/heavier question/);
+    expect(names[4]).toMatch(/agreement|counts/);
   });
   // MESH_INTERFACE → The client's node list → "A routed read goes to a
   // node its need allows" — "how many checks it has completed, so a
@@ -444,10 +445,10 @@ describe('s7 (reach and load)', () => {
     // Interface is the veth peer pub2 holds inside its namespace.
     expect(n.iface).toBe('vp-p2');
   });
-  it('run({dryRun:true}) emits the netem add + its removal and four skipped steps', async () => {
+  it('run({dryRun:true}) emits the netem add + its removal and five skipped steps', async () => {
     const r = await s7.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s7');
-    expect(r.steps.length).toBe(4);
+    expect(r.steps.length).toBe(5);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f: string) => / tc qdisc add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));

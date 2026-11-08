@@ -2,12 +2,12 @@
 // spread across them; a read that needs the tip goes to an `ok` node
 // alone; a node slowed well past the others serves no read. A node on
 // the browser's own network, named only by a seed, is never dialled;
-// added by hand, it is reached at its private address, and
-// `anchorReached` reads true from it alone when the reader trusts it
-// and false when the reader does not. The page shows the agreement
-// counts."
+// added by hand, it is reached at its private address and takes
+// precedence; a hostile node serving a heavier chain that continues
+// the page's memory raises the question, and each answer does what it
+// says. The page shows the agreement counts."
 //
-// Four sub-steps, in order:
+// Five sub-steps, in order:
 //   1. spread and need — `?reads=20&need=older` then
 //     `?reads=10&need=tip` on the stage default; PASS when ≥ 2
 //     distinct nodes served the older reads AND every tip read's
@@ -21,19 +21,39 @@
 //       two completed checks lan1 never holds a connection
 //       (`transport === null` at every poll) AND lan1's mesh log
 //       shows no inbound connection from the browser (`10.103.0.11`);
-//     (b) a variant with no anchors and `byHand: [lan1, trusted]` —
-//       lan1 reads `ok` or `trailing` over `webrtc-direct`,
-//       `path: direct`, `anchorReached: true`;
-//     (c) the same with `trusted: false` — same reach, `anchorReached:
-//       false` (`verdictS7Lan`).
-//   4. the counts — on the stage default after a completed check:
-//     `agreement.onChain >= 2`, `agreement.onChainAnchors >= 1`
-//     (`verdictS7Counts`).
+//     (b) a variant with no first-contact nodes and
+//       `byHand: [lan1, trusted:true]` — lan1 reads `ok` or
+//       `trailing` over `webrtc-direct`, `path: direct`, and its
+//       entry carries `yours: true`;
+//     (c) the same with `trusted: false` — same reach, the entry
+//       carries `yours: false` (`verdictS7Lan`).
+//   4. the heavier question — lan1 trusted as the reader's node and
+//     on the page's chain; then lan1's p2p port is cut from the
+//     honest nodes by `stage/lib/hostile-fork-single.mjs`'s nft
+//     rules, and a miner inside lan1's namespace grows a lighter
+//     fork of its own while the honest chain grows heavier. The
+//     page raises `disagreement.which === 'heavier'`, `state.chain`
+//     and `state.tip` do not move, the two buttons stand under
+//     `[data-role="disagreement-buttons"]`. Pressing *disable it*
+//     calls `client.answer('disable')` once; the next check clears
+//     lan1's `yours` and seats the honest chain. Pressing
+//     *continue on this node* calls `client.answer('continue')`
+//     once; the page's chain is lan1's, the fork joins
+//     `answeredForks`, and the same branch growing raises no new
+//     disagreement (`verdictS7Question`).
+//   5. the counts — on the stage default after a completed check:
+//     `agreement.onChain >= 2` (`verdictS7Counts`).
 //
 // Faults are applied inside `run(ctx)` one at a time and the
 // scenario's `finally` restores the stage default, removes every
 // applied fault, and leaves lan1's qdisc untouched (nothing is set on
 // lan1 here).
+//
+// > AHEAD OF CODE: step 4's drive (lan1 miner, nft cut through the
+// > new single-host builder, the two button presses through the
+// > page's `[data-role="disagreement-*"]` controls) rests on the
+// > `stage/lib/hostile-fork-single.mjs` builder and the lan1 mining
+// > wiring. The step below records a `pending-wiring` measurement.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,6 +62,7 @@ import {
   verdictS7Spread,
   verdictS7Fastest,
   verdictS7Lan,
+  verdictS7Question,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
 import { execIn } from '../lib/measure.mjs';
@@ -70,8 +91,9 @@ export function describe() {
   return [
     'older reads spread across ≥ 2 nodes; tip reads only on ok nodes',
     'pub2 delayed 200ms serves no read',
-    'lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag',
-    'the agreement counts hold onChain ≥ 2 and onChainAnchors ≥ 1',
+    'lan1 is never dialled from a seed; by hand it is reached, yours follows the trusted flag',
+    'the heavier question: lan1 cut and forking lighter raises it; each answer does what it says',
+    'the agreement counts hold onChain ≥ 2',
   ];
 }
 
@@ -203,7 +225,8 @@ export async function run(ctx) {
       const lan1InboundLogged = lan1InboundLoggedSince(lan1NotisLog, seedPhaseLogOffset);
       const seedPhase = { lan1EverConnected, lan1InboundLogged };
 
-      // (b) trusted hand phase — no anchors, byHand=[lan1, trusted:true].
+      // (b) trusted hand phase — no first-contact nodes,
+      // byHand=[lan1, trusted:true]. The entry carries `yours: true`.
       const trustedVariant = buildByHandLanVariant(baseConfig, lan1Row, true);
       writeConfigVariant(ctx.outDir, trustedVariant);
       const trustedState = await waitLan1Reached(ctx, browserUrl, lan1NotisId);
@@ -212,10 +235,11 @@ export async function run(ctx) {
         lan1Status: tEntry?.status ?? null,
         transport: tEntry?.transport ?? null,
         path: tEntry?.path ?? null,
-        anchorReached: trustedState.anchorReached === true,
+        yours: tEntry?.yours === true,
       };
 
-      // (c) untrusted hand phase — no anchors, byHand=[lan1, trusted:false].
+      // (c) untrusted hand phase — no first-contact nodes,
+      // byHand=[lan1, trusted:false]. The entry carries `yours: false`.
       const untrustedVariant = buildByHandLanVariant(baseConfig, lan1Row, false);
       writeConfigVariant(ctx.outDir, untrustedVariant);
       const untrustedState = await waitLan1Reached(ctx, browserUrl, lan1NotisId);
@@ -224,23 +248,43 @@ export async function run(ctx) {
         lan1Status: uEntry?.status ?? null,
         transport: uEntry?.transport ?? null,
         path: uEntry?.path ?? null,
-        anchorReached: untrustedState.anchorReached === true,
+        yours: uEntry?.yours === true,
       };
 
       const m = { seedPhase, trustedPhase, untrustedPhase };
       return { verdict: verdictS7Lan(m), measurement: m };
     });
 
-    // --- Step 4: the counts ---
-    // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-    // one page polled until its first completed check lands, the
-    // counts read from the value that poll returns. `cdp.mjs poll`
-    // opens a fresh target per call, so a wait on one page and a
-    // read on another measures the second page's first non-empty
-    // state — before its first check, so `agreement` is null. A null
-    // `agreement` fails the step with that reason in its measurement,
-    // never silently zeroed.
+    // --- Step 4: the heavier question ---
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — lan1 trusted as yours
+    // and on the page's chain; then its p2p port is cut by the single-
+    // host builder's nft rules and a miner inside lan1's namespace
+    // grows a lighter fork of its own. The page raises `heavier`,
+    // neither chain nor tip move, and the two buttons each fire one
+    // `client.answer`.
+    //
+    // AHEAD OF CODE: this step reads the restated verdict's shape
+    // (`verdictS7Question`). The miner spawn, the nft cut and the
+    // button-press drive land with the single-host builder's
+    // integration into `up.mjs`, which main threads when the stage
+    // stands. Until then the step records a `pending-wiring`
+    // measurement.
     await rec.step(describe()[3], async () => {
+      const m = { reason: 'pending-wiring: lan1 miner + fork_cut + button drive owed' };
+      return { verdict: verdictS7Question(m), measurement: m };
+    });
+
+    // --- Step 5: the counts ---
+    // MESH_INTERFACE → What the client remembers → "The agreement
+    // counts" — one page polled until its first completed check
+    // lands, the counts read from the value that poll returns.
+    // `cdp.mjs poll` opens a fresh target per call, so a wait on one
+    // page and a read on another measures the second page's first
+    // non-empty state — before its first check, so `agreement` is
+    // null. A null `agreement` fails the step with that reason in
+    // its measurement, never silently zeroed.
+    await rec.step(describe()[4], async () => {
       writeStageDefault(ctx.outDir);
       const state = await waitStateWithCompletedChecks(ctx, browserUrl, 1);
       if (state.agreement === null || state.agreement === undefined) {
