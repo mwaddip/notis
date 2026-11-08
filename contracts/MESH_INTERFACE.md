@@ -336,6 +336,9 @@ node at a time**: a `POST` the caller hands the client goes to the first node of
 with no answer — a transport failure or `REQUEST_TIMEOUT_MS` — the same bytes go to the next; the first answer of any
 status is the write's (`WEB_INTERFACE → The extension → "The mesh is the extension's first path"`).
 
+> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client seats no chain from a kept proof and compares no node's proof with
+one; before its first check ends only the build's nodes serve, and no node is picked before the fast set.
+
 | Name | Value | Reads as |
 |---|---|---|
 | `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
