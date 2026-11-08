@@ -31,7 +31,8 @@ import { resolveTip, DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/ni
 import type { Anchor } from '@dagsocial/nipopow-client';
 import { decodeNipopowProof, encodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
-import { continues, judgeByMemory, nodesToRemember } from './memory.js';
+import { continues, judgeByMemory, nodesToRemember, forkKey } from './memory.js';
+import { compareProofs } from '@dagsocial/nipopow';
 import type { MemorySnapshot } from './memory-store.js';
 import { REMEMBERED_NODES_MAX, ANSWERED_FORKS_MAX } from './protocols.js';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
@@ -1605,6 +1606,20 @@ class MeshClientImpl implements MeshClient {
     // places every tip and reads no proof leaves the previous value standing.
     const proofsThisCheck = { asked: 0, verified: 0, invalid: 0, tooShort: 0 };
 
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — the disagreement this
+    // check detected (`null` where none), set in phase 4 after
+    // `judgeByMemory` on the first pass that raises one. "A check
+    // that no longer finds the disagreement clears it": the write to
+    // `this.state_.disagreement` at end of check is this value, so
+    // the standing clears when no pass raises one this check.
+    let raisedThisCheck: Disagreement | null = null;
+    let standingRaisedThisCheck: {
+      yourId: string;
+      proof: NipopowProof;
+      verifyResult: VerifyResult;
+    } | null = null;
+
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
     // address instead of folded into a generic transport failure.
@@ -1959,6 +1974,113 @@ class MeshClientImpl implements MeshClient {
         }
       }
 
+      // MESH_INTERFACE → Discovery → "Your node takes precedence" / "A
+      // disagreement is the reader's question, never the client's
+      // choice" — detection after the memory judgement.
+      if (raisedThisCheck === null) {
+        // Find your node's verified result in this pass.
+        const yoursIds = new Set<string>();
+        for (const e of this.nodeList.entries()) if (e.yours) yoursIds.add(e.notisId);
+        let yIndex = -1;
+        let yId: string | null = null;
+        for (let i = 0; i < result.nodes.length; i++) {
+          const n = result.nodes[i]!;
+          if (!n.verified || n.proof === null || n.verifyResult === null || !n.verifyResult.ok) continue;
+          const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
+          if (yoursIds.has(nid)) { yIndex = i; yId = nid; break; }
+        }
+        if (yIndex >= 0 && yId !== null) {
+          const y = result.nodes[yIndex]!;
+          const yProof = y.proof!;
+          const yVr = y.verifyResult as VerifyResult & { ok: true };
+          const yTip = yVr.tip;
+          const yTipHash = blockHash(yTip);
+          if (yTipHash !== null) {
+            // which: 'memory' — y is in `judgeByMemory`'s lost.
+            let memoryCase = false;
+            let lostSet = new Set<number>();
+            if (this.kept !== null) {
+              const judgment = judgeByMemory(this.kept, result.nodes, this.profile, this.wallClock());
+              lostSet = new Set(judgment.lost);
+              memoryCase = lostSet.has(yIndex);
+            }
+            if (memoryCase) {
+              const fork = forkKey(this.kept!, yProof, this.profile, this.wallClock());
+              if (fork !== null && !this.answeredForks.includes(fork)) {
+                raisedThisCheck = {
+                  which: 'memory',
+                  yours: { height: yTip.height, hash: yTipHash },
+                  other: null,
+                  fork,
+                };
+                standingRaisedThisCheck = { yourId: yId, proof: yProof, verifyResult: yVr };
+              }
+            } else {
+              // which: 'heavier' — a verified, not-lost o ≠ y whose tip
+              // y's proof does not hold and whose proof beats y's.
+              const ySuffixHeaders = [yProof.suffixHead.header, ...yProof.suffixTail];
+              const ySuffixHashes = new Set<string>();
+              for (const h of ySuffixHeaders) {
+                const hh = blockHash(h);
+                if (hh !== null) ySuffixHashes.add(hh);
+              }
+              const yB1 = blockHash(yVr.headers[0]!);
+              if (yB1 !== null) ySuffixHashes.add(yB1);
+              const vp = verifierProfile(this.profile, this.wallClock());
+              const params = { m: DEFAULT_M, k: DEFAULT_K };
+              const cands: { index: number; tipHdr: BlockHeader; proof: NipopowProof }[] = [];
+              for (let i = 0; i < result.nodes.length; i++) {
+                if (i === yIndex) continue;
+                if (lostSet.has(i)) continue;
+                const o = result.nodes[i]!;
+                if (!o.verified || o.proof === null || o.verifyResult === null || !o.verifyResult.ok) continue;
+                const oTip = (o.verifyResult as VerifyResult & { ok: true }).tip;
+                const oHash = blockHash(oTip);
+                if (oHash === null) continue;
+                if (ySuffixHashes.has(oHash)) continue;
+                const cmp = compareProofs(yProof, o.proof, params, vp);
+                if (cmp.verdict !== 'b') continue;
+                cands.push({ index: i, tipHdr: oTip, proof: o.proof });
+              }
+              if (cands.length > 0) {
+                // Best by the same comparison: the one no other beats.
+                let best = cands[0]!;
+                for (const c of cands.slice(1)) {
+                  const cmp = compareProofs(best.proof, c.proof, params, vp);
+                  if (cmp.verdict === 'b') best = c;
+                }
+                const fork = forkKey(yProof, best.proof, this.profile, this.wallClock());
+                if (fork !== null) {
+                  if (this.answeredForks.includes(fork)) {
+                    // Answered fork: place o off, settle to y's chain.
+                    const o = result.nodes[best.index]!;
+                    const oid = idByBase.get(o.url) ?? idOfMeshUrl(o.url);
+                    const oRoute = baseById.get(oid)?.route ?? 'mesh';
+                    const behindEvent: TipEvent = { id: oid, ev: 'behind' };
+                    this.applyEvent(behindEvent, oRoute);
+                    perNodeVerdict.set(oid, 'off');
+                    pendingBehindBy.set(oid, null);
+                    judgedWinner = y;
+                    judgedTip = yTip;
+                  } else {
+                    const bestTipHash = blockHash(best.tipHdr);
+                    if (bestTipHash !== null) {
+                      raisedThisCheck = {
+                        which: 'heavier',
+                        yours: { height: yTip.height, hash: yTipHash },
+                        other: { height: best.tipHdr.height, hash: bestTipHash },
+                        fork,
+                      };
+                      standingRaisedThisCheck = { yourId: yId, proof: yProof, verifyResult: yVr };
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       // MESH_INTERFACE → The client's node list → "The client's
       // chain" — "The tip moves only by a header carrying its work on
       // the client's chain, never by a node's word". A winner whose
@@ -1968,6 +2090,13 @@ class MeshClientImpl implements MeshClient {
       // the chain stands. When the hash is not held, settle to the
       // winner and re-place every tip this check read against the
       // new chain.
+      // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+      // question, never the client's choice" — "the check settles
+      // nothing" while a disagreement stands.
+      if (raisedThisCheck !== null || this.state_.disagreement !== null) {
+        judgedWinner = null;
+        judgedTip = null;
+      }
       if (judgedWinner !== null && judgedTip !== null) {
         const winnerTipHash = blockHash(judgedTip);
         const vr = judgedWinner.verifyResult;
@@ -2109,6 +2238,12 @@ class MeshClientImpl implements MeshClient {
       if (v === 'off') anyOff = true;
     }
     this.state_.notContinued = this.kept !== null && !anyOn && anyOff;
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — "A check that no longer
+    // finds the disagreement clears it": the write is the pass's
+    // detection (`null` where nothing was found).
+    this.state_.disagreement = raisedThisCheck;
+    this.standingDisagreement = standingRaisedThisCheck;
     this.emitStateChange();
     // MESH_INTERFACE → What the client remembers — called after
     // `emitStateChange()`, directly: a throw from the callback is the
@@ -2183,11 +2318,16 @@ class MeshClientImpl implements MeshClient {
   /**
    * The first node (by candidate rank) whose tip read THIS check placed
    * `tip` against the final chain (MESH_INTERFACE → The client's node
-   * list → "A check"). A node still at the previous check's `ok` would
-   * be stale: the `under` reader and the own-tip prepend both want a
-   * node the chain has just placed at the tip.
+   * list → "A check"). A `yours` entry in that set comes first — the
+   * held tip's proof comes from your node when it is placed at the
+   * client's tip (`→ Discovery → "Your node takes precedence"`); the
+   * `under` reader and the own-tip prepend both want a node the chain
+   * has just placed at the tip.
    */
   private firstNodeAtChainTip(placedAtTip: ReadonlySet<string>): string | null {
+    for (const e of this.nodeList.entries()) {
+      if (e.yours && placedAtTip.has(e.notisId)) return e.notisId;
+    }
     for (const id of this.nodeList.candidates()) {
       if (placedAtTip.has(id)) return id;
     }

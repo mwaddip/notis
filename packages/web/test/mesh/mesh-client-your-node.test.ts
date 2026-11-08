@@ -195,7 +195,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
   });
 
-  it.fails("your node's proof loses to the kept one: disagreement memory, the chain does not move", async () => {
+  it("your node's proof loses to the kept one: disagreement memory, the chain does not move", async () => {
     // The kept chain is longer; your node serves a fork from below the
     // kept tip, with different stamps. `judgeByMemory` marks it `lost`,
     // and the disagreement reads `memory`. The client's chain does not
@@ -231,7 +231,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.tip?.height).toBe(100);
   }, 90_000);
 
-  it.fails("another node's proof off your node's chain beats it and continues memory: disagreement heavier", async () => {
+  it("another node's proof off your node's chain beats it and continues memory: disagreement heavier", async () => {
     // Kept = your node = chain of MK (same proof bytes); another node
     // o serves a heavier chain (MK+30, different stamps) off y's.
     // y continues kept (tie), o continues kept too (beats both), and
@@ -342,7 +342,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.tip?.height).toBe(MK + 5);
   }, 90_000);
 
-  it.fails('while a disagreement stands a gossiped block extending the tip does not extend the chain', async () => {
+  it('while a disagreement stands a gossiped block extending the tip does not extend the chain', async () => {
     // The memory setup raises a disagreement. Then a gossiped block
     // whose parent is the kept tip is dropped before `chain.extend`:
     // `state.tip` stays where it was.
@@ -401,7 +401,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(client.state().tip?.height).toBe(tipBefore);
   }, 90_000);
 
-  it.fails('continue: the chain is your node\'s, the competing branch growing does not ask again', async () => {
+  it('continue: the chain is your node\'s, the competing branch growing does not ask again', async () => {
     // Heavier disagreement, then continue. The fork is recorded in
     // answeredForks; a later check where the same competing branch
     // still beats y does not raise a new disagreement.
@@ -448,6 +448,13 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(client.state().disagreement).toBeNull();
   }, 120_000);
 
+  // `buildMinedChain` makes every chain share block 1 (forceLevels on
+  // other heights mines each chain afresh from block 1), so every fork
+  // the pair-helpers can construct has the same `lca = block 1` and
+  // therefore the same `forkKey`. A test of "forks again" needs chains
+  // that diverge at different heights; this one is kept as a
+  // placeholder and will be rewritten when a divergent-chain helper
+  // lands.
   it.fails('continue, then your node forks again: a new disagreement', async () => {
     // First disagreement answered. Then o changes to a different
     // branch — forkKey differs — a new disagreement is raised.
@@ -495,7 +502,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.disagreement!.fork).not.toBe(firstFork);
   }, 120_000);
 
-  it.fails('disable: your node leaves precedence and the better chain seats at the next check', async () => {
+  it('disable: your node leaves precedence and the better chain seats at the next check', async () => {
     // Heavier disagreement, then disable. Your node is removed, and
     // the next check seats to the competing chain.
     const keptProof = proofOf(MK);
@@ -540,7 +547,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(final.tip?.height).toBe(MK + 30);
   }, 120_000);
 
-  it.fails('a check that no longer finds the disagreement clears it', async () => {
+  it('a check that no longer finds the disagreement clears it', async () => {
     // Raise a memory disagreement. Then your node becomes
     // unreachable; a later check runs and no disagreement is
     // detected — it clears.
@@ -612,7 +619,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(order[0]).toBe(yBase);
   }, 90_000);
 
-  it.fails('while a disagreement stands routed reads take no preference for your node', async () => {
+  it('while a disagreement stands routed reads take no preference for your node', async () => {
     // With a standing disagreement, routed reads go on with no yours
     // preference. The `base` pick is no longer biased to your node.
     const keptProof = proofOf(100);
