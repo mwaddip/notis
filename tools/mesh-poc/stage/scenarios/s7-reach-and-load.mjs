@@ -379,7 +379,7 @@ export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
   }
   return {
     network: baseConfig.network,
-    anchors: baseConfig.anchors,
+    firstContact: baseConfig.firstContact,
     seeds: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs }],
   };
 }
@@ -398,7 +398,7 @@ export function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
   }
   return {
     network: baseConfig.network,
-    anchors: [],
+    firstContact: [],
     seeds: [],
     byHand: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs, trusted }],
   };

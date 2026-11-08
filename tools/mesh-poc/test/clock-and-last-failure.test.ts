@@ -40,7 +40,7 @@ function fakeTipResult(nodes: NodeTipResult[], winnerIndex = -1): TipResult {
 function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
   return {
     notisId: over.notisId,
-    anchor: over.anchor ?? false,
+    firstContact: over.firstContact ?? false,
     byHand: over.byHand ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,

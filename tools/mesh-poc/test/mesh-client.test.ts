@@ -74,7 +74,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   it('assertClientConfig refuses a /dns4/ anchor without creating a node', () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     expect(() => assertClientConfig({
-      anchors: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
+      firstContact: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
     })).toThrow(MeshConfigError);
   });
 
@@ -86,7 +86,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       let thrown: unknown;
       try {
         await startMeshClient({
-          anchors: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
+          firstContact: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
           network: 'devnet',
           profile: PROFILE,
           agentName: 'notis-mesh-poc',
@@ -107,20 +107,20 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // `stunServersFor` cases in `test/stun-list.test.ts` cover the IP
   // shape.
 
-  // MESH_INTERFACE → Discovery → "Seeds" — a seed address meets the anchor's
-  // refusals; `assertClientConfig` is called with both lists and throws on a
-  // seed's `/dns4/` as it does on an anchor's.
+  // MESH_INTERFACE → Discovery → "Known nodes" — a seed address meets the
+  // first-contact refusals; `assertClientConfig` is called with both lists and
+  // throws on a seed's `/dns4/` as it does on a first-contact node's.
   it('assertClientConfig refuses a /dns4/ seed without creating a node', () => {
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
     expect(() => assertClientConfig({
-      anchors: [],
+      firstContact: [],
       seeds: [{ notisId: seedKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
     })).toThrow(MeshConfigError);
   });
 
-  // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
-  // any node the DHT finds: a seed is in the client's node list as a
-  // non-anchor entry in `new` status, which `NodeList.candidates()`
+  // MESH_INTERFACE → Discovery → "Known nodes" — a seed is a candidate like
+  // any node the DHT finds: a seed is in the client's node list as an entry
+  // outside the first-contact list in `new` status, which `NodeList.candidates()`
   // lists.
   it('a seed is a candidate', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
@@ -130,7 +130,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // this anchor carries an api base alone. The address is never
     // reached in this case.
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
+      firstContact: [{ notisId: anchorKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
       seeds: [{ notisId: seedKey.notisId, addrs: [] }],
       network: 'devnet',
       profile: PROFILE,
@@ -144,7 +144,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
     const seedEntry = client.state().nodes.find((n) => n.notisId === seedKey.notisId);
     expect(seedEntry, 'the seed is in the node list').toBeDefined();
-    expect(seedEntry!.anchor).toBe(false);
+    expect(seedEntry!.firstContact).toBe(false);
     expect(seedEntry!.status).toBe('new');
   }, 30_000);
 
@@ -167,7 +167,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     await anchor.node.stop();
 
     const client = await startMeshClient({
-      anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      firstContact: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
@@ -183,10 +183,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const s = client.state();
     expect(s.anchorReached).toBe(false);
     const seedEntry = s.nodes.find((n) => n.notisId === seed.id);
-    expect(seedEntry!.anchor).toBe(false);
+    expect(seedEntry!.firstContact).toBe(false);
     expect(seedEntry!.status).toBe('retry');
     const anchorEntry = s.nodes.find((n) => n.notisId === anchor.id);
-    expect(anchorEntry!.anchor).toBe(true);
+    expect(anchorEntry!.firstContact).toBe(true);
     expect(anchorEntry!.status).toBe('retry');
   }, 90_000);
 
@@ -199,7 +199,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(up, dir); nodes.push(started.node);
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -237,7 +237,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -321,7 +321,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const tcpAddr = '/ip4/127.0.0.1/tcp/4002';
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: good.id, addrs: [good.webrtcAddr] },
         { notisId: k2.notisId, addrs: [tcpAddr, k1.webrtcAddr] },
       ],
@@ -372,7 +372,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: good.id, addrs: [good.webrtcAddr] },
         { notisId: k2.notisId, addrs: [goneWebrtcAddr, k1.webrtcAddr] },
       ],
@@ -418,7 +418,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: good.id, addrs: [good.webrtcAddr] },
         { notisId: k2.notisId, addrs: [k1.webrtcAddr, k3.webrtcAddr] },
       ],
@@ -462,7 +462,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // caller. The invariant that MATTERS — the key is not blacklisted
     // — is preserved.
     const client = await startMeshClient({
-      anchors: [{ notisId: a.id, addrs: [b.webrtcAddr, a.webrtcAddr] }],
+      firstContact: [{ notisId: a.id, addrs: [b.webrtcAddr, a.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -487,7 +487,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // The fake resolve answers 'invalid' with a proof — the proof-invalid
     // row of the mapping (`tipEvent`).
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -518,7 +518,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     await started.node.stop();
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -566,7 +566,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -619,7 +619,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // The seam dispatches the event on the client's libp2p so the case
     // holds its guard without a three-node DHT walk.
     const client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -639,7 +639,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const entry = client.state().nodes.find((n) => n.notisId === discoveredId);
     expect(entry, 'discovered id must be a NodeList entry before any event').toBeDefined();
     expect(entry!.addrs).toContain(ma.toString());
-    expect(entry!.anchor).toBe(false);
+    expect(entry!.firstContact).toBe(false);
   }, 30_000);
 
   it('one check at a time: a trigger during a check joins the in-flight one', async () => {
@@ -673,7 +673,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const n = await startNode(stub, dir); nodes.push(n.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -742,7 +742,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-tip-')); dirs.push(dir);
     const started = await startNode(stub, dir); nodes.push(started.node);
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -843,7 +843,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const anchor = await startNode(up, dir); nodes.push(anchor.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      firstContact: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -892,7 +892,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
 
     const client = await startMeshClient({
-      anchors: [{ notisId: k2.notisId, addrs: [k1.webrtcAddr] }],
+      firstContact: [{ notisId: k2.notisId, addrs: [k1.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -995,7 +995,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1025,7 +1025,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     let randIdx = 0;
     const randValues = Array.from({ length: 10 }, (_, i) => i / 10);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1062,7 +1062,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       return CHAIN_K_PLUS_1_TRAIL;
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1116,7 +1116,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     let randIdx = 0;
     const seen = new Set<string>();
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1151,7 +1151,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     let randIdx = 0;
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1197,7 +1197,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
       return SHARED_CHAIN;
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
         { notisId: c.id, addrs: [c.webrtcAddr] },
@@ -1254,7 +1254,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const started = await startNode(stub, dir); nodes.push(started.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
@@ -1279,7 +1279,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1306,7 +1306,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1342,7 +1342,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1381,7 +1381,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1443,7 +1443,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const a = await startNode(upA, dirA); nodes.push(a.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
+      firstContact: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => SHARED_CHAIN, K),
@@ -1491,7 +1491,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
       };
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: resolveStub,
@@ -1530,7 +1530,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
         return { winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] };
       };
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: probingResolve,
@@ -1591,7 +1591,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const b = await startNode(stubB, dirB); nodes.push(b.node);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],

@@ -187,7 +187,7 @@ describe('mesh-client in block gossip', () => {
     const anchorId = started.id;
 
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorId, addrs: [anchorAddr] }],
+      firstContact: [{ notisId: anchorId, addrs: [anchorAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(anchorId) ? chain : 'unreachable', K),
@@ -232,7 +232,7 @@ describe('mesh-client in block gossip', () => {
 
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async (urls, m, k, p, now, httpFetch) => {
@@ -289,7 +289,7 @@ describe('mesh-client in block gossip', () => {
     const started = await startNode(chain); openNodes.push(started);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
@@ -325,7 +325,7 @@ describe('mesh-client in block gossip', () => {
     const started = await startNode(chain); openNodes.push(started);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
@@ -368,7 +368,7 @@ describe('mesh-client in block gossip', () => {
     let callCount = 0;
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async (urls, m, k, p, now, httpFetch) => {
@@ -419,7 +419,7 @@ describe('mesh-client in block gossip', () => {
     const started = await startNode(chain); openNodes.push(started);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
@@ -455,7 +455,7 @@ describe('mesh-client in block gossip', () => {
     const chain = makeLinkedChain(K + 1, PROFILE);
     const started = await startNode(chain); openNodes.push(started);
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
@@ -494,7 +494,7 @@ describe('mesh-client in block gossip', () => {
     const chain = makeLinkedChain(K + 1, PROFILE);
     const started = await startNode(chain); openNodes.push(started);
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
@@ -568,7 +568,7 @@ describe('mesh-client in block gossip', () => {
     }, K);
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -647,7 +647,7 @@ describe('mesh-client in block gossip', () => {
     const chain = makeLinkedChain(K + 1, PROFILE);
     const started = await startNode(chain); openNodes.push(started);
     const client = await startMeshClient({
-      anchors: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),

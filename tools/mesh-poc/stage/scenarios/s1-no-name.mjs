@@ -61,10 +61,10 @@ export function hostOfNodeId(identities, nodeId) {
 /**
  * Pure: the set of `notisId`s that `config.json` lists as anchors.
  */
-export function anchorIdSet(config) {
+export function firstContactIdSet(config) {
   const out = new Set();
-  if (!config || !Array.isArray(config.anchors)) return out;
-  for (const a of config.anchors) {
+  if (!config || !Array.isArray(config.firstContact)) return out;
+  for (const a of config.firstContact) {
     if (typeof a?.notisId === 'string') out.add(a.notisId);
   }
   return out;
@@ -100,7 +100,7 @@ export async function run(ctx) {
   const config = JSON.parse(readFileSync(join(ctx.outDir, 'browser', 'config.json'), 'utf8'));
   const identitiesPath = join(ctx.outDir, 'identities.json');
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
-  const anchors = anchorIdSet(config);
+  const firstContactIds = firstContactIdSet(config);
 
   // Each step is wrapped in `rec.step(name, fn)` so a throw records
   // FAIL for THAT step and the next step still runs (MESH_INTERFACE →
@@ -140,7 +140,7 @@ export async function run(ctx) {
       anchorNodeId = state.nodeId;
       const m = {
         nodeId: state.nodeId,
-        isAnchor: anchors.has(state.nodeId),
+        isAnchor: firstContactIds.has(state.nodeId),
         timeMs: Date.now() - step1Start,
         transport: state.transport,
         path: state.path,

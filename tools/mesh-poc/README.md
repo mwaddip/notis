@@ -23,7 +23,7 @@ reaching the inviter by key — are later work; they are not here.
 | # | Claim | Points at |
 |---|---|---|
 | 1 | A client reads a Notis node's API by key over libp2p with no DNS and no hosted page. | `MESH_INTERFACE → Scope` |
-| 2 | A client refuses an anchor address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component. | `MESH_INTERFACE → Discovery → "Anchors."` |
+| 2 | A client refuses a first-contact address with a `/dns4/`, `/dns6/` or `/dnsaddr/` component. | `MESH_INTERFACE → Discovery → "First contact."` |
 | 3 | A browser dials a public node over WebRTC-direct; the address carries the certificate's hash. | `MESH_INTERFACE → Transports` |
 | 4 | A browser reaches a private node over WebRTC signalled through a circuit relay. | `MESH_INTERFACE → NAT` |
 | 5 | A relay carries data — a node a client has no direct path to is reached through the relay, data relayed, with no limit. | `MESH_INTERFACE → NAT → "A relay carries data"` |
@@ -469,7 +469,7 @@ services is a failure.
    `state.nodeId` stays `null` for longer than two checks.
 
 4. **The DNS log and Firefox's own resolver list hold no names the page could have asked for.**
-   Anchors carry IP multiaddrs only (`MESH_INTERFACE → Discovery → "Anchors."` refuses `/dns4/`,
+   First-contact nodes carry IP multiaddrs only (`MESH_INTERFACE → Discovery → "First contact."` refuses `/dns4/`,
    `/dns6/` and `/dnsaddr/`), so the only hostnames the page could have asked for are a STUN
    host, a relay host, or a name a probe path carried. `tail stage/out/dns.log` through the whole
    Firefox run. **Fails** on any line whose `name` is a STUN host, a relay host, or any name

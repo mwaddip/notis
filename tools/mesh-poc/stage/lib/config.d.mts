@@ -5,7 +5,7 @@ export function buildPageConfig(
   opts?: { dryRun?: boolean },
 ): {
   network: 'devnet' | 'testnet' | 'mainnet';
-  anchors: Array<{ notisId: string; addrs: string[] }>;
+  firstContact: Array<{ notisId: string; addrs: string[] }>;
   seeds: Array<{ notisId: string; addrs: string[] }>;
 };
 

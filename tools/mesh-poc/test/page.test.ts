@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-// MESH_INTERFACE → No anchor reached / The client's node list / Discovery —
-// the page's banner words, the state element, the hostile-text rule, the
+// MESH_INTERFACE → No anchor reached / The client's node list / Discovery →
+// "First contact" — the page's banner words, the state element, the hostile-text rule, the
 // config refusal path, and the bundle scan (no Node built-in). Each case
 // holds one guard the page keeps.
 
@@ -28,7 +28,7 @@ const DIST_PAGE = join(PACKAGE_ROOT, 'dist-page');
 function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
   return {
     notisId: over.notisId,
-    anchor: over.anchor ?? false,
+    firstContact: over.firstContact ?? false,
     byHand: over.byHand ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
@@ -86,7 +86,7 @@ describe('page/render.ts', () => {
       path: 'direct',
       anchorReached: true,
       tip: { height: 42, hash: 'bb'.repeat(32) },
-      nodes: [makeEntry({ notisId: 'aa'.repeat(32), anchor: true, status: 'ok' })],
+      nodes: [makeEntry({ notisId: 'aa'.repeat(32), firstContact: true, status: 'ok' })],
     });
     render(state, root);
     const pre = root.querySelector('pre#state');
@@ -99,7 +99,7 @@ describe('page/render.ts', () => {
     const root = document.createElement('div');
     const nodes = [
       makeEntry({
-        notisId: 'aa'.repeat(32), anchor: true, status: 'ok',
+        notisId: 'aa'.repeat(32), firstContact: true, status: 'ok',
         transport: 'webrtc-direct', path: 'direct',
       }),
       makeEntry({
@@ -146,7 +146,7 @@ describe('page/render.ts', () => {
       new Response(
         JSON.stringify({
           network: 'devnet',
-          anchors: [
+          firstContact: [
             {
               notisId: 'aa'.repeat(32),
               addrs: ['/dns4/example.com/tcp/4001/p2p/12D3KooWBad'],
@@ -332,7 +332,7 @@ describe('page/main.ts probe wiring', () => {
     const fakeFetch = async (): Promise<Response> => new Response(
       JSON.stringify({
         network: 'devnet',
-        anchors: [{ notisId: 'aa'.repeat(32), addrs: ['/dns4/example.com/tcp/4001/p2p/12D3KooWBad'] }],
+        firstContact: [{ notisId: 'aa'.repeat(32), addrs: ['/dns4/example.com/tcp/4001/p2p/12D3KooWBad'] }],
       }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     );
@@ -667,7 +667,7 @@ describe('page/main.ts config refusals', () => {
       new Response(
         JSON.stringify({
           network: 'devnet',
-          anchors: [],
+          firstContact: [],
           stunServers: [],
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -686,7 +686,7 @@ describe('page/main.ts config refusals', () => {
       new Response(
         JSON.stringify({
           network: 'devnet',
-          anchors: [],
+          firstContact: [],
           byHand: [
             { notisId: VALID_KEY_A, addrs: [VALID_ADDR_A], trusted: true },
             { notisId: VALID_KEY_B, addrs: 'not-an-array', trusted: true },
@@ -711,7 +711,7 @@ describe('page/main.ts config refusals', () => {
       new Response(
         JSON.stringify({
           network: 'devnet',
-          anchors: [],
+          firstContact: [],
           byHand: [
             { notisId: VALID_KEY_A, addrs: [VALID_ADDR_A], trusted: true },
             { notisId: 'bad-key', addrs: [VALID_ADDR_A], trusted: true },
@@ -754,7 +754,7 @@ describe('page/main.ts byHand application', () => {
       new Response(
         JSON.stringify({
           network: 'devnet',
-          anchors: [],
+          firstContact: [],
           byHand: entries,
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },

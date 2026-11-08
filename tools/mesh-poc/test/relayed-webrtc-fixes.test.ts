@@ -488,7 +488,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
   function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     return {
       notisId: over.notisId,
-      anchor: over.anchor ?? false,
+      firstContact: over.firstContact ?? false,
       byHand: over.byHand ?? false,
       status: over.status ?? 'new',
       failures: over.failures ?? 0,
@@ -940,7 +940,7 @@ function makeOutDir(opts: { anchorNotisId: string; identities: Record<string, un
   mkdirSync(join(outDir, 'browser'), { recursive: true });
   const config = {
     network: 'devnet',
-    anchors: [{
+    firstContact: [{
       notisId: opts.anchorNotisId,
       addrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
     }],

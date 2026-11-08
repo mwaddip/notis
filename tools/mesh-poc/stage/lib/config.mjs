@@ -20,7 +20,7 @@ import { publicMeshHosts } from './topology.mjs';
 
 export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) {
   const dryRun = opts !== undefined && opts !== null && opts.dryRun === true;
-  const anchors = [];
+  const firstContact = [];
   for (const { name, host } of publicMeshHosts(topology)) {
     const id = nodeIdentities[name];
     if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) {
@@ -70,11 +70,11 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
       throw new Error(`${name}: no realMultiaddrs supplied in exec mode (pass { dryRun: true } to opt into the placeholder)`);
     }
     for (const addr of addrs) assertAddrFinalP2pMatches(name, peerIdStr, addr);
-    anchors.push({ notisId: id, addrs });
+    firstContact.push({ notisId: id, addrs });
   }
   return {
     network: topology.network,
-    anchors,
+    firstContact,
     seeds: [],
   };
 }

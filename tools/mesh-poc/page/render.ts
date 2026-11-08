@@ -186,7 +186,7 @@ function renderNode(n: NodeEntry): HTMLElement {
   meta.className = 'meta';
   // Space-separated metadata the tester reads at a glance; textContent
   // keeps every value a string.
-  meta.textContent = `${n.anchor ? 'anchor' : 'discovered'} · status=${n.status} · failures=${String(n.failures)}`
+  meta.textContent = `${n.firstContact ? 'anchor' : 'discovered'} · status=${n.status} · failures=${String(n.failures)}`
     + ` · transport=${n.transport ?? 'none'} · path=${n.path ?? 'none'}`;
   li.appendChild(meta);
   if (n.evidence !== null) {

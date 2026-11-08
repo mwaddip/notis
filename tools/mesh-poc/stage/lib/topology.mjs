@@ -3,8 +3,9 @@
 // Node-only (reads the file from disk); the browser's config.json is built by
 // `./config.mjs`, which calls these selectors against the parsed object.
 //
-// A hostname in a host's address is a defect (every address an anchor would
-// name is an IP literal, `MESH_INTERFACE → Discovery → Anchors`): `isIp`
+// A hostname in a host's address is a defect (every address a first-contact
+// node would name is an IP literal, `MESH_INTERFACE → Discovery → "First
+// contact"`): `isIp`
 // rejects a value that is neither IPv4 nor IPv6.
 
 import { readFileSync } from 'node:fs';
@@ -19,8 +20,8 @@ export function isIp(value) {
   return typeof value === 'string' && (isIPv4(value) || isIPv6(value));
 }
 
-// MESH_INTERFACE → Discovery — the public mesh nodes a client's anchor list
-// names. Each public host that holds a `mesh` entry with `role: 'public'`.
+// MESH_INTERFACE → Discovery → "First contact" — the public mesh nodes a
+// client's first-contact list names. Each public host that holds a `mesh` entry with `role: 'public'`.
 export function publicMeshHosts(topology) {
   const out = [];
   for (const [name, host] of Object.entries(topology.hosts)) {

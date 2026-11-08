@@ -203,7 +203,7 @@ describe('MeshClient.addByHand — refusals', () => {
 
   async function startBare(): Promise<MeshClient> {
     return startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -285,7 +285,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const n = await startNode(up, dir); nodes.push(n.node);
 
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -298,7 +298,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.anchor, 'trusted sets anchor').toBe(true);
+    expect(entry!.firstContact, 'trusted sets anchor').toBe(true);
     expect(entry!.byHand, 'byHand is true').toBe(true);
     expect(s.anchorReached, 'anchorReached reads true').toBe(true);
   }, 60_000);
@@ -311,7 +311,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const n = await startNode(up, dir); nodes.push(n.node);
 
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -324,7 +324,7 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.anchor, 'untrusted leaves anchor false').toBe(false);
+    expect(entry!.firstContact, 'untrusted leaves anchor false').toBe(false);
     expect(entry!.byHand, 'byHand is true').toBe(true);
     expect(s.anchorReached, 'anchorReached reads false').toBe(false);
   }, 60_000);
@@ -345,7 +345,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
 
   it('a hand-added node is dropped by `removeByHand`', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -365,7 +365,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
     client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [addr] }],
+      firstContact: [{ notisId: k.notisId, addrs: [addr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -378,7 +378,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
 
   it('a non-64-hex id refuses with `MeshConfigError`', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -418,7 +418,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
     client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [addr], api: 'https://a.example' }],
+      firstContact: [{ notisId: k.notisId, addrs: [addr], api: 'https://a.example' }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -435,7 +435,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     const dir = mkdtempSync(join(tmpdir(), 'base-m-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
     client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -449,7 +449,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
 
   it('`base(\'tip\')` answers `null` when no node is allowed and the first check has ended', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',

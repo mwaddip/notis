@@ -69,9 +69,9 @@ describe('s1 (no name)', () => {
     expect(s1.hostOfNodeId(identities, 'cc'.repeat(32))).toBe(null);
     expect(s1.hostOfNodeId(null, 'aa'.repeat(32))).toBe(null);
   });
-  it('anchorIdSet reads config.anchors[].notisId into a Set', () => {
-    const config = { anchors: [{ notisId: 'a'.repeat(64) }, { notisId: 'b'.repeat(64) }] };
-    const s = s1.anchorIdSet(config);
+  it('firstContactIdSet reads config.firstContact[].notisId into a Set', () => {
+    const config = { firstContact: [{ notisId: 'a'.repeat(64) }, { notisId: 'b'.repeat(64) }] };
+    const s = s1.firstContactIdSet(config);
     expect(s.size).toBe(2);
     expect(s.has('a'.repeat(64))).toBe(true);
     expect(s.has('c'.repeat(64))).toBe(false);
@@ -410,12 +410,12 @@ describe('s7 (reach and load)', () => {
   // private one; the variant fails with that reason instead of
   // falling back.
   it('buildSeedOnlyLanVariant refuses a lan1 row without localAddrs', () => {
-    const baseConfig = { network: 'devnet', anchors: [] };
+    const baseConfig = { network: 'devnet', firstContact: [] };
     const lan1Row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [] };
     expect(() => s7.buildSeedOnlyLanVariant(baseConfig, lan1Row)).toThrow(/localAddrs/);
   });
   it('buildSeedOnlyLanVariant uses the row\'s localAddrs exactly, never multiaddrs', () => {
-    const baseConfig = { network: 'devnet', anchors: ['A'] };
+    const baseConfig = { network: 'devnet', firstContact: ['A'] };
     const local = '/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/uEiA/p2p/PLan';
     const row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [local] };
     const out = s7.buildSeedOnlyLanVariant(baseConfig, row);
@@ -455,7 +455,7 @@ describe('s7 (reach and load)', () => {
     expect(dels.length, 'one netem del').toBe(1);
   });
 
-  // MESH_INTERFACE → Discovery → "Seeds" — step 3a's `seedPhase.lan1InboundLogged`
+  // MESH_INTERFACE → Discovery → "Known nodes" — step 3a's `seedPhase.lan1InboundLogged`
   // reads only bytes added to lan1's notis log during the seed phase: the step
   // records the log's size at the phase start and tests the pattern against
   // bytes past that offset. An old inbound line from a previous run of s7
@@ -718,66 +718,66 @@ describe('s8 (prove once, follow by gossip)', () => {
     return { notisId: id, status };
   }
   it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both anchors held, held honest in range', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
     const s = {
       checks: 1,
       traffic: { proofReads: 1 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toEqual({ checks: 1, proofReads: 1 });
     expect(st.final).toBeNull();
   });
   it('s8NoProofsObserve: baseline NOT captured if proofReads is 0 (chain not settled)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const s = {
       checks: 1,
       traffic: { proofReads: 0 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
   it('s8NoProofsObserve: baseline NOT captured if one anchor is missing from the list', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
       nodes: [nodeEntry(ANCHOR_A, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
   it('s8NoProofsObserve: baseline NOT captured if a held honest reads retry', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
   it('s8NoProofsObserve: baseline captured when a non-anchor honest is NOT in the list (held subset)', () => {
     // priv1 and priv2 only come in by DHT; the stage reaches a baseline
     // once both anchors are held and the honest nodes it DOES hold are
     // in range — a honest node absent from the list is not asserted.
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toEqual({ checks: 1, proofReads: 2 });
   });
   it('s8NoProofsObserve: final captured at base.checks + 5 when the rule still holds', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
       checks: 1,
@@ -789,8 +789,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       traffic: { proofReads: 3 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, final, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, final, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
@@ -801,7 +801,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     ]);
   });
   it('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
       checks: 1,
@@ -813,8 +813,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       traffic: { proofReads: 3 },
       nodes: [nodeEntry(ANCHOR_A, 'ok')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
@@ -824,7 +824,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     ]);
   });
   it('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
     const base = {
       checks: 1,
@@ -836,8 +836,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       traffic: { proofReads: 3 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
@@ -848,7 +848,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     ]);
   });
   it('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
       checks: 1,
@@ -865,8 +865,8 @@ describe('s8 (prove once, follow by gossip)', () => {
       traffic: { proofReads: 3 },
       nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFive, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFive, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
@@ -875,7 +875,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: ANCHOR_B, status: 'retry' },
     ]);
     // The later state does not re-record a final.
-    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atSeven, honestIds, firstContactIds);
     expect(st.final).toBe(fin);
   });
   // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
@@ -1012,12 +1012,12 @@ describe('s8 (prove once, follow by gossip)', () => {
   // a notisId with special characters cannot break the expression. A
   // hex notisId round-trips through `JSON.stringify` as a quoted
   // string.
-  it('buildS8NoProofsExpression embeds the honestIds and anchorIds as JSON arrays', () => {
+  it('buildS8NoProofsExpression embeds the honestIds and firstContactIds as JSON arrays', () => {
     const honestIds = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
-    const anchorIds = ['a'.repeat(64), 'b'.repeat(64)];
-    const expr = s8.buildS8NoProofsExpression(honestIds, anchorIds);
+    const firstContactIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8NoProofsExpression(honestIds, firstContactIds);
     expect(expr).toContain(JSON.stringify(honestIds));
-    expect(expr).toContain(JSON.stringify(anchorIds));
+    expect(expr).toContain(JSON.stringify(firstContactIds));
     expect(expr).toContain('__s8NP');
   });
   it('buildS8ForkExpression embeds the laggingId as a JSON string', () => {

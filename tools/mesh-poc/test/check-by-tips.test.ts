@@ -122,7 +122,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a1.id, addrs: [a1.webrtcAddr] },
         { notisId: a2.id, addrs: [a2.webrtcAddr] },
         { notisId: a3.id, addrs: [a3.webrtcAddr] },
@@ -178,7 +178,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
         { notisId: c.id, addrs: [c.webrtcAddr] },
@@ -233,7 +233,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -288,7 +288,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -336,7 +336,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -378,7 +378,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
 
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async (urls) => {
@@ -439,7 +439,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: hostileNode.id, addrs: [hostileNode.webrtcAddr] },
         { notisId: otherNode.id, addrs: [otherNode.webrtcAddr] },
       ],
@@ -484,7 +484,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const n = await startNode(built, d); nodes.push(n.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
@@ -531,7 +531,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const n = await startNode(built, d); nodes.push(n.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => chain, K),
@@ -596,7 +596,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -651,7 +651,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
         { notisId: c.id, addrs: [c.webrtcAddr] },
@@ -712,7 +712,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const underlying = chainResolve(chainOf, K);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -768,7 +768,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
         { notisId: c.id, addrs: [c.webrtcAddr] },
@@ -816,7 +816,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const underlying = chainResolve(chainOf, K);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b1.id, addrs: [b1.webrtcAddr] },
         { notisId: b2.id, addrs: [b2.webrtcAddr] },
@@ -880,7 +880,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a1.id, addrs: [a1.webrtcAddr] },
         { notisId: a2.id, addrs: [a2.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
@@ -929,7 +929,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const underlying = chainResolve(chainOf, K);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -974,7 +974,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const underlying = chainResolve(chainOf, K);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1018,7 +1018,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
+      firstContact: [{ notisId: a.id, addrs: [a.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K),
@@ -1069,7 +1069,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1121,7 +1121,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1173,7 +1173,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const resolveUrls: string[][] = [];
     const urlCount = (): number => resolveUrls.reduce((s, p) => s + p.length, 0);
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1241,7 +1241,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: l.id, addrs: [l.webrtcAddr] },
         { notisId: c.id, addrs: [c.webrtcAddr] },
@@ -1306,7 +1306,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const underlying = chainResolve(chainOf, K);
     const resolveUrls: string[][] = [];
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
         { notisId: d.id, addrs: [d.webrtcAddr] },
@@ -1374,7 +1374,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: hostile.id, addrs: [hostile.webrtcAddr] },
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
@@ -1432,7 +1432,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: hostile.id, addrs: [hostile.webrtcAddr] },
         { notisId: other.id, addrs: [other.webrtcAddr] },
       ],
@@ -1470,7 +1470,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1510,7 +1510,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     const n = await startNode(built, d); nodes.push(n.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', K),
@@ -1575,7 +1575,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     };
 
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: x.id, addrs: [x.webrtcAddr] },
       ],
@@ -1638,7 +1638,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr] },
         { notisId: b.id, addrs: [b.webrtcAddr] },
       ],
@@ -1698,16 +1698,16 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
   }, 180_000);
 
   // MESH_INTERFACE → The client's node list → "An entry may carry an API
-  // base" — an anchor the list gives one is read there over HTTPS wherever
-  // the client holds no connection to its key. These cases pin the four
-  // rules the brief names: mesh-first with an API-base fallback, the
-  // before-first-check anchor, an API-base lie as `retry`, and one
+  // base" — a node the list gives one for is read there over HTTPS wherever
+  // the client holds no connection to its key. These cases pin four
+  // rules: mesh-first with an API-base fallback, the
+  // before-first-check first-contact node, an API-base lie as `retry`, and one
   // entry per key whichever way it answered.
   it('every mesh dial failing: the first read routes to api, the check seats, proofs land at the bases', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to a
     // node its need allows" / → "An entry may carry an API base" — each
-    // anchor's `addrs` names a closed port (nothing listens there), so
-    // every mesh dial fails; each anchor's `api` is the chain harness's
+    // first-contact entry's `addrs` names a closed port (nothing listens
+    // there), so every mesh dial fails; each entry's `api` is the chain harness's
     // own HTTP URL. The first `read('/blocks/current','tip')` answers
     // with `route: 'api'` before the first check ends; the check reads
     // tips and proofs at those bases and seats the chain.
@@ -1724,7 +1724,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: kA.notisId, addrs: [closedAddrA], api: upA.base },
         { notisId: kB.notisId, addrs: [closedAddrB], api: upB.base },
       ],
@@ -1733,7 +1733,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       resolve: chainResolve(chainOf, K_DEFAULT),
     });
     clients.push(client);
-    // The before-first-check anchor fallback answers routed reads over
+    // The before-first-check first-contact fallback answers routed reads over
     // the API base — no node has a connection yet, so the first read
     // must land at an API before the first check ends.
     const startedAtMs = Date.now();
@@ -1757,10 +1757,10 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s1.chain).toBe(blockHash(chain[0]!.header));
   }, 60_000);
 
-  it('a read before the first check ends is served by an anchor at its API base', async () => {
+  it('a read before the first check ends is served by a first-contact node at its API base', async () => {
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need" — with no check yet completed the
-    // read reaches the anchor's api, not a transport failure.
+    // ends a node the client started from serves any need" — with no check
+    // yet completed the read reaches the node's api, not a transport failure.
     const chain = makeLinkedChain(5, PROFILE);
     const up = await chainUpstream(chain); ups.push(up);
     const k = nodeKeyFromKeyPair(generateKeyPair());
@@ -1770,7 +1770,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [closedAddr], api: up.base }],
+      firstContact: [{ notisId: k.notisId, addrs: [closedAddr], api: up.base }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, 5),
@@ -1809,7 +1809,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [
+      firstContact: [
         { notisId: a.id, addrs: [a.webrtcAddr], api: upA.base },
         { notisId: b.id, addrs: [bBogusAddr], api: upB.base },
       ],
@@ -1854,7 +1854,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       return 'unreachable';
     };
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(chainOf, K_DEFAULT),
@@ -1887,7 +1887,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     builts.push(liar);
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [], api: liar.base }],
+      firstContact: [{ notisId: k.notisId, addrs: [], api: liar.base }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: chainResolve(() => 'unreachable', 5),

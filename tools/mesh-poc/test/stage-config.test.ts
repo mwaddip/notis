@@ -85,8 +85,8 @@ describe('stage/topology.json is whole', () => {
         .filter(([, h]) => h.role === 'public' && h.mesh?.role === 'public')
         .map(([name]) => fakeIdentities()[name]),
     );
-    expect(config.anchors.length).toBeGreaterThan(0);
-    for (const a of config.anchors) {
+    expect(config.firstContact.length).toBeGreaterThan(0);
+    for (const a of config.firstContact) {
       expect(publicIds.has(a.notisId), `anchor ${a.notisId} is a public mesh node`).toBe(true);
     }
   });
@@ -110,8 +110,8 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
-    expect(config.anchors.length, 'the stage has anchors').toBeGreaterThan(0);
-    for (const a of config.anchors) {
+    expect(config.firstContact.length, 'the stage has anchors').toBeGreaterThan(0);
+    for (const a of config.firstContact) {
       expect(a.addrs.length, `anchor ${a.notisId} has addresses`).toBeGreaterThan(0);
       for (const addr of a.addrs) {
         expect(addr).not.toMatch(/\/dns4\/|\/dns6\/|\/dnsaddr\//);
@@ -127,7 +127,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('assertClientConfig accepts the output', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
-    expect(config.anchors.length).toBeGreaterThan(0);
+    expect(config.firstContact.length).toBeGreaterThan(0);
     // MESH_INTERFACE → NAT → "A client's STUN list comes from the
     // public nodes it holds" — the built config writes no
     // `stunServers` key; the page refuses the key in words.
@@ -136,7 +136,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
     // the page builder returns is a shape the page accepts.
     profileFor(config.network);
     expect(() => assertClientConfig({
-      anchors: config.anchors,
+      firstContact: config.firstContact,
       seeds: config.seeds,
     })).not.toThrow();
   });
@@ -184,8 +184,8 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
       ],
     };
     const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
-    expect(config.anchors.length).toBe(1);
-    expect(config.anchors[0]!.addrs.length).toBe(1);
+    expect(config.firstContact.length).toBe(1);
+    expect(config.firstContact[0]!.addrs.length).toBe(1);
   });
 
   // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
@@ -202,7 +202,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
       ],
     };
     const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
-    expect(config.anchors.length).toBe(1);
+    expect(config.firstContact.length).toBe(1);
   });
 
   // MESH_INTERFACE → Discovery — the real stage's exec-mode shape:

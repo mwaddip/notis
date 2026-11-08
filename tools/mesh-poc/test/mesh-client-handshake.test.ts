@@ -129,7 +129,7 @@ describe('mesh-client — the reader handshake', () => {
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -159,7 +159,7 @@ describe('mesh-client — the reader handshake', () => {
     await n.libp2p.unhandle(HANDSHAKE_PROTOCOL);
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -190,7 +190,7 @@ describe('mesh-client — the reader handshake', () => {
     await overrideHandshake(n, { capabilities: READER_CAPABILITIES });
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -236,7 +236,7 @@ describe('mesh-client — the reader handshake', () => {
     });
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -279,7 +279,7 @@ describe('mesh-client — the reader handshake', () => {
     });
 
     const client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',

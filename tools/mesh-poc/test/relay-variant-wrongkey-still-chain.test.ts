@@ -24,7 +24,7 @@ const SRC_MEASURE = join(PACKAGE_ROOT, 'stage', 'lib', 'measure.mjs');
 // public mesh hosts' WebRTC-direct addresses with certhash.
 const BASE_CONFIG = {
   network: 'devnet',
-  anchors: [
+  firstContact: [
     { notisId: 'aa'.repeat(32), addrs: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'] },
     { notisId: 'bb'.repeat(32), addrs: ['/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER'] },
   ],
@@ -91,12 +91,12 @@ describe('s2 variant is built from the private node\'s own announced /p2p-circui
       identities: IDENTITIES,
     });
     expect(r.network).toBe('devnet');
-    expect(r.anchors.length).toBe(1);
-    expect(r.anchors[0]!.notisId).toBe('cc'.repeat(32));
+    expect(r.firstContact.length).toBe(1);
+    expect(r.firstContact[0]!.notisId).toBe('cc'.repeat(32));
     // Composed from pub2's WebRTC-direct (not pub1's), /p2p-circuit/webrtc/p2p/<priv1 peer>.
-    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV1PEER');
+    expect(r.firstContact[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV1PEER');
     // No other address — a browser dials only through the relay here.
-    expect(r.anchors[0]!.addrs.length).toBe(1);
+    expect(r.firstContact[0]!.addrs.length).toBe(1);
     expect(r.seeds).toEqual([]);
     // MESH_INTERFACE → NAT → "A client's STUN list comes from the
     // public nodes it holds" — the variant writes no `stunServers`.
@@ -108,7 +108,7 @@ describe('s2 variant is built from the private node\'s own announced /p2p-circui
       privRow: IDENTITIES.priv2,
       identities: IDENTITIES,
     });
-    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV2PEER');
+    expect(r.firstContact[0]!.addrs[0]).toBe('/ip4/11.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER/p2p-circuit/webrtc/p2p/PRIV2PEER');
   });
 
   it('fails loudly when the private node announces no /p2p-circuit address a browser can reach', () => {

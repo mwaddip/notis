@@ -87,7 +87,7 @@ export async function run(ctx) {
           identities,
         });
         writeConfigVariant(ctx.outDir, variant);
-        const anchorAddrRelayed = variant.anchors[0]?.addrs?.[0] ?? null;
+        const anchorAddrRelayed = variant.firstContact[0]?.addrs?.[0] ?? null;
         const started1 = Date.now();
         // MESH_INTERFACE → Acceptance 2 — the step measures reach, not
         // ranking. Poll `#state` until priv1's own entry carries a

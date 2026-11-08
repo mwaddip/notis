@@ -6,7 +6,7 @@
 // `onState`. The one injectable is `fetch` (config read);
 // `startMeshClient` is the real one — its first statement runs
 // `assertClientConfig`, which throws `MeshConfigError` for a
-// `/dns4/`, `/dns6/` or `/dnsaddr/` anchor before any libp2p node is
+// `/dns4/`, `/dns6/` or `/dnsaddr/` first-contact address before any libp2p node is
 // created.
 //
 // MESH_INTERFACE → NAT → "A client's STUN list comes from the public
@@ -22,7 +22,7 @@
 import { profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { startMeshClient } from '@dagsocial/web/mesh';
-import type { MeshAnchor } from '@dagsocial/web/mesh';
+import type { MeshContact } from '@dagsocial/web/mesh';
 import type { NetworkName } from '@dagsocial/web/mesh';
 import type { ReadNeed } from '@dagsocial/web/mesh';
 import { MeshConfigError } from '@dagsocial/web/mesh';
@@ -39,13 +39,13 @@ export interface ByHandEntry {
 
 export interface PageConfig {
   network: NetworkName;
-  anchors: MeshAnchor[];
+  firstContact: MeshContact[];
   /**
-   * MESH_INTERFACE → Discovery → "Seeds" — contacts without trust. Optional;
-   * default none. A seed's addresses meet the same refusals as an anchor's,
-   * and no answer from a seed makes `anchorReached` true.
+   * MESH_INTERFACE → Discovery → "Known nodes" — contacts without trust. Optional;
+   * default none. A seed's addresses meet the same refusals as a first-contact
+   * node's, and no answer from a seed makes `anchorReached` true.
    */
-  seeds?: MeshAnchor[];
+  seeds?: MeshContact[];
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — entries
    * applied through `client.addByHand` after start, in the given
@@ -85,7 +85,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   let client;
   try {
     client = await startFn({
-      anchors: config.anchors,
+      firstContact: config.firstContact,
       ...(config.seeds !== undefined ? { seeds: config.seeds } : {}),
       network: config.network,
       profile,
@@ -178,9 +178,9 @@ function validateConfig(raw: unknown): PageConfig {
   if (net !== 'devnet' && net !== 'testnet' && net !== 'mainnet') {
     throw new Error(`config.network must be 'devnet' | 'testnet' | 'mainnet', not ${JSON.stringify(net)}`);
   }
-  const anchors = o['anchors'];
-  if (!Array.isArray(anchors)) {
-    throw new Error('config.anchors must be an array');
+  const firstContact = o['firstContact'];
+  if (!Array.isArray(firstContact)) {
+    throw new Error('config.firstContact must be an array');
   }
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the
   // public nodes it holds" — a config carrying the key is refused, in
@@ -190,16 +190,16 @@ function validateConfig(raw: unknown): PageConfig {
       'config.stunServers is refused: the client takes its STUN servers from the nodes it holds',
     );
   }
-  // MESH_INTERFACE → Discovery → "Seeds" — optional, default none; when present
+  // MESH_INTERFACE → Discovery → "Known nodes" — optional, default none; when present
   // it must be an array (its addresses are refused by `assertClientConfig`,
   // not here).
   const seedsRaw = o['seeds'];
-  let seeds: MeshAnchor[] | undefined;
+  let seeds: MeshContact[] | undefined;
   if (seedsRaw !== undefined) {
     if (!Array.isArray(seedsRaw)) {
       throw new Error('config.seeds must be an array when present');
     }
-    seeds = seedsRaw as MeshAnchor[];
+    seeds = seedsRaw as MeshContact[];
   }
   // MESH_INTERFACE → Discovery → "A node added by hand" — optional
   // list of `{ notisId, addrs, trusted }`. Shape only here; the
@@ -215,7 +215,7 @@ function validateConfig(raw: unknown): PageConfig {
   }
   return {
     network: net,
-    anchors: anchors as MeshAnchor[],
+    firstContact: firstContact as MeshContact[],
     ...(seeds !== undefined ? { seeds } : {}),
     ...(byHand !== undefined ? { byHand } : {}),
   };

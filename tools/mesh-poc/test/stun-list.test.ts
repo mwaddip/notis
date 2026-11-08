@@ -22,11 +22,11 @@ function makeEntry(partial: {
   status: NodeStatus;
   addrs: string[];
   readMs?: number | null;
-  anchor?: boolean;
+  firstContact?: boolean;
 }): NodeEntry {
   return {
     notisId: partial.notisId,
-    anchor: partial.anchor ?? false,
+    firstContact: partial.firstContact ?? false,
     byHand: false,
     status: partial.status,
     failures: 0,
@@ -141,7 +141,7 @@ describe('iceConfiguration — client-level', () => {
     // defaults are what the empty array stops.
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
+      firstContact: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
@@ -153,7 +153,7 @@ describe('iceConfiguration — client-level', () => {
   it('a client started from anchors alone builds its ICE servers from them', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{
+      firstContact: [{
         notisId: anchorKey.notisId,
         addrs: ['/ip4/11.100.0.11/udp/9999/webrtc-direct'],
       }],

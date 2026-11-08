@@ -32,7 +32,7 @@ export declare function s8NoProofsObserve(
   prev: unknown,
   s: unknown,
   honestIds: string[],
-  anchorIds: string[],
+  firstContactIds: string[],
 ): {
   base: null | { checks: number; proofReads: number };
   final: null | {
@@ -41,7 +41,7 @@ export declare function s8NoProofsObserve(
     honestNodeStatuses: Array<{ notisId: string; status: string }>;
   };
 };
-export declare function buildS8NoProofsExpression(honestIds: string[], anchorIds: string[]): string;
+export declare function buildS8NoProofsExpression(honestIds: string[], firstContactIds: string[]): string;
 export declare const S8_NOPROOFS_PREDICATE: string;
 export declare function buildS8ForkExpression(laggingId: string): string;
 export declare const S8_FORK_PREDICATE: string;
