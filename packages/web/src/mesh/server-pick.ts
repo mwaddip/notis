@@ -115,18 +115,23 @@ export function orderServers(
   };
 
   if (!firstCheckEnded) {
-    // Before the first check ends, every first-contact node serves any
-    // need: its mesh base if connected, else at its API base
+    // Before the first check ends, every first-contact or known entry
+    // serves any need: first-contact first, then known, in list order —
+    // its mesh base if connected, else at its API base
     // (`MESH_INTERFACE → The client's node list → "Before the first check
-    // ends a node the client started from serves any need"`). The others do
-    // not serve until a check has read them; a `blacklisted` node never —
-    // "A `blacklisted` node is never one [a candidate]" holds at every
-    // stage.
-    //
-    // AHEAD OF CODE (2026-11-08): the known-entry fallback is not wired
-    // up here yet; the next unit lands it after the first-contact loop.
+    // ends a node the client started from serves any need"`). The others
+    // do not serve until a check has read them; a `blacklisted` node
+    // never — "A `blacklisted` node is never one [a candidate]" holds at
+    // every stage.
     for (const n of nodes) {
       if (!n.firstContact) continue;
+      if (n.status === 'blacklisted') continue;
+      if (n.meshUsable) push(n.id, n.meshBase);
+      else if (n.api !== null) push(n.id, n.api);
+    }
+    for (const n of nodes) {
+      if (n.firstContact) continue;
+      if (!n.known) continue;
       if (n.status === 'blacklisted') continue;
       if (n.meshUsable) push(n.id, n.meshBase);
       else if (n.api !== null) push(n.id, n.api);

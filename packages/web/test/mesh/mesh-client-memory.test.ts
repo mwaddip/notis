@@ -207,7 +207,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
   });
 
-  it.fails('a kept proof that verifies seats the chain at start; the first check\'s honest continuation switches to it', async () => {
+  it('a kept proof that verifies seats the chain at start; the first check\'s honest continuation switches to it', async () => {
     const keptProof = proofOf(MK);
     const nextProof = proofOf(MK + 30); // gap > DEFAULT_K → phase 4 proof read
     const a = keyPair();
@@ -246,7 +246,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(snap.proof!).toEqual(encodeNipopowProof(nextProof));
   }, 90_000);
 
-  it.fails('a node whose proof does not continue the kept one is placed off the chain and keeps that verdict', async () => {
+  it('a node whose proof does not continue the kept one is placed off the chain and keeps that verdict', async () => {
     // The kept chain is longer, so `compareProofs` answers `'a'` (the
     // fork lost). Both share block 1 (stampIntervalMs changes `createdAt`
     // from height 2 up), so they are comparable.
@@ -295,7 +295,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(s2.notContinued).toBe(true);
   }, 90_000);
 
-  it.fails('every node off the kept chain: notContinued is true and the chain stays the kept one', async () => {
+  it('every node off the kept chain: notContinued is true and the chain stays the kept one', async () => {
     const keptProof = proofOf(100);
     const forkProof = proofOf(MK, 60_001);
     const a = keyPair();
@@ -322,7 +322,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(s.tip?.height).toBe(100);
   }, 90_000);
 
-  it.fails('a kept proof that no longer verifies is dropped: the client starts with no chain', async () => {
+  it('a kept proof that no longer verifies is dropped: the client starts with no chain', async () => {
     // Build a proof, then pass a `wallClock` far enough back that the
     // header stamps are past the client's clock + the drift bound —
     // `verifyProof` answers `{ ok: false, reason: 'clock' }`.
@@ -353,7 +353,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(client.toRemember().proof).toBeNull();
   }, 60_000);
 
-  it.fails('a kept proof that does not decode is dropped: the client starts with no chain', async () => {
+  it('a kept proof that does not decode is dropped: the client starts with no chain', async () => {
     const a = keyPair();
     const h = harness();
     const base = 'http://127.0.0.1:1';
@@ -380,7 +380,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(snap.answeredForks).toEqual(['f1']);
   }, 60_000);
 
-  it.fails('every verified proof incomparable with the kept one: memory is dropped and the best proof seats', async () => {
+  it('every verified proof incomparable with the kept one: memory is dropped and the best proof seats', async () => {
     const keptProof = proofOf(MK);
     // A chain whose block 1 differs — `forceLevels` for block 1 yields
     // a different `powNonce` at that height, so its hash differs and
@@ -418,7 +418,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(snap.proof).toEqual(encodeNipopowProof(foreignProof));
   }, 90_000);
 
-  it.fails('onChecked fires after every check with the nodes on the chain and the kept proof', async () => {
+  it('onChecked fires after every check with the nodes on the chain and the kept proof', async () => {
     const keptProof = proofOf(MK);
     const nextProof = proofOf(MK + 30);
     const a = keyPair();
@@ -451,7 +451,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(seen[0]!.replace).toBe(false);
   }, 90_000);
 
-  it.fails('a chain settled by a proof the kept one beats does not replace the kept proof in the snapshot', async () => {
+  it('a chain settled by a proof the kept one beats does not replace the kept proof in the snapshot', async () => {
     // Memory has a long chain; the node serves a shorter one that
     // loses to it. `judgeByMemory` marks the node `lost`, `best` is
     // null, nothing settles, and the snapshot's `proof` stays the
@@ -481,7 +481,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(snap.proof).toEqual(encodeNipopowProof(keptProof));
   }, 90_000);
 
-  it.fails('a blacklisted node\'s key is in the snapshot\'s dropped', async () => {
+  it('a blacklisted node\'s key is in the snapshot\'s dropped', async () => {
     // The node answers `/blocks/current` with a shape `isTipShape`
     // refuses: that is a `lie` of kind `malformed` at an API base,
     // which the API-base row of the node-list table reads as a
@@ -544,7 +544,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(Array.isArray(snap.dropped)).toBe(true);
   }, 90_000);
 
-  it.fails('before the first check ends a known node serves a read when no first-contact node is reached', async () => {
+  it('before the first check ends a known node serves a read when no first-contact node is reached', async () => {
     const seedId = keyPair().notisId;
     const fcKey = keyPair().notisId;
     const h = harness();
@@ -576,7 +576,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(seedEntry.firstContact).toBe(false);
   }, 60_000);
 
-  it.fails('a known node is an entry like any other after the first check', async () => {
+  it('a known node is an entry like any other after the first check', async () => {
     const seedId = keyPair().notisId;
     const fcKey = keyPair().notisId;
     const h = harness();
