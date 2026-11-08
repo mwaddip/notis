@@ -388,7 +388,7 @@ describe('s7 (reach and load)', () => {
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
   });
-  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // MESH_INTERFACE → What the client remembers → "The agreement counts" —
   // step 4 polls one page until its state carries `checks >= 1` and
   // reads the counts from the returned value. The predicate is false
   // on a fresh page's first-rendered state (`{ checks: 0, agreement:

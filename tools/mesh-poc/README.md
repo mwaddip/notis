@@ -30,7 +30,7 @@ reaching the inviter by key — are later work; they are not here.
 | 6 | Every link is authenticated by the key it was dialled for; a key mismatch is refused at the link. | `MESH_INTERFACE → Transports → "Every link is authenticated by the key it was dialled for."` |
 | 7 | A page under UDP-blocked conditions moves to secure WebSocket on an opted-in node's bare-IP certificate. | `MESH_INTERFACE → The IP certificate` |
 | 8 | Every STUN server is a mesh node named by IP, drawn from the public nodes the client holds. | `MESH_INTERFACE → NAT → "A client's STUN list comes from the public nodes it holds"` |
-| 9 | With no anchor reached, the page says, in these words: `No anchor reached. Nothing shown here is verified.` | `MESH_INTERFACE → No anchor reached` |
+| 9 | When no reachable node continues the kept chain, the page keeps its own and says, in these words: `No node reached continues the chain you verified.` | `MESH_INTERFACE → What the client remembers → "When no node continues it"` |
 | 10 | Malformed and invalid proofs blacklist with their evidence; a valid proof of a lighter chain reads `behind`. | `MESH_INTERFACE → The client's node list` |
 | 11 | A node added by the reader by hand is dialled at its private address; a remote node offering a private address is refused. | `MESH_INTERFACE → Discovery → "A node added by hand"` |
 
@@ -47,8 +47,8 @@ A build that satisfies the claims but does any of these has **failed**:
   certificate, on the UDP-blocked fallback (`MESH_INTERFACE → The IP certificate`).
 - A protocol of our own where an established one exists.
 - A WASM dependency.
-- A client that carries on silently when it reached no anchor
-  (`MESH_INTERFACE → No anchor reached`).
+- A client that silently moves off the chain it verified when no reachable node continues it
+  (`MESH_INTERFACE → What the client remembers → "When no node continues it"`).
 - A blacklist that writes a node off for not answering — a timeout stays `retry`
   (`MESH_INTERFACE → The client's node list`).
 

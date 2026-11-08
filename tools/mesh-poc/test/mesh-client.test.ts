@@ -1293,7 +1293,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   }, 90_000);
 
   it('agreement counts come from the latest check', async () => {
-    // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+    // MESH_INTERFACE → What the client remembers → "The agreement counts" —
     // after each check `state.agreement` holds `{ agreeing,
     // agreeingAnchors, notAgreeing }` from the latest `TipResult`.
     const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
