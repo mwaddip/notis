@@ -162,6 +162,18 @@ describe('memory — judgeByMemory', () => {
     expect(r.best).toBeNull();
     expect(r.lost).toEqual([]);
   });
+
+  it('a node serving exactly the kept chain is best when no other continues it', () => {
+    // `compareProofs(kept, kept)` ties — `aAbove` and `bAbove` empty,
+    // scores `0n` and `0n` — so the node's proof is a candidate, and
+    // the only one: `best` is its index, `lost` empty, `foreign`
+    // false.
+    const kept = proveWithReader(makeReader(buildMinedChain({ count: MK })), { m: M, k: K });
+    const r = judgeByMemory(kept, [nodeTip(true, kept)], PROFILE, NOW);
+    expect(r.best).toBe(0);
+    expect(r.lost).toEqual([]);
+    expect(r.foreign).toBe(false);
+  });
 });
 
 describe('memory — forkKey', () => {
