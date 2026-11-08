@@ -168,19 +168,38 @@ describe('node-list', () => {
     expect(list3.entry(idC)!.yours).toBe(false);
   });
 
-  it('removeByHand clears `yours` and leaves the entry in the list', () => {
+  it.fails('removeByHand deletes an entry added by hand alone', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — a
+    // hand-only entry (`byHand && !fromFirstContactList`) is deleted,
+    // so its addresses no longer in the list and the gater refuses
+    // the private one the reader entered next dial.
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
+    const list = new NodeList([], own, () => 0);
     list.addByHand(idA, [addr], true);
+    expect(list.entry(idA)).toBeDefined();
+    expect(list.configuredAddrs(idA)).toEqual([addr]);
+    list.removeByHand(idA);
+    expect(list.entry(idA)).toBeUndefined();
+    expect(list.configuredAddrs(idA)).toEqual([]);
+  });
+
+  it.fails('removeByHand leaves a first-contact entry in place, no longer yours', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — an entry
+    // the first-contact list named stays after `removeByHand`, with
+    // `yours = false` and `byHand = false`; `configuredAddrs` still
+    // answers the build addresses.
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    list.addByHand(idA, [], true);
     expect(list.entry(idA)!.yours).toBe(true);
+    expect(list.entry(idA)!.byHand).toBe(true);
     expect(list.entry(idA)!.firstContact).toBe(true);
     list.removeByHand(idA);
     const after = list.entry(idA)!;
     expect(after.yours).toBe(false);
-    // The entry stays; the build-list entry keeps its firstContact and byHand.
+    expect(after.byHand).toBe(false);
     expect(after.firstContact).toBe(true);
-    expect(after.byHand).toBe(true);
-    expect(after.addrs).toEqual([addr]);
+    expect(after.addrs).toEqual([a1]);
+    expect(list.configuredAddrs(idA)).toEqual([a1]);
   });
 
   it('a hand-added node caught lying is blacklisted and leaves the candidate set', () => {
@@ -314,23 +333,27 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it('removeByHand clears `yours` on a hand-added entry and on a build node', () => {
+  it.fails('removeByHand on a pure hand-added entry removes it; on a build node it clears yours and byHand', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — the settings
-    // row's commit path. `removeByHand` clears `yours`; the entry stays in
-    // the list, whether it was a build node or a pure hand-added one.
+    // row's commit path. A hand-only entry is removed. A build node
+    // marked by hand stays with `yours = false` and `byHand = false`.
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     list.addByHand(idB, [a2], true);
     expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
     expect(list.entry(idB)!.yours).toBe(true);
     list.removeByHand(idB);
-    expect(list.entry(idB)!.yours).toBe(false);
-    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
-    // On a build node marked by hand: `yours` clears, the entry stays.
+    expect(list.entry(idB)).toBeUndefined();
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+    // On a build node marked by hand: `yours` and `byHand` clear, the
+    // entry stays.
     list.addByHand(idA, [a2], true);
     expect(list.entry(idA)!.yours).toBe(true);
+    expect(list.entry(idA)!.byHand).toBe(true);
     list.removeByHand(idA);
-    expect(list.entry(idA)!.yours).toBe(false);
-    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
+    const after = list.entry(idA)!;
+    expect(after.yours).toBe(false);
+    expect(after.byHand).toBe(false);
+    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
   });
 
   it('removeByHand on an id the list does not hold is a no-op', () => {
