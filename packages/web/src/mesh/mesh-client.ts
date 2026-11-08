@@ -1808,9 +1808,10 @@ class MeshClientImpl implements MeshClient {
           }
         }
         if (judgment.foreign) {
+          // The kept proof shares no block with any verified proof:
+          // it is dropped, and the settle below takes the resolve's
+          // winner. `judgedWinner` / `judgedTip` already name those.
           this.kept = null;
-          // settle takes result.winner as today — judgedWinner/Tip
-          // already hold those.
         } else if (judgment.best !== null) {
           const b = result.nodes[judgment.best]!;
           judgedWinner = b;
@@ -1832,20 +1833,23 @@ class MeshClientImpl implements MeshClient {
       // new chain.
       if (judgedWinner !== null && judgedTip !== null) {
         const winnerTipHash = blockHash(judgedTip);
+        const vr = judgedWinner.verifyResult;
+        const proof = judgedWinner.proof;
         if (winnerTipHash !== null
-            && this.chain.standing(winnerTipHash, judgedTip.height) !== 'held') {
-          const vr = judgedWinner.verifyResult;
-          const proof = judgedWinner.proof;
-          if (vr !== null && vr.ok === true && proof !== null) {
+            && vr !== null && vr.ok === true && proof !== null) {
+          // MESH_INTERFACE → What the client remembers — the kept proof
+          // is "the last proof the client verified of the chain it holds —
+          // a check's winner, a switch, its own tip's proof". It moves
+          // forward whenever a verified proof of the chain it holds
+          // reaches the check — whether the chain switches or the tip
+          // is byHash-held — and never where the new proof loses to it.
+          if (this.kept === null
+              || continues(this.kept, proof, this.profile, this.wallClock())) {
+            this.kept = proof;
+          }
+          if (this.chain.standing(winnerTipHash, judgedTip.height) !== 'held') {
             const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
             this.chain.settle(suffix, vr.headers[0]!);
-            // MESH_INTERFACE → What the client remembers — "The kept
-            // proof moves forward only": a proof is kept only where it
-            // does not lose to the one kept.
-            if (this.kept === null
-                || continues(this.kept, proof, this.profile, this.wallClock())) {
-              this.kept = proof;
-            }
             // MESH_INTERFACE → The client's node list → "A check" —
             // the kept verdicts are dropped when the chain switches.
             this.keptVerdicts.clear();

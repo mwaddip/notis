@@ -615,20 +615,19 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(seedEntry.status).toBe('ok');
   }, 90_000);
 
-  it.fails('a verified proof of the held tip, read at a later check, becomes the kept proof', async () => {
-    // Memory seats the chain at MK. A gossiped block extends the window
-    // by one, so the chain's tip hash is byHash-held but the kept proof
-    // names the pre-extension tip. A check's verified proof of the
-    // extended chain's tip — hash held, no switch — should still become
-    // the kept proof, since the kept proof is "the last proof the client
-    // verified of the chain it holds" (`MESH_INTERFACE → What the client
-    // remembers`).
+  it('a verified proof of the held tip, read at a later check, becomes the kept proof', async () => {
+    // Memory seats the chain at MK. The node serves the extended
+    // chain's tip (MK+1); phase 3a's fill is refused (`/blocks/:h`
+    // answers 404), so the tip stays unplaced and phase 4 reads the
+    // proof. A gossiped block extending the chain to MK+1 fires
+    // inside the `resolve` wrapper — the chain extends while the
+    // proof read is in flight — so when the settle weighs the
+    // winner's tip it finds it byHash-held and skips the switch. The
+    // kept proof must still move forward to the winner's, under the
+    // rule "the last proof the client verified of the chain it holds"
+    // (`MESH_INTERFACE → What the client remembers`).
     const keptProof = proofOf(MK);
     const extendedProof = proofOf(MK + 1);
-    // The (MK+1)-th header of the same chain, wrapped as an OrderingBlock
-    // the gossip handler can decode and `HeldChain.extend` can link
-    // (`prevBlockHash === tip.hash`). The handler reads only the header;
-    // the body is held to the shape `decodeOrderingBlock` admits.
     const extendedChain = buildMinedChain({ count: MK + 1 });
     const nextHeader = extendedChain.headers[MK]!;
     const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
@@ -641,8 +640,34 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     const a = keyPair();
     const h = harness();
     const base = 'http://127.0.0.1:1';
-    h.tips.set(base, tipOf(MK));
-    h.proofs.set(base, keptProof);
+    h.tips.set(base, tipOf(MK + 1));
+    h.proofs.set(base, extendedProof);
+
+    interface PubsubStub {
+      reportMessageValidationResult: (a: string, b: string, c: number) => void;
+      dispatchEvent: (ev: Event) => void;
+    }
+    let pubsub: PubsubStub | null = null;
+    let injected = false;
+    const underlying = h.resolve;
+    const wrappedResolve: ResolveFn = async (urls, m, k, profile, now, fetch) => {
+      const r = await underlying(urls, m, k, profile, now, fetch);
+      if (!injected && pubsub !== null) {
+        injected = true;
+        pubsub.reportMessageValidationResult = () => { /* fake msgId */ };
+        pubsub.dispatchEvent(new CustomEvent('gossipsub:message', {
+          detail: {
+            msg: {
+              topic: gossipTopics(PROFILE.magic).orderingBlock,
+              data: encodeOrderingBlock(extraBlock),
+            },
+            msgId: 'fake-msg-id',
+            propagationSource: { toString: () => 'fake-peer' },
+          },
+        }));
+      }
+      return r;
+    };
 
     const client = await startMeshClient({
       firstContact: [{ notisId: a.notisId, addrs: [], api: base }],
@@ -652,40 +677,17 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
-      resolve: h.resolve,
+      resolve: wrappedResolve,
     });
     clients.push(client);
+    pubsub = (client.libp2p as unknown as { services: { pubsub: PubsubStub } }).services.pubsub;
 
-    // Dispatch a gossipsub message directly to the handler, stubbing
-    // `reportMessageValidationResult` since the fake msgId was never
-    // tracked by pubsub. `HeldChain.extend` fires and the chain's tip
-    // moves to MK+1, with the pre-extension kept proof unchanged.
-    const pubsub = (client.libp2p as unknown as {
-      services: { pubsub: {
-        reportMessageValidationResult: (a: string, b: string, c: number) => void;
-        dispatchEvent: (ev: Event) => void;
-      } };
-    }).services.pubsub;
-    pubsub.reportMessageValidationResult = () => { /* fake msgId: no-op */ };
-    pubsub.dispatchEvent(new CustomEvent('gossipsub:message', {
-      detail: {
-        msg: {
-          topic: gossipTopics(PROFILE.magic).orderingBlock,
-          data: encodeOrderingBlock(extraBlock),
-        },
-        msgId: 'fake-msg-id',
-        propagationSource: { toString: () => 'fake-peer' },
-      },
-    }));
-    expect(client.state().tip?.height).toBe(MK + 1);
-
-    // A later check: the node now serves a proof of the extended chain.
-    // Its tip is byHash-held by the just-extended window, so the settle
-    // branch is skipped. The kept proof must still move forward.
-    h.tips.set(base, tipOf(MK + 1));
-    h.proofs.set(base, extendedProof);
     await client.check();
 
+    // The chain extended during the proof read: the winner's tip is
+    // byHash-held, the settle branch is skipped, and the kept proof
+    // moves forward to the winner's.
+    expect(client.state().tip?.height).toBe(MK + 1);
     expect(client.toRemember().proof).toEqual(encodeNipopowProof(extendedProof));
   }, 90_000);
 });
