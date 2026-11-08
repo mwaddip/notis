@@ -41,6 +41,7 @@ function makeEntry(partial: {
     transport: null,
     path: null,
     api: null,
+    seenMs: null,
   };
 }
 

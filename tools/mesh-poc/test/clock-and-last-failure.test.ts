@@ -55,6 +55,7 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     transport: over.transport ?? null,
     path: over.path ?? null,
     api: over.api ?? null,
+    seenMs: over.seenMs ?? null,
   };
 }
 function emptyState(over: Partial<ClientState> = {}): ClientState {

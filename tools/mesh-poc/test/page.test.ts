@@ -43,6 +43,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     transport: over.transport ?? null,
     path: over.path ?? null,
     api: over.api ?? null,
+    seenMs: over.seenMs ?? null,
   };
 }
 
