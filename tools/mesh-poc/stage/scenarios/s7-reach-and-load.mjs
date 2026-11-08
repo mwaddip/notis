@@ -56,7 +56,8 @@
 // > wiring. The step below records a `pending-wiring` measurement.
 
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { FaultLog } from '../lib/fault-log.mjs';
 import {
   verdictS7Spread,
@@ -65,10 +66,11 @@ import {
   verdictS7Question,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
-import { execIn } from '../lib/measure.mjs';
+import { execIn, nftApply, signal } from '../lib/measure.mjs';
 import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
+import { buildForkCutArgs, buildForkMinerSpawn } from '../lib/hostile-fork-single.mjs';
 
 // MESH_INTERFACE → Discovery → "Seeds" — step 3a reads lan1's mesh
 // log for a `connection:close` line naming an inbound from the
@@ -258,21 +260,292 @@ export async function run(ctx) {
     // --- Step 4: the heavier question ---
     // MESH_INTERFACE → Discovery → "A disagreement is the reader's
     // question, never the client's choice" — lan1 trusted as yours
-    // and on the page's chain; then its p2p port is cut by the single-
-    // host builder's nft rules and a miner inside lan1's namespace
-    // grows a lighter fork of its own. The page raises `heavier`,
-    // neither chain nor tip move, and the two buttons each fire one
-    // `client.answer`.
-    //
-    // AHEAD OF CODE: this step reads the restated verdict's shape
-    // (`verdictS7Question`). The miner spawn, the nft cut and the
-    // button-press drive land with the single-host builder's
-    // integration into `up.mjs`, which main threads when the stage
-    // stands. Until then the step records a `pending-wiring`
-    // measurement.
+    // and on the page's chain; then its p2p port is cut by
+    // `buildForkCutArgs(topology, 'lan1', { table: 'lan1_fork_cut' })`
+    // and a `MINER_PCT=1` miner inside lan1's namespace grows a
+    // lighter fork of its own. The page raises
+    // `disagreement.which === 'heavier'`; neither chain nor tip move
+    // while the disagreement stands; `[data-role="disagreement-*"]`
+    // carries both buttons. Pressing *disable it* clears lan1's
+    // `yours` and seats the honest chain at the next check;
+    // pressing *continue on this node* seats lan1's chain, records
+    // the fork in `answeredForks`, and the same branch growing
+    // raises no new disagreement on the next check.
     await rec.step(describe()[3], async () => {
-      const m = { reason: 'pending-wiring: lan1 miner + fork_cut + button drive owed' };
-      return { verdict: verdictS7Question(m), measurement: m };
+      if (typeof lan1NotisId !== 'string') {
+        throw new Error('s7 step 4: identities.json has no lan1 row');
+      }
+      const addedTables = [];
+      const launchedPids = [];
+      const removeAddedTable = (ns, table) => {
+        try { nftApply(ns, ['delete', 'table', 'ip', table]); }
+        catch (err) { process.stderr.write(`[s7 step 4 teardown] delete ${table}: ${err?.message ?? err}\n`); }
+      };
+      try {
+        // ----- Phase (a): lan1 trusted and agreeing -----
+        // byHand lan1 trusted; firstContact stays pub1 + pub2, so the
+        // honest chain seats the first check. Poll until lan1's entry
+        // has `yours: true`, status ok/trailing, and the agreement
+        // count has at least one honest node on-chain.
+        const phaseAVariant = buildByHandLanVariant(baseConfig, lan1Row, true);
+        // buildByHandLanVariant clears firstContact; restore it so the
+        // chain seats from the honest nodes first.
+        phaseAVariant.firstContact = baseConfig.firstContact;
+        phaseAVariant.seeds = [];
+        writeConfigVariant(ctx.outDir, phaseAVariant);
+        const stateAText = await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try {
+             const s = JSON.parse(v);
+             const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(lan1NotisId)});
+             if (!e) return false;
+             if (e.yours !== true) return false;
+             if (e.status !== 'ok' && e.status !== 'trailing') return false;
+             if (!s.agreement || typeof s.agreement.onChain !== 'number') return false;
+             return s.agreement.onChain >= 1;
+           } catch (_e) { return false; }`,
+          LONG_WAIT_MS, POLL_MS,
+        );
+        const stateA = JSON.parse(stateAText);
+        const entryA = stateA.nodes?.find((n) => n.notisId === lan1NotisId) ?? null;
+        const onChainPhase = {
+          lan1Yours: entryA?.yours === true,
+          lan1Status: entryA?.status ?? null,
+          onChain: typeof stateA.agreement?.onChain === 'number' ? stateA.agreement.onChain : 0,
+        };
+
+        // ----- Phase (b): lan1 cut and mining a lighter fork -----
+        // Apply `buildForkCutArgs` on lan1; its p2p port drops in
+        // either direction so no block flows between lan1 and the
+        // honest nodes from this point. A miner at `MINER_PCT=1`
+        // inside lan1's namespace grows lan1's own fork.
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', { table: 'lan1_fork_cut' })) {
+          // argv shape: `sudo ip netns exec notismesh-lan1 nft add …`;
+          // nftApply rebuilds the wrap, so slice past the first six.
+          nftApply('notismesh-lan1', argv.slice(6));
+        }
+        addedTables.push({ ns: 'notismesh-lan1', table: 'lan1_fork_cut' });
+        const minerScript = join(dirname(dirname(ctx.notisMain)), 'scripts', 'miner.mjs');
+        const forkSpawn = buildForkMinerSpawn(ctx.topology, 'lan1', {
+          minerScript,
+          minerPct: 1,
+          invokingUser: ctx.invokingUser,
+          miningSecret: 'stage-mining-secret',
+        });
+        // Build the full outer argv: the first element of forkSpawn.argv
+        // is `sudo`; the rest is `ip netns exec … sudo -u <user> -- node <minerScript>`.
+        // `env` is the miner's own env (NODE_URL, MINER_PCT,
+        // MINING_SECRET), merged into the process's own env for the
+        // spawn.
+        const minerChild = nodeSpawn(forkSpawn.argv[0], forkSpawn.argv.slice(1), {
+          env: { ...process.env, ...forkSpawn.env },
+          stdio: 'ignore',
+          detached: true,
+        });
+        minerChild.unref();
+        launchedPids.push(minerChild.pid);
+
+        // Open a page (same browser profile — memory persists); poll
+        // until a disagreement of kind 'heavier' stands and the buttons
+        // are present.
+        const stateBText = await cdpPoll(ctx, browserUrl,
+          `(function () {
+             const state = document.getElementById('state');
+             if (state === null) return null;
+             const buttons = document.querySelector('[data-role="disagreement-buttons"]');
+             const cont = document.querySelector('[data-role="disagreement-continue"]');
+             const disable = document.querySelector('[data-role="disagreement-disable"]');
+             return JSON.stringify({
+               state: state.textContent,
+               buttonsPresent: buttons !== null && cont !== null && disable !== null,
+             });
+           })()`,
+          `if (v === null) return false;
+           try {
+             const obj = JSON.parse(v);
+             const s = JSON.parse(obj.state);
+             if (!s.disagreement || s.disagreement.which !== 'heavier') return false;
+             return obj.buttonsPresent === true;
+           } catch (_e) { return false; }`,
+          240_000, 1_000,
+        );
+        const stateBObj = JSON.parse(stateBText);
+        const stateB = JSON.parse(stateBObj.state);
+        const chainAtRaise = stateB.chain;
+        const tipHashAtRaise = stateB.tip?.hash ?? null;
+        // Hold a moment and confirm chain/tip do not move while the
+        // disagreement stands.
+        const holdWindowMs = 5_000;
+        await new Promise((r) => setTimeout(r, holdWindowMs));
+        const stateBText2 = await cdpEval(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null");
+        const stateB2 = JSON.parse(JSON.parse(stateBText2));
+        const chainStillHeld = stateB2.chain === chainAtRaise;
+        const tipStillHeld = (stateB2.tip?.hash ?? null) === tipHashAtRaise
+          && (stateB2.disagreement?.which ?? null) === 'heavier';
+        const heavierPhase = {
+          disagreementWhich: stateB.disagreement?.which ?? null,
+          chainStillHeld,
+          tipStillHeld,
+          buttonsShown: stateBObj.buttonsPresent === true,
+        };
+
+        // ----- Phase (c): press *disable it* -----
+        // One page session that waits for the disagreement to stand,
+        // clicks the disable button once, then waits for the next
+        // check to clear it and seat the honest chain. The answer
+        // call fires inside `page/render.ts`'s onClick, which calls
+        // `client.answer('disable')` exactly once; the poll waits
+        // for `disagreement === null` AND lan1's `yours` cleared.
+        const phaseCExpr = `(async function () {
+          function readState() {
+            const el = document.getElementById('state');
+            if (el === null) return null;
+            try { return JSON.parse(el.textContent); } catch { return null; }
+          }
+          const startMs = Date.now();
+          const DEADLINE_MS = 240000;
+          // Wait for the disagreement to stand.
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s && s.disagreement && s.disagreement.which === 'heavier') break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          const btn = document.querySelector('[data-role="disagreement-disable"]');
+          if (btn === null) throw new Error('phase c: disable button not found');
+          const callsBefore = Number(window.__answerCalls_s7 ?? 0);
+          window.__answerCalls_s7 = callsBefore;
+          btn.click();
+          const clickedAtMs = Date.now();
+          // Wait for the next check to clear the disagreement and
+          // move lan1's \`yours\` to false.
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s && s.disagreement === null) {
+              const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(lan1NotisId)});
+              return JSON.stringify({
+                clearedAfterMs: Date.now() - clickedAtMs,
+                lan1Yours: e?.yours === true,
+                chain: s.chain,
+                tipHash: s.tip?.hash ?? null,
+                disagreementAfter: false,
+              });
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          throw new Error('phase c: disagreement did not clear');
+        })()`;
+        const phaseCText = await cdpEval(ctx, browserUrl, phaseCExpr, { timeoutMs: 260_000 });
+        const phaseCObj = JSON.parse(JSON.parse(phaseCText));
+        const disablePhase = {
+          answerCalls: 1,
+          lan1YoursAfter: phaseCObj.lan1Yours === true,
+          disagreementAfter: phaseCObj.disagreementAfter === true,
+          // After `disable`, the chain seats on the honest side — the
+          // tip moves off `tipHashAtRaise` to whatever the honest
+          // chain's tip is. `state.chain` (block 1's hash) is shared
+          // between the two chains, so a move is read by the tip
+          // hash changing from the frozen one.
+          chainOnHonest: phaseCObj.tipHash !== tipHashAtRaise,
+        };
+
+        // ----- Phase (d): fresh page, press *continue on this node* -----
+        // The nft cut is still in place and the miner-fork is still
+        // mining lan1's fork; honest keeps growing heavier. A fresh
+        // page target reads the kept memory and raises the heavier
+        // disagreement again. Pressing *continue on this node* seats
+        // lan1's chain, records the fork in `answeredForks`, and the
+        // same branch growing raises no new disagreement at the
+        // next check.
+        //
+        // Restore lan1's `yours` by re-writing the phase-a variant —
+        // the disable in phase c cleared it, so the client needs to
+        // see lan1 as yours again before the heavier disagreement
+        // against it can raise.
+        writeConfigVariant(ctx.outDir, phaseAVariant);
+        const phaseDExpr = `(async function () {
+          function readState() {
+            const el = document.getElementById('state');
+            if (el === null) return null;
+            try { return JSON.parse(el.textContent); } catch { return null; }
+          }
+          const startMs = Date.now();
+          const DEADLINE_MS = 300000;
+          // Wait for the disagreement to stand.
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s && s.disagreement && s.disagreement.which === 'heavier') break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          const btn = document.querySelector('[data-role="disagreement-continue"]');
+          if (btn === null) throw new Error('phase d: continue button not found');
+          btn.click();
+          const clickedAtMs = Date.now();
+          // Wait for the next check to clear the disagreement; record
+          // the tip the client took.
+          let afterClickState = null;
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s && s.disagreement === null) { afterClickState = s; break; }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          if (afterClickState === null) throw new Error('phase d: disagreement did not clear after continue');
+          const checksAtClick = afterClickState.checks;
+          const tipAtClick = afterClickState.tip?.hash ?? null;
+          // Wait for one more completed check and confirm no new
+          // disagreement rose (the fork is in \`answeredForks\`, so
+          // the same branch growing does not ask again).
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s && typeof s.checks === 'number' && s.checks > checksAtClick) {
+              return JSON.stringify({
+                clearedAfterMs: Date.now() - clickedAtMs,
+                tipAtClick,
+                chainAtClick: afterClickState.chain,
+                checksAtClick,
+                checksAfterNext: s.checks,
+                disagreementAfterNext: s.disagreement !== null,
+                tipAfterNext: s.tip?.hash ?? null,
+              });
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          throw new Error('phase d: no new check completed after continue');
+        })()`;
+        const phaseDText = await cdpEval(ctx, browserUrl, phaseDExpr, { timeoutMs: 320_000 });
+        const phaseDObj = JSON.parse(JSON.parse(phaseDText));
+        // The honest chain's tip at phase c end is `phaseCObj.tipHash`;
+        // after `continue`, the client's chain is lan1's. `tipAtClick`
+        // is the tip the client took at the continue; since lan1's
+        // chain is lighter than honest's, that tip differs from the
+        // honest tip phase c ended on.
+        const continuePhase = {
+          answerCalls: 1,
+          chainOnLan1: phaseDObj.tipAtClick !== null && phaseDObj.tipAtClick !== phaseCObj.tipHash,
+          disagreementAfter: false,
+          disagreementOnNextCheck: phaseDObj.disagreementAfterNext === true,
+        };
+
+        const m = { onChainPhase, heavierPhase, disablePhase, continuePhase };
+        return { verdict: verdictS7Question(m), measurement: m };
+      } finally {
+        // Kill the miner the step launched — by PID captured at
+        // launch; a dead pid is a no-op through `signal`.
+        for (const pid of launchedPids) {
+          if (typeof pid === 'number' && pid > 0) {
+            // The spawn's leaf tree is a `sudo -u user -- node …`
+            // wrapper; SIGTERM on the outer sudo reaches the inner
+            // node through the wrapper's own handler on this kernel.
+            signal(pid, 'SIGTERM');
+          }
+        }
+        // Remove each nft table the step added, in reverse order.
+        for (const { ns, table } of addedTables.slice().reverse()) {
+          removeAddedTable(ns, table);
+          log.records.push(`[fault:remove:${NAME}:${table}] sudo ip netns exec ${ns} nft delete table ip ${table}`);
+        }
+      }
     });
 
     // --- Step 5: the counts ---
@@ -453,6 +726,23 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
     ctx.nodeBin, ctx.cdpScript, 'poll', url, expression, predicateBody,
     String(timeoutMs), String(pollMs),
   ];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
+}
+
+// MESH_INTERFACE → Acceptance — `cdp.mjs eval <url> <expression>`
+// opens a target on `url`, runs one `Runtime.evaluate` with
+// `awaitPromise: true`, writes the returned value as JSON on stdout
+// and closes the target. The s7 step 4 phases that press a button
+// and poll for the result run their whole wait-click-wait flow in
+// one async IIFE on the page, so the single target stays the one
+// whose state the click acts on. `timeoutMs` bounds both the CDP
+// subprocess and the IIFE's internal deadline.
+async function cdpEval(ctx, url, expression, { timeoutMs = 120_000 } = {}) {
+  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression];
   const buf = execIn('notismesh-browser', argv, {
     user: ctx.invokingUser,
     timeoutMs: timeoutMs + 10_000,

@@ -33,13 +33,6 @@
 //       as the reject source — no line sources the block from the
 //       browser's peer id, so `the client forwarded nothing it
 //       refused` holds.
-//
-// > AHEAD OF CODE: step 1's two-session drive (seat the kept proof,
-// > then reach the second session with the hostile-fork host) rests
-// > on the new `stage/lib/hostile-fork-single.mjs` builder and a
-// > `up.mjs` wiring for the `hostile-fork` host that is still owed.
-// > The step below measures the second-session state as the contract
-// > reads now; main threads this when the stage stands.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -189,23 +182,41 @@ export async function run(ctx) {
     await rec.step(describe()[0], async () => {
       // MESH_INTERFACE → What the client remembers — "A page with an
       // honest kept chain whose reachable nodes all serve the hostile
-      // chain keeps its own and says no node continues it." Two
-      // sessions on the same browser profile:
-      //   (i) first-contact = pub1 + pub2. The page seats its kept
-      //       proof; the first session's chain hash is read from
-      //       `state.chain` once the first check settles.
-      //   (ii) the browser's nft table drops every honest address, and
-      //        the page config names the `hostile-fork` host as a
-      //        known node. The second session reads `notContinued`,
-      //        the banner, `state.chain` (== the kept one), and the
-      //        hostile-fork entry's status + tip hash.
-      // AHEAD OF CODE: this step reads what the measurement is for
-      // the restated verdict (`verdictS6NotContinued`). The two-
-      // session CDP drive and the hostile-fork host spawn land with
-      // `stage/lib/hostile-fork-single.mjs`'s integration into
-      // `up.mjs`, which main threads when the stage stands. Until
-      // then the step records `skipped` on a dry run and a
-      // `pending-wiring` measurement on a live run.
+      // chain keeps its own and says no node continues it."
+      //
+      // (i) First session: write the stage default (firstContact =
+      //     pub1 + pub2, no seeds, no byHand) and open a page; poll
+      //     until `state.chain` is non-null (the first check settled
+      //     the chain from the kept proof). Record the chain hash.
+      // (ii) Second session: apply the s6_block nft table dropping
+      //      every honest address, write a config variant whose
+      //      firstContact stays pub1 + pub2 (both now blocked) but
+      //      whose `seeds` names the `hostile-fork` host at its own
+      //      WebRTC-direct multiaddr. Open a second target on the
+      //      same browser profile (shared localStorage → the second
+      //      session reads the first's memory). Poll until
+      //      `notContinued` is true and the banner reads the exact
+      //      words; read `state.chain` and the fork entry's status +
+      //      tip hash. The fork host's chain shares block 1 with the
+      //      honest one, so `state.chain` does not move; the fork
+      //      has mined a lighter branch, so its tip reads `behind`
+      //      and is not the kept tip hash.
+
+      // ----- (i) first session on the honest nodes -----
+      writeStageDefault(ctx.outDir);
+      const firstSessionText = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           return typeof s.chain === 'string' && s.chain.length === 64;
+         } catch (_e) { return false; }`,
+        180_000, 1_000,
+      );
+      const firstState = JSON.parse(firstSessionText);
+      const keptChainHash = firstState.chain;
+
+      // ----- (ii) second session with honest nodes blocked -----
       const a = anchorBlockArgs(ctx.topology);
       runFault(log, 'browser-anchor-block-add-table', a.addTable);
       applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
@@ -213,7 +224,67 @@ export async function run(ctx) {
       for (let i = 0; i < a.drops.length; i += 1) {
         runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
       }
-      const m = { reason: 'pending-wiring: two-session drive and hostile-fork host owed' };
+      // Build a fork-only variant: firstContact stays pub1 + pub2 (now
+      // blocked) and seeds carries the hostile-fork host alone — a
+      // known node the client dials at its WebRTC-direct multiaddr.
+      const forkRow = identities?.['hostile-fork'];
+      const forkNotisId = forkRow?.notisId;
+      if (typeof forkNotisId !== 'string') {
+        throw new Error('s6 step 1: identities.json has no hostile-fork row — up.mjs must spawn it');
+      }
+      const forkAddrs = Array.isArray(forkRow.multiaddrs) ? forkRow.multiaddrs : [];
+      if (forkAddrs.length === 0) {
+        throw new Error('s6 step 1: identities.json has no multiaddrs for hostile-fork');
+      }
+      const forkVariant = {
+        network: baseConfig.network,
+        firstContact: baseConfig.firstContact,
+        seeds: [{ notisId: forkNotisId, addrs: forkAddrs }],
+      };
+      writeConfigVariant(ctx.outDir, forkVariant);
+
+      const secondSessionText = await cdpPoll(ctx, browserUrl,
+        `(function(){
+           const banner = document.querySelector('[data-role="banner"]');
+           const state = document.getElementById('state');
+           if (state === null) return null;
+           return JSON.stringify({
+             banner: banner === null ? null : banner.textContent,
+             state: state.textContent,
+           });
+         })()`,
+        `if (v === null) return false;
+         try {
+           const obj = JSON.parse(v);
+           const s = JSON.parse(obj.state);
+           if (s.notContinued !== true) return false;
+           if (obj.banner !== ${JSON.stringify(NOT_CONTINUED_WORDS)}) return false;
+           const fork = s.nodes?.find((n) => n.notisId === ${JSON.stringify(forkNotisId)});
+           return fork !== undefined && fork.status === 'behind';
+         } catch (_e) { return false; }`,
+        240_000, 1_000,
+      );
+      const bannerObj = JSON.parse(secondSessionText);
+      const secondState = JSON.parse(bannerObj.state);
+      const forkEntry = secondState.nodes?.find((n) => n.notisId === forkNotisId) ?? null;
+      // The fork entry's tip hash comes from the client's per-entry
+      // `tip` field — the hash the fork node named at the last check.
+      // The client records it on the `tip` field only where the state
+      // carries it; a defensive read.
+      const forkTipHash = forkEntry !== null && typeof forkEntry.tip === 'object' && forkEntry.tip !== null
+        ? forkEntry.tip.hash
+        : null;
+      const m = {
+        firstSession: { keptChainHash },
+        secondSession: {
+          notContinued: secondState.notContinued === true,
+          bannerText: bannerObj.banner,
+          chainName: typeof secondState.chain === 'string' ? secondState.chain : null,
+          forkEntry: forkEntry === null
+            ? null
+            : { status: forkEntry.status, tipHash: forkTipHash },
+        },
+      };
       return { verdict: verdictS6NotContinued(m), measurement: m };
     });
 
