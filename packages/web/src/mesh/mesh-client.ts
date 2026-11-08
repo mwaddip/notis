@@ -30,10 +30,10 @@ import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { Anchor } from '@dagsocial/nipopow-client';
 import { decodeNipopowProof, encodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
-import type { NipopowProof } from '@dagsocial/nipopow';
+import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
 import { continues, judgeByMemory, nodesToRemember } from './memory.js';
 import type { MemorySnapshot } from './memory-store.js';
-import { REMEMBERED_NODES_MAX } from './protocols.js';
+import { REMEMBERED_NODES_MAX, ANSWERED_FORKS_MAX } from './protocols.js';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -304,21 +304,50 @@ export function emptyTraffic(): ClientTraffic {
   };
 }
 
+/**
+ * MESH_INTERFACE → Discovery → "A node added by hand" / "A
+ * disagreement is the reader's question, never the client's choice" —
+ * the shape of a standing disagreement: which disagreement it is,
+ * your node's tip, the other tip (`null` under `memory`, where the
+ * kept chain itself is the other), and the fork — the hash of the
+ * highest header `compareProofs` finds in both proofs. `yours` and
+ * `other` carry the lowercase hex `blockHash`.
+ */
+export interface Disagreement {
+  which: 'memory' | 'heavier';
+  yours: { height: number; hash: string };
+  other: { height: number; hash: string } | null;
+  fork: string;
+}
+
 export interface ClientState {
   nodeId: string | null;
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
   path: 'direct' | 'relay' | null;
   lastLeft: { nodeId: string; reason: string } | null;
-  anchorReached: boolean;
   tip: { height: number; hash: string | null } | null;
   /**
-   * MESH_INTERFACE → No anchor reached → "The agreement counts" — after
-   * each check, how many nodes verified a proof on the tip's chain
-   * within its last `k` headers, how many of those are anchors, and
-   * how many verified off those headers. `null` before the first
-   * check; written from each check's `TipResult` thereafter.
+   * MESH_INTERFACE → What the client remembers → "The agreement counts"
+   * — after each check, how many nodes named a tip on the client's
+   * chain within its last `k` headers, and how many named one off
+   * those headers. `null` before the first check; written from each
+   * check's `TipResult` thereafter.
    */
   agreement: AgreementCounts | null;
+  /**
+   * MESH_INTERFACE → Discovery → "Your node takes precedence" / "A
+   * disagreement is the reader's question, never the client's choice"
+   * — while your node and the evidence disagree, this names the two
+   * tips and their fork, and the client's chain does not move until
+   * the reader answers. `null` at start and when no disagreement
+   * stands; written at the end of a check that raises or clears one.
+   * `which: 'memory'` is your node losing to the kept proof; `which:
+   * 'heavier'` is another node's proof beating your node's. `other`
+   * is `null` for the memory case (the kept chain is the other);
+   * `fork` is the hash of the highest header `compareProofs` finds in
+   * both.
+   */
+  disagreement: Disagreement | null;
   /**
    * MESH_INTERFACE → The client's node list → "A routed read goes to
    * a node its need allows" — "how many checks it has completed, so
@@ -427,6 +456,19 @@ export interface MeshClient {
    */
   removeByHand(notisId: string): void;
   /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the reader's answer to a
+   * standing disagreement. With no disagreement, nothing. *continue*:
+   * settle the chain to your node's proof (the proof read in the
+   * check that raised it), move the kept proof to it, record the
+   * fork so the same competing branch growing does not ask again
+   * (at most `ANSWERED_FORKS_MAX` forks kept, the oldest dropped),
+   * the next snapshot `replace: true`, the disagreement cleared, a
+   * check at once. *disable*: `removeByHand` on your node, the
+   * disagreement cleared, a check at once.
+   */
+  answer(decision: 'continue' | 'disable'): void;
+  /**
    * MESH_INTERFACE → The client's node list → "A routed read goes
    * to a node its need allows" — the base a routed read of the
    * given need would use now: the first pick `read` makes, by the
@@ -478,9 +520,9 @@ export interface StartMeshClientOptions {
   firstContact: MeshContact[];
   /**
    * MESH_INTERFACE → Discovery → "Known nodes" — contacts the client holds
-   * without trusting them. A seed is a candidate like any node the DHT finds;
-   * no answer from one makes `anchorReached` true. Addresses meet the same
-   * refusals as a first-contact node's.
+   * without trusting them. A seed is a candidate like any node the DHT
+   * finds; a seed carries no trust assertion of its own. Addresses meet
+   * the same refusals as a first-contact node's.
    */
   seeds?: MeshContact[];
   network: NetworkName;
@@ -698,6 +740,26 @@ class MeshClientImpl implements MeshClient {
    */
   private kept: NipopowProof | null = null;
   /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the state held with a
+   * standing disagreement: your node's id, the proof read in the
+   * check that raised it, and the verified `VerifyResult` so the
+   * reader's *continue* can settle the chain without a second
+   * verification. `null` whenever no disagreement stands.
+   */
+  private standingDisagreement: {
+    yourId: string;
+    proof: NipopowProof;
+    verifyResult: VerifyResult;
+  } | null = null;
+  /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — "the next snapshot
+   * `replace: true`" after the reader's *continue*. Flipped back
+   * once `toRemember()` reads it.
+   */
+  private replaceNextSnapshot: boolean = false;
+  /**
    * MESH_INTERFACE → What the client remembers — the forks the reader
    * answered, held through the session and carried through
    * `toRemember()` unchanged. Seated from `memory.answeredForks` at
@@ -779,11 +841,10 @@ class MeshClientImpl implements MeshClient {
     // like any node the DHT finds. Added before the first check, so a seed
     // is in the candidates `resolveTip` reads from the start;
     // `NodeList.add` records them as entries outside the first-contact
-    // list, so a seed's success leaves `anchorReached` false. The client's
-    // own key is dropped the same way the first-contact list's own-key
-    // entry is. Each seed's entry carries `known: true` so
-    // `orderServers`' before-first-check branch reaches it after a
-    // first-contact node.
+    // list, so a seed carries no `firstContact`. The client's own key is
+    // dropped the same way the first-contact list's own-key entry is.
+    // Each seed's entry carries `known: true` so `orderServers`'
+    // before-first-check branch reaches it after a first-contact node.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
@@ -821,7 +882,6 @@ class MeshClientImpl implements MeshClient {
       transport: null,
       path: null,
       lastLeft: null,
-      anchorReached: false,
       tip: null,
       agreement: null,
       checks: 0,
@@ -832,6 +892,7 @@ class MeshClientImpl implements MeshClient {
       anchor: null,
       chain: null,
       notContinued: false,
+      disagreement: null,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -1042,6 +1103,22 @@ class MeshClientImpl implements MeshClient {
       this.emitStateChange();
       return;
     }
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — "its chain does not move
+    // — no switch, no extension by gossip". A block whose parent is
+    // the tip is dropped before `this.chain.extend`; one whose parent
+    // is held below the tip or not held still runs a check at once.
+    if (this.state_.disagreement !== null) {
+      const tipHdr = this.chain.tip();
+      const tipHash = tipHdr !== null ? blockHash(tipHdr) : null;
+      if (tipHash !== null && block.header.prevBlockHash === tipHash) {
+        this.emitStateChange();
+        return;
+      }
+      this.emitStateChange();
+      this.triggerImmediateCheck();
+      return;
+    }
     const r = this.chain.extend(block.header);
     if (r === 'extended') {
       const h = blockHash(block.header);
@@ -1095,11 +1172,18 @@ class MeshClientImpl implements MeshClient {
     // read pick's non-null result over the same connection list the fetch
     // opens its stream on; the API fallback uses the entry's api base.
     const entries = this.nodeList.entries();
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" — the
+    // client marks a candidate `yours` only while the entry is `yours`
+    // and no disagreement stands (→ "A disagreement is the reader's
+    // question, never the client's choice"). While a disagreement
+    // stands, routed reads go on with no preference for your node.
+    const yoursActive = this.state_.disagreement === null;
     const meshCandidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       usable: this.pickReadyConnection(e.notisId) !== null,
+      yours: yoursActive && e.yours,
     }));
     const meshPicked = pickServer(meshCandidates, need, this.random);
 
@@ -1122,6 +1206,7 @@ class MeshClientImpl implements MeshClient {
           status: e.status,
           readMs: this.readMsMap.get(e.notisId) ?? null,
           usable: true,
+          yours: yoursActive && e.yours,
         }));
       const apiPicked = pickServer(apiCandidates, need, this.random);
       if (apiPicked !== null) {
@@ -1204,6 +1289,7 @@ class MeshClientImpl implements MeshClient {
   order(need: ReadNeed): string[] {
     const entries = this.nodeList.entries();
     const firstCheckEnded = this.state_.checks > 0;
+    const yoursActive = this.state_.disagreement === null;
     const candidates: OrderCandidate[] = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
@@ -1211,6 +1297,7 @@ class MeshClientImpl implements MeshClient {
       meshUsable: this.pickReadyConnection(e.notisId) !== null,
       firstContact: e.firstContact,
       known: e.known,
+      yours: yoursActive && e.yours,
       api: e.api,
       meshBase: meshBaseUrl(e.notisId),
     }));
@@ -1281,12 +1368,14 @@ class MeshClientImpl implements MeshClient {
     for (const e of entries) {
       if (e.status === 'blacklisted') dropped.push(e.notisId);
     }
+    const replace = this.replaceNextSnapshot;
+    this.replaceNextSnapshot = false;
     return {
       proof: this.kept !== null ? encodeNipopowProof(this.kept) : null,
       nodes,
       dropped,
       answeredForks: [...this.answeredForks],
-      replace: false,
+      replace,
     };
   }
 
@@ -1330,6 +1419,51 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the reader's answer. With
+   * no disagreement, nothing. *continue*: settle the chain to your
+   * node's proof, move `this.kept` to it, record the fork, the next
+   * snapshot `replace: true`, the disagreement cleared, a check at
+   * once. *disable*: `removeByHand` on your node, the disagreement
+   * cleared, a check at once.
+   */
+  answer(decision: 'continue' | 'disable'): void {
+    const d = this.state_.disagreement;
+    if (d === null) return;
+    const standing = this.standingDisagreement;
+    this.state_.disagreement = null;
+    this.standingDisagreement = null;
+    if (decision === 'continue') {
+      if (standing !== null) {
+        // Settle the chain to your node's proof (the proof kept with
+        // the disagreement). The suffix is `[suffixHead.header,
+        // ...suffixTail]`; the window's first header is the proof's
+        // verified tip's own block 1. `this.kept` moves to the proof;
+        // the fork joins `answeredForks`, at most ANSWERED_FORKS_MAX
+        // with the oldest dropped; the next snapshot `replace: true`.
+        const proof = standing.proof;
+        const vr = standing.verifyResult;
+        if (vr.ok === true) {
+          const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
+          this.chain.settle(suffix, vr.headers[0]!);
+          this.keptVerdicts.clear();
+        }
+        this.kept = proof;
+        this.answeredForks.push(d.fork);
+        while (this.answeredForks.length > ANSWERED_FORKS_MAX) {
+          this.answeredForks.shift();
+        }
+        this.replaceNextSnapshot = true;
+      }
+    } else {
+      // disable: remove your node from the list.
+      this.nodeList.removeByHand(standing !== null ? standing.yourId : '');
+    }
+    this.emitStateChange();
+    this.triggerImmediateCheck();
+  }
+
+  /**
    * MESH_INTERFACE → The client's node list → "A routed read goes
    * to a node its need allows" — the base a routed read of the
    * given need would use now. Mirrors `read`'s pick: mesh first,
@@ -1338,11 +1472,13 @@ class MeshClientImpl implements MeshClient {
    */
   base(need: ReadNeed): string | null {
     const entries = this.nodeList.entries();
+    const yoursActive = this.state_.disagreement === null;
     const meshCandidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       usable: this.pickReadyConnection(e.notisId) !== null,
+      yours: yoursActive && e.yours,
     }));
     const meshPicked = pickServer(meshCandidates, need, this.random);
     if (meshPicked !== null) return meshBaseUrl(meshPicked);
@@ -1354,6 +1490,7 @@ class MeshClientImpl implements MeshClient {
         status: e.status,
         readMs: this.readMsMap.get(e.notisId) ?? null,
         usable: true,
+        yours: yoursActive && e.yours,
       }));
     const apiPicked = pickServer(apiCandidates, need, this.random);
     if (apiPicked !== null) {
@@ -1949,19 +2086,13 @@ class MeshClientImpl implements MeshClient {
       this.state_.tip = null;
     }
 
-    // Agreement counts off the per-tip verdicts; first-contact nodes from
-    // the current entries so a hand-added trusted node counts.
-    const firstContactIds = new Set<string>();
-    for (const e of this.nodeList.entries()) {
-      if (e.firstContact) firstContactIds.add(e.notisId);
-    }
+    // Agreement counts off the per-tip verdicts.
     const entries: AgreementEntry[] = [];
-    for (const [id, verdict] of perNodeVerdict) {
-      entries.push({ verdict, anchor: firstContactIds.has(id) });
+    for (const [, verdict] of perNodeVerdict) {
+      entries.push({ verdict });
     }
     this.state_.agreement = agreementCounts(entries);
 
-    this.state_.anchorReached = this.nodeList.anchorReached();
     // WEB_INTERFACE → The extension → "The verified tip" — the field keeps
     // the last check's that read one, so a check that placed every tip and
     // read no proof leaves `proofs` standing.

@@ -58,6 +58,7 @@ function entry(over: Partial<NodeEntry>): NodeEntry {
     firstContact: false,
     known: false,
     byHand: false,
+    yours: false,
     status: 'ok',
     failures: 0,
     retryAtMs: 0,

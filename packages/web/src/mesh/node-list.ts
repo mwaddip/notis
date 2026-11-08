@@ -75,6 +75,14 @@ export interface NodeEntry {
    * private address only when its own configuration names it").
    */
   byHand: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "Your node takes precedence" — true
+   * for an entry a reader has added by hand with `trusted: true`, the
+   * reader's trust assertion. A routed read goes to a `yours` entry
+   * first, before the fast set; `removeByHand` clears it. Carries no
+   * agreement weight of its own.
+   */
+  yours: boolean;
   status: NodeStatus;
   failures: number;
   retryAtMs: number;
@@ -156,6 +164,7 @@ interface InternalEntry {
   firstContact: boolean;
   known: boolean;
   byHand: boolean;
+  yours: boolean;
   seenMs: number | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
@@ -221,6 +230,7 @@ export class NodeList {
           firstContact: true,
           known: false,
           byHand: false,
+          yours: false,
           seenMs: null,
           fromFirstContactList: true,
           status: 'new',
@@ -256,6 +266,7 @@ export class NodeList {
       firstContact: false,
       known,
       byHand: false,
+      yours: false,
       seenMs: null,
       fromFirstContactList: false,
       status: 'new',
@@ -277,15 +288,17 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → Discovery → "A node added by hand" —
-   * the reader may add a node by its key and an address. A new entry
-   * gets `firstContact = trusted`, `byHand = true`; an existing one merges
-   * the addresses, sets `byHand = true`, and `firstContact ||= trusted`; a
-   * `blacklisted` one is unchanged. The addresses are added to
-   * `configured` for the gater (→ Transports → "A client dials a
-   * private address only when its own configuration names it"). The
-   * key check is `add`'s (64 lowercase hex); the address checks (DNS,
-   * `/webrtc-direct/`) are the client's, not the list's.
+   * MESH_INTERFACE → Discovery → "A node added by hand" / "Your node
+   * takes precedence" — the reader may add a node by its key and an
+   * address. A new entry gets `yours = trusted`, `byHand = true`,
+   * `firstContact = false`; an existing one merges the addresses,
+   * sets `byHand = true` and `yours = trusted`, and leaves
+   * `firstContact` as it was; a `blacklisted` one is unchanged. The
+   * addresses are added to `configured` for the gater (→ Transports →
+   * "A client dials a private address only when its own configuration
+   * names it"). The key check is `add`'s (64 lowercase hex); the
+   * address checks (DNS, `/webrtc-direct/`) are the client's, not the
+   * list's.
    */
   addByHand(id: string, addrs: string[], trusted: boolean): void {
     assertNotisId(id);
@@ -295,14 +308,15 @@ export class NodeList {
       this.mergeAddrs(existing, addrs);
       this.mergeConfigured(existing, addrs);
       existing.byHand = true;
-      existing.firstContact = existing.firstContact || trusted;
+      existing.yours = trusted;
       return;
     }
     this.entries_.set(id, {
       notisId: id,
-      firstContact: trusted,
+      firstContact: false,
       known: false,
       byHand: true,
+      yours: trusted,
       seenMs: null,
       fromFirstContactList: false,
       status: 'new',
@@ -320,20 +334,17 @@ export class NodeList {
   }
 
   /**
-   * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. An entry the constructor's first-contact
-   * list named — the build node — is left alone: `fromFirstContactList`
-   * is true for it, and never cleared. An entry this method can drop
-   * is one `byHand === true && fromFirstContactList === false`; anything
-   * else is a no-op. An id the list does not hold is a no-op.
+   * MESH_INTERFACE → Discovery → "A node added by hand" / "Your node
+   * takes precedence" — clears `yours` on the entry. The entry stays
+   * in the list (the build node a reader marked and unmarked keeps its
+   * other state; a hand-added entry stays as an ordinary candidate).
+   * An id the list does not hold is a no-op.
    */
   removeByHand(id: string): void {
     assertNotisId(id);
     const e = this.entries_.get(id);
     if (!e) return;
-    if (e.fromFirstContactList) return;
-    if (!e.byHand) return;
-    this.entries_.delete(id);
+    e.yours = false;
   }
 
   /**
@@ -481,20 +492,6 @@ export class NodeList {
   }
 
   /**
-   * `anchorReached` is true while some anchor's latest event is an answer it
-   * could check — a success, a valid proof one block behind, or a valid
-   * proof further behind (MESH_INTERFACE → No anchor reached). The status
-   * captures the latest event; `ok`, `trailing` or `behind` means the
-   * anchor was reached.
-   */
-  anchorReached(): boolean {
-    for (const e of this.entries_.values()) {
-      if (e.firstContact && (e.status === 'ok' || e.status === 'trailing' || e.status === 'behind')) return true;
-    }
-    return false;
-  }
-
-  /**
    * Ordering: `ok`, `trailing`, `behind`, nodes not yet tried, then
    * `retry` nodes whose time has come; never a `blacklisted` node
    * (MESH_INTERFACE → The client's node list → "Candidates"). Inside a
@@ -583,6 +580,7 @@ export class NodeList {
       firstContact: e.firstContact,
       known: e.known,
       byHand: e.byHand,
+      yours: e.yours,
       status: e.status,
       failures: e.failures,
       retryAtMs,

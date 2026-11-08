@@ -191,13 +191,22 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
     expect(cornerTitle('thin', 7766, THIN_NO)).toBe('no node served a proof · tip 7766');
     expect(cornerTitle('thin', 7766, THIN_SPLIT)).toBe('a node names a tip off this chain · tip 7766');
   });
-  it('thin no-anchor reads: only nodes this build does not name could be checked', () => {
-    const THIN_NO_ANCHOR: TipVerdict = { kind: 'thin', reason: 'no-anchor', height: 7766 };
-    expect(cornerTitle('thin', 7766, THIN_NO_ANCHOR))
-      .toBe('only nodes this build does not name could be checked · tip 7766');
-  });
   it('refused invalid-proof: no node\'s proof verified', () => {
     expect(cornerTitle('refused', 7766, REFUSED_INVALID)).toBe("no node's proof verified · tip 7766");
+  });
+  it('the three disagreement / not-continued titles read word for word', () => {
+    // WEB_INTERFACE → The status corner — the words a reader sees when
+    // your node and the evidence disagree, and when no node continues
+    // the kept chain.
+    const MEM: TipVerdict = { kind: 'refused', reason: 'your-node', which: 'memory', height: 7766 };
+    const HEAVIER: TipVerdict = { kind: 'refused', reason: 'your-node', which: 'heavier', height: 7766 };
+    const NOT_CONT: TipVerdict = { kind: 'thin', reason: 'not-continued', height: 7766 };
+    expect(cornerTitle('refused', 7766, MEM))
+      .toBe("your node's chain does not continue the one you verified · choose in settings · tip 7766");
+    expect(cornerTitle('refused', 7766, HEAVIER))
+      .toBe('another node serves a heavier chain than your node · choose in settings · tip 7766');
+    expect(cornerTitle('thin', 7766, NOT_CONT))
+      .toBe('no node reached continues the chain you verified · tip 7766');
   });
   it('a null tip reads as — in every verdict-aware title', () => {
     expect(cornerTitle('checking', null)).toBe('checking the chain · tip —');
@@ -208,7 +217,9 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
     // Every corner title for every verdict + state pair — none contains a
     // host, a URL or a multiaddr-shaped fragment (WEB_INTERFACE → The
     // status corner).
-    const THIN_NO_ANCHOR: TipVerdict = { kind: 'thin', reason: 'no-anchor', height: 7766 };
+    const NOT_CONT: TipVerdict = { kind: 'thin', reason: 'not-continued', height: 7766 };
+    const YN_MEM: TipVerdict = { kind: 'refused', reason: 'your-node', which: 'memory', height: 7766 };
+    const YN_HEAVIER: TipVerdict = { kind: 'refused', reason: 'your-node', which: 'heavier', height: 7766 };
     const titles = [
       cornerTitle('fresh', 7766, VERIFIED),
       cornerTitle('fresh', 7766),
@@ -220,8 +231,10 @@ describe('cornerTitle — verdict-aware titles, word for word', () => {
       cornerTitle('thin', 7766, THIN_NO),
       cornerTitle('thin', 7766, THIN_SPLIT),
       cornerTitle('thin', 7766, THIN_SHORT),
-      cornerTitle('thin', 7766, THIN_NO_ANCHOR),
+      cornerTitle('thin', 7766, NOT_CONT),
       cornerTitle('refused', 7766, REFUSED_INVALID),
+      cornerTitle('refused', 7766, YN_MEM),
+      cornerTitle('refused', 7766, YN_HEAVIER),
     ];
     for (const t of titles) {
       expect(t).not.toMatch(/https?:\/\//);

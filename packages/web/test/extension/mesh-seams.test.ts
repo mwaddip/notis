@@ -22,7 +22,6 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     transport: null,
     path: null,
     lastLeft: null,
-    anchorReached: false,
     tip: null,
     agreement: null,
     checks: 0,
@@ -33,6 +32,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     anchor: null,
     chain: null,
     notContinued: false,
+    disagreement: null,
     ...overrides,
   };
 }
@@ -61,6 +61,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     stop: hooks.stop ?? ((): Promise<void> => Promise.resolve()),
     addByHand: hooks.addByHand ?? ((): void => {}),
     removeByHand: hooks.removeByHand ?? ((): void => {}),
+    answer: (): void => {},
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
     toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),

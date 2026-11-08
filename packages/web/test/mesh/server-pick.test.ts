@@ -20,6 +20,7 @@ function cand(id: string, over: Partial<PickCandidate> = {}): PickCandidate {
     status: over.status ?? 'ok',
     readMs: over.readMs ?? null,
     usable: over.usable ?? true,
+    yours: over.yours ?? false,
   };
 }
 
@@ -35,6 +36,7 @@ function ocand(id: string, over: Partial<OrderCandidate> = {}): OrderCandidate {
     meshUsable: over.meshUsable ?? false,
     firstContact: over.firstContact ?? false,
     known: over.known ?? false,
+    yours: over.yours ?? false,
     api: over.api ?? null,
     meshBase: over.meshBase ?? `notis-mesh://${id}`,
   };
@@ -219,3 +221,92 @@ describe('orderServers', () => {
     expect(orderServers(nodes, 'tip', true)).toEqual([`notis-mesh://${idB}`]);
   });
 });
+
+describe('pickServer — your node takes precedence', () => {
+  it('a usable `yours` candidate is the pick before the fast set', () => {
+    // A fast node (readMs 10) and a slower `yours` node (readMs 200).
+    // Without the precedence rule the fast node would be the pick; with
+    // it, `yours` is picked every seed.
+    const nodes: PickCandidate[] = [
+      cand(idA, { status: 'ok', readMs: 10 }),
+      cand(idB, { status: 'ok', readMs: 200, yours: true }),
+    ];
+    for (let seed = 0; seed < 50; seed++) {
+      const r = seed / 50;
+      expect(pickServer(nodes, 'tip', () => r)).toBe(idB);
+    }
+  });
+
+  it('a `yours` candidate the need does not allow does not take precedence', () => {
+    // A `yours` node whose status is `trailing` does not serve a `tip`
+    // read — the need rule still refuses it. Another node at `ok`
+    // picks for the `tip` read.
+    const nodes: PickCandidate[] = [
+      cand(idA, { status: 'ok', readMs: 10 }),
+      cand(idB, { status: 'trailing', readMs: 5, yours: true }),
+    ];
+    for (let seed = 0; seed < 20; seed++) {
+      const r = seed / 20;
+      expect(pickServer(nodes, 'tip', () => r)).toBe(idA);
+    }
+    // Under `older`, trailing is allowed; `yours` wins.
+    for (let seed = 0; seed < 20; seed++) {
+      const r = seed / 20;
+      expect(pickServer(nodes, 'older', () => r)).toBe(idB);
+    }
+  });
+
+  it('an unusable `yours` candidate does not pick', () => {
+    const nodes: PickCandidate[] = [
+      cand(idA, { status: 'ok', readMs: 10, usable: false, yours: true }),
+      cand(idB, { status: 'ok', readMs: 20 }),
+    ];
+    for (let seed = 0; seed < 20; seed++) {
+      const r = seed / 20;
+      expect(pickServer(nodes, 'tip', () => r)).toBe(idB);
+    }
+  });
+});
+
+describe('orderServers — your node takes precedence', () => {
+  it('a `yours` entry comes first, both before the first check and after it', () => {
+    // Fast-set rules would put A first; `yours` on B puts B first.
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'ok', meshUsable: true, readMs: 10 }),
+      ocand(idB, { status: 'ok', meshUsable: true, readMs: 200, yours: true }),
+    ];
+    expect(orderServers(nodes, 'tip', true)).toEqual([
+      `notis-mesh://${idB}`,
+      `notis-mesh://${idA}`,
+    ]);
+    // Before the first check ends, the `yours` entry is still first.
+    const nodesBefore: OrderCandidate[] = [
+      ocand(idA, { status: 'new', meshUsable: true, firstContact: true }),
+      ocand(idB, { status: 'new', meshUsable: true, yours: true }),
+    ];
+    expect(orderServers(nodesBefore, 'tip', false)).toEqual([
+      `notis-mesh://${idB}`,
+      `notis-mesh://${idA}`,
+    ]);
+  });
+
+  it('a `yours` entry at its api, no mesh connection', () => {
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'ok', meshUsable: true, readMs: 10 }),
+      ocand(idB, { status: 'ok', meshUsable: false, api: 'https://yours.example', yours: true }),
+    ];
+    expect(orderServers(nodes, 'tip', true)).toEqual([
+      'https://yours.example',
+      `notis-mesh://${idA}`,
+    ]);
+  });
+
+  it('a blacklisted `yours` entry is not in the order', () => {
+    const nodes: OrderCandidate[] = [
+      ocand(idA, { status: 'blacklisted', meshUsable: true, yours: true, api: 'https://yours.example' }),
+      ocand(idB, { status: 'ok', meshUsable: true, readMs: 10 }),
+    ];
+    expect(orderServers(nodes, 'tip', true)).toEqual([`notis-mesh://${idB}`]);
+  });
+});
+

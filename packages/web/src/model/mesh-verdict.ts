@@ -31,7 +31,7 @@ function proofsAreTotal(p: ClientState['proofs']): boolean {
 
 function agreementIsTotal(a: ClientState['agreement']): boolean {
   if (a === null) return true;
-  return isNonNegInt(a.onChain) && isNonNegInt(a.onChainAnchors) && isNonNegInt(a.offChain);
+  return isNonNegInt(a.onChain) && isNonNegInt(a.offChain);
 }
 
 export function meshVerdict(s: ClientState): TipVerdict {
@@ -46,7 +46,8 @@ export function meshVerdict(s: ClientState): TipVerdict {
   }
 
   // Row 1a — no check has ended: `agreement` is `null` before the first
-  // check's end (MESH_INTERFACE → No anchor reached → "The agreement counts").
+  // check's end (MESH_INTERFACE → What the client remembers → "The agreement
+  // counts").
   if (s.agreement === null) {
     return { kind: 'thin', reason: 'no-proof', height };
   }
@@ -70,22 +71,31 @@ export function meshVerdict(s: ClientState): TipVerdict {
     return { kind: 'thin', reason: 'no-proof', height };
   }
 
-  // Row 4 — the chain is seated, and no anchor stands on it.
-  if (!s.anchorReached) {
-    return { kind: 'thin', reason: 'no-anchor', height };
+  // Row 4 — the chain is seated, your node and the evidence disagree, and
+  // the reader has not answered (MESH_INTERFACE → Discovery → "A
+  // disagreement is the reader's question, never the client's choice"). The
+  // refused shape names which of the two disagreements it is.
+  if (s.disagreement !== null) {
+    return { kind: 'refused', reason: 'your-node', which: s.disagreement.which, height };
   }
 
-  // Row 5 — a node names a tip off the chain's last `k` headers.
+  // Row 5 — the chain is seated, and no node continues the kept one
+  // (MESH_INTERFACE → What the client remembers).
+  if (s.notContinued) {
+    return { kind: 'thin', reason: 'not-continued', height };
+  }
+
+  // Row 6 — a node names a tip off the chain's last `k` headers.
   if (s.agreement.offChain > 0) {
     return { kind: 'thin', reason: 'split', height };
   }
 
-  // Row 6 — fewer than two nodes name a tip on the chain.
+  // Row 7 — fewer than two nodes name a tip on the chain.
   if (s.agreement.onChain < 2) {
     return { kind: 'thin', reason: 'one-node', height };
   }
 
-  // Row 7 — two or more do. `verified`'s `nodes` is the agreement's `onChain`.
+  // Row 8 — two or more do. `verified`'s `nodes` is the agreement's `onChain`.
   const resolvedHeight = s.tip !== null ? s.tip.height : 0;
   return { kind: 'verified', nodes: s.agreement.onChain, height: resolvedHeight };
 }

@@ -1,4 +1,4 @@
-// MESH_INTERFACE → The client's node list, → No anchor reached, → Discovery
+// MESH_INTERFACE → The client's node list, → Discovery
 // → "First contact" (duplicates and the client's own key).
 //
 // NET_INTERFACE → Handshake → "Ban policy" is the split the client's list
@@ -131,66 +131,67 @@ describe('node-list', () => {
     expect(list.candidates()).toEqual([idA, idB, idC, idD, idE]);
   });
 
-  it('a trailing anchor counts as reached', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
-    expect(list.anchorReached()).toBe(false);
-    list.trailing(idA);
-    expect(list.anchorReached()).toBe(true);
-  });
-
-  it('a hand-added trusted node is a first-contact node; untrusted is not', () => {
-    // MESH_INTERFACE → Discovery → "A node added by hand" — your node,
-    // "the reader's trust assertion, unless the reader adds it as an ordinary
-    // candidate".
+  it('a hand-added trusted node carries `yours`; untrusted does not', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" / "Your node
+    // takes precedence" — the reader's trust assertion lands on `yours`.
+    // `firstContact` is unchanged by `addByHand`: a new entry has it
+    // `false`; a build node already in the list keeps it `true`.
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
     const list = new NodeList([], own, () => 0);
     list.addByHand(idA, [addr], true);
     const trustedEntry = list.entry(idA)!;
-    expect(trustedEntry.firstContact).toBe(true);
+    expect(trustedEntry.firstContact).toBe(false);
     expect(trustedEntry.byHand).toBe(true);
+    expect(trustedEntry.yours).toBe(true);
     expect(trustedEntry.addrs).toEqual([addr]);
     expect(list.configuredAddrs(idA)).toEqual([addr]);
-    list.success(idA);
-    expect(list.anchorReached()).toBe(true);
 
     const addr2 = '/ip4/10.0.0.2/udp/4001/webrtc-direct/certhash/uEiB';
     list.addByHand(idB, [addr2], false);
     const untrustedEntry = list.entry(idB)!;
     expect(untrustedEntry.firstContact).toBe(false);
     expect(untrustedEntry.byHand).toBe(true);
+    expect(untrustedEntry.yours).toBe(false);
     expect(untrustedEntry.addrs).toEqual([addr2]);
     expect(list.configuredAddrs(idB)).toEqual([addr2]);
-    list.success(idB);
-    // Untrusted hand-added node is not a first-contact node — anchorReached is
-    // true only because idA (trusted) is still ok.
-    const list2 = new NodeList([], own, () => 0);
-    list2.addByHand(idB, [addr2], false);
-    list2.success(idB);
-    expect(list2.anchorReached()).toBe(false);
 
-    // An existing entry outside the first-contact list gets
-    // `firstContact ||= trusted`: a later hand-add with `trusted: true`
-    // upgrades it to a first-contact node; a later hand-add with
-    // `trusted: false` on an existing first-contact node leaves it one.
+    // A build node (`firstContact: true`) marked by hand stays
+    // `firstContact: true`, `yours` follows the latest trusted value.
     const addr3 = '/ip4/10.0.0.3/udp/4001/webrtc-direct/certhash/uEiC';
-    const list3 = new NodeList([], own, () => 0);
-    list3.add(idC, [addr3]);
-    expect(list3.entry(idC)!.firstContact).toBe(false);
+    const list3 = new NodeList([{ notisId: idC, addrs: [] }], own, () => 0);
+    expect(list3.entry(idC)!.firstContact).toBe(true);
     list3.addByHand(idC, [addr3], true);
     expect(list3.entry(idC)!.firstContact).toBe(true);
+    expect(list3.entry(idC)!.yours).toBe(true);
     list3.addByHand(idC, [addr3], false);
     expect(list3.entry(idC)!.firstContact).toBe(true);
+    expect(list3.entry(idC)!.yours).toBe(false);
   });
 
-  it('a hand-added node caught lying is blacklisted and stops counting as reached', () => {
+  it('removeByHand clears `yours` and leaves the entry in the list', () => {
+    const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
+    list.addByHand(idA, [addr], true);
+    expect(list.entry(idA)!.yours).toBe(true);
+    expect(list.entry(idA)!.firstContact).toBe(true);
+    list.removeByHand(idA);
+    const after = list.entry(idA)!;
+    expect(after.yours).toBe(false);
+    // The entry stays; the build-list entry keeps its firstContact and byHand.
+    expect(after.firstContact).toBe(true);
+    expect(after.byHand).toBe(true);
+    expect(after.addrs).toEqual([addr]);
+  });
+
+  it('a hand-added node caught lying is blacklisted and leaves the candidate set', () => {
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
     const list = new NodeList([], own, () => 0);
     list.addByHand(idA, [addr], true);
     list.success(idA);
-    expect(list.anchorReached()).toBe(true);
+    expect(list.entry(idA)!.yours).toBe(true);
     list.lie(idA, { kind: 'malformed', atMs: 1, detail: 'bad' });
     expect(list.entry(idA)!.status).toBe('blacklisted');
-    expect(list.anchorReached()).toBe(false);
+    expect(list.candidates()).not.toContain(idA);
     // A later addByHand on a blacklisted entry is unchanged.
     const addr2 = '/ip4/10.0.0.2/udp/4001/webrtc-direct/certhash/uEiB';
     list.addByHand(idA, [addr2], true);
@@ -242,26 +243,6 @@ describe('node-list', () => {
     expect(list.entry(own)).toBeUndefined();
   });
 
-  it("anchorReached follows the anchors' latest event", () => {
-    const list = new NodeList(
-      [
-        { notisId: idA, addrs: [] },
-        { notisId: idB, addrs: [] },
-      ],
-      own,
-      () => 0,
-    );
-    expect(list.anchorReached()).toBe(false);
-    list.success(idA);
-    expect(list.anchorReached()).toBe(true);
-    list.failure(idA, 'timeout');
-    expect(list.anchorReached()).toBe(false);
-    list.success(idB);
-    expect(list.anchorReached()).toBe(true);
-    list.lie(idB, { kind: 'malformed', atMs: 1, detail: 'x' });
-    expect(list.anchorReached()).toBe(false);
-  });
-
   it('an id that is not 64 lowercase hex is refused', () => {
     const bad = 'AB'.repeat(32);
     const tooShort = 'ab'.repeat(31);
@@ -275,13 +256,6 @@ describe('node-list', () => {
     expect(() => list.behind(bad)).toThrow(MeshKeyError);
     expect(() => list.wrongKey(bad, a1, null)).toThrow(MeshKeyError);
     expect(() => list.lie(bad, { kind: 'malformed', atMs: 0, detail: 'x' })).toThrow(MeshKeyError);
-  });
-
-  it('an anchor that answers behind is reached', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
-    expect(list.anchorReached()).toBe(false);
-    list.behind(idA);
-    expect(list.anchorReached()).toBe(true);
   });
 
   it("a first-contact entry's api is kept on its entry; duplicate entries' first api stands", () => {
@@ -340,21 +314,23 @@ describe('node-list', () => {
     expect(list.candidates()).toContain(idA);
   });
 
-  it('removeByHand drops a hand-added entry; a build node is left alone', () => {
-    // MESH_INTERFACE → Discovery → "A node added by hand" — the settings row's
-    // commit path. A build node (constructor's list) keeps its
-    // `fromFirstContactList`, and `removeByHand` leaves it even when it was also
-    // hand-added. A pure hand-added entry is dropped.
+  it('removeByHand clears `yours` on a hand-added entry and on a build node', () => {
+    // MESH_INTERFACE → Discovery → "A node added by hand" — the settings
+    // row's commit path. `removeByHand` clears `yours`; the entry stays in
+    // the list, whether it was a build node or a pure hand-added one.
     const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
     list.addByHand(idB, [a2], true);
     expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
+    expect(list.entry(idB)!.yours).toBe(true);
     list.removeByHand(idB);
-    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
-    // `removeByHand` on a build node is a no-op, whether or not it was also
-    // added by hand after start.
+    expect(list.entry(idB)!.yours).toBe(false);
+    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
+    // On a build node marked by hand: `yours` clears, the entry stays.
     list.addByHand(idA, [a2], true);
+    expect(list.entry(idA)!.yours).toBe(true);
     list.removeByHand(idA);
-    expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
+    expect(list.entry(idA)!.yours).toBe(false);
+    expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
   });
 
   it('removeByHand on an id the list does not hold is a no-op', () => {
