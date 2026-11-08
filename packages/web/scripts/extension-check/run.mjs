@@ -8590,10 +8590,10 @@ async function lightSteps(cx, targetId = 'unknown') {
     await refreshFeed(cx);
     const t0 = Date.now();
     while (Date.now() - t0 < 15000 && RA.replayPage === null && RB.replayPage === null) await sleep(100);
-    // The relay that caught the record clears the other's flag at once so
-    // no later read overwrites the choice, and the one page is set as
-    // replayPage on both so the replay arm serves it whichever the pick
-    // lands on.
+    // Once one relay holds the page, the other relay's record flag is
+    // cleared so no later read overwrites it, and that page is set as
+    // replayPage on both relays so the replay arm serves it at whichever
+    // relay the pick lands on.
     let recordedAt = null;
     if (RA.replayPage !== null) {
       recordedAt = 'RA';
