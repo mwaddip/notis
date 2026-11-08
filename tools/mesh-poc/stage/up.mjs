@@ -37,6 +37,11 @@ import {
   pairBootstrapAddr,
   buildPairCutArgs,
 } from './lib/hostile-fork-pair.mjs';
+import {
+  buildForkCutArgs,
+  buildForkMinerSpawn,
+  forkHostBootstrapPeers,
+} from './lib/hostile-fork-single.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -816,11 +821,18 @@ function spawnNotisForHost(name, host) {
   // OTHER public mesh node with its `/p2p/<peerId>` trailer; a pair
   // host (`hostile-lagging`, `hostile-malformed`) names the partner's
   // bare-TCP addr alone, so the pair starts from genesis with no path
-  // to the honest chain.
+  // to the honest chain. `hostile-fork` names pub1 alone — it syncs
+  // the honest chain from pub1 before Phase 8b cuts its p2p port and
+  // starts its own miner (`stage/lib/hostile-fork-single.mjs`).
   const partner = partnerOf(name);
   let bootstrapPeers;
   if (partner !== null) {
     bootstrapPeers = pairBootstrapAddr(topology, name);
+  } else if (name === 'hostile-fork') {
+    const pub1Host = topology.hosts['pub1'];
+    const pub1PeerId = peerIdStringOf(notisIds['pub1']);
+    const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}/p2p/${pub1PeerId}`;
+    bootstrapPeers = forkHostBootstrapPeers(pub1Addr);
   } else {
     const seeds = [];
     for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
@@ -1069,6 +1081,10 @@ const minerLaggingBootChild = laggingHostCfg !== undefined
 //     genesis.
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
 if (topology.hosts['hostile-invalid']?.node !== undefined) honestHeightTargetHost.push('hostile-invalid');
+// MESH_INTERFACE → Acceptance 6 — `hostile-fork` seeds from pub1 alone
+// and syncs the honest chain; Phase 8b cuts it after the height wait,
+// so it must reach the honest height first.
+if (topology.hosts['hostile-fork']?.node !== undefined) honestHeightTargetHost.push('hostile-fork');
 const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
 if (laggingHostCfg !== undefined && malformedHostCfg !== undefined) pairHeightTargetHost.push('hostile-malformed');
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
@@ -1150,6 +1166,48 @@ if (laggingHostCfg !== undefined) {
     MINING_SECRET: 'stage-mining-secret',
     MINER_PCT: '1',
   }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });
+}
+
+// -----------------------------------------------------------------------
+// Phase 8b: hostile-fork — cut from the honest chain and mine lighter
+// -----------------------------------------------------------------------
+
+// MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
+// whose reachable nodes all serve the hostile chain keeps its own and
+// says no node continues it." `hostile-fork` seeded from pub1 alone
+// (`forkHostBootstrapPeers`) and synced to pub1's height at Phase 8's
+// wait. Now its node p2p port is cut by `buildForkCutArgs` — every TCP
+// packet on that port drops in either direction, so no block flows
+// between the honest nodes and the fork host after this. Its mesh
+// listener (WebRTC-direct UDP) stays open, so a browser session for
+// s6 step 1 reaches it as a known node at its WebRTC-direct address.
+// A miner inside the host's namespace runs at `MINER_PCT=1` — half the
+// honest chain's steady duty — so the fork stays strictly lighter
+// however long the run goes, and the client reads it `behind` on the
+// honest-chain's suffix.
+const hostileForkHostCfg = topology.hosts['hostile-fork'];
+if (hostileForkHostCfg !== undefined) {
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork')) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+  const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {
+    minerScript,
+    minerPct: 1,
+    invokingUser: INVOKING_USER,
+    miningSecret: 'stage-mining-secret',
+  });
+  // `buildForkMinerSpawn` returns an argv shaped
+  // `sudo ip netns exec notismesh-hostile-fork sudo -u <user> -- node <minerScript>`;
+  // `userWrap` returns the inside-the-ns argv for the same shape. Build
+  // the spawn through `userWrap` so `log.spawn`'s pidfile and teardown
+  // tree match every other spawn's shape. The miner's env comes from
+  // `buildForkMinerSpawn`'s env — `NODE_URL`, `MINER_PCT`,
+  // `MINING_SECRET` — so the function stays the one place the spawn
+  // plan is built.
+  log.spawn(
+    userWrap(nsOf('hostile-fork'), forkSpawn.env).concat([minerScript]),
+    { description: 'miner-fork', logPath: logPathFor('miner-fork') },
+  );
 }
 
 // -----------------------------------------------------------------------

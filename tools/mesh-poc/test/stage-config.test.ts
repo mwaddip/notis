@@ -623,18 +623,22 @@ describe('stage up --dry-run', () => {
 
   // MESH_INTERFACE → Acceptance — the miner reads its node's HTTP; a
   // node's HTTP binds its namespace loopback. The honest miner (boot
-  // + steady) runs inside `notismesh-pub1`; the pair's miner
-  // (lagging boot + lagging steady) runs inside
-  // `notismesh-hostile-lagging`.
+  // + steady) runs inside `notismesh-pub1`; the pair's miner (lagging
+  // boot + lagging steady) runs inside `notismesh-hostile-lagging`;
+  // the single-fork miner (`miner-fork`) runs inside
+  // `notismesh-hostile-fork`.
   it('each miner spawn runs inside its node\'s namespace', () => {
     runDryOnce();
     const minerLines = out.split('\n').filter((l) => l.startsWith('[spawn:miner'));
     expect(minerLines.length, 'at least one miner spawn is present').toBeGreaterThan(0);
     const pub1Ns = 'ip netns exec notismesh-pub1';
     const laggingNs = 'ip netns exec notismesh-hostile-lagging';
+    const forkNs = 'ip netns exec notismesh-hostile-fork';
     for (const minerLine of minerLines) {
       if (minerLine.startsWith('[spawn:miner-lagging-boot]') || minerLine.startsWith('[spawn:miner-lagging]')) {
         expect(minerLine, `miner-lagging* inside hostile-lagging namespace: ${minerLine}`).toContain(laggingNs);
+      } else if (minerLine.startsWith('[spawn:miner-fork]')) {
+        expect(minerLine, `miner-fork inside hostile-fork namespace: ${minerLine}`).toContain(forkNs);
       } else {
         expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain(pub1Ns);
       }

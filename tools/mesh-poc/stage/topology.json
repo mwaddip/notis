@@ -130,6 +130,23 @@
         "role": "server"
       }
     },
+    "hostile-fork": {
+      "_comment": "A hostile mesh node that syncs the honest chain from pub1 and is then cut at Phase 8b, with a MINER_PCT=1 miner inside its namespace growing a lighter fork of its own. s6 step 1 reaches this node as a known node for the second session; the first session seats the kept proof on the honest nodes, the second finds the fork node behind on a fork of the honest chain.",
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.35",
+      "veth": "hf",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "server"
+      }
+    },
     "natA": {
       "role": "nat",
       "nat": "endpoint-independent",
