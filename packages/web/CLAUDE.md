@@ -121,7 +121,7 @@ read. **The withdraw control and the wallet's `send` row read the waiting view o
 (`WEB_INTERFACE → The wallet → "A page no node answers offers what can wait"`): the App's `repNoAnswer` and
 `creditsNoAnswer` (`src/app.ts`) are settled by every read of the reader's own view in `readOwnKarma` and
 `readOwnCredits` under the read's own generation, and `canSignWithdraw`, `withdrawReason` and `waitingSpendable` take
-the waiting view through `tipChain ?? rememberedChain()`;
+the waiting view through `tipChain ?? waitingSeam.rememberedChain()`, the seam the extension build hands;
 the rep row, the balance row, the invite form, vouch and claim read the node's answer alone, and the author window's
 `your vouch` row on another key reads `—` while no rep view has been read (`yourVouchFor`, `src/view/author.ts`'s
 `YourVouch` `unread` arm). **The waiting store** (`src/wallet/waiting.ts`) holds each write under

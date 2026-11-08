@@ -6,7 +6,7 @@ import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createPostsVerifier } from './extension/posts-verifier';
-import { createPostCache } from './extension/post-cache';
+import { createPostCache, rememberedChain } from './extension/post-cache';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam } from './view/settings';
@@ -56,7 +56,7 @@ let handNodeSeam: HandNodeSeam | undefined;
 // build holds a waiting store over `window.localStorage` and the browser's
 // `navigator.locks` (the same adapter the background uses); the web build
 // hands none, and a write no node answers ends as a transport failure.
-let waitingSeam: { storage: WaitingStorage; locks: LockManager } | undefined;
+let waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | undefined;
 
 if (isExtension && BUILD_NETWORK !== null) {
   // WEB_INTERFACE → The extension → "The post check" and "The post cache" —
@@ -107,6 +107,7 @@ if (isExtension && BUILD_NETWORK !== null) {
         return navigator.locks.request(name, () => callback()) as Promise<T>;
       },
     },
+    rememberedChain: (): string | null => rememberedChain(window.localStorage),
   };
 }
 

@@ -38,7 +38,6 @@ import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, sub
 import { WaitingStore, type WaitingStorage, type WaitingWrite } from './wallet/waiting';
 import type { RepBuildContext } from './wallet/builders';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
-import { rememberedChain } from './extension/post-cache';
 import type { LockManager } from './locks';
 import { FlowQueue } from './wallet/queue';
 import { identity as identitySingleton } from './identity/identity';
@@ -502,7 +501,11 @@ export class App {
   // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
   // waits". Non-null only when the extension build hands the App a seam and an
   // identity is loaded. Rebuilt in `onIdentityChange` beside the ledger.
-  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager } | null;
+  // The seam also carries the remembered-chain read (WEB_INTERFACE → The
+  // extension → "The post cache"): the extension wires it to the post cache's
+  // module, which keeps the last chain's name in `localStorage` under
+  // `notis.posts.chain`, so the web build reads no storage key here.
+  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null;
   private waitingStore: WaitingStore | null;
   // The send pass flags — one pass per ledger at a time
   // (WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer").
@@ -589,7 +592,7 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
     handNodeSeam?: HandNodeSeam | null,
-    waitingSeam?: { storage: WaitingStorage; locks: LockManager } | null,
+    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
@@ -1183,7 +1186,7 @@ export class App {
   private waitingRepView(): RepBuildContext | null {
     const store = this.waitingStore;
     if (store === null || !this.repNoAnswer) return null;
-    const chain = this.tipChain ?? rememberedChain();
+    const chain = this.tipChain ?? this.waitingSeam!.rememberedChain();
     if (chain === null) return null;
     return store.repView(chain);
   }
@@ -1195,7 +1198,7 @@ export class App {
   private waitingSpendable(): boolean {
     const store = this.waitingStore;
     if (store === null || !this.creditsNoAnswer || this.walletCredits !== null) return false;
-    const chain = this.tipChain ?? rememberedChain();
+    const chain = this.tipChain ?? this.waitingSeam!.rememberedChain();
     if (chain === null) return false;
     const view = store.creditView(chain);
     return view !== null && view.spendable.length > 0;
@@ -3235,15 +3238,17 @@ export class App {
     const base: SubmitDeps = { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm, network: BUILD_NETWORK };
     const store = this.waitingStore;
     if (store === null) return base;
-    // `chain` is `this.tipChain ?? rememberedChain()` — a submit builds under
-    // the verified chain when one stands, else the last one the module
-    // remembered (WEB_INTERFACE → The wallet → "The view and every waiting
-    // write carry the chain's name", → The extension → "The post cache").
+    // `chain` is `this.tipChain ?? seam.rememberedChain()` — a submit builds
+    // under the verified chain when one stands, else the last one the seam's
+    // module remembered (WEB_INTERFACE → The wallet → "The view and every
+    // waiting write carry the chain's name", → The extension → "The post
+    // cache"). The seam stands wherever the store does.
+    const seam = this.waitingSeam!;
     return {
       ...base,
       waiting: {
         store,
-        chain: () => this.tipChain ?? rememberedChain(),
+        chain: () => this.tipChain ?? seam.rememberedChain(),
         // The reply or like's parent or target author, from the post cache
         // (WEB_INTERFACE → The wallet → "A write no node answers waits").
         cachedAuthor: async (postId: string): Promise<string | null> => {
@@ -3390,14 +3395,18 @@ export class App {
       // WEB_INTERFACE → Invariants → "Affordability is known before the attempt":
       // a read no node answers takes the waiting view's `effective` instead, so
       // the composer offers `post` as the post it would make can wait; with no
-      // waiting view the foot reads as on any other failed read.
+      // waiting view the foot reads as on any other failed read. The seam's
+      // `rememberedChain` is read only where the seam stands, so the web
+      // build (handed no seam) touches no storage key here.
       const store = this.waitingStore;
-      const chain = this.tipChain ?? rememberedChain();
-      if (isNoAnswer(e) && store !== null && chain !== null) {
-        const view = store.repView(chain);
-        if (view !== null) {
-          this.composers.get(key)?.setAffordable(view.effective >= price);
-          return;
+      if (isNoAnswer(e) && store !== null) {
+        const chain = this.tipChain ?? this.waitingSeam!.rememberedChain();
+        if (chain !== null) {
+          const view = store.repView(chain);
+          if (view !== null) {
+            this.composers.get(key)?.setAffordable(view.effective >= price);
+            return;
+          }
         }
       }
       this.composers.get(key)?.setKarmaError("can't read your rep right now");

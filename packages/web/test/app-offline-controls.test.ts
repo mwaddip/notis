@@ -130,9 +130,10 @@ interface Harness {
 }
 
 function harness(opts: Opts = {}): Harness {
-  if (opts.rememberChain !== undefined) {
-    localStorage.setItem('notis.posts.chain', opts.rememberChain);
-  }
+  // `rememberChain` is the chain the harness's seam answers from its
+  // `rememberedChain` — the App's one path to the chain the post-cache
+  // module stored (WEB_INTERFACE → The extension → "The post cache").
+  const chainForSeam = opts.rememberChain ?? null;
   const signCalls: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
@@ -288,7 +289,11 @@ function harness(opts: Opts = {}): Harness {
 
   const waitingSeam = opts.withSeam === false
     ? undefined
-    : { storage: window.localStorage as WaitingStorage, locks: fakeLockManager() };
+    : {
+        storage: window.localStorage as WaitingStorage,
+        locks: fakeLockManager(),
+        rememberedChain: (): string | null => chainForSeam,
+      };
 
   const ledger = new PendingLedger(PUB);
   const app = new App(
@@ -640,8 +645,11 @@ describe('invite, claim and the invites line do not read the waiting view', () =
         },
       };
 
-      localStorage.setItem('notis.posts.chain', CHAIN);
-      const waitingSeam = { storage: window.localStorage as WaitingStorage, locks: fakeLockManager() };
+      const waitingSeam = {
+        storage: window.localStorage as WaitingStorage,
+        locks: fakeLockManager(),
+        rememberedChain: (): string | null => CHAIN,
+      };
       const ledger = new ledgerMod.PendingLedger(PUB);
       const app = new appMod.App(
         fakeApi, writeClient, identity, ledger, undefined, undefined,
@@ -929,6 +937,27 @@ describe('a page no node answers with no tip run names a chain takes the chain f
       cachedThread: () => ownThread(),
     });
     // No resolveTipRunVerified — the client's chain is the remembered one.
+    primeRepBase(h, [{ boxId: BOX, value: 227n }]);
+    await h.drive.loadFeed();
+    await flush();
+    await openOwnPane(h);
+    const wb = withdrawBtn();
+    expect(wb).not.toBeNull();
+    expect(wb!.disabled).toBe(false);
+  });
+
+  // WEB_INTERFACE → The extension → "The post cache": the chain's last name is
+  // kept in `localStorage` under `notis.posts.chain`, read by the post-cache
+  // module's `rememberedChain` and handed to the App through the waiting seam.
+  // The App reaches the name through the seam alone, so the web build (which
+  // is handed no seam) reads no storage key under its feet.
+  it('withdraw, no tip run: the seam\'s rememberedChain answers the chain, with localStorage[notis.posts.chain] empty; the button is enabled', async () => {
+    const h = harness({
+      rememberChain: CHAIN,
+      cachedRoots: [ownRootHeld()],
+      cachedThread: () => ownThread(),
+    });
+    // No resolveTipRunVerified — the client's chain is the seam's.
     primeRepBase(h, [{ boxId: BOX, value: 227n }]);
     await h.drive.loadFeed();
     await flush();

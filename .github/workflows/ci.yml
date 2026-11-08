@@ -3,7 +3,9 @@ name: ci
 # The full gate, on every pull request: each workspace member built, typechecked and tested in a job of its own, and
 # a member's slow tree (`test:slow`) in one more. The matrix is the workspace's own, read at the pull request's head
 # by `.github/ci-members.mjs`. Every job builds every member first: a member's typecheck follows its siblings'
-# built types, and the mesh suite (`@dagsocial/e2e`) runs the built node, which it does not declare.
+# built types, and the mesh suite (`@dagsocial/e2e`) runs the built node, which it does not declare. The web client's
+# job runs its two release builds after its tests, whose checks are the release's
+# (WEB_INTERFACE → "Every pull request runs both build checks").
 on:
   pull_request:
 
@@ -53,3 +55,7 @@ jobs:
       - if: matrix.typecheck
         run: pnpm --filter "${{ matrix.member }}" typecheck
       - run: pnpm --filter "${{ matrix.member }}" run "${{ matrix.run }}"
+      - if: matrix.member == '@dagsocial/web' && matrix.run == 'test'
+        run: bash packages/web/scripts/build-release.sh
+      - if: matrix.member == '@dagsocial/web' && matrix.run == 'test'
+        run: bash packages/web/scripts/build-extension.sh
