@@ -810,18 +810,19 @@ harness refuses any other seed list. Each relay passes every request through —
 (one row's text swapped), `drop` (no row answered), `hold` (answered at `release()`), `hang` (never answered), and
 beside them `list-down` (the list reads answer 503), `list-replay` (a recorded light page), `down` (every connection
 destroyed), with a switchable upstream. The steps: **L1** a cold feed under `hold` — slots with no text and no control
-in `inkMute`, one light list read and one batch of exactly those ids at `RA`, the cards in the same order at the
-release; **L2** a reload — one light list read, no batch; **L3** the reader's own new post named in no batch, and one
-deleted entry asked for in one batch of one id; **L4** the pointer — the feed's batch at `RA`, a thread's at `RB`;
-**L5** `drop` on `RA` — `RB` asked the same ids; **L6** `text` on `RA` — `RB` binds it, no clay; **L7** `text` on `RA`
-with `RB` `down` — that slot gone and *1 post withheld — it does not match its signature*; **L8** `drop` with `RB`
-`down` — no slot, no card, no line; **L9** `hang` with `RB` `down` — the slots standing at nine seconds, gone at
-twelve, the client's close of the batch at `BATCH_RESOLVE_MS`; **L10** a cold thread under `hold` on both relays —
-each reply's slot at the depth its card takes; **L11** `list-down` on a held thread — the error line over the held
-rows; **L12** a withdrawal — the withdrawn card, the entry's text gone, no batch after a reload; **L13** both relays
-in front of an isolated node **D** on another chain — D's database listed and A's not, the list polled until the
-delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database creates it), a
-replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no `light`, no `tx`, no batch, no database.
+in `inkMute`, one light list read at either relay and one batch of exactly those ids at `RA`, the cards in the same
+order at the release; **L2** a reload — one light list read at either relay, no batch; **L3** the reader's own new post
+named in no batch, and one deleted entry asked for in one batch of one id; **L4** the pointer — the feed's batch at
+`RA`, a thread's at `RB`; **L5** `drop` on `RA` — `RB` asked the same ids; **L6** `text` on `RA` — `RB` binds it, no
+clay; **L7** `text` on `RA` with `RB` `down` — that slot gone and *1 post withheld — it does not match its signature*;
+**L8** `drop` with `RB` `down` — no slot, no card, no line; **L9** `hang` with `RB` `down` — the slots standing at nine
+seconds, gone at twelve, the client's close of the batch at `BATCH_RESOLVE_MS`; **L10** a cold thread under `hold` on
+both relays — each reply's slot at the depth its card takes; **L11** `list-down` on both relays over a held thread — the
+error line over the held rows; **L12** a withdrawal — the withdrawn card, the entry's text gone, no batch after a
+reload; **L13** both relays in front of an isolated node **D** on another chain — D's database listed and A's not, the
+list polled until the delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database
+creates it), a replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no
+`light`, no `tx`, no batch, no database.
 **With `--mesh` (it needs `--r-key`, `--node-dist`, `--scratch`, `--node-p2p`; it takes no verified flag and not
 `--light`) the mesh block**, M1–M4, proves the mesh path in the built extension and runs after `13-uncancelled`. The
 harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with `MESH_ROLE=public`,
@@ -848,8 +849,12 @@ nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start lin
 run the harness.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
-starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A request's `close` fires when its body
-has been read** (Node 22): a relay reads the client's going away from the response's `close` while it is not ended.
+starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A list read goes to either relay**: the
+read client's base is the client's routed pick, at random among the fast set
+(`MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"`) — so a step counts a list
+read across both relays' logs and sets a list mode (`list-down`, `list-replay`) and the record flag on both.
+⚠ **A request's `close` fires when its body has been read** (Node 22): a relay reads the client's going away from the
+response's `close` while it is not ended.
 ⚠ **A `//` comment inside a template passed to `cx.eval` carries no backtick** — one ends the string, and
 `node --check` passes it. ⚠ **A thread is opened the product's two ways and no other**: from a feed card's strip, or
 by id through the pending record `notis.open.<id>` written from the background's context — the page has no post-id

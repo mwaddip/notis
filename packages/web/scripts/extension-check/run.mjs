@@ -7920,12 +7920,16 @@ async function lightSteps(cx, targetId = 'unknown') {
       return { atMs: Date.now() - t0, slots: 0 };
     })()`);
     const feedHeld = await readFeedShape(cx);
-    // Mid-hold slice — the list GET is pushed by its own `finish`; the
-    // batch's entry is held in flight and pushed only by its `finish`
-    // after release.
+    // Mid-hold slice — the list GET lands at whichever relay the client's
+    // routed pick chose (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")
+    // and is pushed by its own `finish`; the batch's entry is held in flight
+    // at the relay the pointer picked and pushed only by its `finish` after
+    // release.
     const raMidHold = RA.log.slice(idxBefore.ra);
     const rbSinceHeld = RB.log.slice(idxBefore.rb);
     const listsRa = lightListsIn(raMidHold);
+    const listsRb = lightListsIn(rbSinceHeld);
+    const lists = [...listsRa, ...listsRb];
     const feedSlotsLower = (feedHeld.slots ?? []).map((s) => s.toLowerCase());
     const slotShapesOk = Array.isArray(feedHeld.slotShapes) && feedHeld.slotShapes.length > 0
       && feedHeld.slotShapes.every((s) => s.slotTextEmpty && !s.bodyHasButton && !s.bodyHasLink);
@@ -7959,28 +7963,29 @@ async function lightSteps(cx, targetId = 'unknown') {
       && heldBatch.status === 200
       && typeof heldBatch.doneAt === 'number'
       && heldBatch.doneAt >= releaseAt;
-    // RB's resolve claim: the resolve did not reach RB — no POST
-    // /posts/batch and no light list read. RB may still have served
-    // other routes the client reads (the tip verifier's proof reads),
-    // which the paths summary names.
+    // The batch's relay is fixed by the pointer: the fresh page's first
+    // resolve goes to RA (WEB_INTERFACE → The extension → "A pointer walks the nodes").
+    // RB may still have served other routes the client reads (the tip
+    // verifier's proof reads), which the paths summary names.
     const rbBatches = batchesIn(rbSinceHeld);
-    const rbLightLists = lightListsIn(rbSinceHeld);
     const rbPathCounts = {};
     for (const e of rbSinceHeld) {
       const key = `${e.method} ${e.path.split('?')[0]}`;
       rbPathCounts[key] = (rbPathCounts[key] ?? 0) + 1;
     }
+    const servedAt = listsRa.length >= 1 ? 'RA' : (listsRb.length >= 1 ? 'RB' : 'none');
+    const listPath = lists[0]?.path ?? '';
     const ok = held.slots > 0 && slotsMatchBatch && slotShapesOk && slotColoursOk
-      && listsRa.length === 1 && batchesRa.length === 1 && batchAnsweredAfterRelease
-      && rbBatches.length === 0 && rbLightLists.length === 0 && sameOrder && noLine && releasedCount >= 1;
+      && lists.length === 1 && batchesRa.length === 1 && batchAnsweredAfterRelease
+      && rbBatches.length === 0 && sameOrder && noLine && releasedCount >= 1;
     record('L1', ok,
       `held@${held.atMs}ms slots=${held.slots}, feed slots=${JSON.stringify(feedHeld.slots?.slice(0, 4))}, ` +
       `slot shapes ok=${slotShapesOk} (slotShapes=${JSON.stringify(feedHeld.slotShapes?.slice(0, 3))}), ` +
       `inkMute=${JSON.stringify(feedHeld.inkMuteRgb)} probedColours=${JSON.stringify(feedHeld.probedColours)}, ` +
-      `RA list reads=${listsRa.length} (tx=${JSON.stringify(listsRa[0]?.path?.includes('tx=') ?? false)}), ` +
+      `light list reads: RA=${listsRa.length} RB=${listsRb.length} served at ${servedAt} (tx=${JSON.stringify(listPath.includes('tx='))}), ` +
       `RA batch reads=${batchesRa.length} (batchIds×${batchIdsRa.length} match=${slotsMatchBatch}), ` +
       `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms), ` +
-      `RB batches=${rbBatches.length}, RB light lists=${rbLightLists.length}, RB paths=${JSON.stringify(rbPathCounts)}, release=${releasedCount}, ` +
+      `RB batches=${rbBatches.length}, RB paths=${JSON.stringify(rbPathCounts)}, release=${releasedCount}, ` +
       `after release cards=${feedReleased.liveCards?.length} same order=${sameOrder}, line=${JSON.stringify(feedReleased.withheldLineText)}`);
   } catch (e) {
     record('L1', false, `error: ${e?.stack ?? String(e)}`);
@@ -7988,8 +7993,9 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.release();
   }
 
-  // ---- L2 — a reload reads the cache. One light=1 list read, no
-  // posts/batch at either relay, every card present.
+  // ---- L2 — a reload reads the cache. One light=1 list read at either
+  // relay (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"),
+  // no posts/batch at either relay, every card present.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
@@ -8003,12 +8009,16 @@ async function lightSteps(cx, targetId = 'unknown') {
     const raSlice = RA.log.slice(idxBefore.ra);
     const rbSlice = RB.log.slice(idxBefore.rb);
     const listsRa = lightListsIn(raSlice);
+    const listsRb = lightListsIn(rbSlice);
+    const lists = [...listsRa, ...listsRb];
     const batchesRa = batchesIn(raSlice);
     const batchesRb = batchesIn(rbSlice);
-    const ok = listsRa.length === 1 && batchesRa.length === 0 && batchesRb.length === 0
+    const servedAt = listsRa.length >= 1 ? 'RA' : (listsRb.length >= 1 ? 'RB' : 'none');
+    const ok = lists.length === 1 && batchesRa.length === 0 && batchesRb.length === 0
       && (feedShape.slots?.length ?? 0) === 0 && (feedShape.liveCards?.length ?? 0) > 0;
     record('L2', ok,
-      `RA list reads=${listsRa.length}, RA batches=${batchesRa.length}, RB batches=${batchesRb.length}, ` +
+      `light list reads: RA=${listsRa.length} RB=${listsRb.length} served at ${servedAt}, ` +
+      `RA batches=${batchesRa.length}, RB batches=${batchesRb.length}, ` +
       `feed slots=${feedShape.slots?.length}, cards=${feedShape.liveCards?.length}`);
   } catch (e) {
     record('L2', false, `error: ${e?.stack ?? String(e)}`);
@@ -8346,13 +8356,18 @@ async function lightSteps(cx, targetId = 'unknown') {
         || regions.some((r) => r.querySelector('.region-body .card.slot[data-post-id="${reply2Id}"]'));
     })()`, 'L10 thread slots stand', 15000).catch(() => {});
     const paneHeld = await readThreadPaneShape(cx, rootId);
-    // Mid-hold slice — the thread list GET lands on RA (the client's base)
+    // Mid-hold slice — the thread list GET lands at whichever relay the
+    // client's routed pick chose (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")
     // and is pushed by its own `finish`; the batch's entry is held in
     // flight at whichever relay the pointer picked, pushed only by its
     // `finish` after release.
     const raMidHold = RA.log.slice(idxBeforeThread.ra);
-    const threadLists = raMidHold.filter((e) =>
-      e.method === 'GET' && /^\/posts\/[0-9a-f]{64}\/thread/.test(e.path.split('?')[0]));
+    const rbMidHold = RB.log.slice(idxBeforeThread.rb);
+    const isThreadListEntry = (e) =>
+      e.method === 'GET' && /^\/posts\/[0-9a-f]{64}\/thread$/i.test(e.path.split('?')[0]);
+    const threadListsRa = raMidHold.filter(isThreadListEntry);
+    const threadListsRb = rbMidHold.filter(isThreadListEntry);
+    const threadLists = [...threadListsRa, ...threadListsRb];
     const threadListsLight = threadLists.filter((e) => /[?&]light=1(?:&|$)/.test(e.path));
     const threadListsHaveTx = threadLists.some((e) => /[?&]tx=/.test(e.path));
     // Release both — slot cards become cards; the reply depth-1 and the
@@ -8397,7 +8412,7 @@ async function lightSteps(cx, targetId = 'unknown') {
       && heldBatch.doneAt >= releaseAt;
     record('L10', threadListsLight.length >= 1 && !threadListsHaveTx && depthClassOk
         && slotsBecameCards && released >= 1 && batchAnsweredAfterRelease,
-      `thread list reads=${threadLists.length} (light=${threadListsLight.length}, any tx=${threadListsHaveTx}); ` +
+      `thread list reads: RA=${threadListsRa.length} RB=${threadListsRb.length} total=${threadLists.length} (light=${threadListsLight.length}, any tx=${threadListsHaveTx}); ` +
       `held pane: reply1 depth=${r1Held?.depth} isSlot=${r1Held?.isSlot}, reply2 depth=${r2Held?.depth} isSlot=${r2Held?.isSlot}; ` +
       `released pane: reply1 depth=${r1Released?.depth} isSlot=${r1Released?.isSlot}, reply2 depth=${r2Released?.depth} isSlot=${r2Released?.isSlot}; ` +
       `held batch answered after release=${batchAnsweredAfterRelease} (status=${heldBatch?.status}, doneAt-releaseAt=${heldBatch?.doneAt !== undefined && heldBatch.doneAt !== null ? heldBatch.doneAt - releaseAt : 'n/a'}ms); ` +
@@ -8414,12 +8429,14 @@ async function lightSteps(cx, targetId = 'unknown') {
   }
 
   // ---- L11 — a held thread whose listing fails. With the thread held
-  // (just released into cards in L10): RA on list-down, the pane's ↻ —
-  // the error line, and the held cards beneath it; no batch. RA honest, ↻
-  // — the cards, no error line.
+  // (just released into cards in L10): both relays on list-down so
+  // whichever the client's routed pick chose answers 503
+  // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows");
+  // the pane's ↻ — the error line, and the held cards beneath it; no
+  // batch. Both honest, ↻ — the cards, no error line.
   try {
     RA.mode = 'list-down';
-    RB.mode = 'honest';
+    RB.mode = 'list-down';
     const idxBefore = { ra: RA.log.length, rb: RB.log.length };
     await refreshThreadPane(cx, rootId);
     await cx.waitFor(`(() => {
@@ -8430,11 +8447,17 @@ async function lightSteps(cx, targetId = 'unknown') {
     const raSliceDown = RA.log.slice(idxBefore.ra);
     const rbSliceDown = RB.log.slice(idxBefore.rb);
     const batchesDown = [...batchesIn(raSliceDown), ...batchesIn(rbSliceDown)];
+    const isThreadListEntry = (e) =>
+      e.method === 'GET' && /^\/posts\/[0-9a-f]{64}\/thread$/i.test(e.path.split('?')[0]);
+    const threadListsDownRa = raSliceDown.filter(isThreadListEntry);
+    const threadListsDownRb = rbSliceDown.filter(isThreadListEntry);
+    const servedDownAt = threadListsDownRa.length >= 1 ? 'RA' : (threadListsDownRb.length >= 1 ? 'RB' : 'none');
     const hasError = typeof paneDown.errorLineText === 'string' && paneDown.errorLineText.length > 0;
     const hasReply1 = (paneDown.cards ?? []).some((c) => c.id === reply1Id && !c.isSlot);
     const hasReply2 = (paneDown.cards ?? []).some((c) => c.id === reply2Id && !c.isSlot);
-    // Honest, ↻: cards, no error line.
+    // Both honest, ↻: cards, no error line.
     RA.mode = 'honest';
+    RB.mode = 'honest';
     const idxBeforeHonest = { ra: RA.log.length, rb: RB.log.length };
     await refreshThreadPane(cx, rootId);
     await cx.waitFor(`(() => {
@@ -8446,11 +8469,13 @@ async function lightSteps(cx, targetId = 'unknown') {
     const honestNoError = paneHonest.errorLineText === null;
     const honestHasRoot = (paneHonest.cards ?? []).some((c) => c.id === rootId && !c.isSlot);
     record('L11', hasError && hasReply1 && hasReply2 && batchesDown.length === 0 && honestNoError && honestHasRoot,
-      `list-down pane: error=${JSON.stringify(paneDown.errorLineText)}, reply1 held=${hasReply1}, reply2 held=${hasReply2}, batches during list-down=${batchesDown.length}; ` +
+      `list-down pane: error=${JSON.stringify(paneDown.errorLineText)}, reply1 held=${hasReply1}, reply2 held=${hasReply2}, batches during list-down=${batchesDown.length}, ` +
+      `thread list reads: RA=${threadListsDownRa.length} RB=${threadListsDownRb.length} served at ${servedDownAt}; ` +
       `honest pane: error=${JSON.stringify(paneHonest.errorLineText)}, root present=${honestHasRoot}`);
   } catch (e) {
     record('L11', false, `error: ${e?.stack ?? String(e)}`);
     RA.mode = 'honest';
+    RB.mode = 'honest';
   }
 
   // ---- L12 — a withdrawal. R withdraws reply2 from the pane (the two
@@ -8542,25 +8567,44 @@ async function lightSteps(cx, targetId = 'unknown') {
   }
 
   // ---- L13 — another chain. A light page of the feed is recorded from
-  // RA. Both relays are set to `upstream-D` mode with their `upstream`
-  // reassigned to D, and the page reloads: a fresh page is a fresh client
+  // whichever relay the client's routed pick chose
+  // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")
+  // and is set as `replayPage` on both. Both relays are set to
+  // `upstream-D` mode with their `upstream` reassigned to D, and the
+  // page reloads: a fresh page is a fresh client
   // (`WEB_INTERFACE → The extension → "The contexts, and what each may
   // hold"`), its tip run names D's chain, the cache opens D's database
   // and deletes A's (`WEB_INTERFACE → The extension → "The chain's
-  // name"`, `"The post cache"`). Then RA on list-replay with the recorded
-  // page and a ↻: the listed ids stand as slots and are asked of the
-  // relays — no card is drawn from the first chain's entries — and at
-  // the end no slot stands.
+  // name"`, `"The post cache"`). Then both relays on list-replay and a
+  // ↻: whichever the pick chose answers the recorded page, the listed
+  // ids stand as slots and are asked of the relays — no card is drawn
+  // from the first chain's entries — and at the end no slot stands.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
-    // Record RA's next list GET.
+    // Record whichever relay the client's routed pick sends the next list GET
+    // to (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
     RA.recordNextList = true;
+    RB.recordNextList = true;
     // Trigger a feed read.
     await refreshFeed(cx);
     const t0 = Date.now();
-    while (Date.now() - t0 < 15000 && RA.replayPage === null) await sleep(100);
-    if (RA.replayPage === null) {
+    while (Date.now() - t0 < 15000 && RA.replayPage === null && RB.replayPage === null) await sleep(100);
+    // Once one relay holds the page, the other relay's record flag is
+    // cleared so no later read overwrites it, and that page is set as
+    // replayPage on both relays so the replay arm serves it at whichever
+    // relay the pick lands on.
+    let recordedAt = null;
+    if (RA.replayPage !== null) {
+      recordedAt = 'RA';
+      RB.recordNextList = false;
+      RB.replayPage = RA.replayPage;
+    } else if (RB.replayPage !== null) {
+      recordedAt = 'RB';
+      RA.recordNextList = false;
+      RA.replayPage = RB.replayPage;
+    }
+    if (recordedAt === null) {
       record('L13', false, 'the recorded light page was not captured within 15s');
     } else {
       // Read A's cache ids while A's chain is still open — this set is
@@ -8601,22 +8645,31 @@ async function lightSteps(cx, targetId = 'unknown') {
             }
             await sleep(250);
           }
-          // Switch RA to list-replay and press ↻ — the listed ids stand
-          // as slots and are asked of the relays; no card is drawn from
-          // the first chain's entries; at the end no slot stands (D does
-          // not hold those posts).
+          // Switch both relays to list-replay and press ↻ — whichever the
+          // client's routed pick chose answers the recorded page
+          // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows");
+          // the listed ids stand as slots and are asked of the relays; no
+          // card is drawn from the first chain's entries; at the end no
+          // slot stands (D does not hold those posts).
           RA.mode = 'list-replay';
+          RB.mode = 'list-replay';
           const idxBefore = { ra: RA.log.length, rb: RB.log.length };
           await refreshFeed(cx);
           // The resolve's deadline is 10s; give the whole arm 15.
           await sleep(15000);
           const feedShape = await readFeedShape(cx);
-          const batchesSeen = [...batchesIn(RA.log.slice(idxBefore.ra)), ...batchesIn(RB.log.slice(idxBefore.rb))];
+          const raReplaySlice = RA.log.slice(idxBefore.ra);
+          const rbReplaySlice = RB.log.slice(idxBefore.rb);
+          const batchesSeen = [...batchesIn(raReplaySlice), ...batchesIn(rbReplaySlice)];
           const askedIds = new Set(batchesSeen.flatMap(batchIdsOf));
+          const replayListsRa = lightListsIn(raReplaySlice);
+          const replayListsRb = lightListsIn(rbReplaySlice);
+          const replayServedAt = replayListsRa.length >= 1 ? 'RA' : (replayListsRb.length >= 1 ? 'RB' : 'none');
           const noSlots = (feedShape.slots?.length ?? 0) === 0;
           const noCardsFromAChain = (feedShape.liveCards ?? []).every((id) => !aIdsBefore?.includes(id));
           record('L13', dListedANotListed && askedIds.size > 0 && noSlots && noCardsFromAChain,
             `D listed, A absent=${dListedANotListed} (A ${aDbName.slice(0, 24)}…, D ${dDbName.slice(0, 24)}…, namesOnD=${JSON.stringify(namesOnD)}); ` +
+            `recorded at ${recordedAt}, replayed read served at ${replayServedAt} (RA=${replayListsRa.length} RB=${replayListsRb.length}); ` +
             `batches during replay=${batchesSeen.length} ids asked×${askedIds.size}; ` +
             `at the end slots=${feedShape.slots?.length} cards=${feedShape.liveCards?.length} drew from A's chain=${!noCardsFromAChain}`);
           // Back to A for L14 and the run end.
@@ -8624,6 +8677,10 @@ async function lightSteps(cx, targetId = 'unknown') {
           RB.upstream = B_ORIGIN;
           RA.mode = 'honest';
           RB.mode = 'honest';
+          RA.recordNextList = false;
+          RA.replayPage = null;
+          RB.recordNextList = false;
+          RB.replayPage = null;
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 back on A after cleanup', 60000);
         }
@@ -8635,6 +8692,10 @@ async function lightSteps(cx, targetId = 'unknown') {
     RB.upstream = B_ORIGIN;
     RA.mode = 'honest';
     RB.mode = 'honest';
+    RA.recordNextList = false;
+    RA.replayPage = null;
+    RB.recordNextList = false;
+    RB.replayPage = null;
   } finally {
     await stopChild('d-light').catch(() => {});
     await stopChild('d-light-miner').catch(() => {});
