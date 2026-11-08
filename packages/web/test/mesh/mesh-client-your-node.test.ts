@@ -31,6 +31,7 @@ import {
   buildMinedChain,
   makeReader,
 } from '../../../nipopow/test/helpers.js';
+import { buildMinedBranch } from './helpers/mined-branch.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 
@@ -450,25 +451,32 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(client.state().disagreement).toBeNull();
   }, 120_000);
 
-  // `buildMinedChain` makes every chain share block 1 (forceLevels on
-  // other heights mines each chain afresh from block 1), so every fork
-  // the pair-helpers can construct has the same `lca = block 1` and
-  // therefore the same `forkKey`. A test of "forks again" needs chains
-  // that diverge at different heights; this one is kept as a
-  // placeholder and will be rewritten when a divergent-chain helper
-  // lands.
-  it.fails('continue, then your node forks again: a new disagreement', async () => {
-    // First disagreement answered. Then o changes to a different
-    // branch — forkKey differs — a new disagreement is raised.
-    const keptProof = proofOf(MK);
-    const oProof1 = proofOf(MK + 30, 60_001);
+  it('continue, then your node forks again: a new disagreement', async () => {
+    // Kept = y's chain of MK (y continues). First check: o1 is a
+    // branch rooted at base height 4 — it shares blocks 1..4 with y
+    // and diverges at block 5. Heavier disagreement, fork1 = block 4.
+    // Continue — answered forks records block 4's hash. Swap o to o2,
+    // a branch rooted at base height 9 — shares blocks 1..9 with y
+    // and diverges at block 10. fork2 = block 9's hash, different
+    // from fork1, so the answered-forks set does not match and a new
+    // disagreement is raised.
+    const baseChain = buildMinedChain({ count: MK });
+    const o1Chain = buildMinedBranch({ base: baseChain, fromHeight: 4, count: MK + 30 });
+    const o2Chain = buildMinedBranch({ base: baseChain, fromHeight: 9, count: MK + 30 });
+    const keptProof = proveWithReader(makeReader(baseChain), { m: M, k: K });
+    const oProof1 = proveWithReader(makeReader(o1Chain), { m: M, k: K });
+    const oProof2 = proveWithReader(makeReader(o2Chain), { m: M, k: K });
+    const o1Tip = o1Chain.headers[o1Chain.headers.length - 1]!;
+    const o2Tip = o2Chain.headers[o2Chain.headers.length - 1]!;
+    const yTip = baseChain.headers[baseChain.headers.length - 1]!;
+
     const yId = keyPair().notisId;
     const oId = keyPair().notisId;
     const h = harness();
     const yBase = 'http://127.0.0.1:1';
     const oBase = 'http://127.0.0.1:2';
-    h.tips.set(yBase, tipOf(MK));
-    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.tips.set(yBase, { height: yTip.height, hash: blockHash(yTip)! });
+    h.tips.set(oBase, { height: o1Tip.height, hash: blockHash(o1Tip)! });
     h.proofs.set(yBase, keptProof);
     h.proofs.set(oBase, oProof1);
 
@@ -493,10 +501,9 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     const firstFork = client.state().disagreement!.fork;
     client.answer('continue');
 
-    // Swap o's proof to a different fork (different stampInterval).
-    const oProof2 = proofOf(MK + 30, 59_999);
+    // Swap o to o2 — a branch diverging from y at a higher height.
     h.proofs.set(oBase, oProof2);
-    h.tips.set(oBase, tipOf(MK + 30, 59_999));
+    h.tips.set(oBase, { height: o2Tip.height, hash: blockHash(o2Tip)! });
 
     await client.check();
     const s = client.state();
