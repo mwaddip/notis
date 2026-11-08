@@ -8567,15 +8567,18 @@ async function lightSteps(cx, targetId = 'unknown') {
   }
 
   // ---- L13 — another chain. A light page of the feed is recorded from
-  // RA. Both relays are set to `upstream-D` mode with their `upstream`
-  // reassigned to D, and the page reloads: a fresh page is a fresh client
+  // whichever relay the client's routed pick chose
+  // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")
+  // and is set as `replayPage` on both. Both relays are set to
+  // `upstream-D` mode with their `upstream` reassigned to D, and the
+  // page reloads: a fresh page is a fresh client
   // (`WEB_INTERFACE → The extension → "The contexts, and what each may
   // hold"`), its tip run names D's chain, the cache opens D's database
   // and deletes A's (`WEB_INTERFACE → The extension → "The chain's
-  // name"`, `"The post cache"`). Then RA on list-replay with the recorded
-  // page and a ↻: the listed ids stand as slots and are asked of the
-  // relays — no card is drawn from the first chain's entries — and at
-  // the end no slot stands.
+  // name"`, `"The post cache"`). Then both relays on list-replay and a
+  // ↻: whichever the pick chose answers the recorded page, the listed
+  // ids stand as slots and are asked of the relays — no card is drawn
+  // from the first chain's entries — and at the end no slot stands.
   try {
     RA.mode = 'honest';
     RB.mode = 'honest';
