@@ -451,11 +451,13 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(seen[0]!.replace).toBe(false);
   }, 90_000);
 
-  it('a chain settled by a proof the kept one beats does not replace the kept proof in the snapshot', async () => {
+  it('a node whose proof is lost to the kept one is placed off the chain, the settle is skipped, and the snapshot keeps the kept proof', async () => {
     // Memory has a long chain; the node serves a shorter one that
-    // loses to it. `judgeByMemory` marks the node `lost`, `best` is
-    // null, nothing settles, and the snapshot's `proof` stays the
-    // kept one's bytes.
+    // loses to it. `judgeByMemory` marks the node `lost` — the
+    // perNodeVerdict is `off` and the entry's status is `behind`;
+    // `best` is null, `foreign` is false, `judgedWinner` is null so
+    // the settle is skipped and `this.kept` stays. The snapshot's
+    // `proof` is the kept one's bytes.
     const keptProof = proofOf(MK + 30);
     const loserProof = proofOf(MK);
     const a = keyPair();

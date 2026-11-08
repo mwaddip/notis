@@ -31,7 +31,7 @@ import { resolveTip, DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/ni
 import type { Anchor } from '@dagsocial/nipopow-client';
 import { decodeNipopowProof, encodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
-import { continues, judgeByMemory, nodesToRemember, forkKey } from './memory.js';
+import { judgeByMemory, nodesToRemember, forkKey } from './memory.js';
 import { compareProofs } from '@dagsocial/nipopow';
 import type { MemorySnapshot } from './memory-store.js';
 import { REMEMBERED_NODES_MAX, ANSWERED_FORKS_MAX } from './protocols.js';
@@ -2106,13 +2106,15 @@ class MeshClientImpl implements MeshClient {
           // MESH_INTERFACE → What the client remembers — the kept proof
           // is "the last proof the client verified of the chain it holds —
           // a check's winner, a switch, its own tip's proof". It moves
-          // forward whenever a verified proof of the chain it holds
-          // reaches the check — whether the chain switches or the tip
-          // is byHash-held — and never where the new proof loses to it.
-          if (this.kept === null
-              || continues(this.kept, proof, this.profile, this.wallClock())) {
-            this.kept = proof;
-          }
+          // forward to this proof: `judgeByMemory`'s `best` excludes
+          // every proof that loses to the kept one (`judgment.lost`),
+          // and a `foreign` judgement clears the kept proof before
+          // this write — so the proof `judgedWinner` names here either
+          // continues the kept chain (reached only when `kept !== null`
+          // and `best` selected it) or starts a new chain
+          // (`kept === null` here, either never-held or just cleared
+          // by `foreign`).
+          this.kept = proof;
           if (this.chain.standing(winnerTipHash, judgedTip.height) !== 'held') {
             const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
             this.chain.settle(suffix, vr.headers[0]!);
