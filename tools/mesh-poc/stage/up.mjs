@@ -828,7 +828,7 @@ function spawnNotisForHost(name, host) {
   let bootstrapPeers;
   if (partner !== null) {
     bootstrapPeers = pairBootstrapAddr(topology, name);
-  } else if (name === 'hostile-fork') {
+  } else if (name === 'hostile-fork' || name === 'hostile-fork-peer') {
     const pub1Host = topology.hosts['pub1'];
     const pub1PeerId = peerIdStringOf(notisIds['pub1']);
     const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}/p2p/${pub1PeerId}`;
@@ -1081,10 +1081,15 @@ const minerLaggingBootChild = laggingHostCfg !== undefined
 //     genesis.
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
 if (topology.hosts['hostile-invalid']?.node !== undefined) honestHeightTargetHost.push('hostile-invalid');
-// MESH_INTERFACE → Acceptance 6 — `hostile-fork` seeds from pub1 alone
-// and syncs the honest chain; Phase 8b cuts it after the height wait,
-// so it must reach the honest height first.
+// MESH_INTERFACE → Acceptance 6 — `hostile-fork` + `hostile-fork-peer`
+// seed from pub1 alone and sync the honest chain; Phase 8b cuts both
+// with each other as accept-partner after the height wait, so each
+// must reach the honest height first. `lan1-peer` also syncs from
+// pub1 like lan1; s7 step 4 pairs them with each other across its
+// own cut.
 if (topology.hosts['hostile-fork']?.node !== undefined) honestHeightTargetHost.push('hostile-fork');
+if (topology.hosts['hostile-fork-peer']?.node !== undefined) honestHeightTargetHost.push('hostile-fork-peer');
+if (topology.hosts['lan1-peer']?.node !== undefined) honestHeightTargetHost.push('lan1-peer');
 const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
 if (laggingHostCfg !== undefined && malformedHostCfg !== undefined) pairHeightTargetHost.push('hostile-malformed');
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
@@ -1169,25 +1174,39 @@ if (laggingHostCfg !== undefined) {
 }
 
 // -----------------------------------------------------------------------
-// Phase 8b: hostile-fork — cut from the honest chain and mine lighter
+// Phase 8b: hostile-fork pair — cut from the honest chain, mine lighter
 // -----------------------------------------------------------------------
 
 // MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
 // whose reachable nodes all serve the hostile chain keeps its own and
-// says no node continues it." `hostile-fork` seeded from pub1 alone
-// (`forkHostBootstrapPeers`) and synced to pub1's height at Phase 8's
-// wait. Now its node p2p port is cut by `buildForkCutArgs` — every TCP
-// packet on that port drops in either direction, so no block flows
-// between the honest nodes and the fork host after this. Its mesh
-// listener (WebRTC-direct UDP) stays open, so a browser session for
-// s6 step 1 reaches it as a known node at its WebRTC-direct address.
-// A miner inside the host's namespace runs at `MINER_PCT=1` — half the
-// honest chain's steady duty — so the fork stays strictly lighter
-// however long the run goes, and the client reads it `behind` on the
-// honest-chain's suffix.
+// says no node continues it." `hostile-fork` + `hostile-fork-peer`
+// seeded from pub1 alone (`forkHostBootstrapPeers`) and synced to
+// pub1's height at Phase 8's wait. Now both namespaces install a
+// `fork_cut` table with accept rules for the partner's TCP p2p
+// traffic AHEAD of the drop-everything rule on the p2p port
+// (`buildForkCutArgs(..., { partner })`). After the cut, no block
+// flows between the honest nodes and the fork pair, each pair host
+// keeps the other as its one Active peer
+// (MINING_INTERFACE → The peer-readiness gate), and `miner-fork`
+// inside `hostile-fork`'s namespace at `MINER_PCT=1` keeps producing
+// templates and mining a lighter fork of the honest chain. The mesh
+// listener (WebRTC-direct UDP) stays open, so s6 step 1 reaches
+// `hostile-fork` as a known node at its WebRTC-direct address.
 const hostileForkHostCfg = topology.hosts['hostile-fork'];
-if (hostileForkHostCfg !== undefined) {
-  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork')) {
+const hostileForkPeerHostCfg = topology.hosts['hostile-fork-peer'];
+if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
+  const forkPartner = {
+    addr: hostileForkPeerHostCfg.addr,
+    p2pPort: hostileForkPeerHostCfg.node.p2pPort,
+  };
+  const peerPartner = {
+    addr: hostileForkHostCfg.addr,
+    p2pPort: hostileForkHostCfg.node.p2pPort,
+  };
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork', { partner: forkPartner })) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork-peer', { partner: peerPartner })) {
     log.shell(argv[0], argv.slice(1), { privileged: true });
   }
   const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {

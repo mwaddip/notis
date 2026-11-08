@@ -19,7 +19,7 @@ export interface NftRule {
 export function buildForkCutArgs(
   topology: Topology,
   name: string,
-  options?: { table?: string },
+  options?: { table?: string; partner?: { addr: string; p2pPort: number } | null },
 ): NftRule[];
 
 export function buildForkCutTeardownArgs(

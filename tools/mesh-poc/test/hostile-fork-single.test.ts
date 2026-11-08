@@ -84,15 +84,58 @@ describe('hostile-fork-single builder', () => {
     expect(inDrop.argv.join(' ')).toMatch(/\btcp sport 9100 drop\b/);
   });
 
-  // The host has no partner, so no `daddr` or `saddr` accept rule
-  // appears. A mutation that added one would open a hole in the cut.
-  it('buildForkCutArgs: no daddr/saddr accept rule — the host has no partner', () => {
+  // Without a partner, no `daddr` or `saddr` accept rule appears —
+  // every TCP packet on the p2p port drops in either direction. A
+  // mutation that added one would open a hole in the cut.
+  it('buildForkCutArgs: no partner — no daddr/saddr accept rule', () => {
     const topo = fakeTopology();
     const rules = buildForkCutArgs(topo, 'hostile-fork');
     for (const r of rules) {
       const joined = r.argv.join(' ');
       expect(joined).not.toMatch(/\baccept\b/);
     }
+  });
+
+  // With a partner, an accept rule for the partner's addr + p2p port
+  // sits BEFORE the drop on each chain — nft reads rules in order,
+  // first match wins, so the partner's packets take the accept.
+  it('buildForkCutArgs with a partner: accept rules land before drops on both chains', () => {
+    const topo = fakeTopology();
+    const rules = buildForkCutArgs(topo, 'hostile-fork', {
+      partner: { addr: '11.100.0.36', p2pPort: 9100 },
+    });
+    const descs = rules.map((r) => r.description);
+    const outAccept = descs.indexOf('hostile-fork-fork-out-accept-partner');
+    const outDrop = descs.indexOf('hostile-fork-fork-out-drop');
+    const inAccept = descs.indexOf('hostile-fork-fork-in-accept-partner');
+    const inDrop = descs.indexOf('hostile-fork-fork-in-drop');
+    expect(outAccept).toBeGreaterThan(-1);
+    expect(inAccept).toBeGreaterThan(-1);
+    expect(outAccept).toBeLessThan(outDrop);
+    expect(inAccept).toBeLessThan(inDrop);
+  });
+
+  it('buildForkCutArgs with a partner: accept rules name the partner addr + p2p port on the right direction', () => {
+    const topo = fakeTopology();
+    const rules = buildForkCutArgs(topo, 'hostile-fork', {
+      partner: { addr: '11.100.0.36', p2pPort: 9100 },
+    });
+    const outAccept = rules.find((r) => r.description === 'hostile-fork-fork-out-accept-partner');
+    const inAccept = rules.find((r) => r.description === 'hostile-fork-fork-in-accept-partner');
+    expect(outAccept, 'out-accept present').toBeDefined();
+    expect(inAccept, 'in-accept present').toBeDefined();
+    expect(outAccept!.argv.join(' ')).toMatch(/\bdaddr 11\.100\.0\.36 tcp dport 9100 accept\b/);
+    expect(inAccept!.argv.join(' ')).toMatch(/\bsaddr 11\.100\.0\.36 tcp sport 9100 accept\b/);
+  });
+
+  it('buildForkCutArgs: a partner with no addr or no numeric p2pPort throws', () => {
+    const topo = fakeTopology();
+    expect(() => buildForkCutArgs(topo, 'hostile-fork', {
+      partner: { addr: '', p2pPort: 9100 },
+    })).toThrow(/partner\.addr/);
+    expect(() => buildForkCutArgs(topo, 'hostile-fork', {
+      partner: { addr: '11.100.0.36', p2pPort: '9100' as unknown as number },
+    })).toThrow(/partner\.p2pPort/);
   });
 
   it('buildForkCutArgs: a host without node.p2pPort throws naming the host', () => {

@@ -131,11 +131,28 @@
       }
     },
     "hostile-fork": {
-      "_comment": "A hostile mesh node that syncs the honest chain from pub1 and is then cut at Phase 8b, with a MINER_PCT=1 miner inside its namespace growing a lighter fork of its own. s6 step 1 reaches this node as a known node for the second session; the first session seats the kept proof on the honest nodes, the second finds the fork node behind on a fork of the honest chain.",
+      "_comment": "A hostile mesh node that syncs the honest chain from pub1 and is then cut at Phase 8b, paired with hostile-fork-peer as its one Active peer so a MINER_PCT=1 miner inside its namespace keeps producing templates (MINING_INTERFACE → The peer-readiness gate — a miner only serves a template while the node holds at least one Active peer). s6 step 1 reaches this node as a known node for the second session; the first session seats the kept proof on the honest nodes, the second finds the fork node behind on a lighter fork of the honest chain.",
       "role": "hostile",
       "nat": "none",
       "addr": "11.100.0.35",
       "veth": "hf",
+      "mesh": {
+        "role": "public",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "miner"
+      }
+    },
+    "hostile-fork-peer": {
+      "_comment": "The one Active peer `hostile-fork` keeps after the cut (MINING_INTERFACE → The peer-readiness gate). Synced from pub1 at boot like `hostile-fork`; Phase 8b cuts both with each other as the accept-partner, so neither sees honest blocks but each keeps the other as a peer. No miner runs on this host — `hostile-fork`'s miner is the one that grows the fork.",
+      "role": "hostile",
+      "nat": "none",
+      "addr": "11.100.0.36",
+      "veth": "hfp",
       "mesh": {
         "role": "public",
         "webrtcPort": 4001,
@@ -214,11 +231,30 @@
       "httpPort": 80
     },
     "lan1": {
+      "_comment": "A node on the browser's own network. s7 step 4 cuts lan1's p2p port from every honest node and pairs it with `lan1-peer` as its one Active peer, so a MINER_PCT=1 miner inside lan1's namespace keeps producing templates after the cut (MINING_INTERFACE → The peer-readiness gate). `node.role` is `miner` so `/mining` is served; steps 1-3 and 5 do not launch the miner script, so lan1 serves blocks for them as any `server` node would.",
       "role": "private",
       "nat": "endpoint-independent",
       "parent": "natC",
       "addr": "10.103.0.21",
       "veth": "l1",
+      "mesh": {
+        "role": "private",
+        "webrtcPort": 4001,
+        "tcpPort": 4002
+      },
+      "node": {
+        "httpPort": 3100,
+        "p2pPort": 9100,
+        "role": "miner"
+      }
+    },
+    "lan1-peer": {
+      "_comment": "lan1's Active peer across s7 step 4's cut (MINING_INTERFACE → The peer-readiness gate). A private node beside lan1 under natC, synced from pub1 at boot; s7 step 4 cuts both with each other as accept-partner, so neither sees honest blocks after but each keeps the other as a peer. No miner runs here.",
+      "role": "private",
+      "nat": "endpoint-independent",
+      "parent": "natC",
+      "addr": "10.103.0.22",
+      "veth": "l1p",
       "mesh": {
         "role": "private",
         "webrtcPort": 4001,

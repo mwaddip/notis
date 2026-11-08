@@ -35,16 +35,19 @@
 
 /**
  * The nft rules the single-host cut writes, in order (`table` names
- * the table a teardown deletes):
- *   1. table ip <table>
- *   2. chain out { type filter hook output priority 0 ; }
- *   3. chain in  { type filter hook input  priority 0 ; }
- *   4. rule out tcp dport <p2p port> drop
- *   5. rule in  tcp sport <p2p port> drop
+ * the table a teardown deletes). When `partner` is given
+ * (`{ addr, p2pPort }`), accept rules for the partner's TCP p2p
+ * traffic land BEFORE the drops on both chains — nft reads rules in
+ * order, first match wins, so the partner's packets take the accept
+ * and every other host's p2p hits the drop. This is the pattern
+ * `stage/lib/hostile-fork-pair.mjs` uses for the genesis-pair; the
+ * difference here is the pair synced the honest chain from pub1
+ * before the cut, and the rules are applied dynamically rather than
+ * pre-spawn.
  *
- * No daddr/saddr accept rules — the host has no partner to keep a
- * path to. After the apply, every TCP packet on the Notis p2p port
- * is dropped in either direction.
+ * Without a partner, every TCP packet on the Notis p2p port drops in
+ * either direction — the single-host form, left for a caller who
+ * does not need the peer-readiness gate (`MINING_INTERFACE`).
  *
  * Returns an array of `{ description, argv }` entries where `argv` is
  * the full `sudo ip netns exec <ns> nft ...` command line a caller
@@ -52,7 +55,7 @@
  * record name the stage's command log reads so a teardown can single
  * out any one rule.
  */
-export function buildForkCutArgs(topology, name, { table = 'fork_cut' } = {}) {
+export function buildForkCutArgs(topology, name, { table = 'fork_cut', partner = null } = {}) {
   if (typeof name !== 'string' || name === '') {
     throw new Error('buildForkCutArgs: name must be a non-empty string');
   }
@@ -67,18 +70,36 @@ export function buildForkCutArgs(topology, name, { table = 'fork_cut' } = {}) {
   const ns = `notismesh-${name}`;
   const portStr = String(port);
   const wrap = (...rest) => ['sudo', 'ip', 'netns', 'exec', ns, 'nft', ...rest];
-  return [
+  const rules = [
     { description: `${name}-fork-add-table`,
       argv: wrap('add', 'table', 'ip', table) },
     { description: `${name}-fork-add-chain-out`,
       argv: wrap('add', 'chain', 'ip', table, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}') },
     { description: `${name}-fork-add-chain-in`,
       argv: wrap('add', 'chain', 'ip', table, 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}') },
+  ];
+  if (partner !== null) {
+    if (typeof partner.addr !== 'string' || partner.addr === '') {
+      throw new Error(`buildForkCutArgs: partner.addr must be a non-empty string`);
+    }
+    if (typeof partner.p2pPort !== 'number') {
+      throw new Error(`buildForkCutArgs: partner.p2pPort must be a number`);
+    }
+    const partnerPortStr = String(partner.p2pPort);
+    rules.push(
+      { description: `${name}-fork-out-accept-partner`,
+        argv: wrap('add', 'rule', 'ip', table, 'out', 'ip', 'daddr', partner.addr, 'tcp', 'dport', partnerPortStr, 'accept') },
+      { description: `${name}-fork-in-accept-partner`,
+        argv: wrap('add', 'rule', 'ip', table, 'in', 'ip', 'saddr', partner.addr, 'tcp', 'sport', partnerPortStr, 'accept') },
+    );
+  }
+  rules.push(
     { description: `${name}-fork-out-drop`,
       argv: wrap('add', 'rule', 'ip', table, 'out', 'tcp', 'dport', portStr, 'drop') },
     { description: `${name}-fork-in-drop`,
       argv: wrap('add', 'rule', 'ip', table, 'in', 'tcp', 'sport', portStr, 'drop') },
-  ];
+  );
+  return rules;
 }
 
 /**
