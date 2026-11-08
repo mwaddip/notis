@@ -182,15 +182,16 @@ describe('memory — nodesToRemember', () => {
     const own = '0'.repeat(63) + '1';
     const idOf = (n: number): string => n.toString(16).padStart(64, '0');
     const addrPub = (ip: string): string => `/ip4/${ip}/udp/3456/webrtc-direct/certhash/uEiDXXXX/p2p/${'a'.repeat(52)}`;
-    // One own entry, one private-address entry, one blacklisted, one
-    // retry, two `ok` and two `trailing` seen at known times. The own
-    // entry is excluded; the blacklisted and retry are too; the
-    // private entry is dropped as its one address falls through
-    // `isPrivate`. The remaining four are ordered latest-first by
-    // `seenMs` and capped at 3 for the assertion.
+    // One own entry, one private-address entry at the LATEST `seenMs`
+    // (so only `wouldDial` can drop it — the cap would keep it), one
+    // blacklisted, one retry, two `ok` and two `trailing` seen at
+    // known times. The own entry is excluded; the blacklisted and
+    // retry are too; the private entry is dropped as its one address
+    // falls through `isPrivate`. The remaining four are ordered
+    // latest-first by `seenMs` and capped at 3 for the assertion.
     const entries: NodeEntry[] = [
       entry({ notisId: own, status: 'ok', addrs: [addrPub('1.1.1.1')], seenMs: 1000 }),
-      entry({ notisId: idOf(0xa1), status: 'ok', addrs: [addrPub('192.168.1.5')], seenMs: 2000 }),
+      entry({ notisId: idOf(0xa1), status: 'ok', addrs: [addrPub('192.168.1.5')], seenMs: 9000 }),
       entry({ notisId: idOf(0xa2), status: 'blacklisted', addrs: [addrPub('2.2.2.2')], seenMs: 3000 }),
       entry({ notisId: idOf(0xa3), status: 'retry', addrs: [addrPub('3.3.3.3')], seenMs: 4000 }),
       entry({ notisId: idOf(0xa4), status: 'ok', addrs: [addrPub('4.4.4.4')], seenMs: 5000 }),
@@ -199,10 +200,13 @@ describe('memory — nodesToRemember', () => {
       entry({ notisId: idOf(0xa7), status: 'ok', addrs: [addrPub('7.7.7.7')], seenMs: 6000 }),
     ];
     const out: MeshContact[] = nodesToRemember(entries, own, 3);
-    // Latest first: a5 (8000), a6 (7000), a7 (6000). a4 (5000) is cut
-    // by the cap. The private-address entry (a1) is dropped — its
-    // one `192.168.*` address is refused by `isPrivate`.
+    // Latest first by `seenMs` with the private entry filtered out:
+    // a5 (8000), a6 (7000), a7 (6000). a4 (5000) is cut by the cap.
+    // The private-address entry (a1, `seenMs` 9000, latest) is
+    // dropped — its one `192.168.*` address is refused by
+    // `isPrivate`, so the entry carries no address left.
     expect(out.map(n => n.notisId)).toEqual([idOf(0xa5), idOf(0xa6), idOf(0xa7)]);
+    expect(out.find(n => n.notisId === idOf(0xa1))).toBeUndefined();
     // None carry an `api` row (the brief: "no api").
     for (const n of out) expect(n.api).toBeUndefined();
   });
