@@ -74,9 +74,9 @@ const LOCK_NAME = 'notis.mesh.memory';
 
 /**
  * MESH_INTERFACE → What the client remembers — the per-network key the
- * record is held under. The network argument carries what the store is
- * keyed by (`profile.genesisId` or the network name) and the key is
- * `notis.mesh.memory.<network>`.
+ * record is held under: `notis.mesh.memory.<network name>`. The record's
+ * `genesis` field pins the chain inside the record; the key is always
+ * the network's name.
  */
 function storageKey(network: string): string {
   return `notis.mesh.memory.${network}`;
