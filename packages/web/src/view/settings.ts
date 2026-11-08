@@ -2,6 +2,7 @@ import { el, setText } from '../dom';
 import { prefs, BUILD_BASE, type Theme, type IdTint } from '../prefs';
 import { stopHue } from '../model/identity';
 import type { WindowBody } from '../model/state';
+import type { TipVerdict } from '../model/tip-verdict';
 
 // The @settings window — WEB_INTERFACE → The settings window. The client's
 // preferences in the .winbody/.row/label/.field pattern, no identity read, its
@@ -45,16 +46,27 @@ export interface SettingsHandlers {
   // in a build whose `notis-public` is not empty).
   links?: () => 'site' | 'here';
   setLinks?: (v: 'site' | 'here') => Promise<void>;
+  // The latest tip verdict — the row reads it to decide whether the question
+  // stands (WEB_INTERFACE → The settings window → "While it disagrees the row
+  // holds the question"). `undefined` is a build with no verifier, `null` is
+  // one whose first verdict has not returned.
+  verdict?: () => TipVerdict | null | undefined;
 }
 
 /** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
  *  "In the extension the row adds a node by hand"). `address` reads the stored
  *  address, or `''` when none. `commit` parses, calls the mesh client's
  *  `addByHand` or `removeByHand`, and answers `null` on success, or an error
- *  line to show beside the field. */
+ *  line to show beside the field. `off` / `setOff` hold the reader's off
+ *  switch (`notis.node.hand.off`); `answer` hands the mesh client the
+ *  reader's answer to a standing disagreement (MESH_INTERFACE → Discovery →
+ *  "A node added by hand"). */
 export interface HandNodeSeam {
   address(): string;
   commit(addr: string): string | null;
+  off(): boolean;
+  setOff(off: boolean): void;
+  answer(decision: 'continue' | 'disable'): void;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];

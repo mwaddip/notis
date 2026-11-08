@@ -152,6 +152,15 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
       opts.storage.setItem(HAND_NODE_KEY, trimmed);
       return null;
     },
+    off(): boolean {
+      return false;
+    },
+    setOff(_off: boolean): void {
+      // stub
+    },
+    answer(_decision: 'continue' | 'disable'): void {
+      // stub
+    },
   };
 
   return { readClient, writeClient, tipVerifier, figuresVerifier, namesVerifier, postResolver, handNodeSeam };

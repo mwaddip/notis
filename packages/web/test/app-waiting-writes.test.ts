@@ -915,4 +915,83 @@ describe('a post pressed with no node answering and no tip run runs the chain fr
   });
 });
 
+// -------------------------------------------------------------------------
+// The waiting arm under *your-node* (WEB_INTERFACE → The wallet → "Waiting
+// writes go out at the first answer" — "None goes out while the verdict
+// reads *your-node*"). A waitable press signs and keeps waiting; the send
+// pass does not run while the verdict stands; at the first answered read
+// after the verdict leaves *your-node*, the pass runs as every trigger
+// runs it.
+// -------------------------------------------------------------------------
+
+const yourNodeMemory = (): TipVerdict => ({ kind: 'refused', reason: 'your-node', which: 'memory', height: 6001 });
+
+async function resolveTipRunYourNode(h: Harness): Promise<void> {
+  await flush();
+  if (h.tipRuns.length === 0) await flush();
+  const run = h.tipRuns[h.tipRuns.length - 1];
+  if (run === undefined) throw new Error('no tip run started');
+  run.resolve({ verdict: yourNodeMemory(), anchor: null, chain: CHAIN });
+  await flush();
+}
+
+describe('a waitable write under your-node is signed and kept waiting, no POST leaves', () => {
+  // AssertionError: expected 1 to be +0 — the POST goes out; the verdict is
+  // not read and the flow does not take the waiting arm.
+  it.fails('a root post under your-node waits: no POST, the submission reads stage waiting', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    // A verified run first, so the chain is named and bases are primed.
+    await resolveTipRunVerified(h);
+    primeBases(h);
+    // Then a your-node run — the verdict freezes writes; reads still answer.
+    (h.app as unknown as { startVerification: () => void }).startVerification();
+    await resolveTipRunYourNode(h);
+    // The reads still answer — press the composer, write waits anyway.
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    expect(h.postPosts()).toBe(0);
+    const subs = h.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.stage).toBe('waiting');
+    expect(subs[0]!.txId).not.toBeNull();
+    const entries = h.drive.ledger.all();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.kind).toBe('post');
+    expect(entries[0]!.waiting).toBe(true);
+  });
+});
+
+describe('the send pass does not run while your-node stands, and runs at the first answered read after it leaves', () => {
+  // AssertionError: expected 1 to be +0 — the flush runs under your-node;
+  // flushWaitingWrites has no verdict gate.
+  it.fails('cornerTick while your-node does not flush; once the verdict leaves, the pass runs', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    // Prime: verified first, then your-node, then press a post waiting.
+    await resolveTipRunVerified(h);
+    primeBases(h);
+    (h.app as unknown as { startVerification: () => void }).startVerification();
+    await resolveTipRunYourNode(h);
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    expect(h.postPosts()).toBe(0);
+    // A cornerTick's successful read happens here. Your-node is standing,
+    // so no POST leaves — none goes out while the verdict reads your-node.
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.postPosts()).toBe(0);
+    // Flip the verdict out of your-node. The next tip run returns verified.
+    (h.app as unknown as { startVerification: () => void }).startVerification();
+    const run = h.tipRuns[h.tipRuns.length - 1]!;
+    run.resolve({ verdict: verifiedVerdict(2, 6002), anchor: anchorFor(6002), chain: CHAIN });
+    await flush();
+    // The first answered read after the verdict left your-node triggers the
+    // pass. A corner tick is such a read.
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.postPosts()).toBe(1);
+  });
+});
+
 void computePostIdForTx; // keep the helper available for future tests

@@ -186,11 +186,17 @@ describe("settings window — the extension's node row adds a node by hand", () 
   // with a line beside the field; blank removes.
   const VALID_ADDR = '/ip4/127.0.0.1/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
 
+  // The seam's other members (off, setOff, answer) stand for the extension
+  // build's row; these cases pin the address and the commit, so plain stubs
+  // keep the row free of the question or the off state.
+  const seamStub = { off: () => false, setOff: () => {}, answer: () => {} };
+
   it('with a handNode seam, the row holds its stored address and the hint names what to paste', () => {
     const body = render(handlers({
       handNode: {
         address: () => VALID_ADDR,
         commit: () => null,
+        ...seamStub,
       },
     }));
     const field = rowField(body, 'node')!;
@@ -203,7 +209,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
   it('a commit calling the seam leaves the field unchanged and no error line stands', () => {
     const commit = vi.fn(() => null);
     const body = render(handlers({
-      handNode: { address: () => '', commit },
+      handNode: { address: () => '', commit, ...seamStub },
     }));
     const field = rowField(body, 'node')!;
     const input = field.querySelector('input') as HTMLInputElement;
@@ -216,7 +222,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
   it('an error from the seam shows a line beside the field', () => {
     const commit = vi.fn(() => 'addresses with DNS names are not accepted');
     const body = render(handlers({
-      handNode: { address: () => '', commit },
+      handNode: { address: () => '', commit, ...seamStub },
     }));
     const field = rowField(body, 'node')!;
     const input = field.querySelector('input') as HTMLInputElement;
@@ -230,7 +236,7 @@ describe("settings window — the extension's node row adds a node by hand", () 
   it('blank commits an empty string to the seam', () => {
     const commit = vi.fn(() => null);
     const body = render(handlers({
-      handNode: { address: () => VALID_ADDR, commit },
+      handNode: { address: () => VALID_ADDR, commit, ...seamStub },
     }));
     const field = rowField(body, 'node')!;
     const input = field.querySelector('input') as HTMLInputElement;
