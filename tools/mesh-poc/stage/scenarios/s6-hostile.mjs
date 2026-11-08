@@ -26,7 +26,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
-import { verdictS6NoAnchor, verdictS6Hostile, verdictS6Publisher } from '../lib/verdicts.mjs';
+import { verdictS6NotContinued, verdictS6Hostile, verdictS6Publisher } from '../lib/verdicts.mjs';
 import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
@@ -225,7 +225,7 @@ export async function run(ctx) {
         seedId: answeredSeed?.id ?? null,
         seedStatus: answeredSeed?.status ?? null,
       };
-      return { verdict: verdictS6NoAnchor(m), measurement: m };
+      return { verdict: verdictS6NotContinued(m), measurement: m };
     });
 
     await rec.step(describe()[1], async () => {

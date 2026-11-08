@@ -23,16 +23,20 @@ function missing(m) {
 }
 
 // MESH_INTERFACE → Acceptance 1 — "The client reads a node's API by
-// key from anchors alone, over WebRTC-direct". Scenario 1 step 1:
-// within 60 s the latest routed read went to an `anchor` node, reached
-// over WebRTC-direct with a direct path.
+// key from its first-contact nodes alone, over WebRTC-direct".
+// Scenario 1 step 1: within 60 s the latest routed read went to a
+// first-contact node, reached over WebRTC-direct with a direct path.
 // Measurement:
-//   `{ nodeId: string|null, isAnchor: boolean, timeMs: number,
+//   `{ nodeId: string|null, isFirstContact: boolean, timeMs: number,
 //      transport: string, path: string }`.
 export function verdictS1Node(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
-  if (m.isAnchor !== true) return 'FAIL';
+  // The field was `isAnchor`; the measurement keeps both spellings so a
+  // scenario in flight reads either, and this verdict reads the one
+  // that is present. A FAIL requires neither to be `true`.
+  const matched = m.isFirstContact === true || m.isAnchor === true;
+  if (!matched) return 'FAIL';
   if (typeof m.timeMs !== 'number' || m.timeMs > 60_000) return 'FAIL';
   if (m.transport !== 'webrtc-direct') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
@@ -134,20 +138,20 @@ export function verdictIceServers(record) {
 // MESH_INTERFACE → Acceptance 2 / NAT — "The browser reaches the node
 // behind the endpoint-independent NAT over WebRTC signalled through a
 // relay, its data direct, its ICE servers drawn from the public nodes
-// it holds". priv1's step writes a variant whose anchor is priv1
-// reached through a public node's `/p2p-circuit/webrtc` address,
-// polls the page for priv1's entry answering (`status` ok, trailing
-// or behind — all three say a checked answer came back; `trailing`
-// and `behind` are ranking, not reach) with a non-null entry
-// transport. The reach criterion: priv1's status is ok, trailing or
-// behind, the entry's transport is webrtc with path direct, the
-// anchor address holds `/p2p-circuit/webrtc`, and the ICE record
-// passes the IP-only rule. `nodeIdInUse` and `priv1Failures` are
-// recorded for the reader, not conditions — priv1 may rank below pub1
-// and still be reached.
+// it holds". priv1's step writes a variant whose first-contact entry
+// is priv1 reached through a public node's `/p2p-circuit/webrtc`
+// address, polls the page for priv1's entry answering (`status` ok,
+// trailing or behind — all three say a checked answer came back;
+// `trailing` and `behind` are ranking, not reach) with a non-null
+// entry transport. The reach criterion: priv1's status is ok,
+// trailing or behind, the entry's transport is webrtc with path
+// direct, the relayed address holds `/p2p-circuit/webrtc`, and the
+// ICE record passes the IP-only rule. `nodeIdInUse` and `priv1Failures`
+// are recorded for the reader, not conditions — priv1 may rank below
+// pub1 and still be reached.
 // Measurement:
 //   `{ expectedNodeId, priv1Status, priv1Failures,
-//      transport, path, anchorAddrRelayed,
+//      transport, path, relayedAddr,
 //      connectMs: number, iceServers: Array<{ urls: string[] }>,
 //      nodeIdInUse: string | null }`.
 export function verdictS2Priv1(m) {
@@ -156,8 +160,9 @@ export function verdictS2Priv1(m) {
   if (m.priv1Status !== 'ok' && m.priv1Status !== 'trailing' && m.priv1Status !== 'behind') return 'FAIL';
   if (m.transport !== 'webrtc') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
-  if (typeof m.anchorAddrRelayed !== 'string') return 'FAIL';
-  if (!m.anchorAddrRelayed.includes('/p2p-circuit/webrtc')) return 'FAIL';
+  const relayed = typeof m.relayedAddr === 'string' ? m.relayedAddr : m.anchorAddrRelayed;
+  if (typeof relayed !== 'string') return 'FAIL';
+  if (!relayed.includes('/p2p-circuit/webrtc')) return 'FAIL';
   if (typeof m.connectMs !== 'number') return 'FAIL';
   if (verdictIceServers(m.iceServers) !== 'PASS') return 'FAIL';
   return 'PASS';
@@ -270,38 +275,64 @@ export function verdictS4Renewal(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 5 — "A node with its own key and a copy of
-// an anchor's certificate, at the anchor's address: refused at the
-// link, that address dropped, the anchor not blacklisted". The honest
-// anchor's status may be `ok`, `trailing`, `retry` or `behind` — never
-// `blacklisted`.
+// MESH_INTERFACE → Acceptance 5 — "Impersonation. A node with its own
+// key and a copy of a first-contact node's certificate, at that
+// node's address: refused at the link, that address dropped, the node
+// not blacklisted". The honest first-contact node's status may be
+// `ok`, `trailing`, `retry` or `behind` — never `blacklisted`.
 // Measurement:
-//   `{ anchorStatus: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
+//   `{ firstContactStatus: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
 export function verdictS5(m) {
   if (missing(m)) return 'skipped';
-  if (m.anchorStatus === 'blacklisted') return 'FAIL';
+  // Accept both the current spelling and the legacy `anchorStatus`.
+  const status = typeof m.firstContactStatus === 'string'
+    ? m.firstContactStatus
+    : m.anchorStatus;
+  if (status === 'blacklisted') return 'FAIL';
+  if (typeof status !== 'string') return 'FAIL';
   if (!Array.isArray(m.droppedAddrs)) return 'FAIL';
   if (typeof m.blockedAddr !== 'string') return 'FAIL';
   if (!m.droppedAddrs.includes(m.blockedAddr)) return 'FAIL';
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 6 — "With every anchor out of reach,
-// `anchorReached` is false and the page says so." The property this
-// step turns on is that a client talking to hostile nodes alone says
-// no anchor was reached, so PASS requires positive evidence that at
-// least one seed answered inside the window (its entry left `new` for
-// `ok`, `behind` or `blacklisted`). A page that reached NOTHING —
-// anchors blocked and seeds never dialled, which the stage's broken
-// page would also show — would otherwise read PASS vacuously.
+// MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
+// whose reachable nodes all serve the hostile chain keeps its own and
+// says no node continues it." The step runs across two sessions on
+// the same browser profile: a first page session on the honest nodes
+// seats the kept proof in localStorage; a second session with every
+// honest node out of reach and a hostile-fork node reachable as a
+// known node reads `notContinued: true`, the page's banner words
+// byte for byte, the chain the kept one, and the hostile-fork node
+// `behind` and off the chain. Positive evidence: the hostile-fork
+// node answered the second session (its status is `behind` and its
+// tip hash differs from the kept tip).
 // Measurement:
-//   `{ anchorReached: boolean, bannerText: string|null,
-//      seedAnswered: boolean, seedId: string|null, seedStatus: string|null }`.
-export function verdictS6NoAnchor(m) {
+//   `{ firstSession: { keptChainHash: string },
+//      secondSession: {
+//        notContinued: boolean,
+//        bannerText: string | null,
+//        chainName: string,
+//        forkEntry: { status: string, tipHash: string | null } | null,
+//      } }`.
+export function verdictS6NotContinued(m) {
   if (missing(m)) return 'skipped';
-  if (m.anchorReached !== false) return 'FAIL';
-  if (m.bannerText !== 'No anchor reached. Nothing shown here is verified.') return 'FAIL';
-  if (m.seedAnswered !== true) return 'FAIL';
+  const first = m.firstSession;
+  const second = m.secondSession;
+  if (first === null || typeof first !== 'object') return 'FAIL';
+  if (typeof first.keptChainHash !== 'string') return 'FAIL';
+  if (second === null || typeof second !== 'object') return 'FAIL';
+  if (second.notContinued !== true) return 'FAIL';
+  if (second.bannerText !== 'No node reached continues the chain you verified.') return 'FAIL';
+  if (typeof second.chainName !== 'string') return 'FAIL';
+  if (second.chainName !== first.keptChainHash) return 'FAIL';
+  const fork = second.forkEntry;
+  if (fork === null || typeof fork !== 'object') return 'FAIL';
+  if (fork.status !== 'behind') return 'FAIL';
+  // The fork tip is `null` when the fork node never answered a tip —
+  // the step reports the second session's own view, so `null` is a
+  // FAIL (no positive evidence the hostile node answered).
+  if (typeof fork.tipHash !== 'string') return 'FAIL';
   return 'PASS';
 }
 
@@ -403,16 +434,15 @@ export function verdictS7Fastest(m) {
 
 // MESH_INTERFACE → Acceptance 7 — "A node on the browser's own
 // network, named only by a seed, is never dialled; added by hand, it
-// is reached at its private address, and `anchorReached` reads true
-// from it alone when the reader trusts it and false when the reader
-// does not." Three measurements combined:
+// is reached at its private address, and takes precedence." Three
+// measurements combined:
 //   seedPhase: lan1 never holds a connection (`transport === null` at
 //     every poll) AND the mesh log shows no inbound connection from
 //     `10.103.0.11` (the browser's address).
 //   trustedPhase: lan1 reads `ok` or `trailing` over `webrtc-direct`,
-//     `path: direct`, `anchorReached: true`.
+//     `path: direct`, its entry's `yours` flag is `true`.
 //   untrustedPhase: lan1 reads `ok` or `trailing` over `webrtc-direct`,
-//     `path: direct`, `anchorReached: false`.
+//     `path: direct`, its entry's `yours` flag is `false`.
 // Measurement: `{ seedPhase, trustedPhase, untrustedPhase }`.
 export function verdictS7Lan(m) {
   if (missing(m)) return 'skipped';
@@ -426,26 +456,99 @@ export function verdictS7Lan(m) {
   if (!okOrTrailing(trusted.lan1Status)) return 'FAIL';
   if (trusted.transport !== 'webrtc-direct') return 'FAIL';
   if (trusted.path !== 'direct') return 'FAIL';
-  if (trusted.anchorReached !== true) return 'FAIL';
+  if (trusted.yours !== true) return 'FAIL';
   const untrusted = m.untrustedPhase;
   if (untrusted === null || typeof untrusted !== 'object') return 'FAIL';
   if (!okOrTrailing(untrusted.lan1Status)) return 'FAIL';
   if (untrusted.transport !== 'webrtc-direct') return 'FAIL';
   if (untrusted.path !== 'direct') return 'FAIL';
-  if (untrusted.anchorReached !== false) return 'FAIL';
+  if (untrusted.yours !== false) return 'FAIL';
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 7 / No anchor reached → "The agreement
-// counts" — "The page shows the agreement counts." PASS when
-// `onChain >= 2` and `onChainAnchors >= 1` after a completed check:
-// the counts the client's `agreementCounts` writes to
-// `state.agreement`.
-// Measurement: `{ onChain, onChainAnchors, offChain }`.
+// MESH_INTERFACE → Acceptance 7 — "a hostile node serving a heavier
+// chain that continues the page's memory raises the question, and
+// each answer does what it says." Three phases combined, each a fresh
+// browser profile on the same lan1 identity:
+//   (a) lan1 trusted as the reader's node, on the page's chain: the
+//       page seats its chain from the kept proof and lan1's entry is
+//       `yours: true`, `status` ok or trailing. Positive evidence:
+//       `agreement.onChain >= 1`.
+//   (b) lan1 cut from the honest nodes and mining a fork of its own
+//       while the honest chain grows heavier. The page raises
+//       `which: 'heavier'`; `state.chain` and `state.tip` do not move
+//       while the disagreement stands; the two buttons stand under
+//       `[data-role="disagreement-buttons"]`. Pressing *disable it*
+//       calls `client.answer('disable')` once; at the next check
+//       lan1's entry has `yours: false`, the disagreement is cleared,
+//       and the client's chain seats on the honest side.
+//   (c) the same arrangement, pressed *continue on this node* instead:
+//       the client's chain settles on lan1's, the disagreement is
+//       cleared, and the growing branch raises no new disagreement
+//       on the next check (the fork is in `answeredForks`).
+// Measurement:
+//   `{
+//      onChainPhase: {
+//        lan1Yours: boolean, lan1Status: string, onChain: number,
+//      } | null,
+//      heavierPhase: {
+//        disagreementWhich: 'memory' | 'heavier' | null,
+//        chainStillHeld: boolean,
+//        tipStillHeld: boolean,
+//        buttonsShown: boolean,
+//      } | null,
+//      disablePhase: {
+//        answerCalls: number,
+//        lan1YoursAfter: boolean,
+//        disagreementAfter: boolean,
+//        chainOnHonest: boolean,
+//      } | null,
+//      continuePhase: {
+//        answerCalls: number,
+//        chainOnLan1: boolean,
+//        disagreementAfter: boolean,
+//        disagreementOnNextCheck: boolean,
+//      } | null,
+//   }`.
+export function verdictS7Question(m) {
+  if (missing(m)) return 'skipped';
+  const onChain = m.onChainPhase;
+  if (onChain === null || typeof onChain !== 'object') return 'FAIL';
+  if (onChain.lan1Yours !== true) return 'FAIL';
+  if (onChain.lan1Status !== 'ok' && onChain.lan1Status !== 'trailing') return 'FAIL';
+  if (typeof onChain.onChain !== 'number' || onChain.onChain < 1) return 'FAIL';
+
+  const heavier = m.heavierPhase;
+  if (heavier === null || typeof heavier !== 'object') return 'FAIL';
+  if (heavier.disagreementWhich !== 'heavier') return 'FAIL';
+  if (heavier.chainStillHeld !== true) return 'FAIL';
+  if (heavier.tipStillHeld !== true) return 'FAIL';
+  if (heavier.buttonsShown !== true) return 'FAIL';
+
+  const dis = m.disablePhase;
+  if (dis === null || typeof dis !== 'object') return 'FAIL';
+  if (dis.answerCalls !== 1) return 'FAIL';
+  if (dis.lan1YoursAfter !== false) return 'FAIL';
+  if (dis.disagreementAfter !== false) return 'FAIL';
+  if (dis.chainOnHonest !== true) return 'FAIL';
+
+  const cont = m.continuePhase;
+  if (cont === null || typeof cont !== 'object') return 'FAIL';
+  if (cont.answerCalls !== 1) return 'FAIL';
+  if (cont.chainOnLan1 !== true) return 'FAIL';
+  if (cont.disagreementAfter !== false) return 'FAIL';
+  if (cont.disagreementOnNextCheck !== false) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 7 / What the client remembers → "The
+// agreement counts" — "The page shows the agreement counts." PASS
+// when `onChain >= 2` after a completed check: the counts the
+// client's `agreementCounts` writes to `state.agreement`.
+// Measurement: `{ onChain, offChain }`.
 export function verdictS7Counts(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.onChain !== 'number' || m.onChain < 2) return 'FAIL';
-  if (typeof m.onChainAnchors !== 'number' || m.onChainAnchors < 1) return 'FAIL';
   return 'PASS';
 }
 
