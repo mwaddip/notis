@@ -184,11 +184,13 @@ function harness(): Harness {
   };
 }
 
-// A valid webrtc-direct address — the client's `addByHand` refuses a
-// multiaddr without one. In the test harness no libp2p peer answers at
-// this address, so the entry falls back to its api base for reads.
-const YOUR_ADDR = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg';
-
+// Each test's "yours" entry carries an api base through `firstContact`
+// and no webrtc-direct address. `client.addByHand(yId, [], true)`
+// marks the existing entry `yours = true, byHand = true` without
+// adding a webrtc-direct address — so phase 1's pre-dial sees the
+// entry's `addrs.length === 0` and does nothing, and node-datachannel
+// is never asked for a peer connection. The entry is still reached at
+// its api base for the check's tip and proof reads.
 describe('mesh-client — your node: disagreement, precedence and the reader\'s answer', () => {
   const clients: MeshClient[] = [];
   afterEach(async () => {
@@ -219,7 +221,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     const s = client.state();
@@ -262,7 +264,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     const s = client.state();
@@ -299,7 +301,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     const s = client.state();
@@ -334,7 +336,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     const s = client.state();
@@ -365,7 +367,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     const sBefore = client.state();
@@ -431,7 +433,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).not.toBeNull();
@@ -484,7 +486,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).not.toBeNull();
@@ -531,7 +533,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).not.toBeNull();
@@ -570,7 +572,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).not.toBeNull();
@@ -607,7 +609,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).toBeNull();
@@ -649,7 +651,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       resolve: h.resolve,
     });
     clients.push(client);
-    client.addByHand(yId, [YOUR_ADDR], true);
+    client.addByHand(yId, [], true);
 
     await client.check();
     expect(client.state().disagreement).not.toBeNull();
