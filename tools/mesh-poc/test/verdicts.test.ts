@@ -17,12 +17,13 @@ import {
   verdictS4AllUdpDrop,
   verdictS4Renewal,
   verdictS5,
-  verdictS6NoAnchor,
+  verdictS6NotContinued,
   verdictS6Hostile,
   verdictS6Publisher,
   verdictS7Spread,
   verdictS7Fastest,
   verdictS7Lan,
+  verdictS7Question,
   verdictS7Counts,
   verdictS8NoProofs,
   verdictS8Gossip,
@@ -46,12 +47,13 @@ describe('skipped — missing measurement', () => {
     ['verdictS4AllUdpDrop', verdictS4AllUdpDrop],
     ['verdictS4Renewal', verdictS4Renewal],
     ['verdictS5', verdictS5],
-    ['verdictS6NoAnchor', verdictS6NoAnchor],
+    ['verdictS6NotContinued', verdictS6NotContinued],
     ['verdictS6Hostile', verdictS6Hostile],
     ['verdictS6Publisher', verdictS6Publisher],
     ['verdictS7Spread', verdictS7Spread],
     ['verdictS7Fastest', verdictS7Fastest],
     ['verdictS7Lan', verdictS7Lan],
+    ['verdictS7Question', verdictS7Question],
     ['verdictS7Counts', verdictS7Counts],
     ['verdictS8NoProofs', verdictS8NoProofs],
     ['verdictS8Gossip', verdictS8Gossip],
@@ -381,42 +383,68 @@ describe('verdictS5 — impostor: anchor not blacklisted, its address dropped', 
   });
 });
 
-describe('verdictS6NoAnchor — all anchors unreachable, page says the contract words', () => {
+describe("verdictS6NotContinued — a kept chain stands when no reachable node continues it", () => {
+  // MESH_INTERFACE → What the client remembers → "When no node
+  // continues it" — a page with an honest kept chain whose reachable
+  // nodes all serve the hostile chain keeps its own and says so. The
+  // property rests on positive evidence that the hostile-fork node
+  // answered this session (its status is `behind`, its tip hash is a
+  // real string), so a page that reached nothing cannot read PASS.
   const PASS = {
-    anchorReached: false,
-    bannerText: 'No anchor reached. Nothing shown here is verified.',
-    // Positive evidence: at least one seed answered inside the window.
-    // The property is "a client talking to hostile nodes alone says no
-    // anchor was reached", not "a page that reached nothing shows the
-    // banner" (which the stage's own broken page would also do).
-    seedAnswered: true,
-    seedId: 'cc'.repeat(32),
-    seedStatus: 'blacklisted',
+    firstSession: { keptChainHash: 'aa'.repeat(32) },
+    secondSession: {
+      notContinued: true,
+      bannerText: 'No node reached continues the chain you verified.',
+      chainName: 'aa'.repeat(32),
+      forkEntry: { status: 'behind', tipHash: 'bb'.repeat(32) },
+    },
   };
-  it('anchorReached false + exact banner words + a seed answered → PASS', () => {
-    expect(verdictS6NoAnchor(PASS)).toBe('PASS');
+  it('notContinued true + exact banner + chain is the kept one + fork `behind` answered → PASS', () => {
+    expect(verdictS6NotContinued(PASS)).toBe('PASS');
   });
-  it('anchorReached true → FAIL', () => {
-    expect(verdictS6NoAnchor({ ...PASS, anchorReached: true })).toBe('FAIL');
-  });
-  it('banner text differs by one byte → FAIL', () => {
-    expect(verdictS6NoAnchor({ ...PASS, bannerText: 'No anchor reached. Nothing shown here is verified' })).toBe('FAIL');
-  });
-  it('page reached nothing (no seed answered) → FAIL (no vacuous PASS)', () => {
-    expect(verdictS6NoAnchor({
-      anchorReached: false,
-      bannerText: 'No anchor reached. Nothing shown here is verified.',
-      seedAnswered: false,
-      seedId: null,
-      seedStatus: null,
+  it('notContinued false → FAIL', () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: { ...PASS.secondSession, notContinued: false },
     })).toBe('FAIL');
   });
-  it("a seed in 'new' (never contacted) does not count as answered", () => {
-    expect(verdictS6NoAnchor({
+  it('banner text differs by one byte → FAIL', () => {
+    expect(verdictS6NotContinued({
       ...PASS,
-      seedAnswered: false,
-      seedId: 'cc'.repeat(32),
-      seedStatus: 'new',
+      secondSession: {
+        ...PASS.secondSession,
+        bannerText: 'No node reached continues the chain you verified',
+      },
+    })).toBe('FAIL');
+  });
+  it('the chain name moved (the kept proof was dropped) → FAIL', () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: { ...PASS.secondSession, chainName: 'cc'.repeat(32) },
+    })).toBe('FAIL');
+  });
+  it('the fork node never answered (no positive evidence) → FAIL', () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: { ...PASS.secondSession, forkEntry: null },
+    })).toBe('FAIL');
+  });
+  it("the fork node's tip hash is null (no positive evidence) → FAIL", () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: {
+        ...PASS.secondSession,
+        forkEntry: { status: 'behind', tipHash: null },
+      },
+    })).toBe('FAIL');
+  });
+  it('the fork node is blacklisted (not `behind`) → FAIL', () => {
+    expect(verdictS6NotContinued({
+      ...PASS,
+      secondSession: {
+        ...PASS.secondSession,
+        forkEntry: { status: 'blacklisted', tipHash: 'bb'.repeat(32) },
+      },
     })).toBe('FAIL');
   });
 });
@@ -527,11 +555,16 @@ describe('verdictS7Fastest — the delayed node serves no read', () => {
   });
 });
 
-describe('verdictS7Lan — a local node by the reader\'s hand', () => {
+describe("verdictS7Lan — a local node by the reader's hand", () => {
+  // MESH_INTERFACE → Discovery → "A node added by hand" — "A node on
+  // the browser's own network, named only by a seed, is never
+  // dialled; added by hand, it is reached at its private address and
+  // takes precedence." The `yours` flag on the entry is the trust
+  // assertion; `anchorReached` is retired.
   const PASS = {
     seedPhase: { lan1EverConnected: false, lan1InboundLogged: false },
-    trustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', anchorReached: true },
-    untrustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', anchorReached: false },
+    trustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', yours: true },
+    untrustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', yours: false },
   };
   it('all three phases hold the rule → PASS', () => {
     expect(verdictS7Lan(PASS)).toBe('PASS');
@@ -548,35 +581,119 @@ describe('verdictS7Lan — a local node by the reader\'s hand', () => {
   it('transport not webrtc-direct in trusted phase → FAIL', () => {
     expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, transport: 'webrtc' } })).toBe('FAIL');
   });
-  it('anchorReached true in untrusted phase → FAIL', () => {
-    expect(verdictS7Lan({ ...PASS, untrustedPhase: { ...PASS.untrustedPhase, anchorReached: true } })).toBe('FAIL');
+  it('yours true in untrusted phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, untrustedPhase: { ...PASS.untrustedPhase, yours: true } })).toBe('FAIL');
   });
-  it('anchorReached false in trusted phase → FAIL', () => {
-    expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, anchorReached: false } })).toBe('FAIL');
+  it('yours false in trusted phase → FAIL', () => {
+    expect(verdictS7Lan({ ...PASS, trustedPhase: { ...PASS.trustedPhase, yours: false } })).toBe('FAIL');
+  });
+});
+
+describe("verdictS7Question — the heavier question: the page raises it, each answer does what it says", () => {
+  // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+  // question, never the client's choice" — the four phases: (a) lan1
+  // as `yours` on the chain, (b) lan1 cut and forking lighter —
+  // `which: 'heavier'`, the chain not moving, the buttons shown; (c)
+  // `disable it` clears `yours` and seats the honest chain; (d)
+  // `continue on this node` seats lan1's chain and the same branch
+  // growing raises no new question.
+  const PASS = {
+    onChainPhase: { lan1Yours: true, lan1Status: 'ok', onChain: 2 },
+    heavierPhase: {
+      disagreementWhich: 'heavier',
+      chainStillHeld: true,
+      tipStillHeld: true,
+      buttonsShown: true,
+    },
+    disablePhase: {
+      answerCalls: 1,
+      lan1YoursAfter: false,
+      disagreementAfter: false,
+      chainOnHonest: true,
+    },
+    continuePhase: {
+      answerCalls: 1,
+      chainOnLan1: true,
+      disagreementAfter: false,
+      disagreementOnNextCheck: false,
+    },
+  };
+  it('every phase holds the rule → PASS', () => {
+    expect(verdictS7Question(PASS)).toBe('PASS');
+  });
+  it('lan1 not yours in the on-chain phase → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      onChainPhase: { ...PASS.onChainPhase, lan1Yours: false },
+    })).toBe('FAIL');
+  });
+  it("the heavier phase names 'memory' (wrong question) → FAIL", () => {
+    expect(verdictS7Question({
+      ...PASS,
+      heavierPhase: { ...PASS.heavierPhase, disagreementWhich: 'memory' },
+    })).toBe('FAIL');
+  });
+  it('the chain moved while the disagreement stood → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      heavierPhase: { ...PASS.heavierPhase, chainStillHeld: false },
+    })).toBe('FAIL');
+  });
+  it('the buttons were not shown while the disagreement stood → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      heavierPhase: { ...PASS.heavierPhase, buttonsShown: false },
+    })).toBe('FAIL');
+  });
+  it("`disable it` was pressed but lan1 still carries `yours` → FAIL", () => {
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: { ...PASS.disablePhase, lan1YoursAfter: true },
+    })).toBe('FAIL');
+  });
+  it('after `disable it` the chain did not seat on the honest side → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: { ...PASS.disablePhase, chainOnHonest: false },
+    })).toBe('FAIL');
+  });
+  it('after `continue on this node` the chain is not lan1\'s → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, chainOnLan1: false },
+    })).toBe('FAIL');
+  });
+  it("the same branch growing raised a new disagreement → FAIL", () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, disagreementOnNextCheck: true },
+    })).toBe('FAIL');
+  });
+  it('`answer` was called more than once per press → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: { ...PASS.disablePhase, answerCalls: 2 },
+    })).toBe('FAIL');
   });
 });
 
 describe('verdictS7Counts — agreement counts after a completed check', () => {
-  it('onChain ≥ 2 and onChainAnchors ≥ 1 → PASS', () => {
-    expect(verdictS7Counts({ onChain: 2, onChainAnchors: 1, offChain: 0 })).toBe('PASS');
+  // MESH_INTERFACE → Acceptance 7 / What the client remembers → "The
+  // agreement counts" — "The page shows the agreement counts."
+  it('onChain ≥ 2 → PASS', () => {
+    expect(verdictS7Counts({ onChain: 2, offChain: 0 })).toBe('PASS');
   });
   it('onChain 1 (below the two-node threshold) → FAIL', () => {
-    expect(verdictS7Counts({ onChain: 1, onChainAnchors: 1, offChain: 0 })).toBe('FAIL');
-  });
-  it('onChainAnchors 0 (no anchor on the chain) → FAIL', () => {
-    expect(verdictS7Counts({ onChain: 3, onChainAnchors: 0, offChain: 0 })).toBe('FAIL');
+    expect(verdictS7Counts({ onChain: 1, offChain: 0 })).toBe('FAIL');
   });
   it('onChain not a number → FAIL', () => {
-    expect(verdictS7Counts({ onChain: '2', onChainAnchors: 1, offChain: 0 })).toBe('FAIL');
+    expect(verdictS7Counts({ onChain: '2', offChain: 0 })).toBe('FAIL');
   });
-  it('onChainAnchors not a number → FAIL', () => {
-    expect(verdictS7Counts({ onChain: 2, onChainAnchors: null, offChain: 0 })).toBe('FAIL');
-  });
-  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-  // step 4 records a `{ reason, state }` measurement when the
-  // completed-check state's `agreement` is null; the verdict FAILs
-  // that measurement (its `onChain` is not a number), so the step
-  // names the null instead of silently zeroing to `onChain: 0`.
+  // MESH_INTERFACE → What the client remembers → "The agreement
+  // counts" — step 4 records a `{ reason, state }` measurement when
+  // the completed-check state's `agreement` is null; the verdict
+  // FAILs that measurement (its `onChain` is not a number), so the
+  // step names the null instead of silently zeroing to `onChain: 0`.
   it('a measurement that names a null-agreement reason → FAIL', () => {
     const m = {
       reason: 'completed-check state has a null agreement',
