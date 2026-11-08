@@ -2339,12 +2339,12 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     // `incomparable`; the client keeps the chain it seated first
     // (`NIPOPOW_INTERFACE → compareProofs`, `MESH_INTERFACE → The client's
     // node list → "A check"`). The other node then names a tip off the
-    // seated chain's last `k` headers → `offChain = 1`, row 5 fires → `thin
+    // seated chain's last `k` headers → `offChain = 1`, split fires → `thin
     // · split`, title *a node names a tip off this chain · tip N*
     // (`WEB_INTERFACE → The extension → "The verified tip"`, `MESH_INTERFACE
-    // → No anchor reached → "The agreement counts"`). Which chain seats
-    // depends on which proof the first check read first, so the corner's tip
-    // is B's height or D's — the record names which it was.
+    // → What the client remembers → "The agreement counts"`). Which chain
+    // seats depends on which proof the first check read first, so the
+    // corner's tip is B's height or D's — the record names which it was.
     const dLightTarget = TIP_M + TIP_K + 4;
     console.log(`[vt] 19c: mining D to height ${dLightTarget + 1} (lighter than A)`);
     spawnDaemon('d-miner', MINER_SCRIPT, {
@@ -2371,7 +2371,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19c, D lighter)',
           60000);
-        // The first number on a fresh page can be an anchor's read before the
+        // The first number on a fresh page can be a first-contact node's read before the
         // check ends; a press re-reads the tip through the routed read, which
         // goes to a node the check placed on the chain
         // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
@@ -2439,7 +2439,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19b, D heavier)',
           60000);
-        // The first number on a fresh page can be an anchor's read before the
+        // The first number on a fresh page can be a first-contact node's read before the
         // check ends; a press re-reads the tip through the routed read, which
         // goes to a node the check placed on the chain
         // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
