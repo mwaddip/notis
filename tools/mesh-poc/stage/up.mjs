@@ -1188,12 +1188,22 @@ if (laggingHostCfg !== undefined) {
 // flows between the honest nodes and the fork pair, each pair host
 // keeps the other as its one Active peer
 // (MINING_INTERFACE → The peer-readiness gate), and `miner-fork`
-// inside `hostile-fork`'s namespace at `MINER_PCT=1` keeps producing
-// templates and mining a lighter fork of the honest chain. The mesh
-// listener (WebRTC-direct UDP) stays open, so s6 step 1 reaches
-// `hostile-fork` as a known node at its WebRTC-direct address.
+// inside `hostile-fork`'s namespace at `MINER_PCT=100` mines a FEW
+// blocks of the fork — `FORK_BLOCKS_PAST_CUT = 3`, enough to show a
+// real fork off the honest chain — then the miner is stopped by PID
+// so the fork stays strictly lighter than the honest chain, which
+// keeps growing at `MINER_PCT=2`. Phase 8b then waits for pub1 to
+// reach `forkHeightAtStop + HONEST_LEAD_OVER_FORK` before finishing,
+// so the honest chain is reliably heavier than the frozen fork tip
+// by the time any scenario reads either. The record
+// `stage/out/fork-pair-cut.json` carries the heights the scenarios
+// use. The mesh listener (WebRTC-direct UDP) stays open, so s6
+// step 1 reaches `hostile-fork` as a known node at its WebRTC-
+// direct address.
 const hostileForkHostCfg = topology.hosts['hostile-fork'];
 const hostileForkPeerHostCfg = topology.hosts['hostile-fork-peer'];
+const FORK_BLOCKS_PAST_CUT = 3;
+const HONEST_LEAD_OVER_FORK = 10;
 if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
   const forkPartner = {
     addr: hostileForkPeerHostCfg.addr,
@@ -1203,6 +1213,19 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
     addr: hostileForkHostCfg.addr,
     p2pPort: hostileForkHostCfg.node.p2pPort,
   };
+  // Read pub1's pre-cut height; this is the common ancestor the fork
+  // and the honest chain share once the cut lands.
+  let cutHeight = null;
+  if (!dryRun) {
+    const text = execIn(nsOf('pub1'), [
+      'curl', '-sf', '--max-time', '5',
+      `http://${pub1Host.addr}:${pub1Host.node.httpPort}/blocks/current`,
+    ], { timeoutMs: 8_000 });
+    cutHeight = JSON.parse(text).height;
+    if (typeof cutHeight !== 'number') {
+      throw new Error(`Phase 8b: pub1 /blocks/current.height is not a number before fork cut`);
+    }
+  }
   for (const { argv } of buildForkCutArgs(topology, 'hostile-fork', { partner: forkPartner })) {
     log.shell(argv[0], argv.slice(1), { privileged: true });
   }
@@ -1211,22 +1234,73 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
   }
   const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {
     minerScript,
-    minerPct: 1,
+    minerPct: 100,
     invokingUser: INVOKING_USER,
     miningSecret: 'stage-mining-secret',
   });
-  // `buildForkMinerSpawn` returns an argv shaped
-  // `sudo ip netns exec notismesh-hostile-fork sudo -u <user> -- node <minerScript>`;
-  // `userWrap` returns the inside-the-ns argv for the same shape. Build
-  // the spawn through `userWrap` so `log.spawn`'s pidfile and teardown
-  // tree match every other spawn's shape. The miner's env comes from
-  // `buildForkMinerSpawn`'s env — `NODE_URL`, `MINER_PCT`,
-  // `MINING_SECRET` — so the function stays the one place the spawn
-  // plan is built.
-  log.spawn(
+  const minerForkChild = log.spawn(
     userWrap(nsOf('hostile-fork'), forkSpawn.env).concat([minerScript]),
     { description: 'miner-fork', logPath: logPathFor('miner-fork') },
   );
+
+  // Wait for the fork to reach `cutHeight + FORK_BLOCKS_PAST_CUT`,
+  // then stop the miner by PID and drop its row from `pids.json` so
+  // `down` does not try again. The record `fork-pair-cut.json` names
+  // the heights the s6 step 1 drive reads.
+  recordWait(`hostile-fork reads /blocks/current.height >= ${FORK_BLOCKS_PAST_CUT} past the cut; then miner-fork stops`);
+  recordWait(`pub1 reads /blocks/current.height >= forkHeightAtStop + ${HONEST_LEAD_OVER_FORK} (the honest chain's lead over the frozen fork)`);
+  let forkHeightAtStop = cutHeight;
+  let pub1HeightAfterLead = cutHeight;
+  if (!dryRun && cutHeight !== null && minerForkChild !== null) {
+    const forkTarget = cutHeight + FORK_BLOCKS_PAST_CUT;
+    await waitWithTail(
+      `hostile-fork fork-pair cut height`,
+      async () => {
+        const text = execIn(nsOf('hostile-fork'), [
+          'curl', '-sf', '--max-time', '5',
+          `http://${hostileForkHostCfg.addr}:${hostileForkHostCfg.node.httpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const h = JSON.parse(text).height;
+        if (typeof h !== 'number') return false;
+        forkHeightAtStop = h;
+        return h >= forkTarget;
+      },
+      logPathFor('miner-fork'),
+      { timeoutMs: 300_000, pollMs: 1_000 },
+    );
+    try { process.kill(minerForkChild.pid, 'SIGTERM'); } catch { /* already gone */ }
+    const idx = log.pids.findIndex((e) => e.description === 'miner-fork');
+    if (idx >= 0) log.pids.splice(idx, 1);
+    // Wait for pub1 to lead the frozen fork by HONEST_LEAD_OVER_FORK
+    // blocks. Honest mines at MINER_PCT=2 (one block every few
+    // seconds on devnet), so this holds for under a minute.
+    const pub1Target = forkHeightAtStop + HONEST_LEAD_OVER_FORK;
+    await waitWithTail(
+      `pub1 leads the frozen fork by ${HONEST_LEAD_OVER_FORK} blocks`,
+      async () => {
+        const text = execIn(nsOf('pub1'), [
+          'curl', '-sf', '--max-time', '5',
+          `http://${pub1Host.addr}:${pub1Host.node.httpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const h = JSON.parse(text).height;
+        if (typeof h !== 'number') return false;
+        pub1HeightAfterLead = h;
+        return h >= pub1Target;
+      },
+      logPathFor('notis:pub1'),
+      { timeoutMs: 600_000, pollMs: 1_000 },
+    );
+    writeFileSync(
+      join(OUT_DIR, 'fork-pair-cut.json'),
+      JSON.stringify({
+        cutHeight,
+        forkHeightAtStop,
+        forkBlocksPastCut: forkHeightAtStop - cutHeight,
+        pub1HeightAfterLead,
+        honestLeadOverFork: pub1HeightAfterLead - forkHeightAtStop,
+      }, null, 2),
+    );
+  }
 }
 
 // -----------------------------------------------------------------------

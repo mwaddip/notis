@@ -225,19 +225,36 @@ export async function run(ctx) {
       // Session 1 runs with `?clearMemory=1` so any memory a previous
       // scenario or run left in the browser profile's `localStorage`
       // is removed BEFORE the client reads memory; the first check
-      // then seats a chain from the kept proof it writes itself.
+      // then seats a chain from the kept proof it writes itself. The
+      // page polls for a tip height that already LEADS the frozen
+      // fork's tip (recorded by `stage/up.mjs` in `fork-pair-cut.json`
+      // at the end of Phase 8b) so the kept proof session 1 writes
+      // is strictly heavier than the fork's — the lighter-fork rule
+      // the contract rests on.
       writeStageDefault(ctx.outDir);
+      const forkCutPath = join(ctx.outDir, 'fork-pair-cut.json');
+      if (!existsSync(forkCutPath)) {
+        throw new Error(`s6 step 1: ${forkCutPath} missing — up.mjs must write it at Phase 8b`);
+      }
+      const forkCut = JSON.parse(readFileSync(forkCutPath, 'utf8'));
+      const forkHeightAtStop = Number(forkCut.forkHeightAtStop);
+      if (!Number.isFinite(forkHeightAtStop)) {
+        throw new Error(`s6 step 1: fork-pair-cut.json has no numeric forkHeightAtStop`);
+      }
       const firstSessionText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {
            const s = JSON.parse(v);
-           return typeof s.chain === 'string' && s.chain.length === 64;
+           if (typeof s.chain !== 'string' || s.chain.length !== 64) return false;
+           const h = s.tip?.height;
+           return typeof h === 'number' && h > ${forkHeightAtStop};
          } catch (_e) { return false; }`,
-        180_000, 1_000,
+        240_000, 1_000,
       );
       const firstState = JSON.parse(firstSessionText);
       const keptChainHash = firstState.chain;
+      const keptTipHeight = firstState.tip?.height ?? null;
 
       // ----- (ii) second session with honest nodes blocked -----
       const a = anchorBlockArgs(ctx.topology);
@@ -297,8 +314,9 @@ export async function run(ctx) {
       const forkTipHash = forkEntry !== null && typeof forkEntry.tip === 'object' && forkEntry.tip !== null
         ? forkEntry.tip.hash
         : null;
+      const secondTipHeight = secondState.tip?.height ?? null;
       const m = {
-        firstSession: { keptChainHash },
+        firstSession: { keptChainHash, keptTipHeight },
         secondSession: {
           notContinued: secondState.notContinued === true,
           bannerText: bannerObj.banner,
@@ -306,6 +324,12 @@ export async function run(ctx) {
           forkEntry: forkEntry === null
             ? null
             : { status: forkEntry.status, tipHash: forkTipHash },
+          // The two heights the lighter-fork rule rests on, named so
+          // a reader sees them in `stage/out/scenarios/s6.json`.
+          cutHeight: Number(forkCut.cutHeight),
+          forkHeightAtStop,
+          forkBlocksPastCut: Number(forkCut.forkBlocksPastCut),
+          pub1HeightAtSession2: secondTipHeight,
         },
       };
       return { verdict: verdictS6NotContinued(m), measurement: m };

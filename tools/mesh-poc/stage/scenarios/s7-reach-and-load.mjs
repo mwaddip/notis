@@ -292,6 +292,11 @@ export async function run(ctx) {
         try { nftApply(ns, ['delete', 'table', 'ip', table]); }
         catch (err) { process.stderr.write(`[s7 step 4 teardown] delete ${table}: ${err?.message ?? err}\n`); }
       };
+      // MESH_INTERFACE → Acceptance 7 — on a failure, the measurement
+      // names the phase that ran (`a`, `b-cut`, `b-mine`, `b-poll`,
+      // `c`, `d`) so a tester reads which half of the drive owed what
+      // the step saw. The catch below names the phase in `error`.
+      let currentPhase = 'a';
       try {
         // ----- Phase (a): lan1 trusted and agreeing -----
         // byHand lan1 trusted; firstContact stays pub1 + pub2, so the
@@ -334,12 +339,14 @@ export async function run(ctx) {
         // p2p port drops every TCP packet except the partner's, so
         // neither sees honest blocks but each keeps the other as its
         // one Active peer (MINING_INTERFACE → The peer-readiness
-        // gate). A miner at `MINER_PCT=1` inside lan1's namespace
-        // grows lan1's own fork. The miner's stdout and stderr land
-        // in `stage/out/logs/s7-step4-miner-fork-lan1.log` — a
-        // `stdio: 'ignore'` miner leaves no evidence of why it
-        // produced no template, so the step's log file is the
-        // measurement a tester reads on a FAIL.
+        // gate). A `MINER_PCT=100` miner inside lan1's namespace
+        // mines a FEW blocks of lan1's fork (so the fork is strictly
+        // lighter than the honest chain, which keeps growing at
+        // `MINER_PCT=2`), then the miner is stopped by PID. The
+        // miner's stdout and stderr route to the log file so a FAIL
+        // reads what happened. The honest chain, still growing, is
+        // then the heavier chain the question names.
+        currentPhase = 'b-cut';
         const lan1Partner = {
           addr: lan1PeerHostCfg.addr,
           p2pPort: lan1PeerHostCfg.node.p2pPort,
@@ -348,6 +355,20 @@ export async function run(ctx) {
           addr: lan1HostCfg.addr,
           p2pPort: lan1HostCfg.node.p2pPort,
         };
+        // Read lan1's pre-cut height from its own loopback HTTP; the
+        // miner stops once lan1 is `cut_height + FORK_BLOCKS_PAST_CUT`
+        // so the fork is a strictly shorter extension of the honest
+        // chain past the cut point.
+        const FORK_BLOCKS_PAST_CUT = 3;
+        const lan1HttpPort = lan1HostCfg.node.httpPort;
+        const preCutText = execIn('notismesh-lan1', [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const preCutHeight = JSON.parse(preCutText.toString('utf8')).height;
+        if (typeof preCutHeight !== 'number') {
+          throw new Error('s7 step 4 phase b: lan1 pre-cut /blocks/current.height is not a number');
+        }
         for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', { table: 'lan1_fork_cut', partner: lan1Partner })) {
           // argv shape: `sudo ip netns exec notismesh-lan1 nft add …`;
           // nftApply rebuilds the wrap, so slice past the first six.
@@ -358,10 +379,11 @@ export async function run(ctx) {
           nftApply('notismesh-lan1-peer', argv.slice(6));
         }
         addedTables.push({ ns: 'notismesh-lan1-peer', table: 'lan1_fork_cut' });
+        currentPhase = 'b-mine';
         const minerScript = join(dirname(dirname(ctx.notisMain)), 'scripts', 'miner.mjs');
         const forkSpawn = buildForkMinerSpawn(ctx.topology, 'lan1', {
           minerScript,
-          minerPct: 1,
+          minerPct: 100,
           invokingUser: ctx.invokingUser,
           miningSecret: 'stage-mining-secret',
         });
@@ -377,10 +399,42 @@ export async function run(ctx) {
         minerChild.unref();
         closeSync(minerFd);
         launchedPids.push(minerChild.pid);
+        // Wait until lan1 reaches `preCutHeight + FORK_BLOCKS_PAST_CUT`,
+        // then stop the miner. The honest chain keeps growing at
+        // `MINER_PCT=2` meanwhile, so by the next phase the honest
+        // tip is heavier than lan1's frozen fork tip.
+        const forkTargetHeight = preCutHeight + FORK_BLOCKS_PAST_CUT;
+        const forkMineDeadline = Date.now() + 120_000;
+        let lan1HeightAtStop = preCutHeight;
+        while (Date.now() < forkMineDeadline) {
+          try {
+            const text = execIn('notismesh-lan1', [
+              'curl', '-sf', '--max-time', '5',
+              `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+            ], { timeoutMs: 8_000 });
+            const h = JSON.parse(text.toString('utf8')).height;
+            if (typeof h === 'number') {
+              lan1HeightAtStop = h;
+              if (h >= forkTargetHeight) break;
+            }
+          } catch { /* retry */ }
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        if (lan1HeightAtStop < forkTargetHeight) {
+          throw new Error(`s7 step 4 phase b-mine: lan1 did not reach ${forkTargetHeight} within 120s (last height ${lan1HeightAtStop})`);
+        }
+        // Stop the miner by its PID; the step keeps the cut in place
+        // so lan1 does not rejoin the honest chain while the browser
+        // phases read it.
+        signal(minerChild.pid, 'SIGTERM');
+        // Drop the stopped PID from the local list so `finally` does
+        // not signal it a second time.
+        launchedPids.splice(launchedPids.indexOf(minerChild.pid), 1);
 
         // Open a page (same browser profile — memory persists); poll
         // until a disagreement of kind 'heavier' stands and the buttons
         // are present.
+        currentPhase = 'b-poll';
         const stateBText = await cdpPoll(ctx, browserUrl,
           `(function () {
              const state = document.getElementById('state');
@@ -402,28 +456,49 @@ export async function run(ctx) {
            } catch (_e) { return false; }`,
           240_000, 1_000,
         );
-        const stateBObj = JSON.parse(stateBText);
-        const stateB = JSON.parse(stateBObj.state);
+        // cdpPoll returns the JSON of the `pre#reads`-style page read
+        // — here, the IIFE's JSON.stringify of `{ state, buttonsPresent }`;
+        // ONE JSON.parse yields the inner object. Then its `state`
+        // field is itself a JSON string (the `#state` textContent), so
+        // a second parse on THAT field (not on the outer object!) yields
+        // the state object.
+        const stateBWrapper = JSON.parse(stateBText);
+        const stateB = JSON.parse(stateBWrapper.state);
         const chainAtRaise = stateB.chain;
         const tipHashAtRaise = stateB.tip?.hash ?? null;
-        // Hold a moment and confirm chain/tip do not move while the
-        // disagreement stands.
-        const holdWindowMs = 5_000;
-        await new Promise((r) => setTimeout(r, holdWindowMs));
-        const stateBText2 = await cdpEval(ctx, browserUrl,
-          "document.getElementById('state')?.textContent ?? null");
-        const stateB2 = JSON.parse(JSON.parse(stateBText2));
+        // Hold a moment and poll again — a FRESH page target holds no
+        // `#state` yet, so `cdpPoll` with a predicate "the state has
+        // disagreement.which === 'heavier'" keeps the target open
+        // until the client's first check settles, at which point its
+        // chain + tip are what the frozen page read a moment ago (the
+        // chain does not move while a disagreement stands). `cdpEval`
+        // on a fresh target reads `null` for `#state` before the
+        // client's first render — which was the bug.
+        await new Promise((r) => setTimeout(r, 5_000));
+        const stateBText2 = await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try {
+             const s = JSON.parse(v);
+             return s.disagreement !== null && s.disagreement.which === 'heavier';
+           } catch (_e) { return false; }`,
+          120_000, 1_000,
+        );
+        const stateB2 = JSON.parse(stateBText2);
         const chainStillHeld = stateB2.chain === chainAtRaise;
-        const tipStillHeld = (stateB2.tip?.hash ?? null) === tipHashAtRaise
-          && (stateB2.disagreement?.which ?? null) === 'heavier';
+        const tipStillHeld = (stateB2.tip?.hash ?? null) === tipHashAtRaise;
         const heavierPhase = {
           disagreementWhich: stateB.disagreement?.which ?? null,
           chainStillHeld,
           tipStillHeld,
-          buttonsShown: stateBObj.buttonsPresent === true,
+          buttonsShown: stateBWrapper.buttonsPresent === true,
+          lan1PreCutHeight: preCutHeight,
+          lan1HeightAtStop,
+          forkBlocksPastCut: lan1HeightAtStop - preCutHeight,
         };
 
         // ----- Phase (c): press *disable it* -----
+        currentPhase = 'c';
         // One page session that waits for the disagreement to stand,
         // clicks the disable button once, then waits for the next
         // check to clear it and seat the honest chain. The answer
@@ -469,7 +544,13 @@ export async function run(ctx) {
           throw new Error('phase c: disagreement did not clear');
         })()`;
         const phaseCText = await cdpEval(ctx, browserUrl, phaseCExpr, { timeoutMs: 260_000 });
-        const phaseCObj = JSON.parse(JSON.parse(phaseCText));
+        if (phaseCText === null) {
+          throw new Error('s7 step 4 phase c: cdpEval returned null — the IIFE did not resolve a value');
+        }
+        // The IIFE returns `JSON.stringify(obj)`; cdpEval's own
+        // `JSON.parse` unwraps the subprocess's outer string, so one
+        // more parse on the result yields the object.
+        const phaseCObj = JSON.parse(phaseCText);
         const disablePhase = {
           answerCalls: 1,
           lan1YoursAfter: phaseCObj.lan1Yours === true,
@@ -483,6 +564,7 @@ export async function run(ctx) {
         };
 
         // ----- Phase (d): fresh page, press *continue on this node* -----
+        currentPhase = 'd';
         // The nft cut is still in place and the miner-fork is still
         // mining lan1's fork; honest keeps growing heavier. A fresh
         // page target reads the kept memory and raises the heavier
@@ -546,7 +628,10 @@ export async function run(ctx) {
           throw new Error('phase d: no new check completed after continue');
         })()`;
         const phaseDText = await cdpEval(ctx, browserUrl, phaseDExpr, { timeoutMs: 320_000 });
-        const phaseDObj = JSON.parse(JSON.parse(phaseDText));
+        if (phaseDText === null) {
+          throw new Error('s7 step 4 phase d: cdpEval returned null — the IIFE did not resolve a value');
+        }
+        const phaseDObj = JSON.parse(phaseDText);
         // The honest chain's tip at phase c end is `phaseCObj.tipHash`;
         // after `continue`, the client's chain is lan1's. `tipAtClick`
         // is the tip the client took at the continue; since lan1's
@@ -560,6 +645,15 @@ export async function run(ctx) {
         };
 
         const m = { onChainPhase, heavierPhase, disablePhase, continuePhase };
+        return { verdict: verdictS7Question(m), measurement: m };
+      } catch (err) {
+        // A throw from any phase lands here; the measurement names
+        // the phase that was running so `stage:report`'s FAIL names
+        // where the step owed what it saw.
+        const m = {
+          error: err?.message ?? String(err),
+          phase: currentPhase,
+        };
         return { verdict: verdictS7Question(m), measurement: m };
       } finally {
         // Kill the miner the step launched — by PID captured at
