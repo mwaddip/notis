@@ -690,4 +690,57 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(client.state().tip?.height).toBe(MK + 1);
     expect(client.toRemember().proof).toEqual(encodeNipopowProof(extendedProof));
   }, 90_000);
+
+  it('the chain settles to the node continuing the kept chain, not to a proof of another genesis listed first (profile pins no genesisId)', async () => {
+    // On a profile pinning no genesisId, a proof of another genesis
+    // verifies. `resolveTip` keeps whatever has the highest tip as
+    // its `winner`; `judgeByMemory` reads `best` — the not-lost
+    // candidate no other beats under `compareProofs` — so the settle
+    // picks the node continuing the kept chain, not the foreign one,
+    // even when the foreign tip is higher. A check that read `winner`
+    // in place of `best` here would settle to the foreign proof and
+    // write its bytes into the snapshot.
+    const PROFILE_UNPINNED: NetworkProfile = { ...PROFILE, genesisId: '' };
+    const keptProof = proofOf(MK);
+    // A chain of another genesis: block 1 forced level differs → different block 1.
+    const foreignChain = buildMinedChain({
+      count: MK + 50,
+      forceLevels: new Map([[1, 1]]),
+    });
+    const foreignProof = proveWithReader(makeReader(foreignChain), { m: M, k: K });
+    // A continuation of the kept chain: same memoKey extends the kept chain.
+    const contProof = proofOf(MK + 30);
+    const n1 = keyPair();
+    const n2 = keyPair();
+    const h = harness();
+    const b1 = 'http://127.0.0.1:1';
+    const b2 = 'http://127.0.0.1:2';
+    const foreignTip = foreignChain.headers[foreignChain.headers.length - 1]!;
+    h.tips.set(b1, { height: foreignTip.height, hash: blockHash(foreignTip)! });
+    h.tips.set(b2, tipOf(MK + 30));
+    h.proofs.set(b1, foreignProof);
+    h.proofs.set(b2, contProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: n1.notisId, addrs: [], api: b1 },
+        { notisId: n2.notisId, addrs: [], api: b2 },
+      ],
+      network: 'devnet',
+      profile: PROFILE_UNPINNED,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const snap = client.toRemember();
+    // The snapshot's proof is the continuation's, not the foreign one's.
+    expect(snap.proof).toEqual(encodeNipopowProof(contProof));
+    // The chain's tip is the continuation's tip, not the foreign's.
+    expect(client.state().tip?.height).toBe(MK + 30);
+  }, 120_000);
 });
