@@ -71,7 +71,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // state could be created, which is the property the page relies on
   // when the real `startMeshClient` reaches it with a DNS anchor
   // (MESH_INTERFACE → Discovery / NAT).
-  it('assertClientConfig refuses a /dns4/ anchor without creating a node', () => {
+  it('assertClientConfig refuses a /dns4/ first-contact node without creating a node', () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     expect(() => assertClientConfig({
       firstContact: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
@@ -81,7 +81,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // Each prefix below is a shape — "a <setting> is refused" — one case per
   // the three DNS prefixes a multiaddr may carry.
   for (const prefix of ['/dns4/example.com/tcp/1', '/dns6/example.com/tcp/1', '/dnsaddr/example.com/tcp/1']) {
-    it(`a DNS anchor is refused — ${prefix}`, async () => {
+    it(`a DNS first-contact node is refused — ${prefix}`, async () => {
       const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
       let thrown: unknown;
       try {
@@ -154,9 +154,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // a private address, and the seed never answers. Both anchor and seed
   // are on loopback (private); the anchor is configured, so the anchor's
   // dial reaches libp2p and fails against its stopped node — status
-  // retry — and `anchorReached` stays false because the anchor itself
+  // retry — and the client's chain stays empty because the configured node
   // never answers.
-  it('a seed on a private address is refused by the gater; anchorReached stays false', async () => {
+  it('a seed on a private address is refused by the gater', async () => {
     const upSeed = await chainUpstream(SHARED_CHAIN); ups.push(upSeed);
     const dirSeed = mkdtempSync(join(tmpdir(), 'mesh-client-seed-')); dirs.push(dirSeed);
     const seed = await startNode(upSeed, dirSeed); nodes.push(seed.node);
@@ -181,7 +181,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
     await client.check();
     const s = client.state();
-    expect(s.anchorReached).toBe(false);
     const seedEntry = s.nodes.find((n) => n.notisId === seed.id);
     expect(seedEntry!.firstContact).toBe(false);
     expect(seedEntry!.status).toBe('retry');
@@ -190,7 +189,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(anchorEntry!.status).toBe('retry');
   }, 90_000);
 
-  it('a routed read reaches the one anchor and nodeId names it', async () => {
+  it('a routed read reaches the one first-contact node and nodeId names it', async () => {
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — a `tip` read picks an `ok` node, opens
     // the stream on the connection the client holds, and `state.nodeId`
@@ -219,7 +218,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(s.nodeId).toBe(started.id);
     expect(s.transport).toBe('webrtc-direct');
     expect(s.path).toBe('direct');
-    expect(s.anchorReached).toBe(true);
   }, 60_000);
 
   it('a node that leaves ok/trailing is named by lastLeft, with its reason', async () => {
@@ -511,7 +509,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(client.state().nodeId).toBeNull();
   }, 90_000);
 
-  it('no anchor reached', async () => {
+  it('the client\'s chain stays empty while no node continues it', async () => {
     const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-')); dirs.push(dir);
     const started = await startNode(up, dir); // not pushed: we stop it right away
@@ -530,8 +528,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
     await client.check();
     const s = client.state();
-    expect(s.anchorReached).toBe(false);
-    // The anchor entry survives the failed dial — the client reached it
+    expect(s.chain).toBeNull();
+    // The first-contact entry survives the failed dial — the client reached it
     // and recorded the failure, so a reader can tell "no anchor reached"
     // from "the client ran no check at all".
     expect(s.nodes.length).toBe(1);
@@ -1321,7 +1319,6 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const s = client.state();
     expect(s.agreement).not.toBeNull();
     expect(s.agreement!.onChain).toBe(2);
-    expect(s.agreement!.onChainAnchors).toBe(2);
     expect(s.agreement!.offChain).toBe(0);
   }, 90_000);
 

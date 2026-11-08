@@ -139,12 +139,11 @@ describe('mesh-client — the reader handshake', () => {
 
     await client.check();
     const entry = client.state().nodes.find((e) => e.notisId === n.id);
-    expect(entry, 'anchor entry exists').toBeTruthy();
+    expect(entry, 'first-contact entry exists').toBeTruthy();
     // MESH_INTERFACE → The client's node list — a node that answered
     // the handshake and the tip read is ok/trailing/behind, never
     // retry for the handshake's sake.
     expect(entry!.status).toMatch(/^(ok|trailing|behind)$/);
-    expect(client.state().anchorReached).toBe(true);
   }, 60_000);
 
   it('a node that refuses the handshake is retry with the handshake named, never blacklisted', async () => {
@@ -169,7 +168,7 @@ describe('mesh-client — the reader handshake', () => {
 
     await client.check();
     const entry = client.state().nodes.find((e) => e.notisId === n.id);
-    expect(entry, 'anchor entry exists').toBeTruthy();
+    expect(entry, 'first-contact entry exists').toBeTruthy();
     // MESH_INTERFACE → Block gossip → "A client is a reader of every
     // node it holds a connection to" — a failed handshake is retry,
     // the handshake named, never a lie.
@@ -200,11 +199,10 @@ describe('mesh-client — the reader handshake', () => {
 
     await client.check();
     const entry = client.state().nodes.find((e) => e.notisId === n.id);
-    expect(entry, 'anchor entry exists').toBeTruthy();
+    expect(entry, 'first-contact entry exists').toBeTruthy();
     // No read went out on the connection, so the entry stays `new`.
     // No request reached the stub either.
     expect(entry!.status).toBe('new');
-    expect(client.state().anchorReached).toBe(false);
     expect(stub.requests.length, 'no HTTP read reaches the upstream').toBe(0);
   }, 60_000);
 
@@ -289,7 +287,7 @@ describe('mesh-client — the reader handshake', () => {
 
     await client.check();
     const entry = client.state().nodes.find((e) => e.notisId === n.id);
-    expect(entry, 'anchor entry exists').toBeTruthy();
+    expect(entry, 'first-contact entry exists').toBeTruthy();
     expect(entry!.readMs, 'readMs is set').not.toBeNull();
     // The upstream answers at once; the handshake stalls 300 ms. The
     // recorded speed must be the request's own, not the connection's

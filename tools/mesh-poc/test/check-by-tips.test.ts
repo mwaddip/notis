@@ -1785,7 +1785,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(body).toMatchObject({ height: chain.length });
   }, 60_000);
 
-  it("one anchor's certhash wrong: its reads go to api, the other anchor's over the mesh", async () => {
+  it("one first-contact node's certhash wrong: its reads go to api, the other's over the mesh", async () => {
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — a dial whose certhash does not match the peer's
     // fails as transport, and the entry falls back to its api. The
@@ -1837,7 +1837,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     expect(s.agreement!.onChain).toBe(2);
   }, 90_000);
 
-  it('one entry per key: an anchor reached both ways counts once in onChain', async () => {
+  it('one entry per key: a first-contact node reached both ways counts once in onChain', async () => {
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — "It is one entry whichever way it answers — one
     // witness in every count". With the mesh connection open, the
@@ -1863,7 +1863,6 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     await client.check();
     const s = client.state();
     expect(s.agreement!.onChain).toBe(1);
-    expect(s.agreement!.onChainAnchors).toBe(1);
     // The one entry carries both addresses and the api.
     expect(s.nodes).toHaveLength(1);
     expect(s.nodes[0]!.api).toBe(up.base);

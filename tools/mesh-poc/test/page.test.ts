@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// MESH_INTERFACE → No anchor reached / The client's node list / Discovery →
+// MESH_INTERFACE → What the client remembers / The client's node list / Discovery →
 // "First contact" — the page's banner words, the state element, the hostile-text rule, the
 // config refusal path, and the bundle scan (no Node built-in). Each case
 // holds one guard the page keeps.
@@ -31,6 +31,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     firstContact: over.firstContact ?? false,
     known: over.known ?? false,
     byHand: over.byHand ?? false,
+    yours: over.yours ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
     retryAtMs: over.retryAtMs ?? 0,
@@ -54,7 +55,6 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     transport: over.transport ?? null,
     path: over.path ?? null,
     lastLeft: over.lastLeft ?? null,
-    anchorReached: over.anchorReached ?? false,
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
     checks: over.checks ?? 0,
@@ -65,19 +65,20 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     anchor: over.anchor ?? null,
     chain: over.chain ?? null,
     notContinued: over.notContinued ?? false,
+    disagreement: over.disagreement ?? null,
   };
 }
 
 describe('page/render.ts', () => {
-  it('the no-anchor words are the contract\'s', () => {
+  it('the not-continued words are the contract\'s', () => {
     const root = document.createElement('div');
-    render(emptyState({ anchorReached: false }), root);
+    render(emptyState({ notContinued: true }), root);
     const banner = root.querySelector('[data-role="banner"]');
-    expect(banner, 'the banner must appear while anchorReached is false').not.toBeNull();
-    expect(banner!.textContent).toBe('No anchor reached. Nothing shown here is verified.');
+    expect(banner, 'the banner must appear while notContinued is true').not.toBeNull();
+    expect(banner!.textContent).toBe('No node reached continues the chain you verified.');
 
     const root2 = document.createElement('div');
-    render(emptyState({ anchorReached: true }), root2);
+    render(emptyState({ notContinued: false }), root2);
     expect(root2.querySelector('[data-role="banner"]')).toBeNull();
   });
 
@@ -87,7 +88,6 @@ describe('page/render.ts', () => {
       nodeId: 'aa'.repeat(32),
       transport: 'webrtc-direct',
       path: 'direct',
-      anchorReached: true,
       tip: { height: 42, hash: 'bb'.repeat(32) },
       nodes: [makeEntry({ notisId: 'aa'.repeat(32), firstContact: true, status: 'ok' })],
     });
@@ -111,7 +111,7 @@ describe('page/render.ts', () => {
       }),
       makeEntry({ notisId: 'cc'.repeat(32), status: 'retry' }),
     ];
-    render(emptyState({ anchorReached: true, nodes }), root);
+    render(emptyState({ nodes }), root);
     const metas = Array.from(root.querySelectorAll('.nodes .meta')).map((n) => n.textContent ?? '');
     expect(metas[0], 'first entry carries { webrtc-direct, direct }').toContain('transport=webrtc-direct');
     expect(metas[0]).toContain('path=direct');
@@ -133,14 +133,14 @@ describe('page/render.ts', () => {
         detail: '<img src=x onerror=alert(1)>',
       },
     });
-    render(emptyState({ anchorReached: true, nodes: [hostile] }), root);
+    render(emptyState({ nodes: [hostile] }), root);
     expect(root.querySelector('img'), 'no img may be built from the hostile string').toBeNull();
     expect(root.innerHTML.includes('<img'), 'the hostile string must not have become a tag').toBe(false);
     expect(root.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
   it('a refused config is shown', async () => {
-    // Real `startMeshClient` through `runMain`: a /dns4/ anchor runs through
+    // Real `startMeshClient` through `runMain`: a /dns4/ first-contact node runs through
     // `assertClientConfig` (`startMeshClient`'s first statement) and throws
     // `MeshConfigError` before any libp2p node is created. The "no node is
     // created" property is held by `mesh-client.test.ts`'s own case.
@@ -185,8 +185,8 @@ describe('page/probe.ts', () => {
     const listeners = new Set<(s: ClientState) => void>();
     let state: ClientState = {
       nodeId: null, transport: null, path: null, lastLeft: null,
-      anchorReached: false, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false,
+      tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
     };
     const fetched: string[] = [];
     const client: FakeClient = {
@@ -250,8 +250,8 @@ describe('page/probe.ts', () => {
     const listeners = new Set<(s: ClientState) => void>();
     let state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
-      anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false,
+      tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
     };
     const client: FakeClient = {
       fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
@@ -276,8 +276,8 @@ describe('page/probe.ts survives a render', () => {
   function buildFake(opts: { nodeId: string; body: Uint8Array }): FakeClient {
     const state: ClientState = {
       nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false,
+      lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
     };
     return {
       fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
@@ -296,8 +296,8 @@ describe('page/probe.ts survives a render', () => {
     const probeText = before!.textContent;
     const state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false,
+      lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
     };
     render(state, root);
     const after = root.querySelector('pre#probe');
@@ -313,8 +313,8 @@ describe('page/probe.ts survives a render', () => {
     const probeText = root.querySelector('pre#probe')!.textContent;
     const state1: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
-      lastLeft: null, anchorReached: true, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false,
+      lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
     };
     render(state1, root);
     const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
@@ -352,7 +352,6 @@ interface FakeClientInit {
   nodes?: NodeEntry[];
   agreement?: ClientState['agreement'];
   checks?: number;
-  anchorReached?: boolean;
   addByHandBehavior?: (notisId: string, addrs: string[], trusted: boolean) => void;
   readAnswers?: Array<{ nodeId: string } | { error: string }>;
 }
@@ -374,7 +373,6 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     transport: null,
     path: null,
     lastLeft: null,
-    anchorReached: init.anchorReached ?? false,
     tip: null,
     agreement: init.agreement ?? null,
     checks: init.checks ?? 0,
@@ -385,6 +383,7 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     anchor: null,
     chain: null,
     notContinued: false,
+    disagreement: null,
   };
   const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
   const readQueue: Array<{ nodeId: string } | { error: string }> = (init.readAnswers ?? []).slice();
@@ -423,56 +422,54 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
 }
 
 // ---------------------------------------------------------------------------
-// MESH_INTERFACE → No anchor reached → "The agreement counts" — the page
-// shows how many nodes name a tip on the client's chain within its last
-// `k` headers, how many of those are anchors, and how many name one off
-// those headers; before the first check, the line reads
-// `On this chain: —`, and in every state it sits above the no-anchor
-// words.
+// MESH_INTERFACE → What the client remembers → "The agreement counts" —
+// the page shows how many nodes name a tip on the client's chain within
+// its last `k` headers and how many name one off those headers; before
+// the first check, the line reads `On this chain: —`, and in every state
+// it sits above the not-continued words.
 
 describe('page/render.ts agreement line', () => {
   it('reads "On this chain: —" before the first check (agreement === null)', () => {
     const root = document.createElement('div');
-    render(emptyState({ anchorReached: false, agreement: null }), root);
+    render(emptyState({ agreement: null }), root);
     const line = root.querySelector('[data-role="agreement"]');
     expect(line, 'the agreement line is required').not.toBeNull();
     expect(line!.textContent).toBe('On this chain: —');
   });
 
-  it('reads "On this chain: <n> (anchors: <m>) · Not on this chain\'s last 20 blocks: <p>" after a check', () => {
+  it('reads "On this chain: <n> · Not on this chain\'s last 20 blocks: <p>" after a check', () => {
     const root = document.createElement('div');
     render(
       emptyState({
-        anchorReached: true,
-        agreement: { onChain: 3, onChainAnchors: 1, offChain: 2 },
+        agreement: { onChain: 3, offChain: 2 },
       }),
       root,
     );
     const line = root.querySelector('[data-role="agreement"]');
     expect(line).not.toBeNull();
     expect(line!.textContent).toBe(
-      "On this chain: 3 (anchors: 1) · Not on this chain's last 20 blocks: 2",
+      "On this chain: 3 · Not on this chain's last 20 blocks: 2",
     );
   });
 
-  it('sits above the no-anchor words', () => {
+  it('sits above the not-continued words', () => {
     const root = document.createElement('div');
     render(
       emptyState({
-        anchorReached: false,
-        agreement: { onChain: 0, onChainAnchors: 0, offChain: 1 },
+        notContinued: true,
+        agreement: { onChain: 0, offChain: 1 },
       }),
       root,
     );
     const line = root.querySelector('[data-role="agreement"]');
     const banner = root.querySelector('[data-role="banner"]');
     expect(line, 'the agreement line is required').not.toBeNull();
-    expect(banner, 'the banner is required while anchorReached is false').not.toBeNull();
+    expect(banner, 'the banner is required while notContinued is true').not.toBeNull();
     // DOCUMENT_POSITION_FOLLOWING means banner is after line in the tree.
     const rel = line!.compareDocumentPosition(banner!);
     expect(rel & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // And the banner still says exactly the contract's words.
-    expect(banner!.textContent).toBe('No anchor reached. Nothing shown here is verified.');
+    expect(banner!.textContent).toBe('No node reached continues the chain you verified.');
   });
 });
 
@@ -490,7 +487,6 @@ describe('page/render.ts last-read-from heading', () => {
         nodeId: 'aa'.repeat(32),
         transport: 'webrtc-direct',
         path: 'direct',
-        anchorReached: true,
       }),
       root,
     );
@@ -515,7 +511,6 @@ describe('page/render.ts traffic section', () => {
     const root = document.createElement('div');
     render(
       emptyState({
-        anchorReached: true,
         traffic: {
           tipBytes: 123,
           headerBytes: 456,
@@ -650,7 +645,7 @@ describe('page/form.ts', () => {
     expect(formBefore).not.toBeNull();
     // Set a value, then render; the value must survive.
     (formBefore!.querySelector('input[name="key"]') as HTMLInputElement).value = 'held';
-    render(emptyState({ anchorReached: true }), root);
+    render(emptyState(), root);
     const formAfter = root.querySelector('[data-role="hand-form"]');
     expect(formAfter, 'the form survives the render').toBe(formBefore);
     expect((formAfter!.querySelector('input[name="key"]') as HTMLInputElement).value).toBe('held');
@@ -791,7 +786,7 @@ describe('page/reads.ts', () => {
     const idA = 'a'.repeat(64);
     const idB = 'b'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { onChain: 2, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 2, offChain: 0 },
       nodes: [entryAt(idA, 'ok'), entryAt(idB, 'trailing')],
       readAnswers: [{ nodeId: idA }, { nodeId: idB }, { nodeId: idA }],
     });
@@ -818,7 +813,7 @@ describe('page/reads.ts', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });
@@ -844,7 +839,7 @@ describe('page/reads.ts', () => {
     expect(fake.calls.read, 'no reads fire before agreement !== null').toEqual([]);
     expect(root.querySelector('pre#reads'), 'nothing is written before the check').toBeNull();
     // Now emit a completed check: the driver proceeds.
-    fake.emit({ agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 } });
+    fake.emit({ agreement: { onChain: 1, offChain: 0 } });
     await started;
     expect(fake.calls.read).toEqual([{ path: '/blocks/1', need: 'older' }]);
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
@@ -855,7 +850,7 @@ describe('page/reads.ts', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }, { error: 'no node allowed for a tip read' }, { nodeId: idA }],
     });
@@ -874,7 +869,7 @@ describe('page/reads.ts', () => {
   it('n outside 1–100 writes nothing', async () => {
     const root = document.createElement('div');
     const fake = buildFakeClient({
-      agreement: { onChain: 0, onChainAnchors: 0, offChain: 0 },
+      agreement: { onChain: 0, offChain: 0 },
     });
     for (const n of [0, 101, -1, Number.NaN]) {
       await runReads({ client: fake.client, n, need: 'older', root });
@@ -896,7 +891,7 @@ describe('page/reads.ts', () => {
     ];
     const kept = bodies.slice();
     const fake = buildFakeClient({
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
     });
     (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
@@ -917,7 +912,7 @@ describe('page/reads.ts', () => {
     const good = new Response(new TextEncoder().encode('ok-body'));
     const bodies: Response[] = [failing, good];
     const fake = buildFakeClient({
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
     });
     (fake.client as unknown as { read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }> }).read =
@@ -934,7 +929,7 @@ describe('page/reads.ts sibling pattern', () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });
@@ -942,12 +937,12 @@ describe('page/reads.ts sibling pattern', () => {
     const before = root.querySelector('pre#reads');
     expect(before, '<pre id="reads"> is written before the render').not.toBeNull();
     const text = before!.textContent;
-    render(emptyState({ anchorReached: true }), root);
+    render(emptyState(), root);
     const after = root.querySelector('pre#reads');
     expect(after, 'the reads element survives a render').not.toBeNull();
     expect(after!.textContent).toBe(text);
     // Two renders keep it in place too.
-    render(emptyState({ anchorReached: false }), root);
+    render(emptyState(), root);
     const after2 = root.querySelector('pre#reads');
     expect(after2!.textContent).toBe(text);
   });
@@ -959,7 +954,7 @@ describe('probe and reads coexist', () => {
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
       nodeId: idA,
-      agreement: { onChain: 1, onChainAnchors: 1, offChain: 0 },
+      agreement: { onChain: 1, offChain: 0 },
       nodes: [entryAt(idA, 'ok')],
       readAnswers: [{ nodeId: idA }],
     });
@@ -983,8 +978,8 @@ describe('page/build output', () => {
   // legitimately carries testnet's bootstrap address for the node's own
   // gossip net
   // (`TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"`), and a string in the bundle is not a DNS lookup.
-  // The browser never dials a DNS anchor — that is held at runtime by
-  // `assertClientConfig` on every anchor, and `packages/web/src/mesh/config.ts`'s DNS guard
+  // The browser never dials a DNS first-contact node — that is held at runtime by
+  // `assertClientConfig` on every first-contact entry, and `packages/web/src/mesh/config.ts`'s DNS guard
   // names the three prefixes in the source itself.
   beforeAll(() => {
     execSync('pnpm --filter @dagsocial/mesh-poc page:build', {

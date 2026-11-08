@@ -11,7 +11,7 @@
 // the full dial multiaddr including the trailing `/p2p/<id>` and (b) a
 // dial whose every address the gater denies throws without a
 // `dial-queue:calculated-addresses` entry for them. The addByHand
-// refusal and anchorReached cases run against `startMeshClient`.
+// refusal and trust cases run against `startMeshClient`.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -71,7 +71,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(false);
   });
 
-  it("an anchor's private address passes for its own key; a seed's is refused", () => {
+  it("a first-contact entry's private address passes for its own key; a seed's is refused", () => {
     const anchorMa = multiaddr(anchorAddrA);
     expect(clientDenyDialMultiaddr(anchorMa, configuredAddrsOf)).toBe(false);
     // A seed's private address (another IP under another key, that
@@ -250,9 +250,9 @@ describe('MeshClient.addByHand — refusals', () => {
   }, 15_000);
 });
 
-// ---------- MeshClient.addByHand — anchorReached ----------
+// ---------- MeshClient.addByHand — trusted and untrusted ----------
 
-describe('MeshClient.addByHand — anchorReached', () => {
+describe('MeshClient.addByHand — trusted and untrusted', () => {
   const nodes: NetNode[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
@@ -275,11 +275,13 @@ describe('MeshClient.addByHand — anchorReached', () => {
     return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
-  it('a trusted hand-added node makes anchorReached true when it answers', async () => {
+  it('a trusted hand-added node reads yours when it answers', async () => {
     // A hand-added entry is a candidate like any other; a real mesh
     // node for it means phase 2 reads its /blocks/current and phase 4
-    // settles the chain against its proof. Trusted = anchor; so after
-    // the check `anchorReached` reads true.
+    // settles the chain against its proof. Trusted = yours (the
+    // reader's own node); its entry carries `byHand: true` and
+    // `yours: true` (MESH_INTERFACE → Discovery → "A node added by
+    // hand").
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'ha-t-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
@@ -298,14 +300,13 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.firstContact, 'trusted sets anchor').toBe(true);
+    expect(entry!.yours, 'trusted sets yours').toBe(true);
     expect(entry!.byHand, 'byHand is true').toBe(true);
-    expect(s.anchorReached, 'anchorReached reads true').toBe(true);
   }, 60_000);
 
-  it('an untrusted hand-added node does not make anchorReached true', async () => {
-    // Untrusted = seed; the entry answers and becomes `ok`, but
-    // `anchorReached` reads the `anchor` flag, which is false here.
+  it('an untrusted hand-added node leaves yours false', async () => {
+    // Untrusted = an ordinary candidate; the entry answers and
+    // becomes `ok`, but its `yours` flag is false.
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'ha-u-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
@@ -324,15 +325,14 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.firstContact, 'untrusted leaves anchor false').toBe(false);
+    expect(entry!.yours, 'untrusted leaves yours false').toBe(false);
     expect(entry!.byHand, 'byHand is true').toBe(true);
-    expect(s.anchorReached, 'anchorReached reads false').toBe(false);
   }, 60_000);
 });
 
 // ---------- MeshClient.removeByHand ----------
 
-describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor is left alone', () => {
+describe('MeshClient.removeByHand — drops a hand-added entry; a build first-contact entry is left alone', () => {
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
   let client: MeshClient | null = null;
@@ -360,7 +360,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     expect(client.state().nodes.find((n) => n.notisId === k.notisId)).toBeUndefined();
   }, 15_000);
 
-  it('a build anchor added by hand again is left alone by `removeByHand`', async () => {
+  it('a build first-contact entry added by hand again is left alone by `removeByHand`', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
@@ -413,7 +413,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
-  it('before the first check ends, `base` answers an anchor\'s api when the anchor has one', async () => {
+  it('before the first check ends, `base` answers a first-contact entry\'s api when it has one', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
@@ -430,7 +430,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     expect(b).toBe('https://a.example');
   }, 15_000);
 
-  it('after a check a reached anchor is picked at its mesh base', async () => {
+  it('after a check a reached first-contact entry is picked at its mesh base', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'base-m-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);

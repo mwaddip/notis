@@ -127,7 +127,7 @@ describe('s3 (node goes away)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateAt(3))).toBe(false);
     expect(fn(stateAt(3))).toBe(false);
@@ -136,7 +136,7 @@ describe('s3 (node goes away)', () => {
   it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE never ends when `checks` is missing (old `agreement` stamp)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
@@ -371,7 +371,7 @@ describe('s7 (reach and load)', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     // First poll: baseline captured, predicate false.
     expect(fn(stateAt(5))).toBe(false);
@@ -383,7 +383,7 @@ describe('s7 (reach and load)', () => {
   it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE never ends on `agreement` alone when `checks` is missing', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
@@ -400,7 +400,7 @@ describe('s7 (reach and load)', () => {
     expect(fn(JSON.stringify({ checks: 0, agreement: null }))).toBe(false);
     expect(fn(JSON.stringify({
       checks: 1,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     }))).toBe(true);
   });
   // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —

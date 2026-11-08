@@ -29,6 +29,7 @@ function makeEntry(partial: {
     firstContact: partial.firstContact ?? false,
     known: false,
     byHand: false,
+    yours: false,
     status: partial.status,
     failures: 0,
     retryAtMs: 0,
