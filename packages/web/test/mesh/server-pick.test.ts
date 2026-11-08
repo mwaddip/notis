@@ -34,6 +34,7 @@ function ocand(id: string, over: Partial<OrderCandidate> = {}): OrderCandidate {
     readMs: over.readMs ?? null,
     meshUsable: over.meshUsable ?? false,
     firstContact: over.firstContact ?? false,
+    known: over.known ?? false,
     api: over.api ?? null,
     meshBase: over.meshBase ?? `notis-mesh://${id}`,
   };

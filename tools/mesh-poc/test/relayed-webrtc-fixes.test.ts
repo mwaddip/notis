@@ -489,6 +489,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
     return {
       notisId: over.notisId,
       firstContact: over.firstContact ?? false,
+      known: over.known ?? false,
       byHand: over.byHand ?? false,
       status: over.status ?? 'new',
       failures: over.failures ?? 0,

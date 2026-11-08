@@ -29,6 +29,8 @@ import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsoci
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
 import type { Anchor } from '@dagsocial/nipopow-client';
+import type { NipopowProof } from '@dagsocial/nipopow';
+import type { MemorySnapshot } from './memory-store.js';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -353,6 +355,14 @@ export interface ClientState {
    * else does.
    */
   chain: string | null;
+  /**
+   * MESH_INTERFACE → What the client remembers — "When no node continues
+   * it — no node names a tip on the client's chain and one or more name one
+   * off it — the client keeps its own chain and says so". True at the end
+   * of a check where `this.kept !== null`, no node's verdict is `'on'` and
+   * at least one is `'off'`; false otherwise and at start.
+   */
+  notContinued: boolean;
 }
 
 export interface MeshClient {
@@ -443,6 +453,16 @@ export interface MeshClient {
    */
   iceConfiguration(): { iceServers: RTCIceServer[] };
   /**
+   * MESH_INTERFACE → What the client remembers — the snapshot to persist
+   * at the end of a check or on stop: the kept proof's bytes (or null),
+   * the known nodes the client would dial at its next start — latest first,
+   * at most `REMEMBERED_NODES_MAX` — the keys blacklisted this session (to
+   * drop from the stored list), and the answered-forks list held through
+   * the session. `replace: false` so the store moves the kept proof only
+   * when `continues` answers so.
+   */
+  toRemember(): MemorySnapshot;
+  /**
    * Test seam: the libp2p node under the client. The suite dispatches a
    * `peer:discovery` event here so the "a discovered node is added before
    * any event names it" case can hold its guard without a three-node DHT
@@ -503,6 +523,22 @@ export interface StartMeshClientOptions {
    * `globalThis.fetch.bind(globalThis)`.
    */
   httpFetch?: HttpFetch;
+  /**
+   * MESH_INTERFACE → What the client remembers — the record the client
+   * resumes from: the last kept proof's bytes and the answered-forks list.
+   * The proof is decoded and verified at construct; one that does not
+   * decode or verify is dropped and the client starts with no chain
+   * (`→ "The kept proof"`). `answeredForks` is held for the session and
+   * carried through the snapshot unchanged.
+   */
+  memory?: { proof: Uint8Array; answeredForks: string[] };
+  /**
+   * MESH_INTERFACE → What the client remembers — called at the end of
+   * every check with `toRemember()`, after `emitStateChange()`. The call
+   * is direct — no `try` around it — so a throw from the callback is the
+   * caller's and propagates.
+   */
+  onChecked?: (s: MemorySnapshot) => void;
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -650,6 +686,24 @@ class MeshClientImpl implements MeshClient {
   private readonly keptVerdicts: Map<string, { event: TipEvent; behind: number | null }> = new Map();
   private readonly chain: HeldChain;
   /**
+   * MESH_INTERFACE → What the client remembers — "The kept proof is the
+   * last proof the client verified of the chain it holds — a check's
+   * winner, a switch, its own tip's proof". Seated from `memory.proof` at
+   * construct when it decodes and verifies, moved forward in a check
+   * whose settle's winning proof `continues` the kept one, cleared on a
+   * `foreign` judgement.
+   */
+  private kept: NipopowProof | null = null;
+  /**
+   * MESH_INTERFACE → What the client remembers — the forks the reader
+   * answered, held through the session and carried through
+   * `toRemember()` unchanged. Seated from `memory.answeredForks` at
+   * construct.
+   */
+  private readonly answeredForks: string[];
+  private readonly ownId: string;
+  private readonly onChecked: ((s: MemorySnapshot) => void) | undefined;
+  /**
    * MESH_INTERFACE → Block gossip → "A block is checked before it is
    * forwarded, and never applied" — net's Stage 1 run over every
    * gossiped block. The context reads the client's HeldChain for the
@@ -724,13 +778,27 @@ class MeshClientImpl implements MeshClient {
     // `NodeList.add` records them as entries outside the first-contact
     // list, so a seed's success leaves `anchorReached` false. The client's
     // own key is dropped the same way the first-contact list's own-key
-    // entry is.
+    // entry is. Each seed's entry carries `known: true` so
+    // `orderServers`' before-first-check branch reaches it after a
+    // first-contact node.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
-        this.nodeList.add(s.notisId, s.addrs);
+        this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
       }
     }
+    this.ownId = ownId;
+    this.answeredForks = o.memory !== undefined ? [...o.memory.answeredForks] : [];
+    this.onChecked = o.onChecked;
+    // MESH_INTERFACE → What the client remembers — "The kept proof is the
+    // last proof the client verified of the chain it holds". At construct,
+    // decode and verify `memory.proof`: one that does not decode or verify
+    // is dropped (the client starts with no chain); one that verifies seats
+    // the chain as a check's winner does and is held as `this.kept`.
+    //
+    // AHEAD OF CODE (2026-11-08): the memory decode is not wired up yet;
+    // the client starts with no chain whatever `o.memory` names. The next
+    // unit lands the decode, the verify and the seat.
     this.state_ = {
       nodeId: null,
       transport: null,
@@ -742,10 +810,11 @@ class MeshClientImpl implements MeshClient {
       checks: 0,
       traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
-      seated: false,
+      seated: this.chain.settled(),
       proofs: null,
       anchor: null,
       chain: null,
+      notContinued: false,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -1055,6 +1124,10 @@ class MeshClientImpl implements MeshClient {
     // ends a node the client started from serves any need". Status alone
     // does not refuse here — but `blacklisted` always does (the "lie" row
     // stays "never a candidate" at every stage).
+    //
+    // AHEAD OF CODE (2026-11-08): the known-before-first-check branch is
+    // not wired up here yet; only first-contact entries serve. The next
+    // unit lands the known fallback.
     const firstCheckEnded = this.state_.checks > 0;
     if (pickedId === null && !firstCheckEnded) {
       for (const e of entries) {
@@ -1105,6 +1178,7 @@ class MeshClientImpl implements MeshClient {
       readMs: this.readMsMap.get(e.notisId) ?? null,
       meshUsable: this.pickReadyConnection(e.notisId) !== null,
       firstContact: e.firstContact,
+      known: e.known,
       api: e.api,
       meshBase: meshBaseUrl(e.notisId),
     }));
@@ -1155,6 +1229,27 @@ class MeshClientImpl implements MeshClient {
   onState(cb: (s: ClientState) => void): () => void {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };
+  }
+
+  /**
+   * MESH_INTERFACE → What the client remembers — "After each check it
+   * records every node naming a tip on its chain, `ok` or `trailing`,
+   * with the addresses it would dial — no private address, never its own
+   * key — the most recently seen first, at most `REMEMBERED_NODES_MAX`".
+   * `proof`: the kept proof's bytes or `null`; `nodes`: the entries to
+   * remember; `dropped`: the keys blacklisted this session, so the store
+   * drops them from the merged list; `answeredForks`: the held list;
+   * `replace: false` so the store moves the stored proof only when
+   * `continues` answers so.
+   */
+  toRemember(): MemorySnapshot {
+    // AHEAD OF CODE (2026-11-08): the snapshot's bodies are not wired
+    // up yet; the next unit lands the kept proof's encode, the known-
+    // nodes selection and the blacklisted-key collection. The fields
+    // the next unit reads (`this.kept`, `this.ownId`, `this.answeredForks`
+    // and `this.onChecked`) are kept.
+    void this.kept; void this.ownId; void this.answeredForks; void this.onChecked;
+    throw new Error('toRemember: AHEAD OF CODE');
   }
 
   /**
@@ -1228,6 +1323,8 @@ class MeshClientImpl implements MeshClient {
       if (entry && entry.api !== null) return entry.api;
     }
 
+    // AHEAD OF CODE (2026-11-08): the known-before-first-check branch
+    // is not wired up here yet; only first-contact entries serve.
     const firstCheckEnded = this.state_.checks > 0;
     if (!firstCheckEnded) {
       for (const e of entries) {
@@ -1638,6 +1735,11 @@ class MeshClientImpl implements MeshClient {
       // the chain stands. When the hash is not held, settle to the
       // winner and re-place every tip this check read against the
       // new chain.
+      //
+      // AHEAD OF CODE (2026-11-08): judgeByMemory is not wired up yet;
+      // the kept proof is not read in the check. The next unit lands
+      // the memory contestant, the best / lost / foreign branches, and
+      // the kept-moves-forward update.
       if (result.winner !== null && result.tip !== null) {
         const winnerTipHash = blockHash(result.tip);
         if (winnerTipHash !== null
@@ -1765,6 +1867,9 @@ class MeshClientImpl implements MeshClient {
     if (proofsThisCheck.asked > 0) {
       this.state_.proofs = proofsThisCheck;
     }
+    // AHEAD OF CODE (2026-11-08): `notContinued` and `onChecked` are
+    // not wired up yet; the next unit lands the end-of-check update
+    // and the snapshot callback.
     this.emitStateChange();
   }
 

@@ -32,6 +32,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     proofs: null,
     anchor: null,
     chain: null,
+    notContinued: false,
     ...overrides,
   };
 }
@@ -62,6 +63,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     removeByHand: hooks.removeByHand ?? ((): void => {}),
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
+    toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
     libp2p: {} as unknown as MeshClient['libp2p'],
   };
 }

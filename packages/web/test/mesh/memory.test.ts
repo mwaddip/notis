@@ -56,6 +56,7 @@ function entry(over: Partial<NodeEntry>): NodeEntry {
   return {
     notisId: '0'.repeat(63) + '1',
     firstContact: false,
+    known: false,
     byHand: false,
     status: 'ok',
     failures: 0,

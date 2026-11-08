@@ -59,6 +59,15 @@ export interface NodeEntry {
   notisId: string;
   firstContact: boolean;
   /**
+   * MESH_INTERFACE → Discovery → "Known nodes" — true for an entry
+   * the client was handed as a known node at start (the client's
+   * `seeds` list). A known node is a candidate like any node the DHT
+   * finds; `firstContact` stays `false` for it. `known` carries
+   * forward across later events; a node merged in from the DHT or a
+   * peer list carries `known: false`.
+   */
+  known: boolean;
+  /**
    * MESH_INTERFACE → Discovery → "A node added by hand" —
    * true for an entry a reader has added through `addByHand`, carrying
    * forward across later events; the gater reads it through
@@ -145,6 +154,7 @@ function assertNotisId(id: string): void {
 interface InternalEntry {
   notisId: string;
   firstContact: boolean;
+  known: boolean;
   byHand: boolean;
   seenMs: number | null;
   /**
@@ -209,6 +219,7 @@ export class NodeList {
         this.entries_.set(a.notisId, {
           notisId: a.notisId,
           firstContact: true,
+          known: false,
           byHand: false,
           seenMs: null,
           fromFirstContactList: true,
@@ -228,7 +239,7 @@ export class NodeList {
     }
   }
 
-  add(id: string, addrs: string[]): void {
+  add(id: string, addrs: string[], known = false, api: string | null = null): void {
     assertNotisId(id);
     const existing = this.entries_.get(id);
     if (existing) {
@@ -236,11 +247,14 @@ export class NodeList {
       // `add` revives a blacklisted entry's state.
       if (existing.status === 'blacklisted') return;
       this.mergeAddrs(existing, addrs);
+      if (known) existing.known = true;
+      if (existing.api === null && api !== null) existing.api = api;
       return;
     }
     this.entries_.set(id, {
       notisId: id,
       firstContact: false,
+      known,
       byHand: false,
       seenMs: null,
       fromFirstContactList: false,
@@ -258,7 +272,7 @@ export class NodeList {
       evidence: null,
       lastFailure: null,
       lastFailures: {},
-      api: null,
+      api,
     });
   }
 
@@ -287,6 +301,7 @@ export class NodeList {
     this.entries_.set(id, {
       notisId: id,
       firstContact: trusted,
+      known: false,
       byHand: true,
       seenMs: null,
       fromFirstContactList: false,
@@ -566,6 +581,7 @@ export class NodeList {
     return {
       notisId: e.notisId,
       firstContact: e.firstContact,
+      known: e.known,
       byHand: e.byHand,
       status: e.status,
       failures: e.failures,

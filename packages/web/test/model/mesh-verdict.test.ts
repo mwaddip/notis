@@ -67,6 +67,7 @@ function stateOf(s: StateShape): ClientState {
     proofs: s.proofs ?? null,
     anchor: s.anchor ?? null,
     chain: s.chain ?? null,
+    notContinued: false,
   };
 }
 

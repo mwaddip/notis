@@ -81,6 +81,13 @@ export interface OrderCandidate {
   readMs: number | null;
   meshUsable: boolean;
   firstContact: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "Known nodes" — true for an entry
+   * the client was handed as a known node at start. Before the first
+   * check ends, first-contact and known entries serve any need;
+   * first-contact first, then known, in list order.
+   */
+  known: boolean;
   /** The API base `(scheme)://(host)[:(port)]` with no trailing `/`. */
   api: string | null;
   /** The `notis-mesh://<id>` base, so the caller does not restate it. */
@@ -115,6 +122,9 @@ export function orderServers(
     // not serve until a check has read them; a `blacklisted` node never —
     // "A `blacklisted` node is never one [a candidate]" holds at every
     // stage.
+    //
+    // AHEAD OF CODE (2026-11-08): the known-entry fallback is not wired
+    // up here yet; the next unit lands it after the first-contact loop.
     for (const n of nodes) {
       if (!n.firstContact) continue;
       if (n.status === 'blacklisted') continue;

@@ -41,6 +41,7 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
   return {
     notisId: over.notisId,
     firstContact: over.firstContact ?? false,
+    known: over.known ?? false,
     byHand: over.byHand ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
@@ -74,6 +75,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     proofs: over.proofs ?? null,
     anchor: over.anchor ?? null,
     chain: over.chain ?? null,
+    notContinued: over.notContinued ?? false,
   };
 }
 

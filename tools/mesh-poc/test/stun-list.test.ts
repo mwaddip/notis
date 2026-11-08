@@ -27,6 +27,7 @@ function makeEntry(partial: {
   return {
     notisId: partial.notisId,
     firstContact: partial.firstContact ?? false,
+    known: false,
     byHand: false,
     status: partial.status,
     failures: 0,
