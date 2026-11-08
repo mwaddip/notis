@@ -52,7 +52,7 @@ beforeEach(() => {
 
 describe("the node row holds the question while the verdict reads refused · your-node", () => {
   // AssertionError: expected null not to be null (line 62: the .question element)
-  it.fails('the node row holds the question for which: memory, word for word, and the two answers', () => {
+  it('the node row holds the question for which: memory, word for word, and the two answers', () => {
     const body = settingsBody(handlers({
       handNode: off(),
       verdict: () => memoryVerdict(),
@@ -70,7 +70,7 @@ describe("the node row holds the question while the verdict reads refused · you
   });
 
   // TypeError: Cannot read properties of null (reading 'textContent')
-  it.fails('the node row holds the question for which: heavier, word for word', () => {
+  it('the node row holds the question for which: heavier, word for word', () => {
     const body = settingsBody(handlers({
       handNode: off(),
       verdict: () => heavierVerdict(),
@@ -82,7 +82,7 @@ describe("the node row holds the question while the verdict reads refused · you
 
   // TypeError: Cannot read properties of undefined (reading 'click') — the
   // word control `continue on this node` is not rendered.
-  it.fails("continue on this node calls answer('continue') once and the row draws the next verdict", () => {
+  it("continue on this node calls answer('continue') once and the row draws the next verdict", () => {
     const answer = vi.fn();
     let v: TipVerdict | null = memoryVerdict();
     const body = settingsBody(handlers({
@@ -104,7 +104,7 @@ describe("the node row holds the question while the verdict reads refused · you
 
   // TypeError: Cannot read properties of undefined (reading 'click') — the
   // word control `disable it` is not rendered.
-  it.fails("disable it calls answer('disable') once and stores the node off", () => {
+  it("disable it calls answer('disable') once and stores the node off", () => {
     const answer = vi.fn();
     const setOff = vi.fn();
     let v: TipVerdict | null = heavierVerdict();
@@ -125,7 +125,7 @@ describe("the node row holds the question while the verdict reads refused · you
 describe("the hand-added node's off state", () => {
   // AssertionError: expected undefined not to be undefined — the `turn on`
   // word is not rendered.
-  it.fails('a page that starts with the node off does not add it; turn on adds it back trusted', () => {
+  it('a page that starts with the node off does not add it; turn on adds it back trusted', () => {
     // The row reads the address, `off`, and the word control `turn on`.
     let state = true;
     const setOff = vi.fn((v: boolean) => { state = v; });

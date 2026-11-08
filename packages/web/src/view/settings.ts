@@ -150,9 +150,14 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
   // row adds a node by hand (WEB_INTERFACE → The settings window → "In the
   // extension the row adds a node by hand"): the input holds the stored
   // address, the commit calls the seam, an error from it stands beside the
-  // field, and the hint names the address format.
+  // field, and the hint names the address format. The row also holds the
+  // off state and the reader's question while the verdict reads
+  // `refused` · *your-node* (→ "The reader may switch it off",
+  // → "While it disagrees the row holds the question"); the update owns both
+  // so nothing else in the page moves (`HOUSE_STYLE → Motion`).
   if (handlers.handNode) {
     const handNode = handlers.handNode;
+    const readVerdict = handlers.verdict ?? ((): TipVerdict | null | undefined => undefined);
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
     input.placeholder = '/ip4/…/udp/…/p2p/…';
@@ -176,13 +181,62 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
       }
     });
     let shown = input.value;
-    draws.push(() => {
-      if (input.value !== shown) return;
-      shown = handNode.address();
-      input.value = shown;
-    });
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'the address a node prints at start, its /p2p/<peer id> included. blank removes the hand-added node.'));
+    // The off label and the `turn on` word — stood up on demand by `update`.
+    const offLabel = el('span', 'off', 'off');
+    const turnOn = el('button', 'word', 'turn on') as HTMLButtonElement;
+    turnOn.addEventListener('click', () => { handNode.setOff(false); });
+    // The question slot and its two word controls — stood up on demand by
+    // `update` while the verdict reads `refused` · *your-node*.
+    const question = el('div', 'question');
+    const contWord = el('button', 'word', 'continue on this node') as HTMLButtonElement;
+    contWord.addEventListener('click', () => { handNode.answer('continue'); });
+    const disWord = el('button', 'word', 'disable it') as HTMLButtonElement;
+    disWord.addEventListener('click', () => { handNode.answer('disable'); });
+    const hint = el('div', 'hint', 'the address a node prints at start, its /p2p/<peer id> included. blank removes the hand-added node.');
+    field.appendChild(hint);
+    // The off piece and the question piece live between the input and the
+    // hint; placed and taken by `update`, and never by anything else.
+    const placeBefore = (node: Node, before: Node): void => {
+      if (node.parentNode === field && node.nextSibling === before) return;
+      field.insertBefore(node, before);
+    };
+    const takeOut = (node: Node): void => {
+      if (node.parentNode === field) field.removeChild(node);
+    };
+    draws.push(() => {
+      if (input.value === shown) {
+        shown = handNode.address();
+        input.value = shown;
+      }
+      // The off state: `off` beside the address and `turn on` in place.
+      const isOff = handNode.off();
+      if (isOff) {
+        placeBefore(offLabel, hint);
+        placeBefore(turnOn, hint);
+      } else {
+        takeOut(offLabel);
+        takeOut(turnOn);
+      }
+      // The question: word for word, with the two word controls, while the
+      // verdict reads `refused` · *your-node* (WEB_INTERFACE → The settings
+      // window → "While it disagrees the row holds the question").
+      const v = readVerdict();
+      const yn = v !== null && v !== undefined && v.kind === 'refused' && v.reason === 'your-node'
+        ? v : null;
+      if (yn !== null) {
+        question.textContent = yn.which === 'memory'
+          ? 'your node serves a chain that does not continue the one you verified. It may be compromised.'
+          : 'another node serves a heavier chain than your node. Your node may be compromised.';
+        placeBefore(question, hint);
+        placeBefore(contWord, hint);
+        placeBefore(disWord, hint);
+      } else {
+        takeOut(question);
+        takeOut(contWord);
+        takeOut(disWord);
+      }
+    });
     b.appendChild(r);
   } else {
     const { row: r, field } = row('node');

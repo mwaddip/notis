@@ -16,7 +16,7 @@
 
 import { NodeClient } from '../api/client.js';
 import { WriteClient } from '../api/write.js';
-import { HAND_NODE_KEY } from './storage-keys.js';
+import { HAND_NODE_KEY, HAND_NODE_OFF_KEY } from './storage-keys.js';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
 import { createNamesVerifier } from './names-verifier.js';
@@ -153,13 +153,41 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
       return null;
     },
     off(): boolean {
-      return false;
+      return opts.storage.getItem(HAND_NODE_OFF_KEY) === '1';
     },
-    setOff(_off: boolean): void {
-      // stub
+    setOff(off: boolean): void {
+      // WEB_INTERFACE → The settings window → "The reader may switch it off".
+      // Off: the key is written and the entry removed from the client's list.
+      // On: the key is cleared and the stored address is re-added as a
+      // trusted by-hand node.
+      const stored = opts.storage.getItem(HAND_NODE_KEY);
+      if (off) {
+        opts.storage.setItem(HAND_NODE_OFF_KEY, '1');
+        if (stored !== null) {
+          const parsed = parseHandNodeAddress(stored);
+          if ('notisId' in parsed) {
+            try { client.removeByHand(parsed.notisId); } catch { /* ignore */ }
+          }
+        }
+        return;
+      }
+      opts.storage.removeItem(HAND_NODE_OFF_KEY);
+      if (stored !== null) {
+        const parsed = parseHandNodeAddress(stored);
+        if ('notisId' in parsed) {
+          try { client.addByHand(parsed.notisId, [parsed.addr], true); } catch { /* ignore */ }
+        }
+      }
     },
-    answer(_decision: 'continue' | 'disable'): void {
-      // stub
+    answer(decision: 'continue' | 'disable'): void {
+      // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+      // question, never the client's choice". *disable* also writes the off
+      // key, so a page that loads next starts without the node until the
+      // reader turns it on.
+      client.answer(decision);
+      if (decision === 'disable') {
+        opts.storage.setItem(HAND_NODE_OFF_KEY, '1');
+      }
     },
   };
 
@@ -262,9 +290,12 @@ export async function startExtensionMesh(
   const stopOnHide = (): void => { void client.stop(); };
   opts.window.addEventListener('pagehide', stopOnHide, { once: true });
   // A stored hand-added address is re-added as a trusted by-hand node after
-  // start, so `removeByHand` can later drop it.
+  // start — unless the reader has switched it off (WEB_INTERFACE → The
+  // settings window → "The reader may switch it off"). A page that starts
+  // with the off key set does not add the node.
   const handAddr = opts.storage.getItem(HAND_NODE_KEY);
-  if (handAddr !== null) {
+  const handOff = opts.storage.getItem(HAND_NODE_OFF_KEY) === '1';
+  if (handAddr !== null && !handOff) {
     const parsed = parseHandNodeAddress(handAddr);
     if ('notisId' in parsed) {
       try { client.addByHand(parsed.notisId, [parsed.addr], true); } catch { /* malformed; ignore */ }
