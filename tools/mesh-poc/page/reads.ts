@@ -5,11 +5,17 @@
 // makes `n` reads one after another — `/blocks/current` for `tip`,
 // `/blocks/1` for `older` — through `client.read`. For each it
 // records the answering `nodeId`, that node's `status` in
-// `state().nodes` as the read resolves, and the client's `checks`
+// `state().nodes` as the read resolves, the client's `checks`
 // count at the read — so a reader of the measurement can tell one
-// read's state from the next. A failed read records
-// `{ nodeId: null, status: null, checks, error: <message> }`. The
-// driver writes `<pre id="reads">` with `{ need, served }` as a
+// read's state from the next — the client's tip height at the read,
+// and the list of nodes the pick was made from, each entry's status
+// and its last check's figures. The node list is sampled BEFORE
+// `client.read` so the entries name the state the pick reads —
+// `MeshClient.read` picks synchronously from `nodeList.entries()`,
+// `state_.disagreement`, `readMsMap` and `behindByMap`, with no
+// `await` before the pick. A failed read records
+// `{ nodeId: null, status: null, checks, tipHeight, nodes, error: <message> }`.
+// The driver writes `<pre id="reads">` with `{ need, served }` as a
 // sibling of the state root (the probe's sibling pattern), so a
 // render leaves it in place. `n` is 1–100; anything else is ignored
 // and writes nothing.
@@ -25,9 +31,32 @@ export interface RunReadsOptions {
   root: HTMLElement;
 }
 
+export interface ReadsPickedNode {
+  /** First 8 hex of the entry's `notisId`. */
+  id: string;
+  status: NodeStatus;
+  behindBy: number | null;
+  readMs: number | null;
+  /** The entry's `lastFailure.message`, or `null` when none. */
+  lastFailure: string | null;
+}
+
 type ServedEntry =
-  | { nodeId: string; status: NodeStatus | null; checks: number }
-  | { nodeId: null; status: null; checks: number; error: string };
+  | {
+      nodeId: string;
+      status: NodeStatus | null;
+      checks: number;
+      tipHeight: number | null;
+      nodes: ReadsPickedNode[];
+    }
+  | {
+      nodeId: null;
+      status: null;
+      checks: number;
+      tipHeight: number | null;
+      nodes: ReadsPickedNode[];
+      error: string;
+    };
 
 interface ReadsOutput {
   need: ReadNeed;
@@ -45,11 +74,28 @@ export async function runReads(opts: RunReadsOptions): Promise<void> {
   const path = opts.need === 'tip' ? '/blocks/current' : '/blocks/1';
   const served: ServedEntry[] = [];
   for (let i = 0; i < opts.n; i += 1) {
-    // `checks` is read at the read's moment — the count of completed
-    // checks on the client up to then — so a reader can tell one
-    // read's state from the next (the state renderer's own stamp,
-    // beside the agreement counts).
-    const checks = opts.client.state().checks;
+    // Sample the state the pick reads: `checks`, the client's tip
+    // height, and the entries the pick is made from — every entry
+    // whose status is NOT `new`, so a reader of the measurement
+    // sees the ranked candidates and each one's last check
+    // (MESH_INTERFACE → The client's node list → "A routed read
+    // goes to a node its need allows"). `read` picks synchronously
+    // from these fields with no `await` before the pick, so the
+    // sample taken here is what the pick sees.
+    const stateBefore = opts.client.state();
+    const checks = stateBefore.checks;
+    const tipHeight = stateBefore.tip?.height ?? null;
+    const nodesSampled: ReadsPickedNode[] = [];
+    for (const e of stateBefore.nodes) {
+      if (e.status === 'new') continue;
+      nodesSampled.push({
+        id: e.notisId.slice(0, 8),
+        status: e.status,
+        behindBy: e.behindBy,
+        readMs: e.readMs,
+        lastFailure: e.lastFailure !== null ? e.lastFailure.message : null,
+      });
+    }
     try {
       // MESH_INTERFACE → The client's node list → "A read opens no
       // connection" — the body is drained before the entry is
@@ -61,14 +107,14 @@ export async function runReads(opts: RunReadsOptions): Promise<void> {
         await response.arrayBuffer();
       } catch (bodyErr) {
         const message = bodyErr instanceof Error ? bodyErr.message : String(bodyErr);
-        served.push({ nodeId: null, status: null, checks, error: message });
+        served.push({ nodeId: null, status: null, checks, tipHeight, nodes: nodesSampled, error: message });
         continue;
       }
       const node = opts.client.state().nodes.find((e) => e.notisId === nodeId);
-      served.push({ nodeId, status: node?.status ?? null, checks });
+      served.push({ nodeId, status: node?.status ?? null, checks, tipHeight, nodes: nodesSampled });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      served.push({ nodeId: null, status: null, checks, error: message });
+      served.push({ nodeId: null, status: null, checks, tipHeight, nodes: nodesSampled, error: message });
     }
   }
   writeReads(opts.root, { need: opts.need, served });

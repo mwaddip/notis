@@ -781,6 +781,11 @@ function entryAt(notisId: string, status: NodeEntry['status']): NodeEntry {
 }
 
 describe('page/reads.ts', () => {
+  // Each served entry carries the state the pick was made from: the
+  // client's `tipHeight` and the list of candidates sampled BEFORE
+  // the read is made. The fake client's default state has `tip: null`
+  // and no entries, so `tipHeight: null` and `nodes: []` — the tests
+  // that care name entries explicitly.
   it('?reads=3&need=older runs three reads through client.read and writes three served ids with their statuses', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
@@ -799,12 +804,16 @@ describe('page/reads.ts', () => {
     const pre = root.querySelector('pre#reads');
     expect(pre, '<pre id="reads"> is required').not.toBeNull();
     const parsed = JSON.parse(pre!.textContent ?? '');
+    const sampledNodes = [
+      { id: 'a'.repeat(8), status: 'ok', behindBy: null, readMs: null, lastFailure: null },
+      { id: 'b'.repeat(8), status: 'trailing', behindBy: null, readMs: null, lastFailure: null },
+    ];
     expect(parsed).toEqual({
       need: 'older',
       served: [
-        { nodeId: idA, status: 'ok', checks: 0 },
-        { nodeId: idB, status: 'trailing', checks: 0 },
-        { nodeId: idA, status: 'ok', checks: 0 },
+        { nodeId: idA, status: 'ok', checks: 0, tipHeight: null, nodes: sampledNodes },
+        { nodeId: idB, status: 'trailing', checks: 0, tipHeight: null, nodes: sampledNodes },
+        { nodeId: idA, status: 'ok', checks: 0, tipHeight: null, nodes: sampledNodes },
       ],
     });
   });
@@ -821,7 +830,20 @@ describe('page/reads.ts', () => {
     expect(fake.calls.read).toEqual([{ path: '/blocks/current', need: 'tip' }]);
     const pre = root.querySelector('pre#reads');
     const parsed = JSON.parse(pre!.textContent ?? '');
-    expect(parsed).toEqual({ need: 'tip', served: [{ nodeId: idA, status: 'ok', checks: 0 }] });
+    expect(parsed).toEqual({
+      need: 'tip',
+      served: [
+        {
+          nodeId: idA,
+          status: 'ok',
+          checks: 0,
+          tipHeight: null,
+          nodes: [
+            { id: 'a'.repeat(8), status: 'ok', behindBy: null, readMs: null, lastFailure: null },
+          ],
+        },
+      ],
+    });
   });
 
   it('waits for the first completed check (agreement !== null)', async () => {
@@ -843,10 +865,23 @@ describe('page/reads.ts', () => {
     await started;
     expect(fake.calls.read).toEqual([{ path: '/blocks/1', need: 'older' }]);
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
-    expect(parsed).toEqual({ need: 'older', served: [{ nodeId: idA, status: 'ok', checks: 0 }] });
+    expect(parsed).toEqual({
+      need: 'older',
+      served: [
+        {
+          nodeId: idA,
+          status: 'ok',
+          checks: 0,
+          tipHeight: null,
+          nodes: [
+            { id: 'a'.repeat(8), status: 'ok', behindBy: null, readMs: null, lastFailure: null },
+          ],
+        },
+      ],
+    });
   });
 
-  it('a failed read lands as { nodeId: null, status: null, error }', async () => {
+  it('a failed read lands as { nodeId: null, status: null, error, tipHeight, nodes }', async () => {
     const root = document.createElement('div');
     const idA = 'a'.repeat(64);
     const fake = buildFakeClient({
@@ -856,12 +891,22 @@ describe('page/reads.ts', () => {
     });
     await runReads({ client: fake.client, n: 3, need: 'tip', root });
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
+    const sampledNodes = [
+      { id: 'a'.repeat(8), status: 'ok', behindBy: null, readMs: null, lastFailure: null },
+    ];
     expect(parsed).toEqual({
       need: 'tip',
       served: [
-        { nodeId: idA, status: 'ok', checks: 0 },
-        { nodeId: null, status: null, checks: 0, error: 'no node allowed for a tip read' },
-        { nodeId: idA, status: 'ok', checks: 0 },
+        { nodeId: idA, status: 'ok', checks: 0, tipHeight: null, nodes: sampledNodes },
+        {
+          nodeId: null,
+          status: null,
+          checks: 0,
+          tipHeight: null,
+          nodes: sampledNodes,
+          error: 'no node allowed for a tip read',
+        },
+        { nodeId: idA, status: 'ok', checks: 0, tipHeight: null, nodes: sampledNodes },
       ],
     });
   });
@@ -919,8 +964,24 @@ describe('page/reads.ts', () => {
       async (_path: string, _need: ReadNeed) => ({ response: bodies.shift()!, nodeId: idA });
     await runReads({ client: fake.client, n: 2, need: 'older', root });
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
-    expect(parsed.served[0]).toEqual({ nodeId: null, status: null, checks: 0, error: expect.stringContaining('stream broke') });
-    expect(parsed.served[1]).toEqual({ nodeId: idA, status: 'ok', checks: 0 });
+    const sampledNodes = [
+      { id: 'a'.repeat(8), status: 'ok', behindBy: null, readMs: null, lastFailure: null },
+    ];
+    expect(parsed.served[0]).toEqual({
+      nodeId: null,
+      status: null,
+      checks: 0,
+      tipHeight: null,
+      nodes: sampledNodes,
+      error: expect.stringContaining('stream broke'),
+    });
+    expect(parsed.served[1]).toEqual({
+      nodeId: idA,
+      status: 'ok',
+      checks: 0,
+      tipHeight: null,
+      nodes: sampledNodes,
+    });
   });
 
   // MESH_INTERFACE → The client's node list → "A routed read goes to a
@@ -940,6 +1001,107 @@ describe('page/reads.ts', () => {
     const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
     expect(parsed.served[0].checks).toBe(7);
     expect(parsed.served[1].checks).toBe(7);
+  });
+
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — each served entry carries the client's
+  // `tipHeight` at the read and the list of candidate nodes the pick
+  // was made from. The entries record one row per node not in `new`:
+  // `{ id, status, behindBy, readMs, lastFailure }`.
+  it('each served entry carries tipHeight and the node list behind the pick', async () => {
+    const root = document.createElement('div');
+    const idA = 'a'.repeat(64);
+    const idB = 'b'.repeat(64);
+    const idC = 'c'.repeat(64);
+    const entries = [
+      makeEntry({
+        notisId: idA,
+        status: 'ok',
+        behindBy: 0,
+        readMs: 45,
+        lastFailure: null,
+      }),
+      makeEntry({
+        notisId: idB,
+        status: 'retry',
+        behindBy: null,
+        readMs: null,
+        lastFailure: { kind: 'timeout', message: 'read deadline', atMs: 1_000 },
+      }),
+      makeEntry({ notisId: idC, status: 'new' }),
+    ];
+    const fake = buildFakeClient({
+      agreement: { onChain: 1, offChain: 0 },
+      nodes: entries,
+      readAnswers: [{ nodeId: idA }],
+    });
+    (fake as unknown as { emit: (over: Partial<ClientState>) => void }).emit({
+      tip: { height: 42, hash: 'f'.repeat(64) },
+    });
+    await runReads({ client: fake.client, n: 1, need: 'older', root });
+    const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
+    expect(parsed.served[0].tipHeight).toBe(42);
+    expect(parsed.served[0].nodes).toEqual([
+      { id: 'a'.repeat(8), status: 'ok', behindBy: 0, readMs: 45, lastFailure: null },
+      {
+        id: 'b'.repeat(8),
+        status: 'retry',
+        behindBy: null,
+        readMs: null,
+        lastFailure: 'read deadline',
+      },
+    ]);
+  });
+
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — the node list is sampled BEFORE
+  // `client.read` resolves. A later change to `nodes` must not show
+  // up in the served entry: the pick was made from the earlier
+  // state.
+  it('the node list is sampled before the read, not after', async () => {
+    const root = document.createElement('div');
+    const idA = 'a'.repeat(64);
+    const idB = 'b'.repeat(64);
+    const entries = [entryAt(idA, 'ok'), entryAt(idB, 'trailing')];
+    const fake = buildFakeClient({
+      agreement: { onChain: 1, offChain: 0 },
+      nodes: entries,
+    });
+    // Replace read so a change to `nodes` lands between the pick's
+    // sample and the read's resolve.
+    (fake.client as unknown as {
+      read: (p: string, n: ReadNeed) => Promise<{ response: Response; nodeId: string }>;
+    }).read = async () => {
+      (fake as unknown as { emit: (over: Partial<ClientState>) => void }).emit({
+        nodes: [entryAt(idA, 'ok')],
+      });
+      return { response: new Response('', { status: 200 }), nodeId: idA };
+    };
+    await runReads({ client: fake.client, n: 1, need: 'older', root });
+    const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
+    // The served entry's `nodes` carries both — the state before the
+    // read, not the state after the mid-read change.
+    expect(parsed.served[0].nodes.map((e: { id: string }) => e.id)).toEqual([
+      'a'.repeat(8),
+      'b'.repeat(8),
+    ]);
+  });
+
+  // MESH_INTERFACE → The client's node list — an entry in `new`
+  // (never read) is no candidate: it has no speed, no verdict, no
+  // failure to show. The served entry's `nodes` leaves it out.
+  it('an entry in status `new` is not in the pick record', async () => {
+    const root = document.createElement('div');
+    const idA = 'a'.repeat(64);
+    const idB = 'b'.repeat(64);
+    const fake = buildFakeClient({
+      agreement: { onChain: 1, offChain: 0 },
+      nodes: [entryAt(idA, 'ok'), entryAt(idB, 'new')],
+      readAnswers: [{ nodeId: idA }],
+    });
+    await runReads({ client: fake.client, n: 1, need: 'older', root });
+    const parsed = JSON.parse(root.querySelector('pre#reads')!.textContent ?? '');
+    expect(parsed.served[0].nodes.map((e: { id: string }) => e.id)).toEqual(['a'.repeat(8)]);
   });
 });
 
