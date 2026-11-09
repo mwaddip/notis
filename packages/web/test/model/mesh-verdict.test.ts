@@ -89,12 +89,12 @@ const DISAGREEMENT_HEAVIER: Disagreement = {
 };
 
 describe('meshVerdict — the rows of the table', () => {
-  it('row 1a: no check has ended → thin no-proof, height null', () => {
+  it('row 1: no check has ended → thin no-proof, height null', () => {
     const s = stateOf({ seated: false, agreement: null, tipHeight: null });
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
   });
 
-  it('row 1b: not seated and no proof answered → thin no-proof', () => {
+  it('row 3: not seated and no proof answered → thin no-proof', () => {
     const s = stateOf({
       seated: false,
       agreement: agreement(0, 0),
@@ -104,7 +104,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
   });
 
-  it('row 2: not seated and a proof answered invalid → refused invalid-proof', () => {
+  it('row 4: not seated and a proof answered invalid → refused invalid-proof', () => {
     const s = stateOf({
       seated: false,
       agreement: agreement(0, 0),
@@ -114,7 +114,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'refused', reason: 'invalid-proof', height: null });
   });
 
-  it('row 3: not seated and every proof answered too-short → thin too-short', () => {
+  it('row 5: not seated and every proof answered too-short → thin too-short', () => {
     const s = stateOf({
       seated: false,
       agreement: agreement(0, 0),
@@ -124,7 +124,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'too-short', height: null });
   });
 
-  it('row 3 only reads too-short when every answered proof is too-short — a verified-but-unseated state reads no-proof', () => {
+  it('row 5 only reads too-short when every answered proof is too-short — a verified-but-unseated state reads no-proof', () => {
     const s = stateOf({
       seated: false,
       agreement: agreement(0, 0),
@@ -134,7 +134,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
   });
 
-  it('row 4: seated and a disagreement stands → refused your-node, naming which', () => {
+  it('row 2: seated and a disagreement stands → refused your-node, naming which', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(2, 0),
@@ -149,7 +149,7 @@ describe('meshVerdict — the rows of the table', () => {
     });
   });
 
-  it.fails('a question standing before any chain is seated reads refused your-node, naming which', () => {
+  it('a question standing before any chain is seated reads refused your-node, naming which', () => {
     for (const proofs of [
       null,
       { asked: 2, verified: 0, invalid: 0, tooShort: 0 },
@@ -182,7 +182,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
   });
 
-  it('row 5: seated, no disagreement and notContinued → thin not-continued', () => {
+  it('row 6: seated, no disagreement and notContinued → thin not-continued', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(0, 1),
@@ -192,7 +192,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'not-continued', height: 7766 });
   });
 
-  it('row 6: seated and a node names a tip off the window → thin split', () => {
+  it('row 7: seated and a node names a tip off the window → thin split', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(2, 1),
@@ -201,7 +201,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'split', height: 7766 });
   });
 
-  it('row 7: seated and fewer than two nodes name a tip on it → thin one-node', () => {
+  it('row 8: seated and fewer than two nodes name a tip on it → thin one-node', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(1, 0),
@@ -210,7 +210,7 @@ describe('meshVerdict — the rows of the table', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'one-node', height: 7766 });
   });
 
-  it('row 8: seated and two or more → verified, with the count', () => {
+  it('row 9: seated and two or more → verified, with the count', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(3, 0),
@@ -221,7 +221,7 @@ describe('meshVerdict — the rows of the table', () => {
 });
 
 describe('meshVerdict — the row order, first row that holds wins', () => {
-  it('a state meeting rows 1a and 2 reads row 1a (no check ended)', () => {
+  it('a state meeting rows 1 and 4 reads row 1 (no check ended)', () => {
     const s = stateOf({
       seated: false,
       agreement: null,
@@ -231,7 +231,7 @@ describe('meshVerdict — the row order, first row that holds wins', () => {
     expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
   });
 
-  it('a state meeting rows 6 and 7 reads row 6 (split wins over one-node)', () => {
+  it('a state meeting rows 7 and 8 reads row 7 (split wins over one-node)', () => {
     const s = stateOf({
       seated: true,
       agreement: agreement(1, 2),
@@ -241,7 +241,7 @@ describe('meshVerdict — the row order, first row that holds wins', () => {
   });
 
   it('your-node ranks first among seated rows; not-continued ranks before split; no row reads anchors', () => {
-    // Row 4 — your-node — outranks every seated row. Even with
+    // Row 2 — your-node — outranks every seated row. Even with
     // notContinued true and offChain > 0 (which would otherwise fire
     // not-continued or split), a standing disagreement wins.
     const sYN = stateOf({
@@ -258,7 +258,7 @@ describe('meshVerdict — the row order, first row that holds wins', () => {
       height: 7766,
     });
 
-    // Row 5 — not-continued — ranks before split (row 6). offChain > 0
+    // Row 6 — not-continued — ranks before split (row 7). offChain > 0
     // alone would fire split, but with notContinued true the earlier
     // row wins.
     const sNC = stateOf({

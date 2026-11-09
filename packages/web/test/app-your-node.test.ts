@@ -260,7 +260,7 @@ const unseatedWithQuestion = (): ClientState => ({
 });
 
 describe('a question standing before any chain is seated', () => {
-  it.fails("the extension's settings row shows the question while no chain is seated", async () => {
+  it("the extension's settings row shows the question while no chain is seated", async () => {
     const h = harness();
     await flush();
     const run = h.tipRuns[h.tipRuns.length - 1]!;

@@ -997,7 +997,7 @@ describe('the send pass does not run while your-node stands, and runs at the fir
 });
 
 describe('a waitable write is held while the question stands before any chain is seated', () => {
-  it.fails('a waitable write is held while the question stands before any chain is seated', async () => {
+  it('a waitable write is held while the question stands before any chain is seated', async () => {
     const h = harness({ rememberChain: CHAIN });
     primeBases(h);
     await flush();

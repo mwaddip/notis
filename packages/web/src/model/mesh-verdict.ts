@@ -45,24 +45,32 @@ export function meshVerdict(s: ClientState): TipVerdict {
     return { kind: 'thin', reason: 'no-proof', height };
   }
 
-  // Row 1a — no check has ended: `agreement` is `null` before the first
+  // Row 1 — no check has ended: `agreement` is `null` before the first
   // check's end (MESH_INTERFACE → What the client remembers → "The agreement
   // counts").
   if (s.agreement === null) {
     return { kind: 'thin', reason: 'no-proof', height };
   }
 
-  // Rows 1b–3 — the chain is not yet seated.
+  // Row 2 — your node and the evidence disagree and the reader has not
+  // answered, a chain seated or not (MESH_INTERFACE → Discovery → "A
+  // disagreement is the reader's question, never the client's choice"). The
+  // refused shape names which of the two disagreements it is.
+  if (s.disagreement !== null) {
+    return { kind: 'refused', reason: 'your-node', which: s.disagreement.which, height };
+  }
+
+  // Rows 3–5 — the chain is not yet seated.
   if (!s.seated) {
     const p = s.proofs;
     const answered = p === null ? 0 : p.verified + p.invalid + p.tooShort;
-    // Row 1b — no chain seated, and no node answered a proof.
+    // Row 3 — no chain seated, and no node answered a proof.
     if (answered === 0) return { kind: 'thin', reason: 'no-proof', height };
-    // Row 2 — a proof answered did not decode or did not verify.
+    // Row 4 — a proof answered did not decode or did not verify.
     if (p !== null && p.invalid > 0) {
       return { kind: 'refused', reason: 'invalid-proof', height };
     }
-    // Row 3 — every proof answered says its chain is shorter than m + k.
+    // Row 5 — every proof answered says its chain is shorter than m + k.
     // Anything no row above holds and that is not every answered proof as
     // too-short reads as no-proof — the totality rule.
     if (p !== null && p.tooShort === answered) {
@@ -71,31 +79,23 @@ export function meshVerdict(s: ClientState): TipVerdict {
     return { kind: 'thin', reason: 'no-proof', height };
   }
 
-  // Row 4 — the chain is seated, your node and the evidence disagree, and
-  // the reader has not answered (MESH_INTERFACE → Discovery → "A
-  // disagreement is the reader's question, never the client's choice"). The
-  // refused shape names which of the two disagreements it is.
-  if (s.disagreement !== null) {
-    return { kind: 'refused', reason: 'your-node', which: s.disagreement.which, height };
-  }
-
-  // Row 5 — the chain is seated, and no node continues the kept one
+  // Row 6 — the chain is seated, and no node continues the kept one
   // (MESH_INTERFACE → What the client remembers).
   if (s.notContinued) {
     return { kind: 'thin', reason: 'not-continued', height };
   }
 
-  // Row 6 — a node names a tip off the chain's last `k` headers.
+  // Row 7 — a node names a tip off the chain's last `k` headers.
   if (s.agreement.offChain > 0) {
     return { kind: 'thin', reason: 'split', height };
   }
 
-  // Row 7 — fewer than two nodes name a tip on the chain.
+  // Row 8 — fewer than two nodes name a tip on the chain.
   if (s.agreement.onChain < 2) {
     return { kind: 'thin', reason: 'one-node', height };
   }
 
-  // Row 8 — two or more do. `verified`'s `nodes` is the agreement's `onChain`.
+  // Row 9 — two or more do. `verified`'s `nodes` is the agreement's `onChain`.
   const resolvedHeight = s.tip !== null ? s.tip.height : 0;
   return { kind: 'verified', nodes: s.agreement.onChain, height: resolvedHeight };
 }
