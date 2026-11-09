@@ -328,10 +328,6 @@ verified proof's tip lies off it, `behind` and off the chain — never against t
 take: a fork the reader answered, a question standing, the kept proof's settle (→ What the client remembers). A tip
 whose verified proof lost is kept as lost only when it lies off that chain. A lie and a failure land as they were read.
 
-> ⚠ **AHEAD OF CODE (2026-11-09).** `@dagsocial/web`'s mesh client lands each verified proof's event, distance and
-agreement verdict against the resolve's winner, guarded for the node whose proof was read alone where its tip read
-placed it on the chain; after a chain switch a node that stood at the old tip keeps that event.
-
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
