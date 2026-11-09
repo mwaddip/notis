@@ -754,6 +754,12 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
       chainOnLan1: true,
       disagreementAfter: false,
       disagreementOnNextCheck: false,
+      // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+      // "It disagrees ... when its own proof does not continue the
+      // kept proof": after phase c's `disable` the kept proof is
+      // honest, phase d restores lan1 as yours, and lan1's fork does
+      // not continue the kept proof — the question is `memory`.
+      disagreementWhichD: 'memory',
       checksAtClick: 2,
       checksAtSample: 3,
       sampledTipHeight: 100,
@@ -762,6 +768,25 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
   };
   it('every phase holds the rule → PASS', () => {
     expect(verdictS7Question(PASS)).toBe('PASS');
+  });
+  it("phase d names 'heavier' (wrong question for phase d) → FAIL", () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, disagreementWhichD: 'heavier' },
+    })).toBe('FAIL');
+  });
+  it('phase d names no question (null) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, disagreementWhichD: null },
+    })).toBe('FAIL');
+  });
+  it('phase d has no disagreementWhichD field → FAIL', () => {
+    const { disagreementWhichD: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
   });
   it('lan1 not yours in the on-chain phase → FAIL', () => {
     expect(verdictS7Question({
