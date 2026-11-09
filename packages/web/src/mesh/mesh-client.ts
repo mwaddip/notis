@@ -1682,6 +1682,14 @@ class MeshClientImpl implements MeshClient {
     const timedFetch = this.makeTimedFetch(pendingReadMs, idByBase);
     const perNodeVerdict = new Map<string, 'on' | 'off' | 'none'>();
     for (const id of afterIds) perNodeVerdict.set(id, 'none');
+    // Ids whose phase 4 resolve answered a failure or a lie: the pass
+    // keeps their status and event, so a proof read's own failure or
+    // lie lands as it was read (MESH_INTERFACE → The client's node
+    // list → "A node is judged against the chain the check leaves"
+    // — "A lie and a failure land as they were read"). A `retry`
+    // from phase 1's dial alone is not here; the pass places such a
+    // node by its tip read.
+    const phase4Downgraded = new Set<string>();
 
     interface TipRead { id: string; height: number; hash: string | null; }
     const tipReads: TipRead[] = [];
@@ -1913,6 +1921,9 @@ class MeshClientImpl implements MeshClient {
         const tipEv = tipEvent(nid, n, nowMs);
         if (!n.verified) {
           this.applyEvent(tipEv, route);
+          if (tipEv.ev === 'failure' || tipEv.ev === 'lie') {
+            phase4Downgraded.add(nid);
+          }
         }
 
         if (n.verified) {
@@ -2161,15 +2172,19 @@ class MeshClientImpl implements MeshClient {
     // and reads `behind` with its distance; any other `under`,
     // `above` or `unplaced` reads `behind` with `behindBy` null and
     // `off` in the agreement. A lie and a failure land as they were
-    // read: an entry already `blacklisted` or `retry` keeps that
-    // status and its event. A tip answered with no hash was placed
-    // by phase 3b with the `behind` event and no agreement verdict.
-    // The pass writes `placements`: the outrun re-read below reads
-    // it to pick whom to re-read against the settled chain.
+    // read: an entry already `blacklisted` or one phase 4's proof
+    // read downgraded to `retry` keeps that status and its event. A
+    // tip answered with no hash was placed by phase 3b with the
+    // `behind` event and no agreement verdict. A retry from phase
+    // 1's dial alone is not held here — the api that served the
+    // tip reads is the base the pass writes against. The pass
+    // writes `placements`: the outrun re-read below reads it to
+    // pick whom to re-read against the settled chain.
     for (const read of tipReads) {
       if (read.hash === null) continue;
+      if (phase4Downgraded.has(read.id)) continue;
       const entry = this.nodeList.entry(read.id);
-      if (entry && (entry.status === 'blacklisted' || entry.status === 'retry')) continue;
+      if (entry && entry.status === 'blacklisted') continue;
       const base = baseById.get(read.id);
       if (base === undefined) continue;
       const placement = this.chain.place(read.hash, read.height);
