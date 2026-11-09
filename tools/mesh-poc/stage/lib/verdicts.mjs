@@ -567,11 +567,14 @@ export function verdictS7Lan(m) {
 //        chainOnLan1: boolean,
 //        disagreementAfter: boolean,
 //        disagreementOnNextCheck: boolean,
+//        disagreementWhichD: 'memory' | 'heavier' | null,  // the question phase d waited for
 //        checksAtClick: number,
 //        checksAtSample: number,       // > checksAtClick: a check completed past the click
 //        sampledTipHeight: number,
 //        sampledTipHash: string,
 //      } | null,
+//      lastSeenC: { … } | null,   // evidence: the state phase c last read at a wait that ran out, or at the phase's sample
+//      lastSeenD: { … } | null,   // evidence: the state phase d last read at a wait that ran out, or at the phase's sample
 //   }`.
 export function verdictS7Question(m) {
   if (missing(m)) return 'skipped';
@@ -606,6 +609,12 @@ export function verdictS7Question(m) {
   if (cont.chainOnLan1 !== true) return 'FAIL';
   if (cont.disagreementAfter !== false) return 'FAIL';
   if (cont.disagreementOnNextCheck !== false) return 'FAIL';
+  // MESH_INTERFACE → Discovery → "Your node takes precedence" — "It
+  // disagrees ... when its own proof does not continue the kept
+  // proof". After phase c's `disable` the kept proof is the honest
+  // chain's; phase d restores lan1 as yours, and lan1's fork does
+  // not continue the kept proof — the question is `memory`.
+  if (cont.disagreementWhichD !== 'memory') return 'FAIL';
   if (typeof cont.checksAtClick !== 'number') return 'FAIL';
   if (typeof cont.checksAtSample !== 'number') return 'FAIL';
   if (cont.checksAtSample <= cont.checksAtClick) return 'FAIL';

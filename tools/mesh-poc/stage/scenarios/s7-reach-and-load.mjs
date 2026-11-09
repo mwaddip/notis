@@ -742,36 +742,76 @@ export async function run(ctx) {
         // `state.tip` from `this.chain.tip()`, so the sample at
         // `checks > checksAtClick` reads the honest side.
         const phaseCExpr = `(async function () {
+          const LAN1 = ${JSON.stringify(lan1NotisId)};
           function readState() {
             const el = document.getElementById('state');
             if (el === null) return null;
             try { return JSON.parse(el.textContent); } catch { return null; }
           }
+          // The state a wait that runs out reports and the measurement
+          // rides when the phase completes: checks, tip, disagreement,
+          // notContinued, agreement, and lan1's entry.
+          function summarize(s) {
+            if (s === null || typeof s !== 'object') return null;
+            let e = null;
+            if (Array.isArray(s.nodes)) {
+              for (const n of s.nodes) {
+                if (n && n.notisId === LAN1) { e = n; break; }
+              }
+            }
+            return {
+              checks: typeof s.checks === 'number' ? s.checks : null,
+              tip: s.tip && typeof s.tip === 'object'
+                ? { height: typeof s.tip.height === 'number' ? s.tip.height : null,
+                    hash: typeof s.tip.hash === 'string' ? s.tip.hash : null }
+                : null,
+              disagreement: s.disagreement && typeof s.disagreement === 'object' ? s.disagreement : null,
+              notContinued: s.notContinued === true,
+              agreement: s.agreement && typeof s.agreement === 'object' ? s.agreement : null,
+              lan1: e ? {
+                status: typeof e.status === 'string' ? e.status : null,
+                yours: e.yours === true,
+                byHand: e.byHand === true,
+                behindBy: typeof e.behindBy === 'number' ? e.behindBy : null,
+                lastFailure: e.lastFailure ? e.lastFailure : null,
+              } : null,
+            };
+          }
           const startMs = Date.now();
           const DEADLINE_MS = 240000;
-          // Wait for the disagreement to stand.
+          let lastSeen = null;
+          // Wait for the heavier disagreement to stand.
+          let raised = false;
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
-            if (s && s.disagreement && s.disagreement.which === 'heavier') break;
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement && s.disagreement.which === 'heavier') { raised = true; break; }
             await new Promise((r) => setTimeout(r, 500));
           }
+          if (!raised) {
+            throw new Error('phase c: the heavier disagreement did not stand within '
+              + DEADLINE_MS + 'ms (lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+          }
           const atRaise = readState();
+          if (atRaise !== null) lastSeen = atRaise;
           const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
           const btn = document.querySelector('[data-role="disagreement-disable"]');
-          if (btn === null) throw new Error('phase c: disable button not found');
+          if (btn === null) {
+            throw new Error('phase c: disable button not found (lastSeen='
+              + JSON.stringify(summarize(lastSeen)) + ')');
+          }
           const callsBefore = Number(window.__answerCalls_s7 ?? 0);
           window.__answerCalls_s7 = callsBefore;
           btn.click();
           const clickedAtMs = Date.now();
           // Wait for a check that COMPLETED past the click
-          // (\`checks > checksAtClick\`) AND cleared the
-          // disagreement; sample the state there.
-          let lastSeen = null;
+          // (checks > checksAtClick) AND cleared the disagreement;
+          // sample the state there.
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
             if (s !== null) lastSeen = s;
             if (s && s.disagreement === null && typeof s.checks === 'number' && s.checks > checksAtClick) {
-              const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(lan1NotisId)});
+              const e = s.nodes?.find((n) => n.notisId === LAN1);
               return JSON.stringify({
                 clearedAfterMs: Date.now() - clickedAtMs,
                 lan1Yours: e?.yours === true,
@@ -781,14 +821,14 @@ export async function run(ctx) {
                 checksAtClick,
                 checksAtSample: s.checks,
                 disagreementAfter: false,
+                lastSeen: summarize(s),
               });
             }
             await new Promise((r) => setTimeout(r, 500));
           }
-          throw new Error('phase c: no check completed past the click (checksAtClick=' + checksAtClick
-            + ', lastChecks=' + (lastSeen && typeof lastSeen.checks === 'number' ? lastSeen.checks : 'n/a')
-            + ', lastDisagreement=' + (lastSeen && lastSeen.disagreement ? lastSeen.disagreement.which : 'null')
-            + ')');
+          throw new Error('phase c: no check completed past the click '
+            + '(checksAtClick=' + checksAtClick
+            + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
         })()`;
         const phaseCText = await cdpEval(ctx, browserUrl, phaseCExpr, { timeoutMs: 260_000 });
         if (phaseCText === null) {
@@ -821,47 +861,98 @@ export async function run(ctx) {
         currentPhase = 'd';
         // The nft cut is still in place and the miner-fork's blocks
         // are frozen at `lan1HeightAtStop`; honest keeps growing
-        // heavier. A fresh page target reads the kept memory and
-        // raises the heavier disagreement again. Pressing *continue
-        // on this node* seats lan1's chain in `answer('continue')`
-        // itself (`this.chain.settle`), clears the disagreement,
-        // records the fork in `answeredForks`, and triggers a check.
-        // The check that completes past the click writes
-        // `state.tip` from `this.chain.tip()` — which equals
-        // `lan1ForkTipHash`, since the answered fork keeps the chain
-        // on lan1's. The sample at `checks > checksAtClick` is what
-        // the verdict reads.
+        // heavier. A fresh page target reads the kept memory —
+        // seated from honest at phase c's completed check — and
+        // restores lan1 as yours. MESH_INTERFACE → Discovery → "Your
+        // node takes precedence" — "It disagrees ... when its own
+        // proof does not continue the kept proof": lan1's lighter
+        // fork does not continue the honest proof, so the standing
+        // question is `memory`, not `heavier`. Pressing *continue on
+        // this node* settles the chain to lan1's fork in
+        // `answer('continue')` itself (`this.chain.settle`), clears
+        // the disagreement, records the fork in `answeredForks`,
+        // and triggers a check. The check that completes past the
+        // click writes `state.tip` from `this.chain.tip()` — which
+        // equals `lan1ForkTipHash`, since the answered fork keeps
+        // the chain on lan1's. The sample at `checks > checksAtClick`
+        // is what the verdict reads.
         //
         // Restore lan1's `yours` by re-writing the phase-a variant —
         // the disable in phase c cleared it, so the client needs to
-        // see lan1 as yours again before the heavier disagreement
-        // against it can raise.
+        // see lan1 as yours again before the disagreement against it
+        // can raise.
         writeConfigVariant(ctx.outDir, phaseAVariant);
         const phaseDExpr = `(async function () {
+          const LAN1 = ${JSON.stringify(lan1NotisId)};
           function readState() {
             const el = document.getElementById('state');
             if (el === null) return null;
             try { return JSON.parse(el.textContent); } catch { return null; }
           }
+          // The state a wait that runs out reports and the measurement
+          // rides when the phase completes: checks, tip, disagreement,
+          // notContinued, agreement, and lan1's entry.
+          function summarize(s) {
+            if (s === null || typeof s !== 'object') return null;
+            let e = null;
+            if (Array.isArray(s.nodes)) {
+              for (const n of s.nodes) {
+                if (n && n.notisId === LAN1) { e = n; break; }
+              }
+            }
+            return {
+              checks: typeof s.checks === 'number' ? s.checks : null,
+              tip: s.tip && typeof s.tip === 'object'
+                ? { height: typeof s.tip.height === 'number' ? s.tip.height : null,
+                    hash: typeof s.tip.hash === 'string' ? s.tip.hash : null }
+                : null,
+              disagreement: s.disagreement && typeof s.disagreement === 'object' ? s.disagreement : null,
+              notContinued: s.notContinued === true,
+              agreement: s.agreement && typeof s.agreement === 'object' ? s.agreement : null,
+              lan1: e ? {
+                status: typeof e.status === 'string' ? e.status : null,
+                yours: e.yours === true,
+                byHand: e.byHand === true,
+                behindBy: typeof e.behindBy === 'number' ? e.behindBy : null,
+                lastFailure: e.lastFailure ? e.lastFailure : null,
+              } : null,
+            };
+          }
           const startMs = Date.now();
           const DEADLINE_MS = 300000;
-          // Wait for the disagreement to stand.
+          let lastSeen = null;
+          // Wait for ANY standing disagreement — memory or heavier.
+          // The contract (cited above) names the question memory for
+          // this page; the wait reads whichever stands and the
+          // verdict refuses anything that is not memory.
+          let whichAtRaise = null;
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
-            if (s && s.disagreement && s.disagreement.which === 'heavier') break;
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement && typeof s.disagreement.which === 'string') {
+              whichAtRaise = s.disagreement.which;
+              break;
+            }
             await new Promise((r) => setTimeout(r, 500));
           }
+          if (whichAtRaise === null) {
+            throw new Error('phase d: no disagreement stood within '
+              + DEADLINE_MS + 'ms (lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+          }
           const atRaise = readState();
+          if (atRaise !== null) lastSeen = atRaise;
           const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
           const btn = document.querySelector('[data-role="disagreement-continue"]');
-          if (btn === null) throw new Error('phase d: continue button not found');
+          if (btn === null) {
+            throw new Error('phase d: continue button not found (lastSeen='
+              + JSON.stringify(summarize(lastSeen)) + ')');
+          }
           btn.click();
           const clickedAtMs = Date.now();
           // Wait for a check that COMPLETED past the click
-          // (\`checks > checksAtClick\`) AND cleared the
-          // disagreement; sample the state there.
+          // (checks > checksAtClick) AND cleared the disagreement;
+          // sample the state there.
           let sample = null;
-          let lastSeen = null;
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
             if (s !== null) lastSeen = s;
@@ -872,19 +963,19 @@ export async function run(ctx) {
             await new Promise((r) => setTimeout(r, 500));
           }
           if (sample === null) {
-            throw new Error('phase d: no check completed past the click (checksAtClick=' + checksAtClick
-              + ', lastChecks=' + (lastSeen && typeof lastSeen.checks === 'number' ? lastSeen.checks : 'n/a')
-              + ', lastDisagreement=' + (lastSeen && lastSeen.disagreement ? lastSeen.disagreement.which : 'null')
-              + ')');
+            throw new Error('phase d: no check completed past the click '
+              + '(checksAtClick=' + checksAtClick
+              + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
           }
           const sampleTipHash = sample.tip?.hash ?? null;
           const sampleTipHeight = sample.tip?.height ?? null;
           const sampleChecks = sample.checks;
           // Wait for one more completed check and confirm no new
-          // disagreement rose (the fork is in \`answeredForks\`, so
-          // the same branch growing does not ask again).
+          // disagreement rose (the fork is in answeredForks, so the
+          // same branch growing does not ask again).
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
+            if (s !== null) lastSeen = s;
             if (s && typeof s.checks === 'number' && s.checks > sampleChecks) {
               return JSON.stringify({
                 clearedAfterMs: Date.now() - clickedAtMs,
@@ -896,11 +987,15 @@ export async function run(ctx) {
                 checksAfterNext: s.checks,
                 disagreementAfterNext: s.disagreement !== null,
                 tipAfterNext: s.tip?.hash ?? null,
+                disagreementWhichD: whichAtRaise,
+                lastSeen: summarize(s),
               });
             }
             await new Promise((r) => setTimeout(r, 500));
           }
-          throw new Error('phase d: no second check completed after continue (sampleChecks=' + sampleChecks + ')');
+          throw new Error('phase d: no second check completed after continue '
+            + '(sampleChecks=' + sampleChecks
+            + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
         })()`;
         const phaseDText = await cdpEval(ctx, browserUrl, phaseDExpr, { timeoutMs: 320_000 });
         if (phaseDText === null) {
@@ -917,13 +1012,17 @@ export async function run(ctx) {
           chainOnLan1: phaseDObj.tipHash === lan1ForkTipHash,
           disagreementAfter: false,
           disagreementOnNextCheck: phaseDObj.disagreementAfterNext === true,
+          disagreementWhichD: typeof phaseDObj.disagreementWhichD === 'string'
+            ? phaseDObj.disagreementWhichD : null,
           checksAtClick: typeof phaseDObj.checksAtClick === 'number' ? phaseDObj.checksAtClick : null,
           checksAtSample: typeof phaseDObj.checksAtSample === 'number' ? phaseDObj.checksAtSample : null,
           sampledTipHeight: typeof phaseDObj.tipHeight === 'number' ? phaseDObj.tipHeight : null,
           sampledTipHash: typeof phaseDObj.tipHash === 'string' ? phaseDObj.tipHash : null,
         };
 
-        const m = { onChainPhase, heavierPhase, disablePhase, continuePhase };
+        const lastSeenC = phaseCObj.lastSeen ?? null;
+        const lastSeenD = phaseDObj.lastSeen ?? null;
+        const m = { onChainPhase, heavierPhase, disablePhase, continuePhase, lastSeenC, lastSeenD };
         return { verdict: verdictS7Question(m), measurement: m };
       } catch (err) {
         // A throw from any phase lands here; the measurement names
