@@ -262,12 +262,55 @@ export function signal(pid, sig) {
  * recorded env, so a scenario respawning a node on a different
  * `BOOTSTRAP_PEERS` (or any other env the first spawn set) names
  * exactly what the restart runs on and nothing wider.
+ *
+ * Notis spawns go through `sudo -u <user> -- env KEY=VALUE ...
+ * <binary>`, and `sudo -u` strips the process env by default — the
+ * only env the child reads is the inline `env KEY=VALUE` tokens in
+ * argv. `envOverride` therefore also rewrites every inline
+ * `KEY=VALUE` token in argv whose key matches an override key; keys
+ * the override names that argv does not already carry are appended
+ * right after the `env` token in argv. The Node `spawn` env still
+ * gets the override too, so a non-sudo-wrapped restart (an
+ * `['sh', '-c', …]` spawn, say) reads it straight through.
  */
 export function restartFromEntry(entry, { pidsPath = null, envOverride = {} } = {}) {
   if (!entry || !Array.isArray(entry.argv) || entry.argv.length === 0) {
     throw new Error(`restartFromEntry: entry has no argv: ${JSON.stringify(entry)}`);
   }
-  const [name, ...argv] = entry.argv;
+  // Rewrite inline `env KEY=VALUE …` tokens in argv to match the
+  // override, for the sudo-wrapped case. An `env` token marks the
+  // start of a run of `KEY=VALUE` injections the child reads past
+  // sudo's env-strip; the run ends at the first non-`KEY=VALUE`
+  // token (the binary). Missing keys are appended at the run's end
+  // so a restart that adds a new env name reaches the child too.
+  // The rewrite walks the FULL entry.argv (not the destructured
+  // tail), so an entry whose first token is `env` — a direct
+  // `env KEY=VALUE … sh …` spawn, as the unit case uses — also
+  // honours the override.
+  const fullArgv = [...entry.argv];
+  const envIdx = fullArgv.indexOf('env');
+  if (envIdx !== -1) {
+    const seen = new Set();
+    let endIdx = envIdx + 1;
+    while (endIdx < fullArgv.length) {
+      const tok = fullArgv[endIdx];
+      if (typeof tok !== 'string') break;
+      const eq = tok.indexOf('=');
+      if (eq <= 0) break;
+      const key = tok.slice(0, eq);
+      if (Object.prototype.hasOwnProperty.call(envOverride, key)) {
+        fullArgv[endIdx] = `${key}=${envOverride[key]}`;
+      }
+      seen.add(key);
+      endIdx += 1;
+    }
+    const toAppend = [];
+    for (const k of Object.keys(envOverride)) {
+      if (!seen.has(k)) toAppend.push(`${k}=${envOverride[k]}`);
+    }
+    if (toAppend.length > 0) fullArgv.splice(endIdx, 0, ...toAppend);
+  }
+  const [name, ...argv] = fullArgv;
   const env = { ...process.env, ...(entry.env ?? {}), ...envOverride };
   const logPath = entry.logPath;
   if (typeof logPath !== 'string' || logPath === '') {

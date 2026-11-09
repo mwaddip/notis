@@ -453,11 +453,14 @@ export async function run(ctx) {
         // never find each other through it. The first spawn's
         // `BOOTSTRAP_PEERS` named the public set (pub1), which the cut
         // blocks; a plain restart would dial only a blocked peer.
-        // Respawn each with `BOOTSTRAP_PEERS` naming the partner alone
-        // (the hostile pair's pattern in `hostile-fork-pair.mjs`), so
-        // each node bootstraps from its partner and `peers_connected
-        // == 1` holds. The partner addr is `/ip4/<partner>/tcp/<p2p>`;
-        // Notis `BOOTSTRAP_PEERS` accepts a bare TCP multiaddr.
+        //
+        // The pair-reconnect is one-directional: `lan1-peer` dials
+        // `lan1` (`BOOTSTRAP_PEERS` naming lan1), and `lan1` restarts
+        // with `BOOTSTRAP_PEERS=""` — no seeds, it only accepts.
+        // The symmetric two-way shape opens two connections at once
+        // and one handshake closes at the deadline (a `net` race the
+        // mesh-poc cannot resolve on its own). Same shape as the
+        // Phase 8b fork pair.
         const lan1Host = ctx.topology.hosts.lan1;
         const lan1PeerHost = ctx.topology.hosts['lan1-peer'];
         if (!lan1Host || typeof lan1Host.addr !== 'string' || typeof lan1Host.node?.p2pPort !== 'number') {
@@ -466,11 +469,10 @@ export async function run(ctx) {
         if (!lan1PeerHost || typeof lan1PeerHost.addr !== 'string' || typeof lan1PeerHost.node?.p2pPort !== 'number') {
           throw new Error('s7 step 4 phase b-cut: topology has no lan1-peer addr/p2pPort');
         }
-        const lan1PartnerAddr = `/ip4/${lan1PeerHost.addr}/tcp/${lan1PeerHost.node.p2pPort}`;
         const lan1PeerPartnerAddr = `/ip4/${lan1Host.addr}/tcp/${lan1Host.node.p2pPort}`;
         restartFromEntry(lan1Entry, {
           pidsPath: ctx.pidsPath,
-          envOverride: { BOOTSTRAP_PEERS: lan1PartnerAddr },
+          envOverride: { BOOTSTRAP_PEERS: '' },
         });
         restartFromEntry(lan1PeerEntry, {
           pidsPath: ctx.pidsPath,

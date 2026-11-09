@@ -1332,17 +1332,29 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
     // spawn carries `BOOTSTRAP_PEERS` naming `pub1` (the honest
     // bootstrap the whole stage starts from). After the cut `pub1`
     // is blocked, so a plain restart would dial only a blocked peer
-    // and `peers_connected` would stay 0 — the same cause the lan1
-    // pair hit in s7 step 4. Each fork node restarts with
-    // `BOOTSTRAP_PEERS` naming the partner alone (`/ip4/<partner>
-    // /tcp/<p2pPort>`; Notis accepts a bare TCP multiaddr), so the
-    // pair finds each other and the cut's `peers_connected == 1`
-    // reads the partner alone.
-    const forkPartnerAddr = `/ip4/${hostileForkPeerHostCfg.addr}/tcp/${hostileForkPeerHostCfg.node.p2pPort}`;
+    // and `peers_connected` would stay 0. A two-way reconnect
+    // (both nodes dialing their partner at once) opens two
+    // connections simultaneously; libp2p's handshake has a deadline,
+    // and the previous run showed one handshaking fine while the
+    // other's connection closed at the deadline — a `net` race the
+    // mesh-poc cannot resolve on its own.
+    //
+    // The remedy is one-directional: `hostile-fork-peer` dials
+    // `hostile-fork` (`BOOTSTRAP_PEERS` naming the fork), and
+    // `hostile-fork` restarts with `BOOTSTRAP_PEERS=""` — no seeds,
+    // it only accepts. `parseBootstrapPeers` in
+    // `packages/node/src/config.ts` reads an explicit empty string
+    // as "no seeds" (NODE_INTERFACE → Configuration).
+    //
+    // Notis spawns go through `sudo -u <user>` which strips the
+    // process env, so `envOverride` has to reach the child through
+    // the inline `env KEY=VALUE` tokens in argv — which is how the
+    // first spawn passes env in the first place (`userWrap`).
+    // `restartFromEntry` now rewrites those tokens.
     const peerPartnerAddr = `/ip4/${hostileForkHostCfg.addr}/tcp/${hostileForkHostCfg.node.p2pPort}`;
     restartFromEntry(forkEntry, {
       pidsPath: PIDS_PATH,
-      envOverride: { BOOTSTRAP_PEERS: forkPartnerAddr },
+      envOverride: { BOOTSTRAP_PEERS: '' },
     });
     restartFromEntry(peerEntry, {
       pidsPath: PIDS_PATH,
