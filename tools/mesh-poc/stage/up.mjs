@@ -1328,49 +1328,72 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
       }
       try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
     }
-    // Respawn each on the same argv / env / store; `restartFromEntry`
-    // rewrites the entry's `pid` in-place AND rewrites pids.json so
-    // `down` signals the live process.
-    for (const entry of [forkEntry, peerEntry]) {
-      restartFromEntry(entry, { pidsPath: PIDS_PATH });
-    }
+    // MESH_INTERFACE → Acceptance 6 — each fork pair host's first
+    // spawn carries `BOOTSTRAP_PEERS` naming `pub1` (the honest
+    // bootstrap the whole stage starts from). After the cut `pub1`
+    // is blocked, so a plain restart would dial only a blocked peer
+    // and `peers_connected` would stay 0 — the same cause the lan1
+    // pair hit in s7 step 4. Each fork node restarts with
+    // `BOOTSTRAP_PEERS` naming the partner alone (`/ip4/<partner>
+    // /tcp/<p2pPort>`; Notis accepts a bare TCP multiaddr), so the
+    // pair finds each other and the cut's `peers_connected == 1`
+    // reads the partner alone.
+    const forkPartnerAddr = `/ip4/${hostileForkPeerHostCfg.addr}/tcp/${hostileForkPeerHostCfg.node.p2pPort}`;
+    const peerPartnerAddr = `/ip4/${hostileForkHostCfg.addr}/tcp/${hostileForkHostCfg.node.p2pPort}`;
+    restartFromEntry(forkEntry, {
+      pidsPath: PIDS_PATH,
+      envOverride: { BOOTSTRAP_PEERS: forkPartnerAddr },
+    });
+    restartFromEntry(peerEntry, {
+      pidsPath: PIDS_PATH,
+      envOverride: { BOOTSTRAP_PEERS: peerPartnerAddr },
+    });
     // Now verify the cut: each pair node's `/health` reads
     // `peers_connected == 1` within 60 s. On failure, name every
-    // peer id the node reports in its latest `peer:connect`/
-    // `peer:disconnect` stream so the next run says which hosts
-    // leaked.
-    for (const name of ['hostile-fork', 'hostile-fork-peer']) {
+    // peer id the failing node reports AND what the partner read
+    // at the moment, so the next run says which of the two saw what.
+    const peersConnectedByName = { 'hostile-fork': null, 'hostile-fork-peer': null };
+    const readPeersConnected = (name) => {
       const host = topology.hosts[name];
       const adminPort = host.node.httpPort + 1;
+      try {
+        const text = execIn(nsOf(name), [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${adminPort}/health`,
+        ], { timeoutMs: 8_000 });
+        const data = JSON.parse(text);
+        return typeof data.peers_connected === 'number' ? data.peers_connected : null;
+      } catch {
+        return null;
+      }
+    };
+    for (const name of ['hostile-fork', 'hostile-fork-peer']) {
+      const partner = name === 'hostile-fork' ? 'hostile-fork-peer' : 'hostile-fork';
       const logPath = logPathFor(`notis:${name}`);
-      let lastPeersConnected = null;
       await pollUntil(
         `${name} /health peers_connected == 1 after cut + restart`,
         async () => {
-          try {
-            const text = execIn(nsOf(name), [
-              'curl', '-sf', '--max-time', '5',
-              `http://127.0.0.1:${adminPort}/health`,
-            ], { timeoutMs: 8_000 });
-            const data = JSON.parse(text);
-            if (typeof data.peers_connected !== 'number') return false;
-            lastPeersConnected = data.peers_connected;
-            return data.peers_connected === 1;
-          } catch {
-            // The node may still be coming up after restart; keep polling.
-            return false;
-          }
+          const v = readPeersConnected(name);
+          if (v === null) return false;
+          peersConnectedByName[name] = v;
+          return v === 1;
         },
         { timeoutMs: 60_000, pollMs: 1_000 },
       ).catch((err) => {
+        // Read the partner's /health too, so the message names what
+        // BOTH sides saw at the moment this one failed — a symmetric
+        // view is what distinguishes a leak (one side sees extra
+        // peers) from a non-peering (both sides read 0).
+        peersConnectedByName[partner] = readPeersConnected(partner);
         const connected = standingConnectedPeerIds(logPath);
-        const tail = tailLog(logPath, 20);
         const connectedText = connected.length === 0
           ? '<no standing peer:connect lines>'
           : connected.join(', ');
+        const tail = tailLog(logPath, 20);
         throw new Error(
-          `Phase 8b: ${name} cut leak — last peers_connected ${lastPeersConnected} (expected 1); ` +
-          `standing connected peer ids: ${connectedText}\n` +
+          `Phase 8b: ${name} cut leak — last peers_connected ${peersConnectedByName[name]} (expected 1); ` +
+          `partner ${partner} read peers_connected ${peersConnectedByName[partner]} at the same moment; ` +
+          `${name}'s standing connected peer ids: ${connectedText}\n` +
           `--- last 20 lines of ${logPath} ---\n${tail === '' ? '<no output>' : tail}\n` +
           `${err.message}`,
         );
