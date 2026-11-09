@@ -1897,9 +1897,29 @@ class MeshClientImpl implements MeshClient {
         // `idOfMeshUrl` for a mesh URL, else a bug upstream.
         const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
         const route = baseById.get(nid)?.route ?? 'mesh';
-        pendingBehindBy.set(nid, n.behind);
-        const event = tipEvent(nid, n, nowMs);
-        this.applyEvent(event, route);
+        // MESH_INTERFACE → The client's node list → "A check" — the
+        // resolve's `n.behind` is winner-relative (the blocks from
+        // the node's tip to the resolve's own winner's). A node
+        // phase 3b placed on the client's chain names a tip the
+        // client holds, and `behindBy` is the distance to the
+        // client's tip; the resolve's winner-relative count would
+        // read `null` for that node whenever the resolve's winner
+        // is a chain the client is not on — the own-tip URL, which
+        // phase 4 reads to prove the kept proof is still a
+        // contestant, is such a node after an answered fork or a
+        // kept-proof settle. Phase 3b's placement stands against a
+        // verified result; a resolve failure or a lie still applies
+        // through `tipEvent` so a proof-read defect reaches the
+        // node list.
+        const placement = placements.get(nid);
+        const placedOnChain = placement === 'tip'
+          || placement === 'one-below'
+          || placement === 'below';
+        const tipEv = tipEvent(nid, n, nowMs);
+        if (!placedOnChain || !n.verified) {
+          pendingBehindBy.set(nid, n.behind);
+          this.applyEvent(tipEv, route);
+        }
 
         if (n.verified) {
           const hash = urlToHash.get(n.url);
@@ -1915,7 +1935,7 @@ class MeshClientImpl implements MeshClient {
             for (const otherId of ids) {
               if (otherId === nid) continue;
               const otherRoute = baseById.get(otherId)?.route ?? 'mesh';
-              this.applyEvent({ ...event, id: otherId }, otherRoute);
+              this.applyEvent({ ...tipEv, id: otherId }, otherRoute);
               pendingBehindBy.set(otherId, n.behind);
               perNodeVerdict.set(otherId, verdict);
             }
@@ -1924,7 +1944,7 @@ class MeshClientImpl implements MeshClient {
             // lost tip the client keeps the verdict of, so the next
             // check needs no proof while the chain stands.
             if (n.behind !== 0) {
-              this.keptVerdicts.set(hash, { event, behind: n.behind });
+              this.keptVerdicts.set(hash, { event: tipEv, behind: n.behind });
             }
           }
         }
