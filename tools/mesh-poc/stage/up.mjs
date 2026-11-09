@@ -31,7 +31,7 @@ import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
 import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
-import { descendantPids } from './lib/measure.mjs';
+import { descendantPids, restartFromEntry } from './lib/measure.mjs';
 import {
   partnerOf,
   pairBootstrapAddr,
