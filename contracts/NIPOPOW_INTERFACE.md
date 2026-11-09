@@ -364,9 +364,6 @@ light client:
    client that has never connected has its build's first-contact list alone (`WEB_INTERFACE → The extension → "The
    seed list, the faucet's base and the network's name"`).
 
-> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client keeps no proof between sessions and gives the reader's node no
-precedence.
-
 ---
 
 ## Preconditions

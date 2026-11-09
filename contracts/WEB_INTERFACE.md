@@ -491,9 +491,6 @@ first-time client — and written after every check through one lock, `notis.mes
 and the kept proof only moves forward; the reader's *continue* replaces it. The web build keeps none, and
 `build-release.sh` refuses `notis.mesh.memory` in its bundle.
 
-> ⚠ **AHEAD OF CODE (2026-11-08).** The extension keeps no mesh memory, starts its client from the seed list as
-anchors, and its verdict table carries `no-anchor`; a write never waits on *your-node*.
-
 **The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
 `genesisId` where one is pinned (`NIPOPOW_INTERFACE → verifyProof`), the tool's `genesisHash` for that proof. It is
@@ -1257,9 +1254,6 @@ verdict reads *the chain could not be checked*. The number stays the
 live read — the verified height is rendered nowhere — and a press re-reads the tip and runs a verification; while the
 verdict reads *your-node* a press opens the settings window at its `node` row instead. **A build
 with no verifier keeps the rule of the paragraph above, word for word**: the web build's corner has nothing to fail.
-
-> ⚠ **AHEAD OF CODE (2026-11-08).** The corner's titles include *only nodes this build does not name could be
-checked*, and a press under any verdict runs a verification.
 
 
 ## The standalone thread
@@ -2073,9 +2067,6 @@ preference (→ The extension), read from `storage.local` and set through `links
 renders only when the identity module implements `links` — the extension's proxy, in a build whose `notis-public`
 is not empty — so the web build has no such row either. Its hint: *a link that opens a tab of its own lands in this workspace. a link
 followed inside a page stays there — its `add to workspace` brings it here.*
-
-> ⚠ **AHEAD OF CODE (2026-11-08).** The row hands the node to the client as an anchor; it has no off state and no
-question.
 
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).

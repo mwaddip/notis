@@ -207,10 +207,6 @@ chain, the kept proof becomes its proof, and the fork is recorded, so the same c
 more (at most `ANSWERED_FORKS_MAX` forks kept); *disable it* — the reader switches it off until switching it on, and the
 client takes the best chain by the rules every other node is held to. A new disagreement asks again.
 
-> ⚠ **AHEAD OF CODE (2026-11-08).** `@dagsocial/web`'s mesh client starts from `anchors` (`MeshAnchor`), seats
-seeds as untrusted entries the extension never passes, counts a hand-added trusted node as an anchor, and has no
-precedence, disagreement or answer.
-
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
 on WebRTC-direct so a browser can walk it; private nodes and browsers run it as clients. It finds further nodes, and a
@@ -350,9 +346,6 @@ node at a time**: a `POST` the caller hands the client goes to the first node of
 with no answer — a transport failure or `REQUEST_TIMEOUT_MS` — the same bytes go to the next; the first answer of any
 status is the write's (`WEB_INTERFACE → The extension → "The mesh is the extension's first path"`).
 
-> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client seats no chain from a kept proof and compares no node's proof with
-one; before its first check ends only the build's nodes serve, and no node is picked before the fast set.
-
 | Name | Value | Reads as |
 |---|---|---|
 | `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
@@ -404,9 +397,6 @@ this chain's last 20 blocks`: on another chain, or further back than they reach,
 counts say what the nodes name, never that each verified: a node counts without serving a proof of its own, since a
 proof carries no challenge and any node can serve one it copied. A node that answered no tip is in no count. **Memory is
 no witness**: the kept proof names an old tip, and is in no count.
-
-> ⚠ **AHEAD OF CODE (2026-11-08).** The mesh client keeps nothing between sessions, carries `anchorReached` and
-`onChainAnchors`, and the extension's verdict has the row `no-anchor`.
 
 ## The IP certificate
 
@@ -463,8 +453,6 @@ The mesh holds when every step of the eight scenarios passes on what it measured
    client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
    its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
    browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read.
-
-> ⚠ **AHEAD OF CODE (2026-11-08).** Scenarios 6 and 7 measure `anchorReached` on the stage.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.
