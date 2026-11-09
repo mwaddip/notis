@@ -749,4 +749,212 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
       expect(b).not.toBe(yBase);
     }
   }, 120_000);
+
+  it('after continue, your node at the client\'s tip reads ok at the next check', async () => {
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" — "its
+    // chain is the client's chain, and a routed read goes to it first".
+    // Memory setup: kept is a heavier chain, your node's fork is
+    // lighter and loses — the memory question. A second node continues
+    // kept. The reader answers *continue* and the chain settles to
+    // your node's. At the next check your node is placed at tip in
+    // phase 3b against the client's (your node's) chain; the heavier
+    // other node is above and its proof is read in phase 4, so the
+    // own-tip URL — your node — rides the same resolve. The resolve's
+    // `behind` field is winner-relative (`→ The client's node list
+    // → "A check"`), and the winner there is the heavier other node:
+    // your node's winner-relative `behind` is null. Phase 3b's
+    // placement against the client's chain stands — your node reads
+    // `ok` with `behindBy` 0.
+    const keptProof = proofOf(100);
+    const yoursProof = proofOf(MK, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK, 60_001));
+    h.tips.set(oBase, tipOf(100));
+    h.proofs.set(yBase, yoursProof);
+    h.proofs.set(oBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    expect(client.state().disagreement!.which).toBe('memory');
+
+    client.answer('continue');
+    expect(client.state().disagreement).toBeNull();
+
+    await client.check();
+    const s = client.state();
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    expect(yEntry).toBeDefined();
+    expect(yEntry!.status).toBe('ok');
+    expect(yEntry!.behindBy).toBe(0);
+    expect(yEntry!.yours).toBe(true);
+  }, 120_000);
+
+  it('after continue, a tip read goes to your node', async () => {
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+    // "a routed read goes to it first among the nodes the read's
+    // need allows". After *continue* your node reads `ok` at the
+    // next check and `base('tip')` picks it, over the heavier
+    // other node that reads `behind` off your node's chain.
+    const keptProof = proofOf(100);
+    const yoursProof = proofOf(MK, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK, 60_001));
+    h.tips.set(oBase, tipOf(100));
+    h.proofs.set(yBase, yoursProof);
+    h.proofs.set(oBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    client.answer('continue');
+    await client.check();
+
+    expect(client.base('tip')).toBe(yBase);
+    expect(client.order('tip')[0]).toBe(yBase);
+  }, 120_000);
+
+  it('after continue on the heavier question, your node reads ok at the next check', async () => {
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" — the
+    // heavier question variant. Kept = your node's chain of MK; a
+    // second node's chain is MK+30 off your node's and beats it. The
+    // reader answers *continue*, the fork is answered, and at the next
+    // check the heavier other node's tip is placed off the chain in
+    // the answered-fork branch while your node names the client's tip
+    // — `ok` with `behindBy` 0. The resolve's winner-relative `behind`
+    // is null for your node (the winner is the heavier other node),
+    // but Phase 3b's placement against the client's chain stands.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    expect(client.state().disagreement!.which).toBe('heavier');
+
+    client.answer('continue');
+    expect(client.state().disagreement).toBeNull();
+
+    await client.check();
+    const s = client.state();
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    expect(yEntry).toBeDefined();
+    expect(yEntry!.status).toBe('ok');
+    expect(yEntry!.behindBy).toBe(0);
+    expect(yEntry!.yours).toBe(true);
+  }, 120_000);
+
+  it('after continue, the heavier node off your chain reads behind and serves no read', async () => {
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+    // "a routed read goes to a node its need allows ... a `behind`
+    // node serves no read". After *continue* the answered-fork
+    // branch places the heavier node's tip off your node's chain
+    // and reads `behind`; `pickServer` refuses it for every read.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    client.answer('continue');
+    await client.check();
+
+    const s = client.state();
+    const oEntry = s.nodes.find((n) => n.notisId === oId);
+    expect(oEntry).toBeDefined();
+    expect(oEntry!.status).toBe('behind');
+    // `base('tip')` picks your node first; `base('older')` the same
+    // ('behind' serves neither 'tip' nor 'older').
+    expect(client.base('tip')).toBe(yBase);
+    expect(client.base('older')).toBe(yBase);
+    // The order never carries the behind node's base.
+    expect(client.order('tip')).not.toContain(oBase);
+    expect(client.order('older')).not.toContain(oBase);
+  }, 120_000);
 });
