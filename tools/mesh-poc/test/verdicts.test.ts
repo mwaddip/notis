@@ -669,6 +669,22 @@ describe('verdictS7Fastest — the delayed node serves no read', () => {
       served: [{ nodeId: 'b'.repeat(64) }, { nodeId: null }, { nodeId: 'c'.repeat(64) }],
     })).toBe('PASS');
   });
+  // MESH_INTERFACE → Acceptance 7 — the step records a `withMemory`
+  // diagnostic (reads on a page that keeps the memory step 1 left)
+  // beside `served`. The verdict is about the fresh first check, so
+  // `withMemory` is evidence a reader of the measurement uses, not a
+  // gate: the verdict reads `served` and ignores `withMemory`
+  // whatever its shape.
+  it('withMemory is ignored — the verdict reads `served` alone', () => {
+    expect(verdictS7Fastest({
+      ...PASS,
+      withMemory: [{ nodeId: null, error: 'boom' }, { nodeId: null, error: 'boom' }],
+    })).toBe('PASS');
+    expect(verdictS7Fastest({
+      ...PASS,
+      withMemory: 'not even an array',
+    })).toBe('PASS');
+  });
 });
 
 describe("verdictS7Lan — a local node by the reader's hand", () => {

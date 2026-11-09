@@ -4,13 +4,15 @@
 // Waits for the first completed check (`agreement !== null`), then
 // makes `n` reads one after another — `/blocks/current` for `tip`,
 // `/blocks/1` for `older` — through `client.read`. For each it
-// records the answering `nodeId` and that node's `status` in
-// `state().nodes` as the read resolves. A failed read records
-// `{ nodeId: null, status: null, error: <message> }`. The driver
-// writes `<pre id="reads">` with `{ need, served }` as a sibling of
-// the state root (the probe's sibling pattern), so a render leaves
-// it in place. `n` is 1–100; anything else is ignored and writes
-// nothing.
+// records the answering `nodeId`, that node's `status` in
+// `state().nodes` as the read resolves, and the client's `checks`
+// count at the read — so a reader of the measurement can tell one
+// read's state from the next. A failed read records
+// `{ nodeId: null, status: null, checks, error: <message> }`. The
+// driver writes `<pre id="reads">` with `{ need, served }` as a
+// sibling of the state root (the probe's sibling pattern), so a
+// render leaves it in place. `n` is 1–100; anything else is ignored
+// and writes nothing.
 
 import type { ClientState, MeshClient } from '@dagsocial/web/mesh';
 import type { NodeStatus } from '@dagsocial/web/mesh';
@@ -24,8 +26,8 @@ export interface RunReadsOptions {
 }
 
 type ServedEntry =
-  | { nodeId: string; status: NodeStatus | null }
-  | { nodeId: null; status: null; error: string };
+  | { nodeId: string; status: NodeStatus | null; checks: number }
+  | { nodeId: null; status: null; checks: number; error: string };
 
 interface ReadsOutput {
   need: ReadNeed;
@@ -43,6 +45,11 @@ export async function runReads(opts: RunReadsOptions): Promise<void> {
   const path = opts.need === 'tip' ? '/blocks/current' : '/blocks/1';
   const served: ServedEntry[] = [];
   for (let i = 0; i < opts.n; i += 1) {
+    // `checks` is read at the read's moment — the count of completed
+    // checks on the client up to then — so a reader can tell one
+    // read's state from the next (the state renderer's own stamp,
+    // beside the agreement counts).
+    const checks = opts.client.state().checks;
     try {
       // MESH_INTERFACE → The client's node list → "A read opens no
       // connection" — the body is drained before the entry is
@@ -54,14 +61,14 @@ export async function runReads(opts: RunReadsOptions): Promise<void> {
         await response.arrayBuffer();
       } catch (bodyErr) {
         const message = bodyErr instanceof Error ? bodyErr.message : String(bodyErr);
-        served.push({ nodeId: null, status: null, error: message });
+        served.push({ nodeId: null, status: null, checks, error: message });
         continue;
       }
       const node = opts.client.state().nodes.find((e) => e.notisId === nodeId);
-      served.push({ nodeId, status: node?.status ?? null });
+      served.push({ nodeId, status: node?.status ?? null, checks });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      served.push({ nodeId: null, status: null, error: message });
+      served.push({ nodeId: null, status: null, checks, error: message });
     }
   }
   writeReads(opts.root, { need: opts.need, served });

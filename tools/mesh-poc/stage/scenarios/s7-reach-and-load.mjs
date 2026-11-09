@@ -167,18 +167,26 @@ export async function run(ctx) {
       writeStageDefault(ctx.outDir);
       log.apply('pub2-netem-add', netem.add, netem.del);
       netemApplied = true;
-      // `driveReads` opens its own fresh page under `?reads=&need=`.
-      // `clearMemory: true` so the step measures pub2's new speed on
-      // a fresh first check, never on a memory record a prior
-      // scenario (s3 step 5) or step 1 wrote — a page pre-loaded with
-      // a kept proof seats the chain from memory and the first
-      // check's routing reads differently from a fresh client's.
+      // (a) The `withMemory` diagnostic: a few reads on a page that
+      // KEEPS the memory step 1 left (no `clearMemory=1`). Each entry
+      // carries the node id, the error if any, and the client's
+      // `checks` count at the read. A returning page whose every
+      // routed read answers with no node is exactly what the
+      // remembered chain must not cause, so step 2 measures it and
+      // the next run's `stage/out/scenarios/s7.json` reads WHY.
+      // `verdictS7Fastest` ignores this field; this is evidence, not
+      // a gate.
+      const withMemory = await driveReads(ctx, browserUrl, 5, 'older');
+      // (b) The verdict's own run: fresh page, 20 reads. step 2's
+      // rule ("pub2 delayed 200ms serves no read") is about the
+      // fresh first check, so `clearMemory: true` holds the
+      // measurement independent of what step 1 left in memory.
       const served = await driveReads(ctx, browserUrl, 20, 'older', { clearMemory: true });
       const pub2Id = identities?.pub2?.notisId ?? null;
       if (typeof pub2Id !== 'string') {
         throw new Error('s7 step 2: identities.json has no pub2 row');
       }
-      const m = { delayedNodeId: pub2Id, served };
+      const m = { delayedNodeId: pub2Id, served, withMemory };
       return { verdict: verdictS7Fastest(m), measurement: m };
     });
 
@@ -907,12 +915,18 @@ async function driveReads(ctx, baseUrl, n, need, { clearMemory = false } = {}) {
   const parsed = JSON.parse(value);
   const served = Array.isArray(parsed.served) ? parsed.served : [];
   // Decorate every entry with its `statusAtRead` and keep the probe's
-  // `error` field. A read that threw writes `{ nodeId: null, status:
-  // null, error: <message> }`; the scenario records the message so
-  // `stage/out/scenarios/s7.json` names WHY every read came back with
-  // a null nodeId instead of looking like a vacuous pass.
+  // `error` and `checks` fields. A read that threw writes
+  // `{ nodeId: null, status: null, checks, error: <message> }`; the
+  // scenario records every field so `stage/out/scenarios/s7.json`
+  // names WHY every read came back with a null nodeId and how many
+  // checks the client had completed at each — the diagnostic a
+  // reader needs to separate a vacuous pass from a real one.
   return served.map((e) => {
-    const entry = { nodeId: e?.nodeId ?? null, statusAtRead: e?.status ?? null };
+    const entry = {
+      nodeId: e?.nodeId ?? null,
+      statusAtRead: e?.status ?? null,
+      checks: typeof e?.checks === 'number' ? e.checks : null,
+    };
     if (typeof e?.error === 'string') entry.error = e.error;
     return entry;
   });
