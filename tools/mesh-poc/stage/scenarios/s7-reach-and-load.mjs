@@ -167,10 +167,13 @@ export async function run(ctx) {
       writeStageDefault(ctx.outDir);
       log.apply('pub2-netem-add', netem.add, netem.del);
       netemApplied = true;
-      // `driveReads` opens its own fresh page under `?reads=&need=`,
-      // which waits on its own first completed check before the reads
-      // begin; the fresh page measures pub2's new speed on that check.
-      const served = await driveReads(ctx, browserUrl, 20, 'older');
+      // `driveReads` opens its own fresh page under `?reads=&need=`.
+      // `clearMemory: true` so the step measures pub2's new speed on
+      // a fresh first check, never on a memory record a prior
+      // scenario (s3 step 5) or step 1 wrote — a page pre-loaded with
+      // a kept proof seats the chain from memory and the first
+      // check's routing reads differently from a fresh client's.
+      const served = await driveReads(ctx, browserUrl, 20, 'older', { clearMemory: true });
       const pub2Id = identities?.pub2?.notisId ?? null;
       if (typeof pub2Id !== 'string') {
         throw new Error('s7 step 2: identities.json has no pub2 row');
@@ -903,9 +906,16 @@ async function driveReads(ctx, baseUrl, n, need, { clearMemory = false } = {}) {
   const value = await cdpPoll(ctx, url, expression, predicate, LONG_WAIT_MS, POLL_MS);
   const parsed = JSON.parse(value);
   const served = Array.isArray(parsed.served) ? parsed.served : [];
-  // Decorate every entry with its `statusAtRead` — the driver already
-  // writes it as `status` per read, so copy that field over.
-  return served.map((e) => ({ nodeId: e?.nodeId ?? null, statusAtRead: e?.status ?? null }));
+  // Decorate every entry with its `statusAtRead` and keep the probe's
+  // `error` field. A read that threw writes `{ nodeId: null, status:
+  // null, error: <message> }`; the scenario records the message so
+  // `stage/out/scenarios/s7.json` names WHY every read came back with
+  // a null nodeId instead of looking like a vacuous pass.
+  return served.map((e) => {
+    const entry = { nodeId: e?.nodeId ?? null, statusAtRead: e?.status ?? null };
+    if (typeof e?.error === 'string') entry.error = e.error;
+    return entry;
+  });
 }
 
 // MESH_INTERFACE → The client's node list → "A routed read goes to a

@@ -652,6 +652,23 @@ describe('verdictS7Fastest — the delayed node serves no read', () => {
   it('no reads at all → FAIL (no vacuous PASS)', () => {
     expect(verdictS7Fastest({ ...PASS, served: [] })).toBe('FAIL');
   });
+  // The delayed-node check `e.nodeId === m.delayedNodeId` never fires
+  // on a null nodeId, so a run where every read threw (`nodeId: null`
+  // throughout) would look like a PASS without actually serving one.
+  // The verdict refuses such a run — a non-null nodeId appears at
+  // least once.
+  it('every nodeId null (every read threw: no vacuous PASS) → FAIL', () => {
+    expect(verdictS7Fastest({
+      ...PASS,
+      served: [{ nodeId: null }, { nodeId: null }, { nodeId: null }],
+    })).toBe('FAIL');
+  });
+  it('mixed — some reads served, none the delayed node → PASS', () => {
+    expect(verdictS7Fastest({
+      ...PASS,
+      served: [{ nodeId: 'b'.repeat(64) }, { nodeId: null }, { nodeId: 'c'.repeat(64) }],
+    })).toBe('PASS');
+  });
 });
 
 describe("verdictS7Lan — a local node by the reader's hand", () => {

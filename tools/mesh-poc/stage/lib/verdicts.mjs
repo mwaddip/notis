@@ -465,17 +465,22 @@ export function verdictS7Spread(m) {
 
 // MESH_INTERFACE → Acceptance 7 — "a node slowed well past the others
 // serves no read". PASS when the `delayedNodeId` serves none of the
-// recorded reads.
+// recorded reads AND the step read at least one — a run where every
+// read came back with a null `nodeId` (every read threw) proves
+// nothing about the slow node, so it reads FAIL, not a vacuous PASS.
 // Measurement: `{ delayedNodeId: string, served: Array<{ nodeId: string | null }> }`.
 export function verdictS7Fastest(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.delayedNodeId !== 'string') return 'FAIL';
   if (!Array.isArray(m.served)) return 'FAIL';
   if (m.served.length === 0) return 'FAIL';
+  let anyServed = false;
   for (const e of m.served) {
     if (e === null || typeof e !== 'object') return 'FAIL';
     if (e.nodeId === m.delayedNodeId) return 'FAIL';
+    if (typeof e.nodeId === 'string') anyServed = true;
   }
+  if (!anyServed) return 'FAIL';
   return 'PASS';
 }
 
