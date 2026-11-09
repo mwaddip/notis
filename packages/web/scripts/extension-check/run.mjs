@@ -2494,6 +2494,49 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       // memory before the fresh page so the step measures a first-time
       // client, which seats the heavier chain of the two proofs it
       // reads (`MESH_INTERFACE → The client's node list → "A check"`).
+      //
+      // Before clearing, log what the client should have done: read the
+      // stored kept proof through the main() page, fetch D's proof from
+      // D_ORIGIN, decode both, and run `compareProofs(kept, D, {m, k},
+      // verifierProfile(devnet, Date.now()))` at the client's own m and
+      // k (`@dagsocial/nipopow`, `@dagsocial/nipopow-client`,
+      // `@dagsocial/types`' `profileFor`). The verdict, both scores and
+      // the LCA height record whether the client's decision was right
+      // for this stack's chains.
+      try {
+        const keptRecord = await cx.eval(`(() => {
+          const raw = localStorage.getItem('notis.mesh.memory.devnet');
+          if (raw === null) return null;
+          try { return JSON.parse(raw); } catch { return { parseError: true }; }
+        })()`).catch(() => null);
+        if (keptRecord !== null
+            && typeof keptRecord.proof === 'string'
+            && NIPOPOW_DECODE !== null && NIPOPOW_COMPARE !== null
+            && NIPOPOW_VERIFIER_PROFILE !== null && TYPES_PROFILE_FOR !== null) {
+          const keptBytes = Buffer.from(keptRecord.proof, 'base64');
+          const dRes = await fetch(`${D_ORIGIN}/nipopow/proof/${TIP_M}/${TIP_K}`);
+          const dJson = await dRes.json().catch(() => null);
+          if (dRes.ok && dJson !== null && typeof dJson.proof === 'string') {
+            const dBytes = Buffer.from(dJson.proof, 'hex');
+            const kept = NIPOPOW_DECODE(new Uint8Array(keptBytes));
+            const dProof = NIPOPOW_DECODE(new Uint8Array(dBytes));
+            const profile = TYPES_PROFILE_FOR('devnet');
+            const verifier = NIPOPOW_VERIFIER_PROFILE(profile, Date.now());
+            const result = NIPOPOW_COMPARE(kept, dProof, { m: TIP_M, k: TIP_K }, verifier);
+            if (result.verdict === 'incomparable') {
+              console.log(`[vt] 19b compareProofs(kept=A, D) m=${TIP_M} k=${TIP_K}: verdict=incomparable reason=${result.reason}`);
+            } else {
+              console.log(`[vt] 19b compareProofs(kept=A, D) m=${TIP_M} k=${TIP_K}: verdict=${result.verdict} scoreKept=${result.scoreA.toString()} scoreD=${result.scoreB.toString()} lca.height=${result.lca?.height ?? 'null'}`);
+            }
+          } else {
+            console.log(`[vt] 19b compareProofs log skipped — D's /nipopow/proof/${TIP_M}/${TIP_K} answered status=${dRes.status} body=${JSON.stringify(dJson)}`);
+          }
+        } else {
+          console.log(`[vt] 19b compareProofs log skipped — memory record held no kept proof (record=${JSON.stringify(keptRecord)})`);
+        }
+      } catch (e) {
+        console.log(`[vt] 19b compareProofs log threw: ${e?.stack ?? String(e)}`);
+      }
       await clearExtensionMeshMemory(cx);
       tipRelays.a.upstream = D_ORIGIN;
       tipRelays.a.mode = 'upstream-D';
