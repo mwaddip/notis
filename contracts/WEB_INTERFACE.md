@@ -452,14 +452,19 @@ verdict** is a pure function of the client's state after a check, the first row 
 
 | The client's state after a check | Verdict |
 |---|---|
-| no check has ended, or no chain is seated and no node answered a proof | `thin` · *no-proof* |
+| no check has ended | `thin` · *no-proof* |
+| the reader's own node disagrees with the evidence and the reader has not answered, a chain seated or not (`MESH_INTERFACE → Discovery → "A node added by hand"`) | `refused` · *your-node*, naming which of the two disagreements it is |
+| no chain is seated and no node answered a proof | `thin` · *no-proof* |
 | no chain is seated, and a proof answered did not decode or did not verify | `refused` · *invalid-proof* |
 | no chain is seated, and every proof answered says its chain is shorter than `m + k` | `thin` · *too-short* |
-| the chain is seated, the reader's own node disagrees with the evidence, and the reader has not answered (`MESH_INTERFACE → Discovery → "A node added by hand"`) | `refused` · *your-node*, naming which of the two disagreements it is |
 | no node names a tip on the chain and one or more name one off it, the chain the kept one (`MESH_INTERFACE → What the client remembers`) | `thin` · *not-continued* |
 | a node names a tip off the chain's last `k` headers (`MESH_INTERFACE → What the client remembers → "The agreement counts"`) | `thin` · *split* |
 | fewer than two nodes name a tip on it | `thin` · *one-node* |
 | two or more do | `verified`, with the count |
+
+> ⚠ **AHEAD OF CODE (2026-11-09).** `meshVerdict` reads the no-chain rows before *your-node*, so a question raised
+before any chain is seated reads `thin` · *no-proof*, and the settings row, the corner's press and the held writes
+never show it.
 
 A node counts without serving a proof of its own, since a proof carries no challenge and any node can serve one it
 copied; a seated chain stays seated through a later check whose proofs fail.

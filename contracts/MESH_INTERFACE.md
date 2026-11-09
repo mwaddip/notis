@@ -196,13 +196,13 @@ that is not 64 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/
 hand over, and announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read
 from its `/p2p/` id (`WEB_INTERFACE → The settings window`).
 
-**Your node takes precedence** while it agrees with the evidence: once its proof has verified and its tip is placed,
-its chain is the client's chain, and a routed read goes to it first among the nodes the read's need allows. **It
+**Your node takes precedence** while it agrees with the evidence: once its proof has verified, its chain is the
+client's chain, and a routed read goes to it first among the nodes the read's need allows. **It
 disagrees** when another node's tip lies off its chain and that node's proof beats its own and continues the kept proof,
 or when its own proof does not continue the kept proof (→ What the client remembers); a node behind on the same chain
 does not. **A disagreement is the reader's question, never the client's choice.** Until the reader answers, the client's
-chain does not move — no switch, no extension by gossip — and its state names what disagreed, the two tips and their
-fork, the highest header `compareProofs` finds in both. The answers: *continue on this node* — the client takes its
+chain does not move — no switch, no extension by gossip, and where no chain is seated yet none is seated — and its state
+names what disagreed, the two tips and their fork, the highest header `compareProofs` finds in both. The answers: *continue on this node* — the client takes its
 chain, the kept proof becomes its proof, and the fork is recorded, so the same competing branch growing asks nothing
 more (at most `ANSWERED_FORKS_MAX` forks kept); *disable it* — the reader switches it off until switching it on, and the
 client takes the best chain by the rules every other node is held to. A new disagreement asks again.
