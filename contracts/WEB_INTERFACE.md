@@ -462,10 +462,6 @@ verdict** is a pure function of the client's state after a check, the first row 
 | fewer than two nodes name a tip on it | `thin` · *one-node* |
 | two or more do | `verified`, with the count |
 
-> ⚠ **AHEAD OF CODE (2026-11-09).** `meshVerdict` reads the no-chain rows before *your-node*, so a question raised
-before any chain is seated reads `thin` · *no-proof*, and the settings row, the corner's press and the held writes
-never show it.
-
 A node counts without serving a proof of its own, since a proof carries no challenge and any node can serve one it
 copied; a seated chain stays seated through a later check whose proofs fail.
 
