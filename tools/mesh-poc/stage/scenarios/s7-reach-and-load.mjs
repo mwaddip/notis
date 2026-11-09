@@ -1168,7 +1168,7 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
 // whose state the click acts on. `timeoutMs` bounds both the CDP
 // subprocess and the IIFE's internal deadline.
 async function cdpEval(ctx, url, expression, { timeoutMs = 120_000 } = {}) {
-  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression];
+  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression, String(timeoutMs)];
   const buf = execIn('notismesh-browser', argv, {
     user: ctx.invokingUser,
     timeoutMs: timeoutMs + 10_000,

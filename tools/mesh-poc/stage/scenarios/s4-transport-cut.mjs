@@ -334,11 +334,11 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
   return JSON.parse(buf.toString('utf8'));
 }
 
-async function cdpEval(ctx, url, expression) {
-  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression];
+async function cdpEval(ctx, url, expression, { timeoutMs = 30_000 } = {}) {
+  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression, String(timeoutMs)];
   const buf = execIn('notismesh-browser', argv, {
     user: ctx.invokingUser,
-    timeoutMs: 30_000,
+    timeoutMs: timeoutMs + 10_000,
   });
   return JSON.parse(buf.toString('utf8'));
 }
