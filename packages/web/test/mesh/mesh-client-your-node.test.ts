@@ -345,6 +345,84 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.tip?.height).toBe(MK + 5);
   }, 90_000);
 
+  it.fails('your node many blocks behind on the same chain, its proof read: no disagreement', async () => {
+    // Kept at MK + 60. Your node serves the same chain at MK — a
+    // prefix of the kept, more than K blocks below the window. Phase
+    // 3b places y's tip as `under` and phase 3c bails (no node is at
+    // the tip this check), so phase 4 reads y's proof. judgeByMemory
+    // marks y lost (kept beats). `forkKey(kept, y)` is y's tip (y is
+    // a prefix of kept): no disagreement, because `memory` needs the
+    // fork strictly below y's tip.
+    const keptProof = proofOf(MK + 60);
+    const yProof = proofOf(MK);
+    const yId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    h.tips.set(yBase, tipOf(MK));
+    h.proofs.set(yBase, yProof);
+
+    const client = await startMeshClient({
+      firstContact: [{ notisId: yId, addrs: [], api: yBase }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    const s = client.state();
+    expect(s.disagreement).toBeNull();
+    // The chain stays at the kept's tip.
+    expect(s.tip?.height).toBe(MK + 60);
+  }, 90_000);
+
+  it.fails("another node extending your node's chain raises nothing", async () => {
+    // Kept = y's chain of MK. Another node o serves the same chain
+    // extended to MK + 30. Both continue the kept; o beats y under
+    // `compareProofs`, but `forkKey(y, o)` is y's tip — o extends y,
+    // o's tip is not off y's chain, and heavier needs the fork
+    // strictly below y's tip. No disagreement; the settle advances
+    // the chain to o's.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    const s = client.state();
+    expect(s.disagreement).toBeNull();
+    // The chain advances to o's tip (o continues the kept and y).
+    expect(s.tip?.height).toBe(MK + 30);
+  }, 90_000);
+
   it('while a disagreement stands a gossiped block extending the tip does not extend the chain', async () => {
     // The memory setup raises a disagreement. Then a gossiped block
     // whose parent is the kept tip is dropped before `chain.extend`:
