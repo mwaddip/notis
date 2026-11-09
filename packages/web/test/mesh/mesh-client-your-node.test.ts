@@ -13,7 +13,7 @@
 // tip falls to phase 4.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { encodeOrderingBlock, generateKeyPair, profileFor } from '@dagsocial/types';
+import { bytesToHex, encodeOrderingBlock, generateKeyPair, profileFor } from '@dagsocial/types';
 import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
 import {
   encodeNipopowProof,
@@ -1324,4 +1324,234 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(mEntry!.status).not.toBe('trailing');
     expect(mEntry!.status).not.toBe('behind');
   }, 120_000);
+
+  it.fails("a node further down the chain than the held headers, matched by the chain's own header, counts on the chain", async () => {
+    // Kept = Y's chain of MK. W reports tip at height 5 with Y's
+    // chain's hash at that height. Phase 3b places W 'under' (5 is
+    // below the window's lowest held height, M + 1). Phase 3c reads
+    // Y's `/blocks/5`, whose hash matches W's — W lies on the chain,
+    // further down than the held headers. The lead says W counts on
+    // the chain with `behindBy` its distance (MK - 5).
+    const keptProof = proofOf(MK);
+    const yChain = buildMinedChain({ count: MK });
+    const wHeight = 5;
+    const wHash = blockHash(yChain.headers[wHeight - 1]!);
+    if (wHash === null) throw new Error('unhashable yBlock5');
+    const yId = keyPair().notisId;
+    const wId = keyPair().notisId;
+    const yBase = 'http://127.0.0.1:1';
+    const wBase = 'http://127.0.0.1:2';
+    const tips = new Map<string, { height: number; hash: string }>();
+    tips.set(yBase, tipOf(MK));
+    tips.set(wBase, { height: wHeight, hash: wHash });
+    const proofs = new Map<string, NipopowProof>();
+    proofs.set(yBase, keptProof);
+
+    // Custom httpFetch: /blocks/current per base; Y's /blocks/<h>
+    // serves Y's chain header (phase 3c reads from first-at-tip).
+    const httpFetch: HttpFetch = async (url: string) => {
+      for (const [base, tip] of tips) {
+        if (url === `${base}/blocks/current`) {
+          return new Response(JSON.stringify(tip), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      }
+      if (url.startsWith(`${yBase}/blocks/`)) {
+        const heightStr = url.slice(`${yBase}/blocks/`.length);
+        const height = Number.parseInt(heightStr, 10);
+        if (Number.isInteger(height) && height >= 1 && height <= yChain.headers.length) {
+          return new Response(
+            JSON.stringify({ header: headerToJson(yChain.headers[height - 1]!) }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+      }
+      return new Response('nowhere', { status: 404 });
+    };
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: wId, addrs: [], api: wBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch,
+      resolve: makeResolve(proofs),
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const wEntry = s.nodes.find((n) => n.notisId === wId);
+    expect(wEntry).toBeDefined();
+    expect(wEntry!.status).toBe('behind');
+    expect(wEntry!.behindBy).toBe(MK - wHeight);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+  }, 120_000);
+
+  it("an under tip the chain's own header does not match lies off the chain", async () => {
+    // Kept = Y's chain of MK. V has an incomparable chain with a
+    // forced level-7 nonce at block 1 — so V and Y share no block,
+    // `compareProofs` answers `incomparable`, and V's block at
+    // height 5 differs from Y's. V reports tip at height 5 with its
+    // own chain's block-5 hash; phase 3b places V 'under'. Phase 3c
+    // reads Y's `/blocks/5`, whose hash does not match. Y is
+    // comparable in the batch (its own proof ties kept), so
+    // `foreign` is false and the chain stays on Y. V lies off the
+    // chain, `behind` with `behindBy` null and `off` in the
+    // agreement — the pair to the matched case above.
+    const keptProof = proofOf(MK);
+    const yChain = buildMinedChain({ count: MK });
+    const vForce = new Map([[1, 7]]);
+    const vChain = buildMinedChain({ count: MK, forceLevels: vForce });
+    const vProof = proveWithReader(makeReader(vChain), { m: M, k: K });
+    const vHeight = 5;
+    const vHash = blockHash(vChain.headers[vHeight - 1]!);
+    if (vHash === null) throw new Error('unhashable vBlock5');
+    const yId = keyPair().notisId;
+    const vId = keyPair().notisId;
+    const yBase = 'http://127.0.0.1:1';
+    const vBase = 'http://127.0.0.1:2';
+    const tips = new Map<string, { height: number; hash: string }>();
+    tips.set(yBase, tipOf(MK));
+    tips.set(vBase, { height: vHeight, hash: vHash });
+    const proofs = new Map<string, NipopowProof>();
+    proofs.set(yBase, keptProof);
+    proofs.set(vBase, vProof);
+
+    const httpFetch: HttpFetch = async (url: string) => {
+      for (const [base, tip] of tips) {
+        if (url === `${base}/blocks/current`) {
+          return new Response(JSON.stringify(tip), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      }
+      if (url.startsWith(`${yBase}/blocks/`)) {
+        const heightStr = url.slice(`${yBase}/blocks/`.length);
+        const height = Number.parseInt(heightStr, 10);
+        if (Number.isInteger(height) && height >= 1 && height <= yChain.headers.length) {
+          return new Response(
+            JSON.stringify({ header: headerToJson(yChain.headers[height - 1]!) }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+      }
+      return new Response('nowhere', { status: 404 });
+    };
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: vId, addrs: [], api: vBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch,
+      resolve: makeResolve(proofs),
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const vEntry = s.nodes.find((n) => n.notisId === vId);
+    expect(vEntry).toBeDefined();
+    expect(vEntry!.status).toBe('behind');
+    expect(vEntry!.behindBy).toBeNull();
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
+
+  it("after a switch, the node chosen for the outrun re-read is chosen against the settled chain", async () => {
+    // Kept = Y's chain of MK. Z extends Y by 30 blocks. Y reports
+    // tip MK, Z reports tip MK + 30; the first check settles the
+    // chain to Z. Y's tip at MK falls under Z's window — placed
+    // against the settled chain, Y is 'under', so the outrun re-read
+    // asks Y again (a tip the check has outrun is read again). The
+    // observable: Y's `/blocks/current` is called twice in one
+    // check. A regression that chooses the re-read set against the
+    // pre-switch placements reads Y once, since Y was 'tip' on the
+    // pre-switch chain.
+    const keptProof = proofOf(MK);
+    const zProof = proofOf(MK + 30);
+    const yId = keyPair().notisId;
+    const zId = keyPair().notisId;
+    const yBase = 'http://127.0.0.1:1';
+    const zBase = 'http://127.0.0.1:2';
+    const tips = new Map<string, { height: number; hash: string }>();
+    tips.set(yBase, tipOf(MK));
+    tips.set(zBase, tipOf(MK + 30));
+    const proofs = new Map<string, NipopowProof>();
+    proofs.set(yBase, keptProof);
+    proofs.set(zBase, zProof);
+
+    let yCurrentCalls = 0;
+    const httpFetch: HttpFetch = async (url: string) => {
+      for (const [base, tip] of tips) {
+        if (url === `${base}/blocks/current`) {
+          if (base === yBase) yCurrentCalls += 1;
+          return new Response(JSON.stringify(tip), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      }
+      return new Response('nowhere', { status: 404 });
+    };
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: zId, addrs: [], api: zBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch,
+      resolve: makeResolve(proofs),
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    expect(s.tip?.height).toBe(MK + 30);
+    // Y was 'tip' on Y's chain, 'under' on Z's chain — the re-read
+    // picks against Z, so Y is re-read in this check.
+    expect(yCurrentCalls).toBe(2);
+  }, 120_000);
 });
+
+/** Header JSON shape `/blocks/:height` answers with — shared by the
+ * three cases that need a node to serve its chain's headers. */
+function headerToJson(h: BlockHeader): Record<string, unknown> {
+  return {
+    protocolVersion: h.protocolVersion,
+    height: h.height,
+    prevBlockHash: h.prevBlockHash,
+    utxoTxRoot: h.utxoTxRoot,
+    stateRoot: h.stateRoot,
+    validatorId: bytesToHex(h.validatorId),
+    powNonce: h.powNonce,
+    powTargetBits: h.powTargetBits,
+    createdAt: h.createdAt,
+    interlinkRoot: h.interlinkRoot,
+    adProofsRoot: h.adProofsRoot,
+  };
+}
