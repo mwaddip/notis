@@ -824,7 +824,7 @@ list polled until the delete lands and A's name never opened after the switch (a
 creates it), a replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no
 `light`, no `tx`, no batch, no database.
 **With `--mesh` (it needs `--r-key`, `--node-dist`, `--scratch`, `--node-p2p`; it takes no verified flag and not
-`--light`) the mesh block**, M1–M5, proves the mesh path in the built extension and runs after `13-uncancelled`. The
+`--light`) the mesh block**, M1–M4, proves the mesh path in the built extension and runs after `13-uncancelled`. The
 harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with `MESH_ROLE=public`,
 `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one loopback cannot
 share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep reaches them. The
@@ -844,21 +844,7 @@ but relays it nowhere) — a post from the composer lands on both nodes with no
 `POST /posts` over HTTP in the page's Network domain; **M4** both nodes at their API bases alone, A′ restarted on an
 alternate HTTP port behind a tip relay in `hold-posts` mode at its base port, A′ and B′ at A's tip before the press —
 the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected, the same bytes go
-to the next node, and the post stands once on each node; **M5** a third public mesh node **C′** is spawned beside A′
-and B′ with `MESH_ROLE=public`, its own WebRTC-direct listen port on loopback and `MESH_STUN=off`, bootstrapped off A,
-and **the extension's seed list does not name it** — a first fresh page reaches C′ through the Notis DHT (A′ and B′
-answer the server-side protocol, the browser's kad-dht walks it in client mode and `peer:discovery` feeds
-`nodeList.add` in `src/mesh/mesh-client.ts` `handleDiscovery`), its verdict reads *verified across N nodes* and its
-memory record at `localStorage['notis.mesh.memory.devnet']` (`src/mesh/memory-store.ts`,
-`WEB_INTERFACE → The extension → "What the extension remembers"`) lists C′ among its nodes — polled under a bound; A′
-and B′ are then stopped by the PIDs setupMeshStack holds, and a second fresh page reads through C′ alone — the
-corner's title reads `only one node could be checked · tip N` (one node, C′, on the chain; memory is no witness, the
-kept proof names an old tip and is in no count, `MESH_INTERFACE → What the client remembers → "The agreement
-counts"`), the feed draws, and no HTTP request to AP_ORIGIN or BP_ORIGIN lands after a mark set as the verdict read;
-A′ and B′ come back up without mesh (as M2 restarts them) for the run's end. A record from an earlier step stays in
-the page origin's `localStorage`; M1 writes memory on its first check and M2–M4 each read a client whose seeds
-include A′ and B′ from that write, and none of M1–M4's assertions depends on an empty memory, so M5 leaves the
-cumulative memory as-is at its start. The two-pass recipe for `VITE_NODES` of any block: start the
+to the next node, and the post stands once on each node. The two-pass recipe for `VITE_NODES` of any block: start the
 nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the extension with them, then
 run the harness.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
