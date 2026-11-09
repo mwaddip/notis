@@ -736,18 +736,28 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
       chainStillHeld: true,
       tipStillHeld: true,
       buttonsShown: true,
+      lan1HeightAtStop: 100,
+      lan1ForkTipHash: 'd'.repeat(64),
     },
     disablePhase: {
       answerCalls: 1,
       lan1YoursAfter: false,
       disagreementAfter: false,
       chainOnHonest: true,
+      checksAtClick: 3,
+      checksAtSample: 4,
+      sampledTipHeight: 120,
+      sampledTipHash: 'a'.repeat(64),
     },
     continuePhase: {
       answerCalls: 1,
       chainOnLan1: true,
       disagreementAfter: false,
       disagreementOnNextCheck: false,
+      checksAtClick: 2,
+      checksAtSample: 3,
+      sampledTipHeight: 100,
+      sampledTipHash: 'd'.repeat(64),
     },
   };
   it('every phase holds the rule → PASS', () => {
@@ -856,6 +866,80 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
     expect(verdictS7Question({
       ...PASS,
       continuePhase: { ...PASS.continuePhase, disagreementAfter: true },
+    })).toBe('FAIL');
+  });
+  // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+  // question, never the client's choice" — the state `answer()` emits
+  // at the click carries the pre-answer tip, before the check that
+  // moves the chain. A sample at that state reads the wrong tip; the
+  // verdict refuses a phase whose `checksAtSample` is not strictly
+  // past its `checksAtClick`.
+  it('disablePhase.checksAtSample equals checksAtClick (sampled at the click) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: { ...PASS.disablePhase, checksAtClick: 3, checksAtSample: 3 },
+    })).toBe('FAIL');
+  });
+  it('disablePhase.checksAtClick missing (not a number) → FAIL', () => {
+    const { checksAtClick: _ignored, ...rest } = PASS.disablePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: rest as typeof PASS.disablePhase,
+    })).toBe('FAIL');
+  });
+  it('disablePhase.checksAtSample missing (not a number) → FAIL', () => {
+    const { checksAtSample: _ignored, ...rest } = PASS.disablePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: rest as typeof PASS.disablePhase,
+    })).toBe('FAIL');
+  });
+  it('disablePhase.sampledTipHeight missing (not a number) → FAIL', () => {
+    const { sampledTipHeight: _ignored, ...rest } = PASS.disablePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: rest as typeof PASS.disablePhase,
+    })).toBe('FAIL');
+  });
+  it('disablePhase.sampledTipHash missing (not a string) → FAIL', () => {
+    const { sampledTipHash: _ignored, ...rest } = PASS.disablePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      disablePhase: rest as typeof PASS.disablePhase,
+    })).toBe('FAIL');
+  });
+  it('continuePhase.checksAtSample equals checksAtClick (sampled at the click) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, checksAtClick: 2, checksAtSample: 2 },
+    })).toBe('FAIL');
+  });
+  it('continuePhase.checksAtClick missing (not a number) → FAIL', () => {
+    const { checksAtClick: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
+  });
+  it('continuePhase.checksAtSample missing (not a number) → FAIL', () => {
+    const { checksAtSample: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
+  });
+  it('continuePhase.sampledTipHeight missing (not a number) → FAIL', () => {
+    const { sampledTipHeight: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
+  });
+  it('continuePhase.sampledTipHash missing (not a string) → FAIL', () => {
+    const { sampledTipHash: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
     })).toBe('FAIL');
   });
 });

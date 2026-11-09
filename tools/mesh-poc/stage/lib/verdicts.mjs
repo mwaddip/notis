@@ -548,18 +548,29 @@ export function verdictS7Lan(m) {
 //        chainStillHeld: boolean,
 //        tipStillHeld: boolean,
 //        buttonsShown: boolean,
+//        lan1HeightAtStop: number,
+//        lan1ForkTipHash: string,
+//        …  // diagnostics: lan1PreCutHeight, forkBlocksPastCut, pub1HeightAfterLead, …
 //      } | null,
 //      disablePhase: {
 //        answerCalls: number,
 //        lan1YoursAfter: boolean,
 //        disagreementAfter: boolean,
 //        chainOnHonest: boolean,
+//        checksAtClick: number,
+//        checksAtSample: number,       // > checksAtClick: a check completed past the click
+//        sampledTipHeight: number,
+//        sampledTipHash: string,
 //      } | null,
 //      continuePhase: {
 //        answerCalls: number,
 //        chainOnLan1: boolean,
 //        disagreementAfter: boolean,
 //        disagreementOnNextCheck: boolean,
+//        checksAtClick: number,
+//        checksAtSample: number,       // > checksAtClick: a check completed past the click
+//        sampledTipHeight: number,
+//        sampledTipHash: string,
 //      } | null,
 //   }`.
 export function verdictS7Question(m) {
@@ -583,6 +594,11 @@ export function verdictS7Question(m) {
   if (dis.lan1YoursAfter !== false) return 'FAIL';
   if (dis.disagreementAfter !== false) return 'FAIL';
   if (dis.chainOnHonest !== true) return 'FAIL';
+  if (typeof dis.checksAtClick !== 'number') return 'FAIL';
+  if (typeof dis.checksAtSample !== 'number') return 'FAIL';
+  if (dis.checksAtSample <= dis.checksAtClick) return 'FAIL';
+  if (typeof dis.sampledTipHeight !== 'number') return 'FAIL';
+  if (typeof dis.sampledTipHash !== 'string') return 'FAIL';
 
   const cont = m.continuePhase;
   if (cont === null || typeof cont !== 'object') return 'FAIL';
@@ -590,6 +606,11 @@ export function verdictS7Question(m) {
   if (cont.chainOnLan1 !== true) return 'FAIL';
   if (cont.disagreementAfter !== false) return 'FAIL';
   if (cont.disagreementOnNextCheck !== false) return 'FAIL';
+  if (typeof cont.checksAtClick !== 'number') return 'FAIL';
+  if (typeof cont.checksAtSample !== 'number') return 'FAIL';
+  if (cont.checksAtSample <= cont.checksAtClick) return 'FAIL';
+  if (typeof cont.sampledTipHeight !== 'number') return 'FAIL';
+  if (typeof cont.sampledTipHash !== 'string') return 'FAIL';
   return 'PASS';
 }
 
