@@ -948,7 +948,17 @@ export class NetNode {
         // with a concrete port; the WSS listen is appended above
         // when the initial certificate is held, so it rides along.
         const publicAnnounce = effectiveAnnounce(publicListen, mesh);
+        // NET_INTERFACE → Node Lifecycle →
+        // "Every connection libp2p opens reaches net's hooks": libp2p is
+        // created stopped, so `createLibp2p` resolves a libp2p that has
+        // opened nothing — its own redial of a stored `keep-alive` peer
+        // (NET_INTERFACE → Handshake →
+        // "Every connection this node dialled carries its handshake,
+        // whoever within the node dialled it") waits on the explicit
+        // `libp2p.start()` below, by then with every listener and both
+        // protocol handlers in place.
         libp2p = await createLibp2p({
+          start: false,
           privateKey: libp2pPrivateKey,
           datastore: meshDatastore,
           addresses: {
@@ -973,7 +983,12 @@ export class NetNode {
         // after start — the private role must never take libp2p down.
         const relayCount = Math.max(1, this.config.bootstrapPeers.length);
         const stunServers = mesh.stunServers ?? [];
+        // NET_INTERFACE → Node Lifecycle →
+        // "Every connection libp2p opens reaches net's hooks": see the
+        // public-role `createLibp2p` call above for why libp2p is created
+        // stopped.
         libp2p = await createLibp2p({
+          start: false,
           privateKey: libp2pPrivateKey,
           datastore: meshDatastore,
           addresses: {
@@ -996,7 +1011,12 @@ export class NetNode {
         }) as Libp2p;
       }
     } else {
+      // NET_INTERFACE → Node Lifecycle →
+      // "Every connection libp2p opens reaches net's hooks": see the
+      // public-role `createLibp2p` call above for why libp2p is created
+      // stopped.
       libp2p = await createLibp2p({
+        start: false,
         privateKey: libp2pPrivateKey,
         addresses: { listen: [this.config.listenAddrs] },
         transports: [tcp()],
@@ -1010,54 +1030,33 @@ export class NetNode {
     }
     this.libp2p = libp2p;
 
-    // NET_INTERFACE → The mesh — STUN after libp2p so a bind failure
-    // tears libp2p down before `start` returns
-    // (`MESH_INTERFACE → NAT`).
-    if (mesh !== undefined && meshStunSetting !== undefined) {
-      try {
-        this.meshStun = await startStunServer(meshStunSetting);
-      } catch (e) {
-        try { await libp2p.stop(); } catch { /* already stopped */ }
-        this.libp2p = null;
-        throw e;
-      }
-    }
-    // `MESH_INTERFACE → The IP certificate` — the renewal driver
-    // swaps the WSS listener's certificate in place at half the
-    // lifetime, closes it at `notAfter`, and with no initial cert
-    // retries `obtain()` every `CERT_RETRY_MS` and wires the
-    // listener in on the first successful retry. Started after
-    // libp2p because it fires events on the shared bus and reaches
-    // into the transport manager.
-    if (wssOptions !== null) {
-      this.wssRenewal = startWssRenewal(libp2p, wssOptions, {
-        cert: wssInitialCert,
-        lastFailureMs: wssInitialCert === null ? Date.now() : null,
-      });
-    }
-    // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
-    // of the announced set; libp2p's `self:peer:update` is the one
-    // event that carries that signal.
-    if (mesh !== undefined) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const listener = (_ev: any): void => {
-        const id = this.meshIdentity();
-        if (id === null) return;
-        for (const cb of this.meshAddressHandlers) {
-          try { cb(id); } catch (err) {
-            console.warn(`[net] onMeshAddresses handler error: ${String(err)}`);
-          }
-        }
-      };
-      libp2p.addEventListener('self:peer:update', listener);
-      this.meshSelfPeerUpdateListener = listener;
-    }
-
     try {
-      // Create PeerDb with self-address filtering
-      const listenAddrs = libp2p.getMultiaddrs();
-      const selfAddrs = listenAddrs.map(a => a.toString());
-      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap, selfAddrs);
+      // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
+      // of the announced set; libp2p's `self:peer:update` is the one
+      // event that carries that signal. Attached on a stopped libp2p so
+      // the first announce at start fires on this hook
+      // (NET_INTERFACE → Node Lifecycle →
+      // "Every connection libp2p opens reaches net's hooks").
+      if (mesh !== undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const listener = (_ev: any): void => {
+          const id = this.meshIdentity();
+          if (id === null) return;
+          for (const cb of this.meshAddressHandlers) {
+            try { cb(id); } catch (err) {
+              console.warn(`[net] onMeshAddresses handler error: ${String(err)}`);
+            }
+          }
+        };
+        libp2p.addEventListener('self:peer:update', listener);
+        this.meshSelfPeerUpdateListener = listener;
+      }
+
+      // NET_INTERFACE → PeerDb — a PeerDb built before `libp2p.start()`
+      // opens with an empty self set, the storage pass filtering nothing;
+      // `setSelfAddresses` below hands in the addresses once libp2p lists
+      // them and drops every entry that matches.
+      this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap, []);
 
       // Create SyncMachine with lazy store bridge and wire the scheduler's
       // injected shape (NET_INTERFACE → Sync Handler Registration).
@@ -1091,11 +1090,20 @@ export class NetNode {
       // Create OutboundManager
       this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
-      // Register handshake stream handler
-      this.registerHandshakeHandler(libp2p);
-
-      // Register sync stream handler (framed protocol)
-      this.registerSyncStreamHandler(libp2p);
+      // NET_INTERFACE → Node Lifecycle →
+      // "Every connection libp2p opens reaches net's hooks": both
+      // protocol handlers and every event listener are in place on a
+      // stopped libp2p, so libp2p's own redial of a stored `keep-alive`
+      // peer at start (NET_INTERFACE → Handshake →
+      // "Every connection this node dialled carries its handshake,
+      // whoever within the node dialled it") reaches them. The
+      // `libp2p.handle` call sets the registrar's handler map
+      // synchronously and writes the protocol into the peer store in
+      // an awaited step, so by the time `libp2p.start()` runs below
+      // the registrar lists both protocols
+      // (`libp2p@3.5.1` `registrar.ts` `handle`).
+      await this.registerHandshakeHandler(libp2p);
+      await this.registerSyncStreamHandler(libp2p);
 
       // Track peers on connect/disconnect.
       // Listen for all four event types because the timing and payload differ:
@@ -1214,7 +1222,52 @@ export class NetNode {
         console.log(`[net] peer:identify ${peerId}`);
       });
 
-      // Subscribe to gossip topics
+      // NET_INTERFACE → Node Lifecycle →
+      // "Every connection libp2p opens reaches net's hooks": with both
+      // protocol handlers and every event listener in place, libp2p is
+      // started. A `libp2p.start()` that throws is caught below and the
+      // catch tears libp2p down with the rest (NET_INTERFACE → Node
+      // Lifecycle → "A start that throws stops what it started").
+      await libp2p.start();
+
+      // NET_INTERFACE → The mesh — STUN is bound after `libp2p.start()`
+      // so a bind failure tears libp2p down through the catch below
+      // (`MESH_INTERFACE → NAT`). The STUN server is a plain UDP bind,
+      // apart from libp2p.
+      if (mesh !== undefined && meshStunSetting !== undefined) {
+        this.meshStun = await startStunServer(meshStunSetting);
+      }
+
+      // `MESH_INTERFACE → The IP certificate` — the renewal driver
+      // swaps the WSS listener's certificate in place at half the
+      // lifetime, closes it at `notAfter`, and with no initial cert
+      // retries `obtain()` every `CERT_RETRY_MS` and wires the
+      // listener in on the first successful retry. Started after
+      // `libp2p.start()` because its first tick runs
+      // `transportManager.listen()`, which answers only on a started
+      // libp2p; its `resolveInternals` read of the shared bus reaches
+      // a started node alone.
+      if (wssOptions !== null) {
+        this.wssRenewal = startWssRenewal(libp2p, wssOptions, {
+          cert: wssInitialCert,
+          lastFailureMs: wssInitialCert === null ? Date.now() : null,
+        });
+      }
+
+      // NET_INTERFACE → PeerDb — hand PeerDb the listen addresses
+      // `libp2p.getMultiaddrs()` lists (answered only on a started
+      // libp2p), so `record` filters our own addresses out and any
+      // entry the storage pass loaded that normalises to one of them
+      // is dropped.
+      const listenAddrs = libp2p.getMultiaddrs();
+      const selfAddrs = listenAddrs.map((a) => a.toString());
+      this.peerDb.setSelfAddresses(selfAddrs);
+
+      // Subscribe to gossip topics. Gossipsub's `subscribe` throws on a
+      // stopped node (`@libp2p/gossipsub@17.2.1` `gossipsub.ts`
+      // `subscribe` — `Pubsub has not started`), so this runs after
+      // `libp2p.start()`. The topic validators and the message listener
+      // are installed by the same call.
       const handlers: GossipHandlers = {
         onOrderingBlock: (block, fromPeerId) => {
           for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
@@ -1251,18 +1304,7 @@ export class NetNode {
       );
 
       // Log listen addresses
-      console.log(`[net] listening on: ${listenAddrs.map(a => a.toString()).join(', ')}`);
-
-      // NET_INTERFACE → Handshake →
-      // "A connection handshakes within its deadline, or is closed":
-      // `createLibp2p` has already begun listening by the time the
-      // `connection:open` listener attaches, so a connection that opens in
-      // that window has no timer yet. Sweep every connection libp2p is
-      // holding and start the deadline for it; `startHandshakeDeadline` is
-      // idempotent on a connection whose timer is already running.
-      for (const conn of libp2p.getConnections()) {
-        this.startHandshakeDeadline(conn);
-      }
+      console.log(`[net] listening on: ${listenAddrs.map((a) => a.toString()).join(', ')}`);
 
       // Dial each configured bootstrap peer. Each dial reports settled
       // (Active, failed or self) through `markBootstrapSettled`, which the
@@ -1300,10 +1342,10 @@ export class NetNode {
       this.started = true;
     } catch (err) {
       // NET_INTERFACE → API → Node Lifecycle →
-      // "A start that throws stops what it started". Everything after
-      // createLibp2p runs inside the try above; on a throw, the libp2p
-      // node and whatever startup reached is torn down before the error
-      // leaves start().
+      // "A start that throws stops what it started". Every step after
+      // `createLibp2p` runs inside the try above; on a throw — including
+      // one from `libp2p.start()` itself — the libp2p node and whatever
+      // startup reached is torn down before the error leaves start().
       if (this.syncTimer) {
         clearInterval(this.syncTimer);
         this.syncTimer = null;
@@ -1314,12 +1356,20 @@ export class NetNode {
         this.wssRenewal.stop();
         this.wssRenewal = null;
       }
+      if (this.meshStun !== null) {
+        try { await this.meshStun.close(); } catch { /* already down */ }
+        this.meshStun = null;
+      }
       this.syncMachine?.stop();
       this.syncMachine = null;
       this.outboundMgr = null;
       this.peerDb = null;
       this.topics = null;
       this.bootstrapSettledAddrs.clear();
+      if (this.meshSelfPeerUpdateListener !== null) {
+        try { libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener); } catch { /* already gone */ }
+        this.meshSelfPeerUpdateListener = null;
+      }
       try { await libp2p.stop(); } catch { /* already down */ }
       this.libp2p = null;
       throw err;
@@ -1792,10 +1842,10 @@ export class NetNode {
   // Handshake — inbound handler registration
   // -----------------------------------------------------------------------
 
-  private registerHandshakeHandler(libp2p: Libp2p): void {
+  private async registerHandshakeHandler(libp2p: Libp2p): Promise<void> {
     const magic = this.config.magic;
 
-    libp2p.handle(HANDSHAKE_PROTOCOL, async (stream, connection) => {
+    await libp2p.handle(HANDSHAKE_PROTOCOL, async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
       const connId = connection.id;
       // NET_INTERFACE → Validation → "A stream write is bounded in time as
@@ -2021,10 +2071,10 @@ export class NetNode {
   // Sync stream handler — framed protocol
   // -----------------------------------------------------------------------
 
-  private registerSyncStreamHandler(libp2p: Libp2p): void {
+  private async registerSyncStreamHandler(libp2p: Libp2p): Promise<void> {
     const magic = this.config.magic;
 
-    libp2p.handle(SYNC_PROTOCOL, async (stream, connection) => {
+    await libp2p.handle(SYNC_PROTOCOL, async (stream, connection) => {
       const peerId = connection.remotePeer.toString();
 
       // NET_INTERFACE → Stream Protocols → "A peer's sync streams are served
