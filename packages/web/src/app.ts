@@ -2577,9 +2577,7 @@ export class App {
 
   /** The corner's press under *your-node* opens the settings window with the
    *  `node` row in view, by the placement rule every window open follows, and
-   *  runs no verification (WEB_INTERFACE → The status corner → "while the
-   *  verdict reads *your-node* a press opens the settings window at its
-   *  `node` row"). */
+   *  runs no verification (WEB_INTERFACE → The status corner). */
   private openSettingsAtNode(): void {
     this.openSettings();
     const held = this.bodies.get('@settings');
@@ -4960,8 +4958,7 @@ export class App {
     // verifier, the press runs a verification too (WEB_INTERFACE → The
     // extension → "The verified tip"). While the verdict reads *your-node*
     // the press opens the settings window at its `node` row instead
-    // (WEB_INTERFACE → The status corner → "while the verdict reads
-    // *your-node* a press opens the settings window at its `node` row").
+    // (WEB_INTERFACE → The status corner).
     btn.addEventListener('click', () => {
       if (this.isYourNodeHeld()) {
         this.openSettingsAtNode();

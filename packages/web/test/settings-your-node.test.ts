@@ -4,7 +4,7 @@ import { settingsBody, type SettingsHandlers, type HandNodeSeam } from '../src/v
 import { prefs, setNode } from '../src/prefs';
 import type { TipVerdict } from '../src/model/tip-verdict';
 
-// WEB_INTERFACE → The settings window → the `node` row holds the reader's
+// WEB_INTERFACE → The settings window — the `node` row holds the reader's
 // question while the verdict reads `refused` · *your-node* — word for word —
 // and the two word controls answer. The hand-added node's off state is kept
 // as `notis.node.hand.off`, the row reads `off` with `turn on`; a page that
