@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { loadNodeKey } from '@dagsocial/net';
 import { CommandLog, isProcessAlive } from './lib/commands.mjs';
-import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
+import { readTopology, natRouters, publicMeshHosts, hostsBehindBrowserNat } from './lib/topology.mjs';
 import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
@@ -40,6 +40,7 @@ import {
 import {
   buildForkCutArgs,
   buildForkMinerSpawn,
+  buildHonestSideIsolationArgs,
   forkHostBootstrapPeers,
 } from './lib/hostile-fork-single.mjs';
 
@@ -1286,6 +1287,26 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
   // After the restart each pair node bootstraps from its one
   // allowed peer alone, and the `peers_connected == 1` check
   // reads the fresh connection state.
+  // MESH_INTERFACE → Acceptance 6 — the fork pair's cut accepts the
+  // browser's natC outside address (`11.100.0.103`) so the page can
+  // still reach the fork over mesh. Every host that shares natC with
+  // the browser — `lan1`, `lan1-peer` by the topology — emits its
+  // packets through the same NAT, which SNATs them to the same
+  // outside address; from the fork's view those packets arrive from
+  // `11.100.0.103` too and the cut cannot tell them apart from the
+  // browser's. Earlier run measured exactly that: the fork reconnected
+  // to `lan1` and `lan1-peer` after the restart. The remedy writes
+  // the cut on the HONEST SIDE in each such host's namespace
+  // (`buildHonestSideIsolationArgs`), BEFORE the fork restart so the
+  // honest side cannot dial in during the restart window either.
+  const honestBehindBrowserNat = hostsBehindBrowserNat(topology);
+  const forkPairAddrs = [hostileForkHostCfg.addr, hostileForkPeerHostCfg.addr];
+  for (const hostName of honestBehindBrowserNat) {
+    for (const { argv } of buildHonestSideIsolationArgs(hostName, { forkAddrs: forkPairAddrs })) {
+      log.shell(argv[0], argv.slice(1), { privileged: true });
+    }
+  }
+
   recordWait(`notis:hostile-fork and notis:hostile-fork-peer restarted on the same store after the cut; /health peers_connected reads 1 (the partner alone) within 60 s`);
   if (!dryRun) {
     const forkEntry = log.pids.find((e) => e.description === 'notis:hostile-fork');

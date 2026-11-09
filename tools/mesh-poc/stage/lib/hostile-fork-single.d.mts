@@ -26,6 +26,11 @@ export function buildForkCutArgs(
   },
 ): NftRule[];
 
+export function buildHonestSideIsolationArgs(
+  hostName: string,
+  options: { forkAddrs: string[]; table?: string },
+): NftRule[];
+
 export function buildForkCutTeardownArgs(
   name: string,
   options?: { table?: string },

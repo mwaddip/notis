@@ -13,6 +13,7 @@ import {
   buildForkCutArgs,
   buildForkCutTeardownArgs,
   buildForkMinerSpawn,
+  buildHonestSideIsolationArgs,
   forkHostBootstrapPeers,
 } from '../stage/lib/hostile-fork-single.mjs';
 
@@ -239,5 +240,81 @@ describe('hostile-fork-single builder', () => {
   it('forkHostBootstrapPeers: a non-string pub1 throws', () => {
     expect(() => forkHostBootstrapPeers('')).toThrow();
     expect(() => forkHostBootstrapPeers(null as unknown as string)).toThrow();
+  });
+
+  // MESH_INTERFACE → Acceptance 6 — the honest-side isolation rules
+  // every host behind the browser's NAT gets, so its packets to the
+  // fork pair drop at the source where its address is unique (the
+  // fork's cut cannot tell them from the browser's at the NAT's
+  // outside address).
+  describe('buildHonestSideIsolationArgs', () => {
+    it('one table in the inet family + two chains (default accept) + two drop rules per fork addr', () => {
+      const rules = buildHonestSideIsolationArgs('lan1', {
+        forkAddrs: ['11.100.0.35', '11.100.0.36'],
+      });
+      expect(rules.map((r) => r.description)).toEqual([
+        'lan1-isolate-add-table',
+        'lan1-isolate-add-chain-out',
+        'lan1-isolate-add-chain-in',
+        'lan1-isolate-out-drop-11.100.0.35',
+        'lan1-isolate-in-drop-11.100.0.35',
+        'lan1-isolate-out-drop-11.100.0.36',
+        'lan1-isolate-in-drop-11.100.0.36',
+      ]);
+    });
+
+    it('the table is in the inet family — covers v4 and v6 in one table', () => {
+      const rules = buildHonestSideIsolationArgs('lan1', { forkAddrs: ['11.100.0.35'] });
+      const table = rules.find((r) => r.description === 'lan1-isolate-add-table')!;
+      expect(table.argv.join(' ')).toMatch(/\bnft add table inet fork_isolate$/);
+    });
+
+    it("the chains carry no `policy drop` — the default is accept, only the fork addrs drop", () => {
+      const rules = buildHonestSideIsolationArgs('lan1', { forkAddrs: ['11.100.0.35'] });
+      const chainOut = rules.find((r) => r.description === 'lan1-isolate-add-chain-out')!;
+      const chainIn = rules.find((r) => r.description === 'lan1-isolate-add-chain-in')!;
+      expect(chainOut.argv.join(' ')).not.toMatch(/\bpolicy drop\b/);
+      expect(chainIn.argv.join(' ')).not.toMatch(/\bpolicy drop\b/);
+      expect(chainOut.argv.join(' ')).toMatch(/\btype filter hook output priority 0 ; \}$/);
+      expect(chainIn.argv.join(' ')).toMatch(/\btype filter hook input priority 0 ; \}$/);
+    });
+
+    it("the drop rules match daddr for out and saddr for in, on the inet table", () => {
+      const rules = buildHonestSideIsolationArgs('lan1', { forkAddrs: ['11.100.0.35', '11.100.0.36'] });
+      const out1 = rules.find((r) => r.description === 'lan1-isolate-out-drop-11.100.0.35')!;
+      const in1 = rules.find((r) => r.description === 'lan1-isolate-in-drop-11.100.0.35')!;
+      const out2 = rules.find((r) => r.description === 'lan1-isolate-out-drop-11.100.0.36')!;
+      const in2 = rules.find((r) => r.description === 'lan1-isolate-in-drop-11.100.0.36')!;
+      expect(out1.argv.join(' ')).toMatch(/\bnft add rule inet fork_isolate out ip daddr 11\.100\.0\.35 drop$/);
+      expect(in1.argv.join(' ')).toMatch(/\bnft add rule inet fork_isolate in ip saddr 11\.100\.0\.35 drop$/);
+      expect(out2.argv.join(' ')).toMatch(/\bnft add rule inet fork_isolate out ip daddr 11\.100\.0\.36 drop$/);
+      expect(in2.argv.join(' ')).toMatch(/\bnft add rule inet fork_isolate in ip saddr 11\.100\.0\.36 drop$/);
+    });
+
+    it('every argv runs inside the host namespace — the ns is derived from hostName', () => {
+      const rules = buildHonestSideIsolationArgs('lan1-peer', { forkAddrs: ['11.100.0.35'] });
+      for (const r of rules) {
+        expect(r.argv.slice(0, 6)).toEqual([
+          'sudo', 'ip', 'netns', 'exec', 'notismesh-lan1-peer', 'nft',
+        ]);
+      }
+    });
+
+    it('a different table name lands on every rule', () => {
+      const rules = buildHonestSideIsolationArgs('lan1', {
+        forkAddrs: ['11.100.0.35'],
+        table: 'custom',
+      });
+      for (const r of rules) {
+        expect(r.argv).toContain('custom');
+        expect(r.argv).not.toContain('fork_isolate');
+      }
+    });
+
+    it('empty hostName or empty forkAddrs throws', () => {
+      expect(() => buildHonestSideIsolationArgs('', { forkAddrs: ['11.100.0.35'] })).toThrow();
+      expect(() => buildHonestSideIsolationArgs('lan1', { forkAddrs: [] })).toThrow();
+      expect(() => buildHonestSideIsolationArgs('lan1', { forkAddrs: [''] })).toThrow();
+    });
   });
 });

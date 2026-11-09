@@ -95,6 +95,74 @@ export function buildForkCutArgs(topology, name, { table = 'fork_cut', partner =
 }
 
 /**
+ * The honest-side isolation rules for a host that shares a NAT with
+ * the browser. From the fork pair's view, this host's packets arrive
+ * at the fork from the same NAT outside address the browser's do, so
+ * the `fork_cut` on the fork side cannot tell them apart — the
+ * accept rule the page relies on would let them through. The remedy
+ * writes the cut on the HONEST SIDE in this host's namespace: an
+ * nft table in the `inet` family (so v4 + v6 live in the same table)
+ * with default-accept chains that drop every packet to or from the
+ * fork pair's addresses. Loopback and every other reach stays open.
+ *
+ *   1. `add table inet <table>`
+ *   2. `add chain inet <table> out { type filter hook output priority 0 ; }`  (default accept)
+ *   3. `add chain inet <table> in  { type filter hook input  priority 0 ; }`
+ *   4. per fork addr:
+ *      `add rule inet <table> out ip daddr <addr> drop`
+ *      `add rule inet <table> in  ip saddr <addr> drop`
+ *
+ * The chain's default policy is accept (no explicit `policy drop`),
+ * so only packets matching a `daddr`/`saddr` of the fork pair's
+ * addresses drop; every other reach — honest nodes, loopback, the
+ * browser — stays open. Rules apply to v4 traffic (`ip daddr`); a
+ * v6 fork would add `ip6 daddr` rules to the same table.
+ *
+ * Teardown is one `delete table` as `buildForkCutTeardownArgs`
+ * builds; nft's cascade drops the chains and rules. In practice the
+ * namespace teardown by `stage:down` removes the table along with
+ * every other nft state the namespace held.
+ *
+ * Returns an array of `{ description, argv }` entries where `argv` is
+ * the full `sudo ip netns exec <ns> nft ...` command line.
+ *
+ * Pure: a plain function of hostName + options; no file-system read,
+ * no clock, no process state.
+ */
+export function buildHonestSideIsolationArgs(hostName, { forkAddrs, table = 'fork_isolate' } = {}) {
+  if (typeof hostName !== 'string' || hostName === '') {
+    throw new Error('buildHonestSideIsolationArgs: hostName must be a non-empty string');
+  }
+  if (!Array.isArray(forkAddrs) || forkAddrs.length === 0) {
+    throw new Error('buildHonestSideIsolationArgs: forkAddrs must be a non-empty array');
+  }
+  for (const addr of forkAddrs) {
+    if (typeof addr !== 'string' || addr === '') {
+      throw new Error('buildHonestSideIsolationArgs: every forkAddrs entry must be a non-empty string');
+    }
+  }
+  const ns = `notismesh-${hostName}`;
+  const wrap = (...rest) => ['sudo', 'ip', 'netns', 'exec', ns, 'nft', ...rest];
+  const rules = [
+    { description: `${hostName}-isolate-add-table`,
+      argv: wrap('add', 'table', 'inet', table) },
+    { description: `${hostName}-isolate-add-chain-out`,
+      argv: wrap('add', 'chain', 'inet', table, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}') },
+    { description: `${hostName}-isolate-add-chain-in`,
+      argv: wrap('add', 'chain', 'inet', table, 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}') },
+  ];
+  for (const addr of forkAddrs) {
+    rules.push(
+      { description: `${hostName}-isolate-out-drop-${addr}`,
+        argv: wrap('add', 'rule', 'inet', table, 'out', 'ip', 'daddr', addr, 'drop') },
+      { description: `${hostName}-isolate-in-drop-${addr}`,
+        argv: wrap('add', 'rule', 'inet', table, 'in', 'ip', 'saddr', addr, 'drop') },
+    );
+  }
+  return rules;
+}
+
+/**
  * The matching teardown argv for `buildForkCutArgs` — a single
  * `delete table` is enough; nft's own cascade drops the chains and
  * rules. Pure.

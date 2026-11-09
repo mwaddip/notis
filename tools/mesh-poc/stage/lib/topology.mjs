@@ -40,6 +40,58 @@ export function natRouters(topology) {
   return out;
 }
 
+/**
+ * MESH_INTERFACE → Acceptance 6 — the honest hosts behind the same
+ * NAT as the browser. From a public mesh node's view, every packet
+ * either host sends arrives from the NAT's outside address — the
+ * same address the browser's packets carry. A `fork_cut` on the
+ * public fork host accepts that outside address so the page can
+ * still reach the fork over mesh, which leaves these honest hosts'
+ * packets flowing through the same accept. The remedy writes the
+ * cut on the HONEST SIDE in each such host's namespace, so lan1 and
+ * lan1-peer never emit packets to the fork pair — the source where
+ * they can be told apart.
+ *
+ * Returns the names (not entries) of every host whose `parent` is
+ * the browser's `parent` AND which runs a mesh node (`host.mesh !==
+ * undefined`). Hosts without `mesh` do not peer libp2p and do not
+ * need the isolation.
+ */
+export function hostsBehindBrowserNat(topology) {
+  const browser = topology?.hosts?.browser;
+  if (browser === undefined || typeof browser.parent !== 'string') return [];
+  const browserParent = browser.parent;
+  const out = [];
+  for (const [name, host] of Object.entries(topology.hosts)) {
+    if (name === 'browser') continue;
+    if (host.parent !== browserParent) continue;
+    if (host.mesh === undefined) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+/**
+ * MESH_INTERFACE → Acceptance 7 — s7 step 4's lan1 cut accepts the
+ * browser's inside-natC address (`10.103.0.11`), so that address must
+ * be unique across every other host behind natC. Each host's `addr`
+ * is its unique IP inside the parent NAT's subnet (the topology
+ * assigns one; `assertTopologyWhole` checks `isIp`). This function
+ * returns the list of OTHER host names that share the browser's
+ * `addr`; a non-empty list is a topology defect lan1's cut cannot
+ * close — the scenario throws when it reads one.
+ */
+export function hostsSharingBrowserAddr(topology) {
+  const browser = topology?.hosts?.browser;
+  if (browser === undefined || typeof browser.addr !== 'string') return [];
+  const out = [];
+  for (const [name, host] of Object.entries(topology.hosts)) {
+    if (name === 'browser') continue;
+    if (host.addr === browser.addr) out.push(name);
+  }
+  return out;
+}
+
 // MESH_INTERFACE → Acceptance — every host has an address (or an inside/outside
 // pair, for a NAT router), a role and a NAT type. A plain host carries `addr`;
 // a NAT router carries `outsideAddr` and `insideSubnet` with `insideGateway`.

@@ -71,6 +71,7 @@ import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 import { buildForkCutArgs, buildForkMinerSpawn } from '../lib/hostile-fork-single.mjs';
+import { hostsSharingBrowserAddr } from '../lib/topology.mjs';
 
 // MESH_INTERFACE → Discovery → "Seeds" — step 3a reads lan1's mesh
 // log for a `connection:close` line naming an inbound from the
@@ -352,10 +353,24 @@ export async function run(ctx) {
         // lan1 and lan1-peer share natC's inside bridge with the
         // browser; the browser's address from each of them is its
         // real inside IP `10.103.0.11` (no NAT), not natC's outside.
+        // The lan1 cut accepts that inside IP so the page can still
+        // reach lan1; no other honest host behind natC shares it (each
+        // host has a unique IP, `assertTopologyWhole` holds `isIp`
+        // per host, and the natC-inside subnet gives each a distinct
+        // address). `hostsSharingBrowserAddr` is the explicit
+        // check — the symmetric form of the shared-NAT leak the
+        // fork's cut closed on the honest side.
         const browserCfg = ctx.topology.hosts.browser;
         const browserAddrForLan1 = browserCfg?.addr;
         if (typeof browserAddrForLan1 !== 'string') {
           throw new Error('s7 step 4 phase b: topology.hosts.browser.addr is not a string');
+        }
+        const sharingBrowserAddr = hostsSharingBrowserAddr(ctx.topology);
+        if (sharingBrowserAddr.length !== 0) {
+          throw new Error(
+            `s7 step 4 phase b: topology defect — host(s) share the browser's addr ${browserAddrForLan1}: ${sharingBrowserAddr.join(', ')}. ` +
+            `lan1's cut accepts that address so the page can reach lan1; a sharing host would slip through the same accept.`,
+          );
         }
         // Read lan1's pre-cut height from its own loopback HTTP; the
         // miner stops on the first poll that reads
