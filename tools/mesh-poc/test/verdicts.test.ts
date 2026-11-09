@@ -764,6 +764,17 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
       checksAtSample: 3,
       sampledTipHeight: 100,
       sampledTipHash: 'd'.repeat(64),
+      // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+      // "its chain is the client's chain, and a routed read goes to
+      // it first among the nodes the read's need allows". After
+      // *continue* lan1 names the client's tip: its entry reads
+      // `ok` with `behindBy` 0, and a routed tip read on the page
+      // picks it.
+      lan1StatusAfter: 'ok',
+      lan1BehindByAfter: 0,
+      tipReadNodeAfter: 'e'.repeat(64),
+      tipReadErrorAfter: null,
+      lan1NotisId: 'e'.repeat(64),
     },
   };
   it('every phase holds the rule → PASS', () => {
@@ -962,6 +973,43 @@ describe("verdictS7Question — the heavier question: the page raises it, each a
   });
   it('continuePhase.sampledTipHash missing (not a string) → FAIL', () => {
     const { sampledTipHash: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
+  });
+  // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+  // "its chain is the client's chain, and a routed read goes to it
+  // first among the nodes the read's need allows". The verdict
+  // refuses a phase whose `lan1StatusAfter` is not `ok` and whose
+  // routed tip read did not go to lan1.
+  it('continuePhase.lan1StatusAfter is `behind` (lan1 names the client\'s tip, must be ok) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, lan1StatusAfter: 'behind' },
+    })).toBe('FAIL');
+  });
+  it('continuePhase.lan1StatusAfter missing (not a string) → FAIL', () => {
+    const { lan1StatusAfter: _ignored, ...rest } = PASS.continuePhase;
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: rest as typeof PASS.continuePhase,
+    })).toBe('FAIL');
+  });
+  it("continuePhase.tipReadNodeAfter names another node (the pick did not go to lan1) → FAIL", () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, tipReadNodeAfter: 'f'.repeat(64) },
+    })).toBe('FAIL');
+  });
+  it('continuePhase.tipReadNodeAfter null (the routed read threw) → FAIL', () => {
+    expect(verdictS7Question({
+      ...PASS,
+      continuePhase: { ...PASS.continuePhase, tipReadNodeAfter: null },
+    })).toBe('FAIL');
+  });
+  it('continuePhase.tipReadNodeAfter missing (not a string) → FAIL', () => {
+    const { tipReadNodeAfter: _ignored, ...rest } = PASS.continuePhase;
     expect(verdictS7Question({
       ...PASS,
       continuePhase: rest as typeof PASS.continuePhase,
