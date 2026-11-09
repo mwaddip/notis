@@ -1398,6 +1398,7 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
   recordWait(`hostile-fork reads /blocks/current.height >= cutHeight + ${FORK_BLOCKS_PAST_CUT}; miner-fork stops on the first poll that reads the target`);
   recordWait(`pub1 reads /blocks/current.height >= forkHeightAtStop + ${HONEST_LEAD_OVER_FORK} (the honest chain's lead over the frozen fork)`);
   let forkHeightAtStop = cutHeight;
+  let forkTipHashAtStop = null;
   let pub1HeightAfterLead = cutHeight;
   if (!dryRun && cutHeight !== null && minerForkChild !== null) {
     const forkTarget = cutHeight + FORK_BLOCKS_PAST_CUT;
@@ -1408,9 +1409,16 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
           'curl', '-sf', '--max-time', '5',
           `http://${hostileForkHostCfg.addr}:${hostileForkHostCfg.node.httpPort}/blocks/current`,
         ], { timeoutMs: 8_000 });
-        const h = JSON.parse(text).height;
+        const data = JSON.parse(text);
+        const h = data.height;
         if (typeof h !== 'number') return false;
         forkHeightAtStop = h;
+        // The fork's tip hash at stop — positive evidence s6 step 1
+        // asserts against (the fork node answered this chain's tip).
+        // Captured here so the step reads it from `fork-pair-cut.json`
+        // and never relies on a per-node `tip` field the client's
+        // state does not carry.
+        if (typeof data.hash === 'string') forkTipHashAtStop = data.hash;
         return h >= forkTarget;
       },
       logPathFor('miner-fork'),
@@ -1440,6 +1448,7 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
       JSON.stringify({
         cutHeight,
         forkHeightAtStop,
+        forkTipHashAtStop,
         forkBlocksPastCut: forkHeightAtStop - cutHeight,
         pub1HeightAfterLead,
         honestLeadOverFork: pub1HeightAfterLead - forkHeightAtStop,

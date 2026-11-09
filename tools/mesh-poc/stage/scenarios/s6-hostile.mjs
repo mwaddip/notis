@@ -241,6 +241,18 @@ export async function run(ctx) {
       if (!Number.isFinite(forkHeightAtStop)) {
         throw new Error(`s6 step 1: fork-pair-cut.json has no numeric forkHeightAtStop`);
       }
+      // MESH_INTERFACE → Acceptance 6 — "positive evidence the hostile
+      // node answered this session": the fork's tip hash read by the
+      // stage at Phase 8b (directly from the fork host's
+      // `/blocks/current`), stable because the fork pair stops mining
+      // once `forkHeightAtStop` lands. The client's state nodes list
+      // carries no per-node `tip` field, so the step reads this hash
+      // from `fork-pair-cut.json` and `verdictS6NotContinued`'s
+      // `typeof fork.tipHash !== 'string'` guard holds.
+      const forkTipHashAtStop = forkCut.forkTipHashAtStop;
+      if (typeof forkTipHashAtStop !== 'string' || !/^[0-9a-f]{64}$/.test(forkTipHashAtStop)) {
+        throw new Error(`s6 step 1: fork-pair-cut.json has no 64-hex forkTipHashAtStop`);
+      }
       const firstSessionText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
@@ -307,13 +319,11 @@ export async function run(ctx) {
       const bannerObj = JSON.parse(secondSessionText);
       const secondState = JSON.parse(bannerObj.state);
       const forkEntry = secondState.nodes?.find((n) => n.notisId === forkNotisId) ?? null;
-      // The fork entry's tip hash comes from the client's per-entry
-      // `tip` field — the hash the fork node named at the last check.
-      // The client records it on the `tip` field only where the state
-      // carries it; a defensive read.
-      const forkTipHash = forkEntry !== null && typeof forkEntry.tip === 'object' && forkEntry.tip !== null
-        ? forkEntry.tip.hash
-        : null;
+      // The fork's tip hash is the stage's own read at Phase 8b
+      // (`fork-pair-cut.json.forkTipHashAtStop`), not a client's
+      // per-entry `tip` field — the client's node entries carry none.
+      // The fork pair is cut and no longer mining once the stage
+      // records it, so the hash is stable through the scenario.
       const secondTipHeight = secondState.tip?.height ?? null;
       const m = {
         firstSession: { keptChainHash, keptTipHeight },
@@ -323,7 +333,7 @@ export async function run(ctx) {
           chainName: typeof secondState.chain === 'string' ? secondState.chain : null,
           forkEntry: forkEntry === null
             ? null
-            : { status: forkEntry.status, tipHash: forkTipHash },
+            : { status: forkEntry.status, tipHash: forkTipHashAtStop },
           // The two heights the lighter-fork rule rests on, named so
           // a reader sees them in `stage/out/scenarios/s6.json`.
           cutHeight: Number(forkCut.cutHeight),
