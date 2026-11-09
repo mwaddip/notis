@@ -322,6 +322,16 @@ any tip read is placed: at the tip, one below, further down, or above and filled
 node's speed. A re-read that fails is a failure as any read's is. A re-read that names a tip no placement holds is left
 to the next check, the node keeping its first read's placement. A check that does not move the tip reads no tip twice.
 
+**A node is judged against the chain the check leaves.** Its event, its distance below the tip and its count in the
+agreement are read against the client's chain as the check ends — its tip placed on that chain by hash, or, where its
+verified proof's tip lies off it, `behind` and off the chain — never against the winner of a contest the client did not
+take: a fork the reader answered, a question standing, the kept proof's settle (→ What the client remembers). A tip
+whose verified proof lost is kept as lost only when it lies off that chain. A lie and a failure land as they were read.
+
+> ⚠ **AHEAD OF CODE (2026-11-09).** `@dagsocial/web`'s mesh client lands each verified proof's event, distance and
+agreement verdict against the resolve's winner, guarded for the node whose proof was read alone where its tip read
+placed it on the chain; after a chain switch a node that stood at the old tip keeps that event.
+
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
