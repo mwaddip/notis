@@ -581,6 +581,52 @@ export async function run(ctx) {
         signal(minerChild.pid, 'SIGTERM');
         launchedPids.splice(launchedPids.indexOf(minerChild.pid), 1);
 
+        // Read lan1's frozen fork tip from lan1 itself, once the
+        // miner has stopped. The SIGTERM is async and a block the
+        // miner was already hashing may land right after; poll
+        // `/blocks/current` until two consecutive reads one second
+        // apart agree on the same height — that height is lan1's
+        // final tip, and the hash it names is `lan1ForkTipHash`.
+        // The cut stands, so lan1 cannot take any further block
+        // from another node.
+        let lan1ForkTipHash = null;
+        {
+          const stableDeadline = Date.now() + 30_000;
+          let lastHeight = -1;
+          let lastHash = null;
+          while (Date.now() < stableDeadline) {
+            try {
+              const text = execIn('notismesh-lan1', [
+                'curl', '-sf', '--max-time', '5',
+                `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+              ], { timeoutMs: 8_000 });
+              const parsed = JSON.parse(text.toString('utf8'));
+              const h = parsed.height;
+              const hash = parsed.hash;
+              if (typeof h === 'number' && typeof hash === 'string') {
+                if (h === lastHeight) {
+                  lan1HeightAtStop = h;
+                  lan1ForkTipHash = hash;
+                  break;
+                }
+                lastHeight = h;
+                lastHash = hash;
+              }
+            } catch { /* retry */ }
+            await new Promise((r) => setTimeout(r, 1_000));
+          }
+          if (lan1ForkTipHash === null) {
+            // Fall back to the last read we did; a never-answering
+            // lan1 fails later phases on its own.
+            if (typeof lastHash === 'string' && lastHeight >= 0) {
+              lan1HeightAtStop = lastHeight;
+              lan1ForkTipHash = lastHash;
+            } else {
+              throw new Error('s7 step 4 phase b-mine: lan1 did not answer /blocks/current after the miner stopped');
+            }
+          }
+        }
+
         // Wait for pub1 to lead lan1's frozen fork by
         // `HONEST_LEAD_OVER_LAN1` blocks — the honest chain's work
         // above the cut clearly exceeds the fork's three slow-paced
@@ -674,6 +720,7 @@ export async function run(ctx) {
           buttonsShown: stateBWrapper.buttonsPresent === true,
           lan1PreCutHeight: preCutHeight,
           lan1HeightAtStop,
+          lan1ForkTipHash,
           forkBlocksPastCut: lan1HeightAtStop - preCutHeight,
           pub1HeightAfterLead,
           honestLeadOverFork: pub1HeightAfterLead - lan1HeightAtStop,
@@ -683,11 +730,17 @@ export async function run(ctx) {
         // ----- Phase (c): press *disable it* -----
         currentPhase = 'c';
         // One page session that waits for the disagreement to stand,
-        // clicks the disable button once, then waits for the next
-        // check to clear it and seat the honest chain. The answer
-        // call fires inside `page/render.ts`'s onClick, which calls
-        // `client.answer('disable')` exactly once; the poll waits
-        // for `disagreement === null` AND lan1's `yours` cleared.
+        // records the client's `checks` at the click, clicks the
+        // disable button once, and samples the state at the first
+        // completed check past the click — the state `answer()`
+        // emits at the click carries `state.tip` the raising check
+        // wrote, which is the tip the chain stood at while the
+        // disagreement held (MESH_INTERFACE → Discovery → "A
+        // disagreement is the reader's question, never the
+        // client's choice"). The check the click triggers is what
+        // moves the chain to honest; its completion writes
+        // `state.tip` from `this.chain.tip()`, so the sample at
+        // `checks > checksAtClick` reads the honest side.
         const phaseCExpr = `(async function () {
           function readState() {
             const el = document.getElementById('state');
@@ -702,29 +755,40 @@ export async function run(ctx) {
             if (s && s.disagreement && s.disagreement.which === 'heavier') break;
             await new Promise((r) => setTimeout(r, 500));
           }
+          const atRaise = readState();
+          const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
           const btn = document.querySelector('[data-role="disagreement-disable"]');
           if (btn === null) throw new Error('phase c: disable button not found');
           const callsBefore = Number(window.__answerCalls_s7 ?? 0);
           window.__answerCalls_s7 = callsBefore;
           btn.click();
           const clickedAtMs = Date.now();
-          // Wait for the next check to clear the disagreement and
-          // move lan1's \`yours\` to false.
+          // Wait for a check that COMPLETED past the click
+          // (\`checks > checksAtClick\`) AND cleared the
+          // disagreement; sample the state there.
+          let lastSeen = null;
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
-            if (s && s.disagreement === null) {
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement === null && typeof s.checks === 'number' && s.checks > checksAtClick) {
               const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(lan1NotisId)});
               return JSON.stringify({
                 clearedAfterMs: Date.now() - clickedAtMs,
                 lan1Yours: e?.yours === true,
                 chain: s.chain,
                 tipHash: s.tip?.hash ?? null,
+                tipHeight: s.tip?.height ?? null,
+                checksAtClick,
+                checksAtSample: s.checks,
                 disagreementAfter: false,
               });
             }
             await new Promise((r) => setTimeout(r, 500));
           }
-          throw new Error('phase c: disagreement did not clear');
+          throw new Error('phase c: no check completed past the click (checksAtClick=' + checksAtClick
+            + ', lastChecks=' + (lastSeen && typeof lastSeen.checks === 'number' ? lastSeen.checks : 'n/a')
+            + ', lastDisagreement=' + (lastSeen && lastSeen.disagreement ? lastSeen.disagreement.which : 'null')
+            + ')');
         })()`;
         const phaseCText = await cdpEval(ctx, browserUrl, phaseCExpr, { timeoutMs: 260_000 });
         if (phaseCText === null) {
@@ -738,23 +802,35 @@ export async function run(ctx) {
           answerCalls: 1,
           lan1YoursAfter: phaseCObj.lan1Yours === true,
           disagreementAfter: phaseCObj.disagreementAfter === true,
-          // After `disable`, the chain seats on the honest side — the
-          // tip moves off `tipHashAtRaise` to whatever the honest
-          // chain's tip is. `state.chain` (block 1's hash) is shared
-          // between the two chains, so a move is read by the tip
-          // hash changing from the frozen one.
-          chainOnHonest: phaseCObj.tipHash !== tipHashAtRaise,
+          // MESH_INTERFACE → What the client remembers — after
+          // `disable`, the chain takes the best of the rest (honest).
+          // The sampled tip is on the honest side iff it is not
+          // lan1's frozen fork tip and sits strictly above
+          // `lan1HeightAtStop`.
+          chainOnHonest:
+            phaseCObj.tipHash !== lan1ForkTipHash
+            && typeof phaseCObj.tipHeight === 'number'
+            && phaseCObj.tipHeight > lan1HeightAtStop,
+          checksAtClick: typeof phaseCObj.checksAtClick === 'number' ? phaseCObj.checksAtClick : null,
+          checksAtSample: typeof phaseCObj.checksAtSample === 'number' ? phaseCObj.checksAtSample : null,
+          sampledTipHeight: typeof phaseCObj.tipHeight === 'number' ? phaseCObj.tipHeight : null,
+          sampledTipHash: typeof phaseCObj.tipHash === 'string' ? phaseCObj.tipHash : null,
         };
 
         // ----- Phase (d): fresh page, press *continue on this node* -----
         currentPhase = 'd';
-        // The nft cut is still in place and the miner-fork is still
-        // mining lan1's fork; honest keeps growing heavier. A fresh
-        // page target reads the kept memory and raises the heavier
-        // disagreement again. Pressing *continue on this node* seats
-        // lan1's chain, records the fork in `answeredForks`, and the
-        // same branch growing raises no new disagreement at the
-        // next check.
+        // The nft cut is still in place and the miner-fork's blocks
+        // are frozen at `lan1HeightAtStop`; honest keeps growing
+        // heavier. A fresh page target reads the kept memory and
+        // raises the heavier disagreement again. Pressing *continue
+        // on this node* seats lan1's chain in `answer('continue')`
+        // itself (`this.chain.settle`), clears the disagreement,
+        // records the fork in `answeredForks`, and triggers a check.
+        // The check that completes past the click writes
+        // `state.tip` from `this.chain.tip()` — which equals
+        // `lan1ForkTipHash`, since the answered fork keeps the chain
+        // on lan1's. The sample at `checks > checksAtClick` is what
+        // the verdict reads.
         //
         // Restore lan1's `yours` by re-writing the phase-a variant —
         // the disable in phase c cleared it, so the client needs to
@@ -775,32 +851,48 @@ export async function run(ctx) {
             if (s && s.disagreement && s.disagreement.which === 'heavier') break;
             await new Promise((r) => setTimeout(r, 500));
           }
+          const atRaise = readState();
+          const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
           const btn = document.querySelector('[data-role="disagreement-continue"]');
           if (btn === null) throw new Error('phase d: continue button not found');
           btn.click();
           const clickedAtMs = Date.now();
-          // Wait for the next check to clear the disagreement; record
-          // the tip the client took.
-          let afterClickState = null;
+          // Wait for a check that COMPLETED past the click
+          // (\`checks > checksAtClick\`) AND cleared the
+          // disagreement; sample the state there.
+          let sample = null;
+          let lastSeen = null;
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
-            if (s && s.disagreement === null) { afterClickState = s; break; }
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement === null && typeof s.checks === 'number' && s.checks > checksAtClick) {
+              sample = s;
+              break;
+            }
             await new Promise((r) => setTimeout(r, 500));
           }
-          if (afterClickState === null) throw new Error('phase d: disagreement did not clear after continue');
-          const checksAtClick = afterClickState.checks;
-          const tipAtClick = afterClickState.tip?.hash ?? null;
+          if (sample === null) {
+            throw new Error('phase d: no check completed past the click (checksAtClick=' + checksAtClick
+              + ', lastChecks=' + (lastSeen && typeof lastSeen.checks === 'number' ? lastSeen.checks : 'n/a')
+              + ', lastDisagreement=' + (lastSeen && lastSeen.disagreement ? lastSeen.disagreement.which : 'null')
+              + ')');
+          }
+          const sampleTipHash = sample.tip?.hash ?? null;
+          const sampleTipHeight = sample.tip?.height ?? null;
+          const sampleChecks = sample.checks;
           // Wait for one more completed check and confirm no new
           // disagreement rose (the fork is in \`answeredForks\`, so
           // the same branch growing does not ask again).
           while (Date.now() - startMs < DEADLINE_MS) {
             const s = readState();
-            if (s && typeof s.checks === 'number' && s.checks > checksAtClick) {
+            if (s && typeof s.checks === 'number' && s.checks > sampleChecks) {
               return JSON.stringify({
                 clearedAfterMs: Date.now() - clickedAtMs,
-                tipAtClick,
-                chainAtClick: afterClickState.chain,
                 checksAtClick,
+                checksAtSample: sampleChecks,
+                tipHash: sampleTipHash,
+                tipHeight: sampleTipHeight,
+                chainAtClick: sample.chain,
                 checksAfterNext: s.checks,
                 disagreementAfterNext: s.disagreement !== null,
                 tipAfterNext: s.tip?.hash ?? null,
@@ -808,23 +900,27 @@ export async function run(ctx) {
             }
             await new Promise((r) => setTimeout(r, 500));
           }
-          throw new Error('phase d: no new check completed after continue');
+          throw new Error('phase d: no second check completed after continue (sampleChecks=' + sampleChecks + ')');
         })()`;
         const phaseDText = await cdpEval(ctx, browserUrl, phaseDExpr, { timeoutMs: 320_000 });
         if (phaseDText === null) {
           throw new Error('s7 step 4 phase d: cdpEval returned null — the IIFE did not resolve a value');
         }
         const phaseDObj = JSON.parse(phaseDText);
-        // The honest chain's tip at phase c end is `phaseCObj.tipHash`;
-        // after `continue`, the client's chain is lan1's. `tipAtClick`
-        // is the tip the client took at the continue; since lan1's
-        // chain is lighter than honest's, that tip differs from the
-        // honest tip phase c ended on.
+        // MESH_INTERFACE → Discovery → "A node added by hand" —
+        // `continue` sets `this.kept` to lan1's proof and settles the
+        // chain to it; the next check keeps it there because the
+        // fork is answered. The sampled tip is on lan1's side iff
+        // its hash equals the frozen `lan1ForkTipHash`.
         const continuePhase = {
           answerCalls: 1,
-          chainOnLan1: phaseDObj.tipAtClick !== null && phaseDObj.tipAtClick !== phaseCObj.tipHash,
+          chainOnLan1: phaseDObj.tipHash === lan1ForkTipHash,
           disagreementAfter: false,
           disagreementOnNextCheck: phaseDObj.disagreementAfterNext === true,
+          checksAtClick: typeof phaseDObj.checksAtClick === 'number' ? phaseDObj.checksAtClick : null,
+          checksAtSample: typeof phaseDObj.checksAtSample === 'number' ? phaseDObj.checksAtSample : null,
+          sampledTipHeight: typeof phaseDObj.tipHeight === 'number' ? phaseDObj.tipHeight : null,
+          sampledTipHash: typeof phaseDObj.tipHash === 'string' ? phaseDObj.tipHash : null,
         };
 
         const m = { onChainPhase, heavierPhase, disablePhase, continuePhase };
@@ -923,11 +1019,19 @@ async function driveReads(ctx, baseUrl, n, need, { clearMemory = false } = {}) {
   // names WHY every read came back with a null nodeId and how many
   // checks the client had completed at each — the diagnostic a
   // reader needs to separate a vacuous pass from a real one.
+  //
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — `tipHeight` and `nodes` (the state the
+  // pick reads) ride through so the measurement names which
+  // candidates were in play and why pub1 was not allowed. The fields
+  // the stage's verdicts already read keep their names and meaning.
   return served.map((e) => {
     const entry = {
       nodeId: e?.nodeId ?? null,
       statusAtRead: e?.status ?? null,
       checks: typeof e?.checks === 'number' ? e.checks : null,
+      tipHeight: typeof e?.tipHeight === 'number' ? e.tipHeight : null,
+      nodes: Array.isArray(e?.nodes) ? e.nodes : [],
     };
     if (typeof e?.error === 'string') entry.error = e.error;
     return entry;
