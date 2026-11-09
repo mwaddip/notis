@@ -973,7 +973,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
   });
 
-  it.fails("after a switch to a heavier chain, the node at the old tip reads behind and serves no tip read", async () => {
+  it("after a switch to a heavier chain, the node at the old tip reads behind and serves no tip read", async () => {
     // Kept = Y's chain of MK blocks. Z extends Y by 30 blocks (past
     // k = 20 of Y's window). The first check seats the chain, reads
     // Z's proof — which continues kept — and judge-by-memory picks
@@ -1019,7 +1019,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(client.order('older')).not.toContain(yBase);
   }, 120_000);
 
-  it.fails("while a question stands, nodes are judged against the held chain", async () => {
+  it("while a question stands, nodes are judged against the held chain", async () => {
     // Kept = Y's chain of MK. A heavier O on a different chain (stamp
     // 60_001 shifts its retarget so it does not continue kept). The
     // first check raises a heavier disagreement; the chain stays at
@@ -1069,26 +1069,18 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(s.agreement!.offChain).toBe(1);
   }, 120_000);
 
-  it.fails("where the kept proof wins the settle over the resolve's winner, nodes are judged against the kept chain", async () => {
-    // Kept = Y's chain of MK. Z is heavier (MK + 30) on an
-    // incomparable chain: a forced level-10 nonce at height 1 gives
+  it("where the kept proof wins the settle over the resolve's winner, nodes are judged against the kept chain", async () => {
+    // Kept = Y's chain of MK. Z is higher (MK + 30) on an
+    // incomparable chain: a forced level-7 nonce at height 1 gives
     // a different genesis, so Z and Y share no block and
     // `compareProofs` answers `incomparable`. The resolve picks Z
     // (highest tip); `judgeByMemory` picks Y, since no comparable
     // proof beats the kept. The lead says Z, whose tip lies off the
-    // kept chain, reads behind and off.
+    // kept chain, reads behind with `behindBy` null.
     const keptProof = proofOf(MK);
-    const zProof = proveWithReader(
-      makeReader(buildMinedChain({
-        count: MK + 30,
-        forceLevels: new Map([[1, 10]]),
-      })),
-      { m: M, k: K },
-    );
-    const zChain = buildMinedChain({
-      count: MK + 30,
-      forceLevels: new Map([[1, 10]]),
-    });
+    const zForce = new Map([[1, 7]]);
+    const zChain = buildMinedChain({ count: MK + 30, forceLevels: zForce });
+    const zProof = proveWithReader(makeReader(zChain), { m: M, k: K });
     const zTipHdr = zChain.headers[zChain.headers.length - 1]!;
     const zTipHash = blockHash(zTipHdr);
     if (zTipHash === null) throw new Error('unhashable zTip');

@@ -1897,27 +1897,16 @@ class MeshClientImpl implements MeshClient {
         // `idOfMeshUrl` for a mesh URL, else a bug upstream.
         const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
         const route = baseById.get(nid)?.route ?? 'mesh';
-        // MESH_INTERFACE → The client's node list → "A check" — the
-        // resolve's `n.behind` is winner-relative (the blocks from
-        // the node's tip to the resolve's own winner's). A node
-        // phase 3b placed on the client's chain names a tip the
-        // client holds, and `behindBy` is the distance to the
-        // client's tip; the resolve's winner-relative count would
-        // read `null` for that node whenever the resolve's winner
-        // is a chain the client is not on — the own-tip URL, which
-        // phase 4 reads to prove the kept proof is still a
-        // contestant, is such a node after an answered fork or a
-        // kept-proof settle. Phase 3b's placement stands against a
-        // verified result; a resolve failure or a lie still applies
-        // through `tipEvent` so a proof-read defect reaches the
-        // node list.
-        const placement = placements.get(nid);
-        const placedOnChain = placement === 'tip'
-          || placement === 'one-below'
-          || placement === 'below';
+        // A resolve failure or a lie applies through `tipEvent` so a
+        // proof-read defect reaches the node list; the per-chain
+        // verdict and distance of a verified node are rewritten in
+        // the single pass after the chain is final
+        // (MESH_INTERFACE → The client's node list → "A node is
+        // judged against the chain the check leaves"). The read
+        // against the final chain, never the resolve's winner-relative
+        // `n.behind`, decides event and distance.
         const tipEv = tipEvent(nid, n, nowMs);
-        if (!placedOnChain || !n.verified) {
-          pendingBehindBy.set(nid, n.behind);
+        if (!n.verified) {
           this.applyEvent(tipEv, route);
         }
 
@@ -1925,26 +1914,17 @@ class MeshClientImpl implements MeshClient {
           const hash = urlToHash.get(n.url);
           if (hash !== undefined) {
             verifiedHashes.add(hash);
-            // Propagate the queried node's event to every other id
-            // that named the same hash. Each other id's route is
-            // its own base's — a propagated verdict must still
-            // downgrade a lie at its own API base.
-            const ids = groups.get(hash) ?? [];
-            const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
-            perNodeVerdict.set(nid, verdict);
-            for (const otherId of ids) {
-              if (otherId === nid) continue;
-              const otherRoute = baseById.get(otherId)?.route ?? 'mesh';
-              this.applyEvent({ ...tipEv, id: otherId }, otherRoute);
-              pendingBehindBy.set(otherId, n.behind);
-              perNodeVerdict.set(otherId, verdict);
-            }
             // MESH_INTERFACE → The client's node list → "A check" —
             // a verified proof whose hash is not the winner's is a
             // lost tip the client keeps the verdict of, so the next
-            // check needs no proof while the chain stands.
+            // check needs no proof while the chain stands. A lost
+            // tip's event and distance come from the final pass over
+            // the chain, which places the hash and writes `behind`
+            // with `behindBy` null when the hash lies off the chain;
+            // the stored record carries that placement forward.
             if (n.behind !== 0) {
-              this.keptVerdicts.set(hash, { event: tipEv, behind: n.behind });
+              const lostEv: TipEvent = { id: nid, ev: 'behind' };
+              this.keptVerdicts.set(hash, { event: lostEv, behind: null });
             }
           }
         }
@@ -2189,6 +2169,46 @@ class MeshClientImpl implements MeshClient {
             }
           }
         }
+      }
+    }
+
+    // MESH_INTERFACE → The client's node list → "A node is judged
+    // against the chain the check leaves" — one pass after the
+    // settle, over every tip the check read: the node's event,
+    // distance and agreement verdict are read against the client's
+    // chain as it stands here, so no earlier pass's winner-relative
+    // value survives into the end of the check. A hash the chain
+    // holds reads its placement's event and distance; one off it
+    // reads `behind` with `behindBy` null and `off` in the
+    // agreement. A lie and a failure land as they were read: an
+    // entry already `blacklisted` or `retry` keeps that status and
+    // its event. A tip answered with no hash was placed by phase 3b
+    // with the `behind` event and no agreement verdict.
+    for (const read of tipReads) {
+      if (read.hash === null) continue;
+      const entry = this.nodeList.entry(read.id);
+      if (entry && (entry.status === 'blacklisted' || entry.status === 'retry')) continue;
+      const base = baseById.get(read.id);
+      if (base === undefined) continue;
+      const placement = this.chain.place(read.hash, read.height);
+      const chainTipNow = this.chain.tip();
+      if (placement === 'tip') {
+        this.applyEvent({ id: read.id, ev: 'success' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 0);
+      } else if (placement === 'one-below') {
+        this.applyEvent({ id: read.id, ev: 'trailing' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 1);
+      } else if (placement === 'below') {
+        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+      } else {
+        // 'above', 'under' or 'unplaced': the tip lies off the chain.
+        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'off');
+        pendingBehindBy.set(read.id, null);
       }
     }
 
