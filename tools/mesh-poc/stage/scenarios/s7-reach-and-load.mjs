@@ -970,6 +970,40 @@ export async function run(ctx) {
           const sampleTipHash = sample.tip?.hash ?? null;
           const sampleTipHeight = sample.tip?.height ?? null;
           const sampleChecks = sample.checks;
+          // MESH_INTERFACE → Discovery → "Your node takes precedence"
+          // — lan1's entry at the sample: the check past the click
+          // settles the chain to lan1's, and lan1 names the client's
+          // tip (status ok, behindBy 0). Read it off the sampled
+          // state before the next check runs.
+          let lan1StatusAfter = null;
+          let lan1BehindByAfter = null;
+          if (Array.isArray(sample.nodes)) {
+            for (const n of sample.nodes) {
+              if (n && n.notisId === LAN1) {
+                lan1StatusAfter = typeof n.status === 'string' ? n.status : null;
+                lan1BehindByAfter = typeof n.behindBy === 'number' ? n.behindBy : null;
+                break;
+              }
+            }
+          }
+          // MESH_INTERFACE → The client's node list → "A routed read
+          // goes to a node its need allows" — a routed tip read on
+          // the page after the sample; lan1 serves it first among
+          // the nodes the need allows while it takes precedence.
+          let tipReadNodeAfter = null;
+          let tipReadErrorAfter = null;
+          const meshClient = globalThis.__meshClient;
+          if (meshClient && typeof meshClient.read === 'function') {
+            try {
+              const { response, nodeId } = await meshClient.read('/blocks/current', 'tip');
+              try { await response.arrayBuffer(); } catch { /* body drain */ }
+              tipReadNodeAfter = typeof nodeId === 'string' ? nodeId : null;
+            } catch (e) {
+              tipReadErrorAfter = e && typeof e.message === 'string' ? e.message : String(e);
+            }
+          } else {
+            tipReadErrorAfter = 'globalThis.__meshClient unbound';
+          }
           // Wait for one more completed check and confirm no new
           // disagreement rose (the fork is in answeredForks, so the
           // same branch growing does not ask again).
@@ -988,6 +1022,10 @@ export async function run(ctx) {
                 disagreementAfterNext: s.disagreement !== null,
                 tipAfterNext: s.tip?.hash ?? null,
                 disagreementWhichD: whichAtRaise,
+                lan1StatusAfter,
+                lan1BehindByAfter,
+                tipReadNodeAfter,
+                tipReadErrorAfter,
                 lastSeen: summarize(s),
               });
             }
@@ -1018,6 +1056,18 @@ export async function run(ctx) {
           checksAtSample: typeof phaseDObj.checksAtSample === 'number' ? phaseDObj.checksAtSample : null,
           sampledTipHeight: typeof phaseDObj.tipHeight === 'number' ? phaseDObj.tipHeight : null,
           sampledTipHash: typeof phaseDObj.tipHash === 'string' ? phaseDObj.tipHash : null,
+          // MESH_INTERFACE → Discovery → "Your node takes precedence"
+          // — lan1's status and `behindBy` at the sample, and the
+          // node the routed tip read made on the page after the
+          // sample went to. `tipReadErrorAfter` names the throw
+          // when `tipReadNodeAfter` is null. `lan1NotisId` rides
+          // the measurement so the verdict reads the raw read answer
+          // beside the id it is held to.
+          lan1StatusAfter: typeof phaseDObj.lan1StatusAfter === 'string' ? phaseDObj.lan1StatusAfter : null,
+          lan1BehindByAfter: typeof phaseDObj.lan1BehindByAfter === 'number' ? phaseDObj.lan1BehindByAfter : null,
+          tipReadNodeAfter: typeof phaseDObj.tipReadNodeAfter === 'string' ? phaseDObj.tipReadNodeAfter : null,
+          tipReadErrorAfter: typeof phaseDObj.tipReadErrorAfter === 'string' ? phaseDObj.tipReadErrorAfter : null,
+          lan1NotisId,
         };
 
         const lastSeenC = phaseCObj.lastSeen ?? null;

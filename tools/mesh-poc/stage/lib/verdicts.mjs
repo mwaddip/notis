@@ -620,6 +620,16 @@ export function verdictS7Question(m) {
   if (cont.checksAtSample <= cont.checksAtClick) return 'FAIL';
   if (typeof cont.sampledTipHeight !== 'number') return 'FAIL';
   if (typeof cont.sampledTipHash !== 'string') return 'FAIL';
+  // MESH_INTERFACE → Discovery → "Your node takes precedence" —
+  // "its chain is the client's chain, and a routed read goes to it
+  // first among the nodes the read's need allows". After *continue*
+  // lan1 names the client's tip: its entry reads `ok`, and a routed
+  // tip read on the page picks it over every other node. The
+  // measurement carries `lan1NotisId` so the raw read answer lands
+  // in the measurement beside the id it is held to.
+  if (cont.lan1StatusAfter !== 'ok') return 'FAIL';
+  if (typeof cont.tipReadNodeAfter !== 'string') return 'FAIL';
+  if (cont.tipReadNodeAfter !== cont.lan1NotisId) return 'FAIL';
   return 'PASS';
 }
 

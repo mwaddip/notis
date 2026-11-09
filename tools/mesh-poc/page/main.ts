@@ -259,6 +259,13 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
 
   attachHandForm({ root: opts.root, client });
 
+  // MESH_INTERFACE → The client's node list → "A routed read goes to
+  // a node its need allows" — the stage's IIFE drives a routed tip
+  // read on the page from the running client to measure where the
+  // pick lands; the page exposes the client on `globalThis` for the
+  // stage alone, no production page does.
+  (globalThis as unknown as { __meshClient?: MeshClient }).__meshClient = client;
+
   // MESH_INTERFACE → Acceptance — the one query parameter the page honours:
   // `?probe=<path>` reads `<path>` through the client's own fetch after the
   // first state with a non-null `nodeId`, and writes `<pre id="probe">`.
