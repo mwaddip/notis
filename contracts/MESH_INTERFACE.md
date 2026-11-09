@@ -322,9 +322,6 @@ any tip read is placed: at the tip, one below, further down, or above and filled
 node's speed. A re-read that fails is a failure as any read's is. A re-read that names a tip no placement holds is left
 to the next check, the node keeping its first read's placement. A check that does not move the tip reads no tip twice.
 
-> ⚠ **AHEAD OF CODE (2026-11-09).** `@dagsocial/web`'s mesh client places each tip read once, against the chain as the
-check leaves it: a node that named a tip the same check's proof or fill ran past reads `trailing` or `behind`.
-
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
