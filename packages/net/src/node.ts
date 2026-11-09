@@ -1107,7 +1107,9 @@ export class NetNode {
         const conn = evt.detail;
         const peerId = conn?.remotePeer?.toString() ?? 'unknown';
         const direction = conn?.direction ?? '?';
-        console.log(`[net] connection:open peer=${peerId} dir=${direction}`);
+        const connId = conn?.id ?? '?';
+        const remoteAddr = conn?.remoteAddr?.toString() ?? '?';
+        console.log(`[net] connection:open id=${connId} peer=${peerId} dir=${direction} addr=${remoteAddr}`);
         // NET_INTERFACE → Handshake →
         // "A connection handshakes within its deadline, or is closed":
         // the deadline starts at connection:open, per connection id.
@@ -1175,7 +1177,7 @@ export class NetNode {
             this.handshakeDeadlines.delete(conn.id);
           }
         }
-        console.log(`[net] connection:close peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
+        console.log(`[net] connection:close id=${conn?.id ?? '?'} peer=${peerId} addr=${remoteAddr} dir=${direction} durationMs=${durationMs} opened=${openTs} closed=${closeTs}`);
       });
 
       libp2p.addEventListener('peer:disconnect', (evt: any) => {
@@ -1440,7 +1442,7 @@ export class NetNode {
       // a service-opened connection that never handshakes is audible to
       // the operator.
       const peerId = conn.remotePeer?.toString() ?? 'unknown';
-      console.log(`[net] handshake deadline: closing connection to ${peerId} — handshake did not complete in time`);
+      console.log(`[net] handshake deadline: closing connection id=${conn.id} to ${peerId} — handshake did not complete in time`);
       // The close hangs the connection up. The connection:close event the
       // close raises clears every per-connection fact, so this fires once.
       void conn.close().catch(() => { /* already gone */ });
@@ -1906,7 +1908,7 @@ export class NetNode {
         }
 
         const msg = result.msg;
-        console.log(`[net] inbound handshake from ${peerId}: ok=true height=${msg.chainHeight}`);
+        console.log(`[net] inbound handshake from ${peerId} on id=${connId}: ok=true height=${msg.chainHeight}`);
 
         // NET_INTERFACE → Handshake → "A peer becomes Active once": a
         // handshake that completes for a peer already Active is answered
@@ -2342,7 +2344,7 @@ export class NetNode {
       );
       return result;
     }
-    console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
+    console.log(`[net] outbound handshake with ${peerId} on id=${conn.id}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
     return result;
   }
 
