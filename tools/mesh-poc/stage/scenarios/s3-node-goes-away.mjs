@@ -25,18 +25,21 @@
 //   3. apply the firewall rules in pub1's namespace (`s3_fw`) that
 //      drop UDP/TCP to pub1's mesh listener ports; poll same as step 1.
 //   4. remove `s3_fw`; wait same as step 2.
-//   5. the known-nodes reach. Two sessions on the same browser profile:
-//      session 1 (`?clearMemory=1`) reaches first contact, then the
-//      page polls `localStorage['notis.mesh.memory.<network>']` until
-//      the record's `nodes` list carries at least one honest host
-//      that is not a first-contact node (priv1 / priv2 are the ones
-//      the browser discovers through the relay). An nft table in the
-//      browser namespace (`s3_known`) drops every first-contact
-//      address. Session 2 (no clear) reaches a remembered node — the
-//      client takes memory's `seeds` at start, dials them, and reads
-//      its chain from them. The measurement names the remembered
-//      honest ids from session 1, the remembered entries in session
-//      2, the first-contact entries, the tip, and `notContinued`.
+//   5. the known-nodes reach. Two sessions on the same browser
+//      profile, over a config variant whose `firstContact` holds pub1
+//      ALONE — pub2 is a public mesh host the client discovers through
+//      the DHT via pub1, and `onChecked` writes it to memory as a
+//      known (non-first-contact) node. Session 1 (`?clearMemory=1`)
+//      reaches pub1, then the page polls
+//      `localStorage['notis.mesh.memory.<network>']` until the
+//      record's `nodes` list carries at least one honest host that is
+//      not a first-contact node. An nft table in the browser
+//      namespace (`s3_known`) drops pub1's address alone — the one
+//      first-contact entry. Session 2 (no clear) reaches the remembered
+//      node — the client takes memory's `seeds` at start, dials them,
+//      and reads its chain from them. The measurement names the
+//      remembered honest ids from session 1, the remembered entries
+//      in session 2, pub1's entry, the tip, and `notContinued`.
 //
 // Faults are applied inside `run(ctx)` one at a time between the
 // measurements, not up front. The dry-run still records every fault so
@@ -46,7 +49,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS3Moved, verdictS3Recovered, verdictS3KnownNodes } from '../lib/verdicts.mjs';
-import { writeStageDefault } from '../lib/scenario-config.mjs';
+import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mjs';
 import {
   execIn, findPid, nftApply,
   restartFromEntry, sigterm,
@@ -321,31 +324,50 @@ export async function run(ctx) {
     //        every first-contact entry's status.
     const browserBlockApplied = { on: false };
     await rec.step(describe()[4], async () => {
-      // Read the stage default fresh — `writeStageDefault` ran at
-      // the scenario's start, so this holds pub1 + pub2 as
-      // firstContact. Each first-contact entry carries a notisId;
-      // the topology name + address come from identities.json's
-      // row matching that id.
+      // Read the stage default fresh — the scenario's start wrote it,
+      // and the step builds its own variant from the same bytes-for-
+      // bytes copy. The default's `firstContact` holds pub1 + pub2 as
+      // the browser's two first-contact entries; the step's variant
+      // keeps only pub1 as first contact, so pub2 is a public mesh
+      // host the browser discovers through the DHT and `onChecked`
+      // writes to memory as a known (non-first-contact) node. A
+      // session 2 then blocks pub1's address alone and the client
+      // reaches the network through pub2.
       const defaultConfig = JSON.parse(readFileSync(
         join(ctx.outDir, 'browser', 'config.default.json'),
         'utf8',
       ));
       const network = defaultConfig.network;
-      const firstContactIds = (defaultConfig.firstContact ?? [])
-        .map((e) => e && typeof e.notisId === 'string' ? e.notisId : null)
-        .filter((id) => id !== null);
-      if (firstContactIds.length === 0) {
-        throw new Error('s3 step 5: config.default.json has no firstContact entries');
+      const defaultFirstContact = Array.isArray(defaultConfig.firstContact)
+        ? defaultConfig.firstContact : [];
+      if (defaultFirstContact.length < 2) {
+        throw new Error('s3 step 5: config.default.json needs at least two firstContact entries (pub1 + pub2)');
       }
-      const firstContactAddrs = firstContactIds.map((id) => {
-        for (const [name, h] of Object.entries(ctx.topology.hosts)) {
-          if (identities[name]?.notisId === id && typeof h.addr === 'string') return h.addr;
-        }
-        return null;
-      }).filter((a) => typeof a === 'string');
-      if (firstContactAddrs.length === 0) {
-        throw new Error('s3 step 5: no topology address found for any first-contact id');
+      // `firstContactIds` is the step's set — pub1 alone. The variant
+      // writes just pub1 into `firstContact`; pub2 reaches the client
+      // through DHT discovery via pub1.
+      const pub1Id = identities?.pub1?.notisId;
+      if (typeof pub1Id !== 'string') {
+        throw new Error('s3 step 5: identities.json has no pub1 row');
       }
+      const pub1Entry = defaultFirstContact.find((e) => e && e.notisId === pub1Id);
+      if (!pub1Entry) {
+        throw new Error('s3 step 5: pub1 is not in config.default.json firstContact');
+      }
+      const firstContactIds = [pub1Id];
+      const pub1Addr = ctx.topology.hosts.pub1?.addr;
+      if (typeof pub1Addr !== 'string') {
+        throw new Error('s3 step 5: topology has no pub1 address');
+      }
+      // The browser's reach to the fork pair goes through pub1's
+      // address alone; session 2 blocks that address alone.
+      const firstContactAddrs = [pub1Addr];
+      // The honest non-first-contact set holds every mesh-running host
+      // that is NOT pub1. pub2 is the public mesh node the client
+      // reaches through DHT discovery; priv1 and priv2 run mesh too,
+      // and either is a valid remembered node. (The stage's step 5 was
+      // seeing an empty set only because the default `firstContact`
+      // held every public host.)
       const honestNonFirstContactIds = [];
       for (const [name, h] of Object.entries(ctx.topology.hosts)) {
         if (h.role !== 'public' && h.role !== 'private') continue;
@@ -360,12 +382,16 @@ export async function run(ctx) {
         throw new Error('s3 step 5: topology has no honest non-first-contact mesh host');
       }
 
-      // ----- (i) first session on the honest nodes -----
-      // The page polls both `#state` and `localStorage` through one
-      // IIFE until memory names a remembered honest node. `cdpPoll`
-      // keeps one page open across polls; the IIFE returns a JSON
-      // string the test reads with ONE JSON.parse.
-      writeStageDefault(ctx.outDir);
+      // ----- (i) first session on pub1 alone -----
+      // The variant lands via `writeConfigVariant`; the page fetches
+      // the new file at its next load. `clearMemory=1` on session 1
+      // removes a prior scenario's record.
+      const pub1OnlyVariant = {
+        network: defaultConfig.network,
+        firstContact: [pub1Entry],
+        seeds: [],
+      };
+      writeConfigVariant(ctx.outDir, pub1OnlyVariant);
       const session1Text = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         `(function () {
            const el = document.getElementById('state');
