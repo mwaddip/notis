@@ -13,6 +13,8 @@ import type { WriteClient, LikeSubmitResult, PostSubmitResult, SendSubmitResult 
 import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent, CreditsResult } from '../src/api/dto';
 import type { Anchor } from '@dagsocial/nipopow-client';
 import type { TipVerdict } from '../src/model/tip-verdict';
+import { meshVerdict } from '../src/model/mesh-verdict';
+import type { ClientState } from '../src/mesh/mesh-client';
 
 // WEB_INTERFACE → The wallet → "A write no node answers waits", → "Waiting
 // writes go out at the first answer", → "A refusal ends what it strands",
@@ -991,6 +993,39 @@ describe('the send pass does not run while your-node stands, and runs at the fir
     await h.drive.cornerTick();
     await flush();
     expect(h.postPosts()).toBe(1);
+  });
+});
+
+describe('a waitable write is held while the question stands before any chain is seated', () => {
+  it.fails('a waitable write is held while the question stands before any chain is seated', async () => {
+    const h = harness({ rememberChain: CHAIN });
+    primeBases(h);
+    await flush();
+    const state: ClientState = {
+      nodeId: null, transport: null, path: null, lastLeft: null, tip: null,
+      agreement: { onChain: 0, offChain: 0 }, checks: 1,
+      traffic: { tipBytes: 0, proofBytes: 0, headerBytes: 0, gossipBytes: 0, proofReads: 0, forwarded: 0 },
+      nodes: [], seated: false,
+      proofs: { asked: 2, verified: 0, invalid: 0, tooShort: 0 },
+      anchor: null, chain: null, notContinued: false,
+      disagreement: {
+        which: 'memory',
+        yours: { height: 100, hash: 'bb'.repeat(32) },
+        other: null,
+        fork: 'cc'.repeat(32),
+      },
+    };
+    const run = h.tipRuns[h.tipRuns.length - 1]!;
+    run.resolve({ verdict: meshVerdict(state), anchor: null, chain: null });
+    await flush();
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'a thread');
+    await flush();
+    expect(h.postPosts()).toBe(0);
+    const subs = h.drive.state.submissions;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.stage).toBe('waiting');
+    expect(h.drive.ledger.all()[0]!.waiting).toBe(true);
   });
 });
 

@@ -149,6 +149,39 @@ describe('meshVerdict — the rows of the table', () => {
     });
   });
 
+  it.fails('a question standing before any chain is seated reads refused your-node, naming which', () => {
+    for (const proofs of [
+      null,
+      { asked: 2, verified: 0, invalid: 0, tooShort: 0 },
+      { asked: 2, verified: 0, invalid: 1, tooShort: 0 },
+      { asked: 2, verified: 0, invalid: 0, tooShort: 2 },
+    ] as Array<ClientState['proofs']>) {
+      const s = stateOf({
+        seated: false,
+        agreement: agreement(0, 0),
+        proofs,
+        disagreement: DISAGREEMENT_HEAVIER,
+        tipHeight: null,
+      });
+      expect(meshVerdict(s)).toEqual({
+        kind: 'refused',
+        reason: 'your-node',
+        which: 'heavier',
+        height: null,
+      });
+    }
+  });
+
+  it('before the first check ends, a standing question still reads thin no-proof', () => {
+    const s = stateOf({
+      seated: false,
+      agreement: null,
+      disagreement: DISAGREEMENT_MEMORY,
+      tipHeight: null,
+    });
+    expect(meshVerdict(s)).toEqual({ kind: 'thin', reason: 'no-proof', height: null });
+  });
+
   it('row 5: seated, no disagreement and notContinued → thin not-continued', () => {
     const s = stateOf({
       seated: true,

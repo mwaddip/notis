@@ -11,6 +11,8 @@ import type { HandNodeSeam } from '../src/view/settings';
 import type { BlockHeader } from '@dagsocial/types';
 import { karmaResult } from './karma-fixture';
 import { setNode } from '../src/prefs';
+import { meshVerdict } from '../src/model/mesh-verdict';
+import type { ClientState } from '../src/mesh/mesh-client';
 
 // WEB_INTERFACE → The settings window — the node row holds the reader's
 // question while the verdict reads `refused` · *your-node*. The status
@@ -228,6 +230,51 @@ describe('under your-node', () => {
     const laterRows = [...body.querySelectorAll<HTMLElement>('.row')]
       .filter((r) => r.querySelector('label')?.textContent !== 'node');
     for (const r of laterRows) expect(panes.contains(r)).toBe(true);
+  });
+});
+
+// A client state with a question standing and no chain seated: the first check
+// has ended, the reader has not answered (MESH_INTERFACE → Discovery → "A
+// disagreement is the reader's question, never the client's choice").
+const unseatedWithQuestion = (): ClientState => ({
+  nodeId: null,
+  transport: null,
+  path: null,
+  lastLeft: null,
+  tip: null,
+  agreement: { onChain: 0, offChain: 0 },
+  checks: 1,
+  traffic: { tipBytes: 0, proofBytes: 0, headerBytes: 0, gossipBytes: 0, proofReads: 0, forwarded: 0 },
+  nodes: [],
+  seated: false,
+  proofs: { asked: 2, verified: 0, invalid: 0, tooShort: 0 },
+  anchor: null,
+  chain: null,
+  notContinued: false,
+  disagreement: {
+    which: 'memory',
+    yours: { height: 100, hash: 'bb'.repeat(32) },
+    other: null,
+    fork: 'cc'.repeat(32),
+  },
+});
+
+describe('a question standing before any chain is seated', () => {
+  it.fails("the extension's settings row shows the question while no chain is seated", async () => {
+    const h = harness();
+    await flush();
+    const run = h.tipRuns[h.tipRuns.length - 1]!;
+    run.resolve({ verdict: meshVerdict(unseatedWithQuestion()), anchor: null, chain: null });
+    await flush();
+    h.drive.cornerEl!.click();
+    await flush();
+    const body = h.panes.querySelector<HTMLElement>('.winbody')!;
+    const nodeRow = [...body.querySelectorAll<HTMLElement>('.row')]
+      .find((r) => r.querySelector('label')?.textContent === 'node')!;
+    expect(nodeRow.querySelector('.question')).not.toBeNull();
+    const labels = [...nodeRow.querySelectorAll<HTMLButtonElement>('button.word')].map((w) => w.textContent);
+    expect(labels).toContain('continue on this node');
+    expect(labels).toContain('disable it');
   });
 });
 
