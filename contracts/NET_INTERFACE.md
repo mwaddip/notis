@@ -321,7 +321,9 @@ and otherwise leaves the connection to its deadline.
 
 **Every connection this node dialled carries its handshake, whoever within the node dialled it.** libp2p opens
 outbound connections on the node's behalf outside the dial funnel — a private node's relay reservation, a DHT query,
-AutoNAT's dial-back (→ The mesh). Each is an outbound connection like the funnel's: the node opens its handshake on it
+AutoNAT's dial-back (→ The mesh), and at libp2p's own start its redial of every stored peer it keeps alive, the mesh's
+DHT keeping its closest peers so (→ Node Lifecycle → "Every connection libp2p opens reaches net's hooks"). Each is an
+outbound connection like the funnel's: the node opens its handshake on it
 as it opens, once — the funnel's own and this one are the same handshake, never two — and it lives or ends by the rules
 above and below. A connection none handshakes is closed at its deadline, and a relay reservation riding it is lost with
 it. Whichever reaches a connection first — the funnel, or the connection's open — runs its handshake, and the other
@@ -1658,7 +1660,7 @@ first hop.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
+| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **Every connection libp2p opens reaches net's hooks**: libp2p is created stopped, and net's connection and peer listeners, both stream protocols and everything they reach are in place before it starts — libp2p dials on its own as it starts (→ Handshake → "Every connection this node dialled carries its handshake, whoever within the node dialled it"), and such a connection opens its handshake, and its peer is tracked from that first connection, as for any other. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
 | `stop()` | `() => Promise<void>` | Graceful shutdown. **A stopped node starts again whole**: the next `start()` registers both protocols on the libp2p node it creates |
 | `peerId()` | `() => string` | This node's libp2p peer ID — the node key's (→ The node key) |
 | `loadNodeKey(path)` | `(string) => Promise<KeyPair>` | Read the node key file at `path`, or write a fresh key there; `NodeKeyError` on a file it refuses (→ The node key) |
@@ -1670,6 +1672,11 @@ first hop.
 | `onMeshAddresses(cb)` | `((MeshIdentity) => void) => void` | Each change of the announced set (→ The mesh) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
 | `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The scheduler's phase (Sync State Machine → "The phases"): `'idle'` before the first claim this node settles — before `start()`, after `stop()`, and on a node that has met no peer; `'syncing'` while a header sync or a block request is open or the best chain is not fully applied; `'synced'` once the best chain is fully applied and every unmarked Active peer's claim is settled — a co-started mesh enters it at its first settled claims, a miner with followers included. A reader wanting "not behind" tests for `'syncing'` absent |
+
+> ⚠ **AHEAD OF CODE (2026-11-09).** `NetNode.start` attaches its listeners and registers its protocols after
+> `createLibp2p` has started libp2p. A connection libp2p opens in between raises its `connection:open` and its peer's
+> `peer:connect` unheard: no handshake opens on it, so the remote end closes it at its deadline, and its peer is never
+> tracked, so a handshake on another connection to it leaves it out of `getConnectedPeers`.
 
 ### Gossip
 
