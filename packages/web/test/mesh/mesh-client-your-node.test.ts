@@ -345,7 +345,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.tip?.height).toBe(MK + 5);
   }, 90_000);
 
-  it.fails('your node many blocks behind on the same chain, its proof read: no disagreement', async () => {
+  it('your node many blocks behind on the same chain, its proof read: no disagreement', async () => {
     // Kept at MK + 60. Your node serves the same chain at MK — a
     // prefix of the kept, more than K blocks below the window. Phase
     // 3b places y's tip as `under` and phase 3c bails (no node is at
@@ -381,7 +381,7 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(s.tip?.height).toBe(MK + 60);
   }, 90_000);
 
-  it.fails("another node extending your node's chain raises nothing", async () => {
+  it("another node extending your node's chain raises nothing", async () => {
     // Kept = y's chain of MK. Another node o serves the same chain
     // extended to MK + 30. Both continue the kept; o beats y under
     // `compareProofs`, but `forkKey(y, o)` is y's tip — o extends y,

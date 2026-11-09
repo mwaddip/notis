@@ -2005,8 +2005,14 @@ class MeshClientImpl implements MeshClient {
               memoryCase = lostSet.has(yIndex);
             }
             if (memoryCase) {
+              // MESH_INTERFACE → Discovery → "A node added by hand" —
+              // "a node behind on the same chain does not" raise a
+              // disagreement. `forkKey(kept, y)` equals `yTipHash` iff
+              // `y` is a prefix of the kept chain (lca is y's tip) —
+              // y is behind on the same chain, no disagreement. A
+              // fork strictly below y's tip does disagree.
               const fork = forkKey(this.kept!, yProof, this.profile, this.wallClock());
-              if (fork !== null && !this.answeredForks.includes(fork)) {
+              if (fork !== null && fork !== yTipHash && !this.answeredForks.includes(fork)) {
                 raisedThisCheck = {
                   which: 'memory',
                   yours: { height: yTip.height, hash: yTipHash },
@@ -2050,7 +2056,13 @@ class MeshClientImpl implements MeshClient {
                   if (cmp.verdict === 'b') best = c;
                 }
                 const fork = forkKey(yProof, best.proof, this.profile, this.wallClock());
-                if (fork !== null) {
+                // MESH_INTERFACE → Discovery → "A node added by hand"
+                // — heavier needs the other node's tip off y's chain:
+                // `forkKey(y, o)` strictly below y's tip. Where it is
+                // y's tip (o extends y), nothing is raised and o's
+                // result is no evidence against y — the ordinary
+                // settle advances the chain to o's.
+                if (fork !== null && fork !== yTipHash) {
                   if (this.answeredForks.includes(fork)) {
                     // Answered fork: place o off, settle to y's chain.
                     const o = result.nodes[best.index]!;
