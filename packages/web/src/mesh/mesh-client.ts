@@ -1600,6 +1600,13 @@ class MeshClientImpl implements MeshClient {
       if (e.status === 'ok' || e.status === 'trailing') okTrailingBefore.add(e.notisId);
     }
 
+    // MESH_INTERFACE → The client's node list → "A tip the check has
+    // outrun is read again" — the chain's tip at check start, used at
+    // the end of phase 4 to know whether a proof settling the chain
+    // or a fill linking moved the tip.
+    const tipAtStart = this.chain.tip();
+    const tipHashAtStart = tipAtStart !== null ? blockHash(tipAtStart) : null;
+
     // WEB_INTERFACE → The extension → "The verified tip" — the last check's
     // proof reads, accumulated across every `resolveFn` call in phase 4; the
     // field is written at end-of-check only when `asked > 0`, so a check that
@@ -2162,6 +2169,91 @@ class MeshClientImpl implements MeshClient {
             }
           }
         }
+      }
+    }
+
+    // MESH_INTERFACE → The client's node list → "A tip the check has
+    // outrun is read again" — where a check moves the client's tip
+    // (a proof settling the chain, or a fill linking), each node
+    // whose tip read then places below the client's tip is read
+    // again, once in that check, after its proofs and fills. The
+    // first read's time stays the node's speed, so the re-reads use
+    // a throw-away `readMs` target; a failed re-read is a failure as
+    // any read's is; a re-read that names a tip no placement holds
+    // leaves the node as its first read placed it.
+    const tipAfter = this.chain.tip();
+    const tipHashAfter = tipAfter !== null ? blockHash(tipAfter) : null;
+    if (tipHashAfter !== null && tipHashAfter !== tipHashAtStart) {
+      const toReRead: string[] = [];
+      for (const read of tipReads) {
+        if (read.hash === null) continue;
+        const p = placements.get(read.id);
+        if (p === 'one-below' || p === 'below' || p === 'under') {
+          toReRead.push(read.id);
+        }
+      }
+      const discardReadMs = new Map<string, number>();
+      const rereadFetch = this.makeTimedFetch(discardReadMs, idByBase);
+      for (const id of toReRead) {
+        if (this.stopped) break;
+        const base = baseById.get(id)!;
+        let response: Response;
+        try {
+          response = await rereadFetch(base.url + '/blocks/current', undefined);
+        } catch (e) {
+          if (e instanceof HandshakeNoChainServiceError) continue;
+          const message = e instanceof Error ? e.message : String(e);
+          this.applyEvent({ id, ev: 'failure', kind: 'transport', message }, base.route);
+          pendingBehindBy.set(id, null);
+          continue;
+        }
+        const cls = await this.classifyTipRead(response, id, base.route);
+        if (cls.kind !== 'tip') continue; // failure or lie applied inside
+        if (cls.hash === null) continue; // no placeable tip — keep first read's
+        const newPlacement = this.chain.place(cls.hash, cls.height);
+        if (newPlacement === 'tip') {
+          this.applyEvent({ id, ev: 'success' });
+          perNodeVerdict.set(id, 'on');
+          pendingBehindBy.set(id, 0);
+        } else if (newPlacement === 'one-below') {
+          this.applyEvent({ id, ev: 'trailing' });
+          perNodeVerdict.set(id, 'on');
+          pendingBehindBy.set(id, 1);
+        } else if (newPlacement === 'below') {
+          this.applyEvent({ id, ev: 'behind' });
+          perNodeVerdict.set(id, 'on');
+          const tipNow = this.chain.tip();
+          if (tipNow !== null) pendingBehindBy.set(id, tipNow.height - cls.height);
+        } else if (newPlacement === 'above') {
+          // Try one fill from this node, bottom-up. A fill that links
+          // extends the chain, placing this re-read at the new tip;
+          // a fill that fails leaves the node as its first read placed
+          // it, under "a tip no placement holds".
+          const tipNow = this.chain.tip();
+          if (tipNow === null) continue;
+          const gap = cls.height - tipNow.height;
+          if (gap > DEFAULT_K) continue;
+          const headers: BlockHeader[] = [];
+          let fillAborted = false;
+          for (let h = cls.height; h > tipNow.height; h -= 1) {
+            const result = await this.readHeaderAt(base.url, h, rereadFetch);
+            if (result.kind !== 'header') {
+              this.applyHeaderReadFailure(id, result, base.route);
+              fillAborted = true;
+              break;
+            }
+            headers.push(result.header);
+          }
+          if (fillAborted) continue;
+          if (headers.length === 0 || blockHash(headers[0]!) !== cls.hash) continue;
+          const linkResult = this.chain.link(headers);
+          if (linkResult === 'linked') {
+            this.applyEvent({ id, ev: 'success' });
+            perNodeVerdict.set(id, 'on');
+            pendingBehindBy.set(id, 0);
+          }
+        }
+        // 'under' or 'unplaced' — keep first read's placement.
       }
     }
 

@@ -277,9 +277,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
   });
 
-  // Without the re-read, A's placement after settle is `below` gap 2:
-  //   AssertionError: expected 'behind' to be 'ok'
-  it.fails('a first check whose proof runs two blocks past the tips read places both nodes at the tip', async () => {
+  it('a first check whose proof runs two blocks past the tips read places both nodes at the tip', async () => {
     // Two nodes, both naming tip MK at their first `/blocks/current`;
     // the resolve answers a proof of MK + 2 for each (their chains ran
     // on between the tip read and the proof read). The chain settles
@@ -330,10 +328,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(picked === aBase || picked === bBase).toBe(true);
   }, 90_000);
 
-  // Without the re-read, A stays `below` even though its chain has moved
-  // past:
-  //   AssertionError: expected 'behind' to be 'ok'
-  it.fails('a node still two below at its re-read stays behind', async () => {
+  it('a node still two below at its re-read stays behind', async () => {
     // A sees MK + 2 at its re-read; B still names MK. B lands `behind`
     // with `behindBy` 2.
     const h = harness();
@@ -377,10 +372,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(eB.behindBy).toBe(2);
   }, 90_000);
 
-  // Without the re-read, A stays `trailing` after the fill moves the tip
-  // past A's first read:
-  //   AssertionError: expected 'trailing' to be 'ok'
-  it.fails('a fill that moves the tip re-reads the node read at the old tip', async () => {
+  it('a fill that moves the tip re-reads the node read at the old tip', async () => {
     // Memory seats the chain at MK. Node A names MK; node B names
     // MK + 1 and serves the header at MK + 1. Phase 3a fills to
     // MK + 1 — the tip moves by a fill, with no proof read of its
@@ -471,9 +463,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(Math.min(cA, cB)).toBe(1);
   }, 90_000);
 
-  // Without the re-read A is never read a second time:
-  //   AssertionError: expected 1 to be 2
-  it.fails('a re-read is made once per node per check', async () => {
+  it('a re-read is made once per node per check', async () => {
     // One node names MK at the first `/blocks/current`; the resolve
     // answers a proof of MK + 2. The chain settles to MK + 2; the
     // node is placed `below` gap 2 and re-reads to MK + 5 (above
@@ -503,7 +493,14 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     clients.push(client);
 
     await client.check();
-    expect(h.counts.get(aBase)!.current.length).toBe(2);
+    // A: one call in phase 2, one in the re-read, and one more if
+    // the end-of-check routed tip read picked A.
+    const cA = h.counts.get(aBase)!.current.length;
+    expect(cA).toBeGreaterThanOrEqual(2);
+    expect(cA).toBeLessThanOrEqual(3);
+    // The re-read's fill ran once — three headers at MK + 3, MK + 4,
+    // MK + 5. A second re-read would make it six.
+    expect(h.counts.get(aBase)!.headers.length).toBe(3);
     const s = client.state();
     expect(s.tip?.height).toBe(MK + 5);
     const eA = s.nodes.find((n) => n.notisId === aId)!;
@@ -511,9 +508,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(eA.behindBy).toBe(0);
   }, 90_000);
 
-  // Without the re-read B stays `behind` rather than moving to `retry`:
-  //   AssertionError: expected 'behind' to be 'ok'   (and B stays `behind`)
-  it.fails('a failed re-read is a failure', async () => {
+  it('a failed re-read is a failure', async () => {
     // Two nodes name MK at the first `/blocks/current`; the resolve
     // answers a proof of MK + 2 for each. The chain settles to MK + 2
     // and both tips place `below` gap 2. The re-read of B throws a
@@ -559,9 +554,7 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(eB.status).toBe('retry');
   }, 90_000);
 
-  // Without the re-read A stays `behind` rather than moving to `ok`:
-  //   AssertionError: expected 'behind' to be 'ok'
-  it.fails("a re-read naming a tip no placement holds keeps the first read's placement", async () => {
+  it("a re-read naming a tip no placement holds keeps the first read's placement", async () => {
     // Two nodes name MK; the resolve answers proofs of MK + 2. The
     // chain settles to MK + 2 and both tips place `below` gap 2. A's
     // re-read answers MK + 2 — A places at the tip. B's re-read
@@ -612,9 +605,9 @@ describe('mesh-client — a tip the check has outrun is read again', () => {
     expect(eB.status).toBe('behind');
     expect(eB.behindBy).toBe(2);
     // The proofs count after the check reflects the first-pass proof
-    // reads only — one per distinct hash (MK), not a second read of
-    // the fabricated tip.
-    expect(s.proofs!.asked - proofsBefore).toBe(2);
+    // reads only — one for the single distinct hash (MK) across both
+    // nodes, not a second read of the fabricated tip.
+    expect(s.proofs!.asked - proofsBefore).toBe(1);
   }, 90_000);
 
   it("the first read's time stays the node's speed", async () => {
