@@ -1325,7 +1325,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(mEntry!.status).not.toBe('behind');
   }, 120_000);
 
-  it.fails("a node further down the chain than the held headers, matched by the chain's own header, counts on the chain", async () => {
+  it("a node further down the chain than the held headers, matched by the chain's own header, counts on the chain", async () => {
     // Kept = Y's chain of MK. W reports tip at height 5 with Y's
     // chain's hash at that height. Phase 3b places W 'under' (5 is
     // below the window's lowest held height, M + 1). Phase 3c reads

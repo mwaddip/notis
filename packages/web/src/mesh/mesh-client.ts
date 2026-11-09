@@ -722,14 +722,14 @@ class MeshClientImpl implements MeshClient {
   private behindByMap: Map<string, number | null> = new Map();
   /**
    * MESH_INTERFACE → The client's node list → "A tip whose proof
-   * verified and lost keeps its verdict" — per tip hash, the event
-   * `tipEvent` answered and its `behind` from a proof that verified
-   * and lost. A node naming the hash again at the next check takes
-   * that verdict with no proof read; cleared when `chain.settle`
-   * moves to a new winner, and a hash leaves when no node named it
-   * at a check.
+   * verified and lost keeps its verdict" — the set of tip hashes
+   * whose proofs verified and lost. A node naming the hash again
+   * at the next check gates the proof read (the pass over the
+   * final chain writes its event, distance and agreement verdict);
+   * cleared when `chain.settle` moves to a new winner, and a hash
+   * leaves when no node named it at a check.
    */
-  private readonly keptVerdicts: Map<string, { event: TipEvent; behind: number | null }> = new Map();
+  private readonly keptVerdicts: Set<string> = new Set();
   private readonly chain: HeldChain;
   /**
    * MESH_INTERFACE → What the client remembers — "The kept proof is the
@@ -1753,6 +1753,12 @@ class MeshClientImpl implements MeshClient {
     // (`under` → phase 3c; the rest → phase 4).
     const placements = new Map<string, Placement>();
     const placedAtTip = new Set<string>();
+    // Ids whose `under` placement phase 3c matched against the chain's
+    // own header at that height: on the chain, further down than the
+    // held headers (MESH_INTERFACE → The client's node list → "A
+    // check"). Cleared on a chain switch, since the match was against
+    // the chain the check started on.
+    const underMatched = new Set<string>();
     for (const read of tipReads) {
       if (read.hash === null) {
         this.applyEvent({ id: read.id, ev: 'behind' });
@@ -1798,6 +1804,7 @@ class MeshClientImpl implements MeshClient {
         perNodeVerdict.set(read.id, 'on');
         const chainTipNow = this.chain.tip();
         pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+        underMatched.add(read.id);
       }
     }
 
@@ -1820,14 +1827,12 @@ class MeshClientImpl implements MeshClient {
       // MESH_INTERFACE → The client's node list → "A check" — "A tip
       // whose proof verified and lost keeps its verdict while the
       // client's chain stands: a node naming it again is placed off
-      // the chain with no proof read".
-      const kept = this.keptVerdicts.get(read.hash);
-      if (kept !== undefined) {
-        this.applyEvent({ ...kept.event, id: read.id });
-        pendingBehindBy.set(read.id, kept.behind);
-        perNodeVerdict.set(read.id, 'off');
-        continue;
-      }
+      // the chain with no proof read". The node's own event, distance
+      // and agreement verdict come from the single pass over the
+      // final chain (MESH_INTERFACE → "A node is judged against the
+      // chain the check leaves"); the kept-verdict lookup only gates
+      // the proof read here.
+      if (this.keptVerdicts.has(read.hash)) continue;
       let list = groups.get(read.hash);
       if (list === undefined) { list = []; groups.set(read.hash, list); }
       list.push(read.id);
@@ -1917,14 +1922,12 @@ class MeshClientImpl implements MeshClient {
             // MESH_INTERFACE → The client's node list → "A check" —
             // a verified proof whose hash is not the winner's is a
             // lost tip the client keeps the verdict of, so the next
-            // check needs no proof while the chain stands. A lost
-            // tip's event and distance come from the final pass over
-            // the chain, which places the hash and writes `behind`
-            // with `behindBy` null when the hash lies off the chain;
-            // the stored record carries that placement forward.
+            // check needs no proof while the chain stands. The lost
+            // tip's event and distance come from the pass over the
+            // final chain (MESH_INTERFACE → "A node is judged
+            // against the chain the check leaves").
             if (n.behind !== 0) {
-              const lostEv: TipEvent = { id: nid, ev: 'behind' };
-              this.keptVerdicts.set(hash, { event: lostEv, behind: null });
+              this.keptVerdicts.add(hash);
             }
           }
         }
@@ -1933,12 +1936,15 @@ class MeshClientImpl implements MeshClient {
       // MESH_INTERFACE → What the client remembers — "The kept proof
       // is a contestant in every check that reads proofs": with
       // `this.kept !== null`, `judgeByMemory` picks the lost, the best
-      // and `foreign` over `result.nodes` against the kept. Lost nodes
-      // read `behind` with `off` perNodeVerdict, their hash kept so
-      // the next check reads no proof while the chain stands; the
-      // settle below uses `best`'s proof and tip in place of
-      // `result.winner` / `result.tip`, `best === null` settles
-      // nothing, and `foreign` drops the kept and takes the winner.
+      // and `foreign` over `result.nodes` against the kept. A lost
+      // proof's hash is kept as a lost tip so the next check reads no
+      // proof while the chain stands; the settle below uses `best`'s
+      // proof and tip in place of `result.winner` / `result.tip`,
+      // `best === null` settles nothing, and `foreign` drops the kept
+      // and takes the winner. The lost node's own event, distance and
+      // agreement verdict come from the single pass over the final
+      // chain (MESH_INTERFACE → "A node is judged against the chain
+      // the check leaves").
       let judgedWinner: typeof result.winner = result.winner;
       let judgedTip: typeof result.tip = result.tip;
       if (this.kept !== null) {
@@ -1946,23 +1952,9 @@ class MeshClientImpl implements MeshClient {
         for (const idx of judgment.lost) {
           const n = result.nodes[idx]!;
           if (!n.verified || n.proof === null || n.verifyResult === null || !n.verifyResult.ok) continue;
-          const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
-          const route = baseById.get(nid)?.route ?? 'mesh';
-          const behindEvent: TipEvent = { id: nid, ev: 'behind' };
-          this.applyEvent(behindEvent, route);
-          perNodeVerdict.set(nid, 'off');
-          pendingBehindBy.set(nid, null);
           const hash = blockHash(n.verifyResult.tip);
           if (hash !== null) {
-            this.keptVerdicts.set(hash, { event: behindEvent, behind: null });
-            const ids = groups.get(hash) ?? [];
-            for (const otherId of ids) {
-              if (otherId === nid) continue;
-              const otherRoute = baseById.get(otherId)?.route ?? 'mesh';
-              this.applyEvent({ ...behindEvent, id: otherId }, otherRoute);
-              perNodeVerdict.set(otherId, 'off');
-              pendingBehindBy.set(otherId, null);
-            }
+            this.keptVerdicts.add(hash);
             verifiedHashes.add(hash);
           }
         }
@@ -2071,14 +2063,11 @@ class MeshClientImpl implements MeshClient {
                 // settle advances the chain to o's.
                 if (fork !== null && fork !== yTipHash) {
                   if (this.answeredForks.includes(fork)) {
-                    // Answered fork: place o off, settle to y's chain.
-                    const o = result.nodes[best.index]!;
-                    const oid = idByBase.get(o.url) ?? idOfMeshUrl(o.url);
-                    const oRoute = baseById.get(oid)?.route ?? 'mesh';
-                    const behindEvent: TipEvent = { id: oid, ev: 'behind' };
-                    this.applyEvent(behindEvent, oRoute);
-                    perNodeVerdict.set(oid, 'off');
-                    pendingBehindBy.set(oid, null);
+                    // Answered fork: settle to y's chain. o's event,
+                    // distance and agreement verdict come from the
+                    // single pass over the final chain
+                    // (MESH_INTERFACE → "A node is judged against the
+                    // chain the check leaves").
                     judgedWinner = y;
                     judgedTip = yTip;
                   } else {
@@ -2140,32 +2129,21 @@ class MeshClientImpl implements MeshClient {
             // MESH_INTERFACE → The client's node list → "A check" —
             // the kept verdicts are dropped when the chain switches.
             this.keptVerdicts.clear();
+            // MESH_INTERFACE → The client's node list → "A node is
+            // judged against the chain the check leaves" — phase
+            // 3c's match was against the chain the check started
+            // on; a settle to a new tip voids the match the same
+            // way the kept verdicts clear. The pass judges every
+            // tip against the chain as it stands here.
+            underMatched.clear();
+            // Rebuild `placedAtTip` against the new chain: phase 4's
+            // next iteration reads it through `firstNodeAtChainTip`
+            // to prepend the own-tip URL.
             placedAtTip.clear();
             for (const read of tipReads) {
               if (read.hash === null) continue;
               const newPlacement = this.chain.place(read.hash, read.height);
-              placements.set(read.id, newPlacement);
-              const chainTipNow = this.chain.tip();
-              if (newPlacement === 'tip') {
-                this.applyEvent({ id: read.id, ev: 'success' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, 0);
-                placedAtTip.add(read.id);
-              } else if (newPlacement === 'one-below') {
-                this.applyEvent({ id: read.id, ev: 'trailing' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, 1);
-              } else if (newPlacement === 'below') {
-                this.applyEvent({ id: read.id, ev: 'behind' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
-              } else if (!verifiedHashes.has(read.hash)) {
-                // 'above', 'under' or 'unplaced' with no proof verdict
-                // of its own: reads `behind`.
-                this.applyEvent({ id: read.id, ev: 'behind' });
-                perNodeVerdict.set(read.id, 'off');
-              }
-              // else: hash has a proof verdict — keep its event/verdict.
+              if (newPlacement === 'tip') placedAtTip.add(read.id);
             }
           }
         }
@@ -2173,17 +2151,21 @@ class MeshClientImpl implements MeshClient {
     }
 
     // MESH_INTERFACE → The client's node list → "A node is judged
-    // against the chain the check leaves" — one pass after the
-    // settle, over every tip the check read: the node's event,
-    // distance and agreement verdict are read against the client's
-    // chain as it stands here, so no earlier pass's winner-relative
-    // value survives into the end of the check. A hash the chain
-    // holds reads its placement's event and distance; one off it
-    // reads `behind` with `behindBy` null and `off` in the
-    // agreement. A lie and a failure land as they were read: an
-    // entry already `blacklisted` or `retry` keeps that status and
-    // its event. A tip answered with no hash was placed by phase 3b
-    // with the `behind` event and no agreement verdict.
+    // against the chain the check leaves" — the check's one
+    // placement after the settle, over every tip the check read: the
+    // node's event, distance and agreement verdict are read against
+    // the client's chain as it stands here. A hash the chain holds
+    // reads its placement's event and distance; an `under` hash
+    // phase 3c matched against the chain's own header at that
+    // height lies on the chain, further down than the held headers,
+    // and reads `behind` with its distance; any other `under`,
+    // `above` or `unplaced` reads `behind` with `behindBy` null and
+    // `off` in the agreement. A lie and a failure land as they were
+    // read: an entry already `blacklisted` or `retry` keeps that
+    // status and its event. A tip answered with no hash was placed
+    // by phase 3b with the `behind` event and no agreement verdict.
+    // The pass writes `placements`: the outrun re-read below reads
+    // it to pick whom to re-read against the settled chain.
     for (const read of tipReads) {
       if (read.hash === null) continue;
       const entry = this.nodeList.entry(read.id);
@@ -2191,6 +2173,7 @@ class MeshClientImpl implements MeshClient {
       const base = baseById.get(read.id);
       if (base === undefined) continue;
       const placement = this.chain.place(read.hash, read.height);
+      placements.set(read.id, placement);
       const chainTipNow = this.chain.tip();
       if (placement === 'tip') {
         this.applyEvent({ id: read.id, ev: 'success' }, base.route);
@@ -2204,8 +2187,12 @@ class MeshClientImpl implements MeshClient {
         this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
         perNodeVerdict.set(read.id, 'on');
         pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+      } else if (placement === 'under' && underMatched.has(read.id)) {
+        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
       } else {
-        // 'above', 'under' or 'unplaced': the tip lies off the chain.
+        // 'above', 'under' (unmatched) or 'unplaced': the tip lies off the chain.
         this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
         perNodeVerdict.set(read.id, 'off');
         pendingBehindBy.set(read.id, null);
