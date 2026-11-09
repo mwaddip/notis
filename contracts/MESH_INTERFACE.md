@@ -427,7 +427,8 @@ The mesh holds when every step of the eight scenarios passes on what it measured
    direct path, never `blacklisted`.
 3. **A node goes away.** Killed, then firewalled: the client's reads move to other nodes within two checks, the node
    reads `retry`, never `blacklisted`; once it is back and within a block of the tip, the next check reads it by its
-   tip — `ok` at the tip, `trailing` one block short.
+   tip — `ok` at the tip, `trailing` one block short. With every first-contact node out of reach, a page that has
+   connected before reaches the network through the nodes it remembers and reads its chain from them.
 4. **A transport is cut.** UDP to one public node: the client stays connected, through another node or over that
    node's secure WebSocket — whichever ranks first. UDP to all: the client gets in through the secure WebSocket; a
    renewal replaces the certificate with no request dropped.
