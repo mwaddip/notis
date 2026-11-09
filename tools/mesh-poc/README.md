@@ -266,8 +266,8 @@ update could change that), but the acceptance line names a relayed path.
 
 ### s3 — A node goes away (`MESH_INTERFACE → Acceptance 3`)
 
-Four sub-steps against pub1's integrated node, driving the client's `CHECK_INTERVAL_MS` (30 000 ms) and
-the retry cadence by hand.
+Five sub-steps against pub1's integrated node (four) and the browser profile's memory (one),
+driving the client's `CHECK_INTERVAL_MS` (30 000 ms) and the retry cadence by hand.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
@@ -275,6 +275,7 @@ the retry cadence by hand.
 | 2 | `pub1 restarted: pub1 reads at or one block short of the tip at the next completed check` | After waiting until pub1's own `/blocks/current` is within one block of pub2's, the next completed check reads pub1 as `ok` with `behindBy === 0`, or `trailing` with `behindBy === 1`; `recoveryTimeMs` is recorded. | pub1 `retry` or `blacklisted` at the check; `ok` with a non-zero `behindBy`; `trailing` with any other distance. |
 | 3 | `pub1 firewalled: client moves to another node within 2 checks, pub1 retry` | Same as step 1, with nft rules dropping UDP/TCP to pub1's mesh listener in pub1's namespace. | As step 1. |
 | 4 | `pub1 unfirewalled: pub1 reads at or one block short of the tip at the next completed check` | Same as step 2. | As step 2. |
+| 5 | `with first contact out of reach, the page reaches the network through the nodes it remembers` | Two sessions on the same browser profile. Session 1 (`?clearMemory=1`) reaches the first-contact nodes; the page polls `localStorage['notis.mesh.memory.<network>']` until the record's `nodes` list carries at least one honest non-first-contact id (priv1 or priv2 — the browser discovers them through the relay). An nft `s3_known` table in the browser namespace drops every first-contact address. Session 2 (no clear) opens; the client takes memory's `seeds` at start, dials them, and reads its chain: `state.tip` non-null (64-hex `hash`, positive `height`), at least one remembered id reads `ok` or `trailing`, every first-contact id reads `retry`, `notContinued` is false. | A session 1 memory with no honest non-first-contact id; a session 2 tip missing; every remembered entry stuck at `retry`; a first-contact id not at `retry`; `notContinued` true. |
 
 **What a tester reports even on PASS:** pub1 reaching `blacklisted` at any point — a timeout, a
 refused connection, a dropped link or a non-2xx is `retry`, never permanent

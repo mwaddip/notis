@@ -13,6 +13,7 @@ import {
   verdictS2Priv2,
   verdictS3Moved,
   verdictS3Recovered,
+  verdictS3KnownNodes,
   verdictS4Pub1UdpDrop,
   verdictS4AllUdpDrop,
   verdictS4Renewal,
@@ -43,6 +44,7 @@ describe('skipped — missing measurement', () => {
     ['verdictS2Priv2', verdictS2Priv2],
     ['verdictS3Moved', verdictS3Moved],
     ['verdictS3Recovered', verdictS3Recovered],
+    ['verdictS3KnownNodes', verdictS3KnownNodes],
     ['verdictS4Pub1UdpDrop', verdictS4Pub1UdpDrop],
     ['verdictS4AllUdpDrop', verdictS4AllUdpDrop],
     ['verdictS4Renewal', verdictS4Renewal],
@@ -303,6 +305,75 @@ describe('verdictS3Recovered — once the node is back it reads at or one block 
   });
   it('recoveryTimeMs missing → FAIL', () => {
     expect(verdictS3Recovered({ nodeId: AT_TIP.nodeId, status: 'ok', behindBy: 0 })).toBe('FAIL');
+  });
+});
+
+describe("verdictS3KnownNodes — with every first-contact node out of reach, the page reaches the network through the nodes it remembers", () => {
+  // MESH_INTERFACE → Acceptance 3 — the second session's state names
+  // at least one remembered honest node at `ok` or `trailing`, every
+  // first-contact entry at `retry`, `state.tip` non-null, and
+  // `notContinued` false. Each guard held by a case; a mutation
+  // deleting the guard turns the matching case red.
+  const FC_A = 'a'.repeat(64);
+  const FC_B = 'b'.repeat(64);
+  const REMEMBERED = 'c'.repeat(64);
+  const TIP_HASH = 'd'.repeat(64);
+  const PASS = {
+    firstContactIds: [FC_A, FC_B],
+    rememberedHonestIds: [REMEMBERED],
+    rememberedEntries: [{ notisId: REMEMBERED, status: 'ok' }],
+    firstContactEntries: [
+      { notisId: FC_A, status: 'retry' },
+      { notisId: FC_B, status: 'retry' },
+    ],
+    tipHeight: 100,
+    tipHash: TIP_HASH,
+    notContinued: false,
+  };
+  it('every field holds the rule → PASS', () => {
+    expect(verdictS3KnownNodes(PASS)).toBe('PASS');
+  });
+  it('a remembered node in trailing (one block short) still PASS', () => {
+    expect(verdictS3KnownNodes({
+      ...PASS,
+      rememberedEntries: [{ notisId: REMEMBERED, status: 'trailing' }],
+    })).toBe('PASS');
+  });
+  it('firstContactIds missing → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, firstContactIds: [] })).toBe('FAIL');
+  });
+  it('rememberedHonestIds empty (session 1 found no honest non-first-contact node) → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, rememberedHonestIds: [] })).toBe('FAIL');
+  });
+  it('rememberedEntries not an array → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, rememberedEntries: null })).toBe('FAIL');
+  });
+  it('no remembered entry reached (every one in retry) → FAIL', () => {
+    expect(verdictS3KnownNodes({
+      ...PASS,
+      rememberedEntries: [{ notisId: REMEMBERED, status: 'retry' }],
+    })).toBe('FAIL');
+  });
+  it('tipHeight not positive → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, tipHeight: 0 })).toBe('FAIL');
+  });
+  it('tipHash not a 64-hex string → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, tipHash: 'nope' })).toBe('FAIL');
+  });
+  it('firstContactEntries empty → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, firstContactEntries: [] })).toBe('FAIL');
+  });
+  it('a first-contact entry not in retry (one is ok, the cut leaked) → FAIL', () => {
+    expect(verdictS3KnownNodes({
+      ...PASS,
+      firstContactEntries: [
+        { notisId: FC_A, status: 'ok' },
+        { notisId: FC_B, status: 'retry' },
+      ],
+    })).toBe('FAIL');
+  });
+  it('notContinued true → FAIL', () => {
+    expect(verdictS3KnownNodes({ ...PASS, notContinued: true })).toBe('FAIL');
   });
 });
 

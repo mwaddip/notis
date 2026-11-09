@@ -189,6 +189,33 @@ function tailLog(logPath, maxLines = 20) {
  * Wait with `pollUntil` and tail the related process's log on failure, so
  * a timeout points at the cause rather than at the timeout itself.
  */
+/**
+ * Walk a `notis:<host>.log` file and keep track of every peer-id that
+ * has a `peer:connect` line NOT followed by a matching
+ * `peer:disconnect` — the set of peers the host still reports
+ * connected. A shape the admin API does not expose directly (no
+ * `/peers` route), so on a cut-leak failure the Phase 8b check names
+ * these ids so a reader of the error sees which hosts leaked.
+ *
+ * Returns `[]` when the log file does not exist. The log format is
+ * `[net] peer:connect <peerIdString> (total=N)` and
+ * `[net] peer:disconnect <peerIdString> (total=N)`.
+ */
+function standingConnectedPeerIds(logPath) {
+  if (!logPath || !existsSync(logPath)) return [];
+  const text = readFileSync(logPath, 'utf8');
+  const connected = new Set();
+  const connectRe = /\[net\] peer:connect ([A-Za-z0-9]+)/;
+  const disconnectRe = /\[net\] peer:disconnect ([A-Za-z0-9]+)/;
+  for (const line of text.split('\n')) {
+    let m = connectRe.exec(line);
+    if (m) { connected.add(m[1]); continue; }
+    m = disconnectRe.exec(line);
+    if (m) { connected.delete(m[1]); }
+  }
+  return [...connected];
+}
+
 async function waitWithTail(description, check, logPath, options) {
   try {
     await pollUntil(description, check, options);
@@ -1248,34 +1275,86 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
   })) {
     log.shell(argv[0], argv.slice(1), { privileged: true });
   }
-  // Verify the cut holds: after the cut, `hostile-fork`'s admin
-  // `/health` reads `peers_connected: 1` (its partner alone). An
-  // earlier shape dropped TCP on the p2p port only and the pair
-  // stayed peered with every honest node over WebRTC-direct (UDP),
-  // relays and the secure WebSocket; `peers_connected > 1` here
-  // fails the bring-up naming the count so a leak does not slip
-  // through to the scenarios.
-  recordWait(`hostile-fork /health peers_connected reads 1 (its partner alone) within 60 s after the cut`);
+  // After the cut, every connection either fork host opened BEFORE
+  // the cut stays `open` until libp2p's keepalive gives up — a
+  // `policy drop` chain stops packets but does not close the TCP
+  // state, and an earlier `waitWithTail` of
+  // `peers_connected == 1` within 60 s timed out with 4 peers
+  // still named. The remedy is deterministic: stop both pair nodes
+  // by their recorded PIDs and respawn them from the same argv /
+  // env / store, so no connection made before the cut survives.
+  // After the restart each pair node bootstraps from its one
+  // allowed peer alone, and the `peers_connected == 1` check
+  // reads the fresh connection state.
+  recordWait(`notis:hostile-fork and notis:hostile-fork-peer restarted on the same store after the cut; /health peers_connected reads 1 (the partner alone) within 60 s`);
   if (!dryRun) {
-    const forkAdminPort = hostileForkHostCfg.node.httpPort + 1;
-    let lastPeersConnected = null;
-    await waitWithTail(
-      `hostile-fork /health peers_connected == 1 after cut`,
-      async () => {
-        const text = execIn(nsOf('hostile-fork'), [
-          'curl', '-sf', '--max-time', '5',
-          `http://127.0.0.1:${forkAdminPort}/health`,
-        ], { timeoutMs: 8_000 });
-        const data = JSON.parse(text);
-        if (typeof data.peers_connected !== 'number') return false;
-        lastPeersConnected = data.peers_connected;
-        return data.peers_connected === 1;
-      },
-      logPathFor('notis:hostile-fork'),
-      { timeoutMs: 60_000, pollMs: 1_000 },
-    ).catch((err) => {
-      throw new Error(`Phase 8b: hostile-fork cut leak — last peers_connected ${lastPeersConnected} (expected 1); ${err.message}`);
-    });
+    const forkEntry = log.pids.find((e) => e.description === 'notis:hostile-fork');
+    const peerEntry = log.pids.find((e) => e.description === 'notis:hostile-fork-peer');
+    if (!forkEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork');
+    if (!peerEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork-peer');
+    // Stop both pair nodes.
+    for (const entry of [forkEntry, peerEntry]) {
+      try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+    // Give each wrapper up to 10 s to exit; if it is still alive,
+    // SIGKILL — a stuck process under the old PID holds the port
+    // and the respawn would fail to bind.
+    for (const entry of [forkEntry, peerEntry]) {
+      const stopDeadline = Date.now() + 10_000;
+      while (Date.now() < stopDeadline) {
+        try { process.kill(entry.pid, 0); } catch { break; } // ESRCH → dead
+        await sleep(200);
+      }
+      try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    // Respawn each on the same argv / env / store; `restartFromEntry`
+    // rewrites the entry's `pid` in-place AND rewrites pids.json so
+    // `down` signals the live process.
+    for (const entry of [forkEntry, peerEntry]) {
+      restartFromEntry(entry, { pidsPath: PIDS_PATH });
+    }
+    // Now verify the cut: each pair node's `/health` reads
+    // `peers_connected == 1` within 60 s. On failure, name every
+    // peer id the node reports in its latest `peer:connect`/
+    // `peer:disconnect` stream so the next run says which hosts
+    // leaked.
+    for (const name of ['hostile-fork', 'hostile-fork-peer']) {
+      const host = topology.hosts[name];
+      const adminPort = host.node.httpPort + 1;
+      const logPath = logPathFor(`notis:${name}`);
+      let lastPeersConnected = null;
+      await pollUntil(
+        `${name} /health peers_connected == 1 after cut + restart`,
+        async () => {
+          try {
+            const text = execIn(nsOf(name), [
+              'curl', '-sf', '--max-time', '5',
+              `http://127.0.0.1:${adminPort}/health`,
+            ], { timeoutMs: 8_000 });
+            const data = JSON.parse(text);
+            if (typeof data.peers_connected !== 'number') return false;
+            lastPeersConnected = data.peers_connected;
+            return data.peers_connected === 1;
+          } catch {
+            // The node may still be coming up after restart; keep polling.
+            return false;
+          }
+        },
+        { timeoutMs: 60_000, pollMs: 1_000 },
+      ).catch((err) => {
+        const connected = standingConnectedPeerIds(logPath);
+        const tail = tailLog(logPath, 20);
+        const connectedText = connected.length === 0
+          ? '<no standing peer:connect lines>'
+          : connected.join(', ');
+        throw new Error(
+          `Phase 8b: ${name} cut leak — last peers_connected ${lastPeersConnected} (expected 1); ` +
+          `standing connected peer ids: ${connectedText}\n` +
+          `--- last 20 lines of ${logPath} ---\n${tail === '' ? '<no output>' : tail}\n` +
+          `${err.message}`,
+        );
+      });
+    }
   }
   const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {
     minerScript,

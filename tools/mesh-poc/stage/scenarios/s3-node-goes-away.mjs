@@ -2,9 +2,12 @@
 // firewalled: the client's reads move to other nodes within two
 // checks, the node reads `retry`, never `blacklisted`; once it is
 // back and within a block of the tip, the next check reads it by its
-// tip — `ok` at the tip, `trailing` one block short."
+// tip — `ok` at the tip, `trailing` one block short. With every
+// first-contact node out of reach, a page that has connected before
+// reaches the network through the nodes it remembers and reads its
+// chain from them."
 //
-// Four sub-steps, in order:
+// Five sub-steps, in order:
 //   1. stop pub1's notis node (`kill -TERM` the recorded PID of
 //      `notis:pub1`; a mesh host carries its mesh functionality inside
 //      the node, NODE_INTERFACE → Configuration);
@@ -22,6 +25,18 @@
 //   3. apply the firewall rules in pub1's namespace (`s3_fw`) that
 //      drop UDP/TCP to pub1's mesh listener ports; poll same as step 1.
 //   4. remove `s3_fw`; wait same as step 2.
+//   5. the known-nodes reach. Two sessions on the same browser profile:
+//      session 1 (`?clearMemory=1`) reaches first contact, then the
+//      page polls `localStorage['notis.mesh.memory.<network>']` until
+//      the record's `nodes` list carries at least one honest host
+//      that is not a first-contact node (priv1 / priv2 are the ones
+//      the browser discovers through the relay). An nft table in the
+//      browser namespace (`s3_known`) drops every first-contact
+//      address. Session 2 (no clear) reaches a remembered node — the
+//      client takes memory's `seeds` at start, dials them, and reads
+//      its chain from them. The measurement names the remembered
+//      honest ids from session 1, the remembered entries in session
+//      2, the first-contact entries, the tip, and `notContinued`.
 //
 // Faults are applied inside `run(ctx)` one at a time between the
 // measurements, not up front. The dry-run still records every fault so
@@ -30,7 +45,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
-import { verdictS3Moved, verdictS3Recovered } from '../lib/verdicts.mjs';
+import { verdictS3Moved, verdictS3Recovered, verdictS3KnownNodes } from '../lib/verdicts.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import {
   execIn, findPid, nftApply,
@@ -53,7 +68,29 @@ export function describe() {
     'pub1 restarted: pub1 reads ok at a later check',
     'pub1 firewalled: client moves to another node within 2 checks, pub1 retry',
     'pub1 unfirewalled: pub1 reads ok at a later check',
+    'with first contact out of reach, the page reaches the network through the nodes it remembers',
   ];
+}
+
+const KNOWN_TABLE = 's3_known';
+
+/**
+ * The nft argvs the known-nodes step applies and removes inside
+ * `notismesh-browser` to drop every first-contact node's address.
+ * Exported so a case can hold them against the recorded dry-run.
+ * One `add table` + one `add chain` on output + per-first-contact
+ * `add rule out ip daddr <addr> drop` + a single `delete table`
+ * cleanup.
+ */
+export function firstContactBlockArgs(topology, firstContactAddrs) {
+  const ns = 'notismesh-browser';
+  const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', KNOWN_TABLE];
+  const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', KNOWN_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
+  const drops = firstContactAddrs.map((addr) => [
+    'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', KNOWN_TABLE, 'out', 'ip', 'daddr', addr, 'drop',
+  ]);
+  const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', KNOWN_TABLE];
+  return { addTable, addChain, drops, deleteTable };
 }
 
 /**
@@ -261,6 +298,159 @@ export async function run(ctx) {
       };
       return { verdict: verdictS3Recovered(m), measurement: m };
     });
+
+    // --- Step 5: the known-nodes reach ---
+    // MESH_INTERFACE → Acceptance 3 — "With every first-contact node
+    // out of reach, a page that has connected before reaches the
+    // network through the nodes it remembers and reads its chain
+    // from them." Two sessions on the same browser profile:
+    //
+    //   (i)  session 1 (`?clearMemory=1`) reaches first contact;
+    //        the page polls `localStorage['notis.mesh.memory.<network>']`
+    //        until the record's `nodes` list carries at least one
+    //        honest non-first-contact node — the client's `onChecked`
+    //        wrote it after a check that read the node `ok`/`trailing`.
+    //        priv1/priv2 are the two the browser discovers through
+    //        the relay; either is enough.
+    //   (ii) nft rules in the browser namespace drop every first-
+    //        contact address, so the client cannot reach pub1 or
+    //        pub2. Session 2 (no clear) opens the page; the client
+    //        takes memory's `seeds` at start, dials them through the
+    //        relay path, and reads its chain from them. The step
+    //        reads `state.tip`, a remembered node's status, and
+    //        every first-contact entry's status.
+    const browserBlockApplied = { on: false };
+    await rec.step(describe()[4], async () => {
+      // Read the stage default fresh — `writeStageDefault` ran at
+      // the scenario's start, so this holds pub1 + pub2 as
+      // firstContact. Each first-contact entry carries a notisId;
+      // the topology name + address come from identities.json's
+      // row matching that id.
+      const defaultConfig = JSON.parse(readFileSync(
+        join(ctx.outDir, 'browser', 'config.default.json'),
+        'utf8',
+      ));
+      const network = defaultConfig.network;
+      const firstContactIds = (defaultConfig.firstContact ?? [])
+        .map((e) => e && typeof e.notisId === 'string' ? e.notisId : null)
+        .filter((id) => id !== null);
+      if (firstContactIds.length === 0) {
+        throw new Error('s3 step 5: config.default.json has no firstContact entries');
+      }
+      const firstContactAddrs = firstContactIds.map((id) => {
+        for (const [name, h] of Object.entries(ctx.topology.hosts)) {
+          if (identities[name]?.notisId === id && typeof h.addr === 'string') return h.addr;
+        }
+        return null;
+      }).filter((a) => typeof a === 'string');
+      if (firstContactAddrs.length === 0) {
+        throw new Error('s3 step 5: no topology address found for any first-contact id');
+      }
+      const honestNonFirstContactIds = [];
+      for (const [name, h] of Object.entries(ctx.topology.hosts)) {
+        if (h.role !== 'public' && h.role !== 'private') continue;
+        if (h.mesh === undefined) continue;
+        if (name === 'browser') continue;
+        const id = identities[name]?.notisId;
+        if (typeof id !== 'string') continue;
+        if (firstContactIds.includes(id)) continue;
+        honestNonFirstContactIds.push(id);
+      }
+      if (honestNonFirstContactIds.length === 0) {
+        throw new Error('s3 step 5: topology has no honest non-first-contact mesh host');
+      }
+
+      // ----- (i) first session on the honest nodes -----
+      // The page polls both `#state` and `localStorage` through one
+      // IIFE until memory names a remembered honest node. `cdpPoll`
+      // keeps one page open across polls; the IIFE returns a JSON
+      // string the test reads with ONE JSON.parse.
+      writeStageDefault(ctx.outDir);
+      const session1Text = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
+        `(function () {
+           const el = document.getElementById('state');
+           if (el === null) return null;
+           const raw = localStorage.getItem('notis.mesh.memory.' + ${JSON.stringify(network)});
+           return JSON.stringify({ state: el.textContent, memory: raw });
+         })()`,
+        `if (v === null) return false;
+         try {
+           const o = JSON.parse(v);
+           const s = JSON.parse(o.state);
+           if (typeof s.chain !== 'string' || s.chain.length !== 64) return false;
+           if (typeof o.memory !== 'string') return false;
+           const rec = JSON.parse(o.memory);
+           if (!rec || !Array.isArray(rec.nodes)) return false;
+           const want = ${JSON.stringify(honestNonFirstContactIds)};
+           const firstContactSet = ${JSON.stringify(firstContactIds)};
+           return rec.nodes.some((n) => n && typeof n.notisId === 'string'
+             && !firstContactSet.includes(n.notisId)
+             && want.includes(n.notisId));
+         } catch (_e) { return false; }`,
+        240_000, 1_000,
+      );
+      const session1Wrapper = JSON.parse(session1Text);
+      const memoryRecord = JSON.parse(session1Wrapper.memory);
+      const rememberedHonestIds = (memoryRecord.nodes ?? [])
+        .map((n) => (n && typeof n.notisId === 'string') ? n.notisId : null)
+        .filter((id) => id !== null && !firstContactIds.includes(id) && honestNonFirstContactIds.includes(id));
+      if (rememberedHonestIds.length === 0) {
+        throw new Error('s3 step 5: session 1 memory has no honest non-first-contact node');
+      }
+
+      // ----- (ii) block first contact, open session 2 -----
+      const b = firstContactBlockArgs(ctx.topology, firstContactAddrs);
+      runFault(log, 'browser-s3-known-add-table', b.addTable);
+      browserBlockApplied.on = true;
+      runFault(log, 'browser-s3-known-add-chain', b.addChain);
+      for (let i = 0; i < b.drops.length; i += 1) {
+        runFault(log, `browser-s3-known-drop-${i}`, b.drops[i]);
+      }
+      const session2Text = await cdpPoll(ctx, browserUrl,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           if (!s.tip || typeof s.tip.hash !== 'string' || s.tip.hash.length !== 64) return false;
+           if (typeof s.tip.height !== 'number' || s.tip.height <= 0) return false;
+           if (s.notContinued !== false) return false;
+           const remembered = ${JSON.stringify(rememberedHonestIds)};
+           const firstContact = ${JSON.stringify(firstContactIds)};
+           const anyRememberedReached = s.nodes?.some((n) => n && remembered.includes(n.notisId)
+             && (n.status === 'ok' || n.status === 'trailing'));
+           if (!anyRememberedReached) return false;
+           const everyFirstContactRetry = firstContact.every((id) => {
+             const e = s.nodes?.find((n) => n.notisId === id);
+             return e !== undefined && e.status === 'retry';
+           });
+           return everyFirstContactRetry;
+         } catch (_e) { return false; }`,
+        240_000, 1_000,
+      );
+      const session2State = JSON.parse(session2Text);
+      const rememberedEntries = (session2State.nodes ?? [])
+        .filter((n) => rememberedHonestIds.includes(n.notisId))
+        .map((n) => ({ notisId: n.notisId, status: n.status }));
+      const firstContactEntries = firstContactIds
+        .map((id) => session2State.nodes?.find((n) => n.notisId === id) ?? null)
+        .map((n) => (n === null ? null : { notisId: n.notisId, status: n.status }));
+      const m = {
+        firstContactIds,
+        rememberedHonestIds,
+        rememberedEntries,
+        firstContactEntries,
+        tipHeight: typeof session2State.tip?.height === 'number' ? session2State.tip.height : null,
+        tipHash: typeof session2State.tip?.hash === 'string' ? session2State.tip.hash : null,
+        notContinued: session2State.notContinued === true,
+      };
+      return { verdict: verdictS3KnownNodes(m), measurement: m };
+    });
+    // Teardown for step 5 — remove the browser block table.
+    if (browserBlockApplied.on) {
+      try { nftApply('notismesh-browser', ['delete', 'table', 'ip', KNOWN_TABLE]); }
+      catch (err) { process.stderr.write(`[s3 teardown] delete ${KNOWN_TABLE}: ${err?.message ?? err}\n`); }
+      log.records.push(`[fault:remove:${NAME}:browser-s3-known-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${KNOWN_TABLE}`);
+    }
   } finally {
     // Teardown: if we stopped pub1 and did not restart it, restart now.
     if (pub1Stopped) {
@@ -374,4 +564,11 @@ export const S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE = `if (v === null) return fa
 
 async function pollNextCompletedCheck(pollStateUntil, name) {
   return pollStateUntil(S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE, { timeoutMs: 180_000, pollMs: 1_000, name });
+}
+
+function runFault(log, name, argv) {
+  // `argv` is `[sudo, ip, netns, exec, <ns>, nft, ...sub]`; nftApply
+  // prepends `nft`, so we slice(6) to drop the duplicate.
+  log.records.push(`[fault:${NAME}:${name}] ${argv.join(' ')}`);
+  nftApply(argv[4], argv.slice(6));
 }

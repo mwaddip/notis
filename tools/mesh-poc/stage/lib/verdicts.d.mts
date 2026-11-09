@@ -7,6 +7,7 @@ export function verdictS2Priv1(m: unknown): Verdict;
 export function verdictS2Priv2(m: unknown): Verdict;
 export function verdictS3Moved(m: unknown): Verdict;
 export function verdictS3Recovered(m: unknown): Verdict;
+export function verdictS3KnownNodes(m: unknown): Verdict;
 export function verdictS4Pub1UdpDrop(m: unknown): Verdict;
 export function verdictS4AllUdpDrop(m: unknown): Verdict;
 export function verdictS4Renewal(m: unknown): Verdict;

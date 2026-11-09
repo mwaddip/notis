@@ -79,26 +79,40 @@ describe('s1 (no name)', () => {
 });
 
 describe('s3 (node goes away)', () => {
-  it('describe() lists four steps: stop, restart, firewall, unfirewall', () => {
+  it('describe() lists five steps: stop, restart, firewall, unfirewall, known-nodes reach', () => {
     const names = s3.describe();
-    expect(names.length).toBe(4);
+    expect(names.length).toBe(5);
     expect(names[0]).toMatch(/stopped/);
     expect(names[1]).toMatch(/restarted/);
     expect(names[2]).toMatch(/firewalled/);
     expect(names[3]).toMatch(/unfirewalled/);
+    expect(names[4]).toMatch(/first contact out of reach|remembered|known-nodes reach/);
   });
   it('run({dryRun:true}) emits the firewall apply + remove and skipped steps', async () => {
     const r = await s3.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s3');
-    expect(r.steps.length).toBe(4);
+    expect(r.steps.length).toBe(5);
     for (const step of r.steps) {
       expect(step.verdict).toBe('skipped');
     }
-    // Fault records: five adds + one delete.
+    // Fault records: five adds + one delete (step 3's firewall).
     const adds = r.faults.filter((f) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f) => /\[fault:remove/.test(f));
-    expect(adds.length, 'five adds (table, chain, three drops)').toBe(5);
-    expect(dels.length, 'one delete (the table)').toBe(1);
+    expect(adds.length, 'five adds (table, chain, three drops) from step 3').toBe(5);
+    expect(dels.length, 'one delete (the firewall table)').toBe(1);
+  });
+  it('firstContactBlockArgs produces nft argvs inside notismesh-browser, one drop per first-contact address', () => {
+    const a = s3.firstContactBlockArgs(TOPOLOGY, ['11.100.0.11', '11.100.0.12']);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length).toBe(2);
+    for (const argv of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.slice(-1)[0]).toBe('drop');
+    }
+    expect(a.drops[0]!.join(' ')).toContain('ip daddr 11.100.0.11 drop');
+    expect(a.drops[1]!.join(' ')).toContain('ip daddr 11.100.0.12 drop');
   });
   it('pub1FirewallArgs produces nft argvs inside notismesh-pub1 with ports read from the topology', () => {
     const a = s3.pub1FirewallArgs(TOPOLOGY);

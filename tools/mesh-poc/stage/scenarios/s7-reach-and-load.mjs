@@ -66,7 +66,7 @@ import {
   verdictS7Question,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
-import { execIn, nftApply, signal } from '../lib/measure.mjs';
+import { execIn, nftApply, signal, findPid, restartFromEntry } from '../lib/measure.mjs';
 import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -392,28 +392,76 @@ export async function run(ctx) {
         }
         addedTables.push({ ns: 'notismesh-lan1-peer', table: 'lan1_fork_cut' });
 
-        // Verify the cut holds: lan1's /health reads `peers_connected
-        // == 1` (its partner) within 60 s. A larger count names a
-        // leak — libp2p would have rejoined honest peers through a
-        // transport the earlier port-keyed cut missed.
-        let lan1PeersConnectedAfterCut = null;
-        const cutHealthDeadline = Date.now() + 60_000;
-        while (Date.now() < cutHealthDeadline) {
-          try {
-            const text = execIn('notismesh-lan1', [
-              'curl', '-sf', '--max-time', '5',
-              `http://127.0.0.1:${lan1AdminPort}/health`,
-            ], { timeoutMs: 8_000 });
-            const data = JSON.parse(text.toString('utf8'));
-            if (typeof data.peers_connected === 'number') {
-              lan1PeersConnectedAfterCut = data.peers_connected;
-              if (data.peers_connected === 1) break;
-            }
-          } catch { /* retry */ }
-          await new Promise((r) => setTimeout(r, 1_000));
+        // After the cut, every connection either lan1 or lan1-peer
+        // opened BEFORE the cut stays `open` until libp2p's
+        // keepalive gives up — a `policy drop` chain stops packets
+        // but does not close the TCP state, and an earlier wait of
+        // `peers_connected == 1` within 60 s timed out with the
+        // pair still peered with every honest node. The remedy is
+        // deterministic: stop both lan1 and lan1-peer by their
+        // recorded PIDs and respawn them on the same argv / env /
+        // store, so no pre-cut connection survives. After the
+        // restart each node bootstraps from its one allowed peer
+        // alone, and `peers_connected == 1` reads the fresh
+        // connection state.
+        const lan1Entry = findPid(ctx.pids?.pids, 'notis:lan1');
+        const lan1PeerEntry = findPid(ctx.pids?.pids, 'notis:lan1-peer');
+        if (!lan1Entry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1 entry');
+        if (!lan1PeerEntry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1-peer entry');
+        for (const entry of [lan1Entry, lan1PeerEntry]) {
+          try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
         }
-        if (lan1PeersConnectedAfterCut !== 1) {
-          throw new Error(`s7 step 4 phase b-cut: lan1 cut leak — /health peers_connected = ${lan1PeersConnectedAfterCut} (expected 1)`);
+        // Give each wrapper up to 10 s to exit; else SIGKILL — a
+        // stuck process under the old PID holds the port and the
+        // respawn would fail to bind.
+        for (const entry of [lan1Entry, lan1PeerEntry]) {
+          const stopDeadline = Date.now() + 10_000;
+          while (Date.now() < stopDeadline) {
+            try { process.kill(entry.pid, 0); } catch { break; }
+            await new Promise((r) => setTimeout(r, 200));
+          }
+          try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+        }
+        for (const entry of [lan1Entry, lan1PeerEntry]) {
+          restartFromEntry(entry, { pidsPath: ctx.pidsPath });
+        }
+        // Now verify the cut: each pair node's `/health` reads
+        // `peers_connected == 1` within 60 s. On failure, name
+        // every peer id the node reports as standing (its
+        // `peer:connect` lines not yet followed by a matching
+        // `peer:disconnect`) so the next run says which hosts
+        // leaked.
+        let lan1PeersConnectedAfterCut = null;
+        const lan1LogPath = join(ctx.outDir, 'logs', 'notis:lan1.log');
+        for (const name of ['lan1', 'lan1-peer']) {
+          const adminPort = ctx.topology.hosts[name].node.httpPort + 1;
+          let lastPeersConnected = null;
+          const healthDeadline = Date.now() + 60_000;
+          while (Date.now() < healthDeadline) {
+            try {
+              const text = execIn(`notismesh-${name}`, [
+                'curl', '-sf', '--max-time', '5',
+                `http://127.0.0.1:${adminPort}/health`,
+              ], { timeoutMs: 8_000 });
+              const data = JSON.parse(text.toString('utf8'));
+              if (typeof data.peers_connected === 'number') {
+                lastPeersConnected = data.peers_connected;
+                if (data.peers_connected === 1) break;
+              }
+            } catch { /* retry — the node may still be coming up */ }
+            await new Promise((r) => setTimeout(r, 1_000));
+          }
+          if (name === 'lan1') lan1PeersConnectedAfterCut = lastPeersConnected;
+          if (lastPeersConnected !== 1) {
+            const connected = standingConnectedPeerIds(join(ctx.outDir, 'logs', `notis:${name}.log`));
+            const connectedText = connected.length === 0
+              ? '<no standing peer:connect lines>'
+              : connected.join(', ');
+            throw new Error(
+              `s7 step 4 phase b-cut: ${name} cut leak — last peers_connected ${lastPeersConnected} (expected 1); ` +
+              `standing connected peer ids: ${connectedText}`,
+            );
+          }
         }
 
         currentPhase = 'b-mine';
@@ -958,3 +1006,28 @@ async function cdpEval(ctx, url, expression, { timeoutMs = 120_000 } = {}) {
   return JSON.parse(buf.toString('utf8'));
 }
 
+
+// MESH_INTERFACE → Acceptance 3/7 — walk a `notis:<host>.log` file
+// and return every peer-id with a `peer:connect` line NOT followed
+// by a matching `peer:disconnect` — the set of peers the host still
+// reports as connected. The admin API has no `/peers` route; on a
+// cut-leak failure the step names these ids so a reader sees which
+// hosts leaked.
+//
+// Returns `[]` when the log file does not exist. The log format is
+// `[net] peer:connect <peerIdString> (total=N)` and
+// `[net] peer:disconnect <peerIdString> (total=N)`.
+function standingConnectedPeerIds(logPath) {
+  if (!logPath || !existsSync(logPath)) return [];
+  const text = readFileSync(logPath, 'utf8');
+  const connected = new Set();
+  const connectRe = /\[net\] peer:connect ([A-Za-z0-9]+)/;
+  const disconnectRe = /\[net\] peer:disconnect ([A-Za-z0-9]+)/;
+  for (const line of text.split('\n')) {
+    let m = connectRe.exec(line);
+    if (m) { connected.add(m[1]); continue; }
+    m = disconnectRe.exec(line);
+    if (m) { connected.delete(m[1]); }
+  }
+  return [...connected];
+}

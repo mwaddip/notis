@@ -9,6 +9,12 @@ export declare function pub1FirewallArgs(topology: unknown): {
   deleteTable: string[];
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;
+export declare function firstContactBlockArgs(topology: unknown, firstContactAddrs: string[]): {
+  addTable: string[];
+  addChain: string[];
+  drops: string[][];
+  deleteTable: string[];
+};
 export declare const S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE: string;
 export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: string]: unknown }): Promise<{
   scenario: string;

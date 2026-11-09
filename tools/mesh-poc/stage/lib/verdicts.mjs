@@ -225,6 +225,49 @@ export function verdictS3Recovered(m) {
   return 'FAIL';
 }
 
+// MESH_INTERFACE → Acceptance 3 — "With every first-contact node out
+// of reach, a page that has connected before reaches the network
+// through the nodes it remembers and reads its chain from them." Two
+// sessions on the same browser profile:
+//   (i)  session 1 (`?clearMemory=1`): first-contact reaches; the
+//        page's memory record ends with at least one honest non-
+//        first-contact node listed — the client's `onChecked` wrote
+//        it after a check that read the node `ok`/`trailing`.
+//   (ii) session 2 (no clear): every first-contact address is
+//        dropped by an nft rule in the browser namespace; the client
+//        reaches a remembered honest node and reads its chain —
+//        `state.tip` non-null, a remembered node reads `ok` or
+//        `trailing`, every first-contact entry reads `retry`, and
+//        `notContinued` is false (the client's chain stands on the
+//        remembered node's work).
+// Measurement:
+//   `{ firstContactIds: string[],
+//      rememberedHonestIds: string[],              // session 1 memory
+//      rememberedEntries: Array<{ notisId, status }>,
+//      firstContactEntries: Array<{ notisId, status }>,
+//      tipHeight: number | null,
+//      tipHash: string | null,
+//      notContinued: boolean }`.
+export function verdictS3KnownNodes(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.firstContactIds) || m.firstContactIds.length < 1) return 'FAIL';
+  if (!Array.isArray(m.rememberedHonestIds) || m.rememberedHonestIds.length < 1) return 'FAIL';
+  if (!Array.isArray(m.rememberedEntries)) return 'FAIL';
+  const anyReached = m.rememberedEntries.some(
+    (e) => e !== null && typeof e === 'object' && (e.status === 'ok' || e.status === 'trailing'),
+  );
+  if (!anyReached) return 'FAIL';
+  if (typeof m.tipHeight !== 'number' || m.tipHeight <= 0) return 'FAIL';
+  if (typeof m.tipHash !== 'string' || !/^[0-9a-f]{64}$/.test(m.tipHash)) return 'FAIL';
+  if (!Array.isArray(m.firstContactEntries) || m.firstContactEntries.length < 1) return 'FAIL';
+  const allRetry = m.firstContactEntries.every(
+    (e) => e !== null && typeof e === 'object' && e.status === 'retry',
+  );
+  if (!allRetry) return 'FAIL';
+  if (m.notContinued !== false) return 'FAIL';
+  return 'PASS';
+}
+
 // MESH_INTERFACE → Acceptance 4 — "UDP to one public node: the client
 // stays connected, through another node or over that node's secure
 // WebSocket — whichever ranks first". PASS when the client is
