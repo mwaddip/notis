@@ -2,60 +2,54 @@
 // whose reachable nodes all serve the hostile chain keeps its own and
 // says no node continues it." The pair (`hostile-fork-pair.mjs`) mines
 // from its own genesis and devnet pins no `genesisId`, so its proof is
-// `incomparable` with an honest kept proof and the client drops the
-// kept one before reaching the memory judgement (MESH_INTERFACE → What
-// the client remembers → "When every verified proof shares no block
-// with the kept one"). s6 step 1 needs a hostile host whose fork
-// **shares the honest chain**: it syncs from the honest nodes, is cut
-// from them at a chosen height, and mines a lighter fork of its own
-// past the cut. A page that verified the honest tip's proof reads the
-// fork host's chain `off` the kept one, and the client says `No node
-// reached continues the chain you verified.`
-//
-// The mechanics reuse the pair's cut building blocks — the per-host
-// nft table, the output/input chain hooks, the daddr/saddr accept
-// rules that pass the pair's own traffic (here: none) and the drop
-// rules on the p2p port. Two differences:
-//   1. the cut is applied AFTER the host has synced from the honest
-//      chain, not before its Notis node spawns (the sync is the whole
-//      point);
-//   2. the host carries no partner — the accept rules are empty and
-//      only the drops apply, so every TCP packet on the p2p port is
-//      dropped at cut time.
-//
-// The host is a role=`hostile` entry in topology.json whose node.role
-// is `server`; a miner process (`packages/node/scripts/miner.mjs`) is
-// started inside its namespace at cut time, pointed at the host's own
-// HTTP port. The miner reads the node's `/mining/template` and
-// `/mining/submit` paths over HTTP, so no NODE_ROLE change is needed.
-//
-// Pure: `buildForkCutArgs` is a plain function of the topology and
-// the host name; it holds no file-system read, no clock, no process
-// state. The stage applies the returned argv lists in order.
+// `incomparable` with an honest kept proof: the client drops the kept
+// one and reaches the memory judgement with no chain. s6's first step
+// reads the `notContinued` rule, which needs a hostile fork whose
+// chain **shares the honest chain**. The remedy pairs the fork with a
+// partner that keeps it peered after the cut
+// (MINING_INTERFACE → The peer-readiness gate), and both hosts drop
+// every packet to and from every other host — libp2p peers over TCP,
+// WebRTC-direct (UDP), through relays and over the secure WebSocket;
+// a cut on the Notis p2p port alone (an earlier attempt) leaked
+// through every other transport, so the fork pair rejoined the honest
+// chain through its mesh listener. The new cut is policy-drop on both
+// chains, with accepts only for loopback, the partner's address, and
+// the browser's address (so the page still reaches the fork pair at
+// its mesh port).
 
 /**
- * The nft rules the single-host cut writes, in order (`table` names
- * the table a teardown deletes). When `partner` is given
- * (`{ addr, p2pPort }`), accept rules for the partner's TCP p2p
- * traffic land BEFORE the drops on both chains — nft reads rules in
- * order, first match wins, so the partner's packets take the accept
- * and every other host's p2p hits the drop. This is the pattern
- * `stage/lib/hostile-fork-pair.mjs` uses for the genesis-pair; the
- * difference here is the pair synced the honest chain from pub1
- * before the cut, and the rules are applied dynamically rather than
- * pre-spawn.
+ * The nft rules the single-host cut writes. `table` names the table
+ * a teardown deletes; `partner: { addr }` is the one host the host
+ * stays peered with across the cut (any protocol); `browserAddr` is
+ * the browser's reachable address from this host (natC's outside
+ * address for a public fork host, the browser's inside address for
+ * a private fork host).
  *
- * Without a partner, every TCP packet on the Notis p2p port drops in
- * either direction — the single-host form, left for a caller who
- * does not need the peer-readiness gate (`MINING_INTERFACE`).
+ *   1. `add table ip <table>`
+ *   2. `add chain ip <table> out { type filter hook output priority 0 ; policy drop ; }`
+ *   3. `add chain ip <table> in  { type filter hook input  priority 0 ; policy drop ; }`
+ *   4. `add rule  ip <table> out oif lo accept`           (loopback — the node's own HTTP)
+ *   5. `add rule  ip <table> in  iif lo accept`
+ *   6. `add rule  ip <table> out ip daddr <partner.addr> accept`   (partner)
+ *   7. `add rule  ip <table> in  ip saddr <partner.addr> accept`
+ *   8. `add rule  ip <table> out ip daddr <browserAddr> accept`    (browser)
+ *   9. `add rule  ip <table> in  ip saddr <browserAddr> accept`
+ *
+ * The chain's default `policy drop` closes every other packet, so
+ * libp2p's WebRTC-direct, relay and secure-WebSocket traffic between
+ * the host and the honest nodes drops at the kernel — no block flows
+ * between the honest chain and the fork pair after the cut.
  *
  * Returns an array of `{ description, argv }` entries where `argv` is
  * the full `sudo ip netns exec <ns> nft ...` command line a caller
  * hands to `nftApply` or lists in a dry-run. `description` is the
  * record name the stage's command log reads so a teardown can single
  * out any one rule.
+ *
+ * Pure: a plain function of topology + name + options; no file-system
+ * read, no clock, no process state.
  */
-export function buildForkCutArgs(topology, name, { table = 'fork_cut', partner = null } = {}) {
+export function buildForkCutArgs(topology, name, { table = 'fork_cut', partner = null, browserAddr = null } = {}) {
   if (typeof name !== 'string' || name === '') {
     throw new Error('buildForkCutArgs: name must be a non-empty string');
   }
@@ -67,39 +61,37 @@ export function buildForkCutArgs(topology, name, { table = 'fork_cut', partner =
   if (typeof port !== 'number') {
     throw new Error(`buildForkCutArgs: ${name} has no node.p2pPort`);
   }
+  if (partner === null || typeof partner !== 'object') {
+    throw new Error('buildForkCutArgs: partner is required — the one host the fork stays peered with across the cut');
+  }
+  if (typeof partner.addr !== 'string' || partner.addr === '') {
+    throw new Error('buildForkCutArgs: partner.addr must be a non-empty string');
+  }
+  if (typeof browserAddr !== 'string' || browserAddr === '') {
+    throw new Error('buildForkCutArgs: browserAddr must be a non-empty string — the browser\'s address as seen from this host (natC outside for a public fork, 10.103.0.11 for a private fork)');
+  }
   const ns = `notismesh-${name}`;
-  const portStr = String(port);
   const wrap = (...rest) => ['sudo', 'ip', 'netns', 'exec', ns, 'nft', ...rest];
-  const rules = [
+  return [
     { description: `${name}-fork-add-table`,
       argv: wrap('add', 'table', 'ip', table) },
     { description: `${name}-fork-add-chain-out`,
-      argv: wrap('add', 'chain', 'ip', table, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}') },
+      argv: wrap('add', 'chain', 'ip', table, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', 'policy', 'drop', ';', '}') },
     { description: `${name}-fork-add-chain-in`,
-      argv: wrap('add', 'chain', 'ip', table, 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}') },
+      argv: wrap('add', 'chain', 'ip', table, 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', 'policy', 'drop', ';', '}') },
+    { description: `${name}-fork-out-accept-lo`,
+      argv: wrap('add', 'rule', 'ip', table, 'out', 'oif', 'lo', 'accept') },
+    { description: `${name}-fork-in-accept-lo`,
+      argv: wrap('add', 'rule', 'ip', table, 'in', 'iif', 'lo', 'accept') },
+    { description: `${name}-fork-out-accept-partner`,
+      argv: wrap('add', 'rule', 'ip', table, 'out', 'ip', 'daddr', partner.addr, 'accept') },
+    { description: `${name}-fork-in-accept-partner`,
+      argv: wrap('add', 'rule', 'ip', table, 'in', 'ip', 'saddr', partner.addr, 'accept') },
+    { description: `${name}-fork-out-accept-browser`,
+      argv: wrap('add', 'rule', 'ip', table, 'out', 'ip', 'daddr', browserAddr, 'accept') },
+    { description: `${name}-fork-in-accept-browser`,
+      argv: wrap('add', 'rule', 'ip', table, 'in', 'ip', 'saddr', browserAddr, 'accept') },
   ];
-  if (partner !== null) {
-    if (typeof partner.addr !== 'string' || partner.addr === '') {
-      throw new Error(`buildForkCutArgs: partner.addr must be a non-empty string`);
-    }
-    if (typeof partner.p2pPort !== 'number') {
-      throw new Error(`buildForkCutArgs: partner.p2pPort must be a number`);
-    }
-    const partnerPortStr = String(partner.p2pPort);
-    rules.push(
-      { description: `${name}-fork-out-accept-partner`,
-        argv: wrap('add', 'rule', 'ip', table, 'out', 'ip', 'daddr', partner.addr, 'tcp', 'dport', partnerPortStr, 'accept') },
-      { description: `${name}-fork-in-accept-partner`,
-        argv: wrap('add', 'rule', 'ip', table, 'in', 'ip', 'saddr', partner.addr, 'tcp', 'sport', partnerPortStr, 'accept') },
-    );
-  }
-  rules.push(
-    { description: `${name}-fork-out-drop`,
-      argv: wrap('add', 'rule', 'ip', table, 'out', 'tcp', 'dport', portStr, 'drop') },
-    { description: `${name}-fork-in-drop`,
-      argv: wrap('add', 'rule', 'ip', table, 'in', 'tcp', 'sport', portStr, 'drop') },
-  );
-  return rules;
 }
 
 /**
@@ -119,17 +111,23 @@ export function buildForkCutTeardownArgs(name, { table = 'fork_cut' } = {}) {
 }
 
 /**
- * The miner-process spawn plan for the fork host, as a caller passes
- * to `log.spawn`: the `argv` runs `packages/node/scripts/miner.mjs`
- * inside the host's namespace as the invoking user; `env` sets the
- * `NODE_URL` to the host's own HTTP port on loopback, `MINER_PCT` to
- * the given pace and (when a secret is handed) `MINING_SECRET`. The
- * miner reads the node's HTTP mining endpoints, so no `NODE_ROLE`
- * change is needed on the host — a `role: 'server'` Notis node answers
- * the mining routes.
+ * The miner-process spawn plan for the fork host, with env INLINED on
+ * the command line via `env VAR=VAL ...` — `sudo -u <user>` strips
+ * environment variables for security, so the inner process would see
+ * the defaults (an earlier attempt passed env through `process.env`,
+ * and the miner logged `node=http://localhost:3000 cpu=25%` — the
+ * defaults). The `env` command the inner shell runs sets the env on
+ * the final `node <minerScript>` call directly.
  *
- * Returns `{ description, argv, env }`. The caller hands these three
- * to its own spawn wrapper, which writes the pid to `pids.json`.
+ * `nodeBin` is the absolute path to Node — `sudo -u`'s `secure_path`
+ * reduces `$PATH` to a narrow default where `node` may resolve to an
+ * older binary or none; the stage spawns every long-lived process
+ * with `process.execPath` to hold that invariant
+ * (`NODE_ABS` in up.mjs).
+ *
+ * Returns `{ description, argv }`. The caller hands argv to its own
+ * spawn wrapper (`log.spawn`'s pidfile and teardown tree match every
+ * other spawn's shape).
  *
  * Pure: no file-system, no process, no clock.
  */
@@ -138,6 +136,7 @@ export function buildForkMinerSpawn(topology, name, {
   minerPct = 1,
   invokingUser,
   miningSecret,
+  nodeBin = 'node',
 } = {}) {
   if (typeof name !== 'string' || name === '') {
     throw new Error('buildForkMinerSpawn: name must be a non-empty string');
@@ -154,20 +153,24 @@ export function buildForkMinerSpawn(topology, name, {
     throw new Error(`buildForkMinerSpawn: ${name} has no node.httpPort`);
   }
   const ns = `notismesh-${name}`;
-  const envEntries = {
-    NODE_URL: `http://127.0.0.1:${String(httpPort)}`,
-    MINER_PCT: String(minerPct),
-  };
+  const envPairs = [`NODE_URL=http://127.0.0.1:${String(httpPort)}`, `MINER_PCT=${String(minerPct)}`];
   if (typeof miningSecret === 'string' && miningSecret !== '') {
-    envEntries.MINING_SECRET = miningSecret;
+    envPairs.push(`MINING_SECRET=${miningSecret}`);
   }
-  const outer = typeof invokingUser === 'string' && invokingUser !== ''
-    ? ['sudo', 'ip', 'netns', 'exec', ns, 'sudo', '-u', invokingUser, '--', 'node', minerScript]
-    : ['sudo', 'ip', 'netns', 'exec', ns, 'node', minerScript];
+  const envMap = Object.fromEntries(envPairs.map((p) => {
+    const i = p.indexOf('=');
+    return [p.slice(0, i), p.slice(i + 1)];
+  }));
+  // The env lands on the command line as `env NAME=VALUE ...` so the
+  // inner `node minerScript` reads them regardless of `sudo -u`'s
+  // environment stripping — same shape as `up.mjs`'s `userWrap`.
+  const argv = typeof invokingUser === 'string' && invokingUser !== ''
+    ? ['sudo', 'ip', 'netns', 'exec', ns, 'sudo', '-u', invokingUser, '--', 'env', ...envPairs, nodeBin, minerScript]
+    : ['sudo', 'ip', 'netns', 'exec', ns, 'env', ...envPairs, nodeBin, minerScript];
   return {
     description: `miner-${name}`,
-    argv: outer,
-    env: envEntries,
+    argv,
+    env: envMap,
   };
 }
 

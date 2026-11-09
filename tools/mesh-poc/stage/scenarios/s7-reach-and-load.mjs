@@ -347,20 +347,24 @@ export async function run(ctx) {
         // reads what happened. The honest chain, still growing, is
         // then the heavier chain the question names.
         currentPhase = 'b-cut';
-        const lan1Partner = {
-          addr: lan1PeerHostCfg.addr,
-          p2pPort: lan1PeerHostCfg.node.p2pPort,
-        };
-        const lan1PeerPartner = {
-          addr: lan1HostCfg.addr,
-          p2pPort: lan1HostCfg.node.p2pPort,
-        };
+        const lan1Partner = { addr: lan1PeerHostCfg.addr };
+        const lan1PeerPartner = { addr: lan1HostCfg.addr };
+        // lan1 and lan1-peer share natC's inside bridge with the
+        // browser; the browser's address from each of them is its
+        // real inside IP `10.103.0.11` (no NAT), not natC's outside.
+        const browserCfg = ctx.topology.hosts.browser;
+        const browserAddrForLan1 = browserCfg?.addr;
+        if (typeof browserAddrForLan1 !== 'string') {
+          throw new Error('s7 step 4 phase b: topology.hosts.browser.addr is not a string');
+        }
         // Read lan1's pre-cut height from its own loopback HTTP; the
-        // miner stops once lan1 is `cut_height + FORK_BLOCKS_PAST_CUT`
-        // so the fork is a strictly shorter extension of the honest
-        // chain past the cut point.
+        // miner stops on the first poll that reads
+        // `cutHeight + FORK_BLOCKS_PAST_CUT`, mined at the stage's
+        // usual pace (`MINER_PCT=1`) so ASERT does not raise the
+        // fork's target bits.
         const FORK_BLOCKS_PAST_CUT = 3;
         const lan1HttpPort = lan1HostCfg.node.httpPort;
+        const lan1AdminPort = lan1HttpPort + 1;
         const preCutText = execIn('notismesh-lan1', [
           'curl', '-sf', '--max-time', '5',
           `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
@@ -369,30 +373,67 @@ export async function run(ctx) {
         if (typeof preCutHeight !== 'number') {
           throw new Error('s7 step 4 phase b: lan1 pre-cut /blocks/current.height is not a number');
         }
-        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', { table: 'lan1_fork_cut', partner: lan1Partner })) {
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', {
+          table: 'lan1_fork_cut',
+          partner: lan1Partner,
+          browserAddr: browserAddrForLan1,
+        })) {
           // argv shape: `sudo ip netns exec notismesh-lan1 nft add …`;
           // nftApply rebuilds the wrap, so slice past the first six.
           nftApply('notismesh-lan1', argv.slice(6));
         }
         addedTables.push({ ns: 'notismesh-lan1', table: 'lan1_fork_cut' });
-        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1-peer', { table: 'lan1_fork_cut', partner: lan1PeerPartner })) {
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1-peer', {
+          table: 'lan1_fork_cut',
+          partner: lan1PeerPartner,
+          browserAddr: browserAddrForLan1,
+        })) {
           nftApply('notismesh-lan1-peer', argv.slice(6));
         }
         addedTables.push({ ns: 'notismesh-lan1-peer', table: 'lan1_fork_cut' });
+
+        // Verify the cut holds: lan1's /health reads `peers_connected
+        // == 1` (its partner) within 60 s. A larger count names a
+        // leak — libp2p would have rejoined honest peers through a
+        // transport the earlier port-keyed cut missed.
+        let lan1PeersConnectedAfterCut = null;
+        const cutHealthDeadline = Date.now() + 60_000;
+        while (Date.now() < cutHealthDeadline) {
+          try {
+            const text = execIn('notismesh-lan1', [
+              'curl', '-sf', '--max-time', '5',
+              `http://127.0.0.1:${lan1AdminPort}/health`,
+            ], { timeoutMs: 8_000 });
+            const data = JSON.parse(text.toString('utf8'));
+            if (typeof data.peers_connected === 'number') {
+              lan1PeersConnectedAfterCut = data.peers_connected;
+              if (data.peers_connected === 1) break;
+            }
+          } catch { /* retry */ }
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        if (lan1PeersConnectedAfterCut !== 1) {
+          throw new Error(`s7 step 4 phase b-cut: lan1 cut leak — /health peers_connected = ${lan1PeersConnectedAfterCut} (expected 1)`);
+        }
+
         currentPhase = 'b-mine';
         const minerScript = join(dirname(dirname(ctx.notisMain)), 'scripts', 'miner.mjs');
         const forkSpawn = buildForkMinerSpawn(ctx.topology, 'lan1', {
           minerScript,
-          minerPct: 100,
+          minerPct: 1,
           invokingUser: ctx.invokingUser,
           miningSecret: 'stage-mining-secret',
+          nodeBin: ctx.nodeBin,
         });
         const minerLogDir = join(ctx.outDir, 'logs');
         mkdirSync(minerLogDir, { recursive: true });
         const minerLogPath = join(minerLogDir, 's7-step4-miner-fork-lan1.log');
         const minerFd = openSync(minerLogPath, 'a');
+        // The miner's argv has env INLINED via `env NAME=VALUE ...`
+        // (`buildForkMinerSpawn` was reshaped for this — `sudo -u`'s
+        // environment stripping used to leave the miner with the
+        // defaults, logged as `node=http://localhost:3000 cpu=25%`).
         const minerChild = nodeSpawn(forkSpawn.argv[0], forkSpawn.argv.slice(1), {
-          env: { ...process.env, ...forkSpawn.env },
           stdio: ['ignore', minerFd, minerFd],
           detached: true,
         });
@@ -400,11 +441,12 @@ export async function run(ctx) {
         closeSync(minerFd);
         launchedPids.push(minerChild.pid);
         // Wait until lan1 reaches `preCutHeight + FORK_BLOCKS_PAST_CUT`,
-        // then stop the miner. The honest chain keeps growing at
-        // `MINER_PCT=2` meanwhile, so by the next phase the honest
-        // tip is heavier than lan1's frozen fork tip.
+        // then stop the miner on the first poll that reads the target
+        // (polling every 500 ms — faster than the miner at MINER_PCT=1
+        // produces blocks — so the stop lands at the target, not
+        // many blocks past it).
         const forkTargetHeight = preCutHeight + FORK_BLOCKS_PAST_CUT;
-        const forkMineDeadline = Date.now() + 120_000;
+        const forkMineDeadline = Date.now() + 180_000;
         let lan1HeightAtStop = preCutHeight;
         while (Date.now() < forkMineDeadline) {
           try {
@@ -418,18 +460,55 @@ export async function run(ctx) {
               if (h >= forkTargetHeight) break;
             }
           } catch { /* retry */ }
-          await new Promise((r) => setTimeout(r, 1_000));
+          await new Promise((r) => setTimeout(r, 500));
         }
         if (lan1HeightAtStop < forkTargetHeight) {
-          throw new Error(`s7 step 4 phase b-mine: lan1 did not reach ${forkTargetHeight} within 120s (last height ${lan1HeightAtStop})`);
+          // Tail the miner log so a FAIL reads why the miner did not
+          // produce the targeted blocks.
+          let minerTail = '<no tail>';
+          try {
+            const tail = execIn('notismesh-lan1', [
+              'tail', '-n', '40', minerLogPath,
+            ], { timeoutMs: 5_000 });
+            minerTail = tail.toString('utf8');
+          } catch { /* keep default */ }
+          throw new Error(`s7 step 4 phase b-mine: lan1 did not reach ${forkTargetHeight} within 180s (last height ${lan1HeightAtStop})\n--- last 40 lines of ${minerLogPath} ---\n${minerTail}`);
         }
-        // Stop the miner by its PID; the step keeps the cut in place
-        // so lan1 does not rejoin the honest chain while the browser
-        // phases read it.
+        // Stop the miner on the first poll reading the target; the
+        // step keeps the cut in place so lan1 does not rejoin the
+        // honest chain while the browser phases read it.
         signal(minerChild.pid, 'SIGTERM');
-        // Drop the stopped PID from the local list so `finally` does
-        // not signal it a second time.
         launchedPids.splice(launchedPids.indexOf(minerChild.pid), 1);
+
+        // Wait for pub1 to lead lan1's frozen fork by
+        // `HONEST_LEAD_OVER_LAN1` blocks — the honest chain's work
+        // above the cut clearly exceeds the fork's three slow-paced
+        // blocks. 20 is the same margin `up.mjs` holds for the fork
+        // pair; at steady ASERT each block weighs about the same so
+        // 20 > 3 is heavier through usual drift.
+        const HONEST_LEAD_OVER_LAN1 = 20;
+        const pub1HostCfg = ctx.topology.hosts.pub1;
+        const pub1HttpPort = pub1HostCfg.node.httpPort;
+        const pub1LeadDeadline = Date.now() + 600_000;
+        let pub1HeightAfterLead = preCutHeight;
+        const pub1Target = lan1HeightAtStop + HONEST_LEAD_OVER_LAN1;
+        while (Date.now() < pub1LeadDeadline) {
+          try {
+            const text = execIn('notismesh-pub1', [
+              'curl', '-sf', '--max-time', '5',
+              `http://${pub1HostCfg.addr}:${pub1HttpPort}/blocks/current`,
+            ], { timeoutMs: 8_000 });
+            const h = JSON.parse(text.toString('utf8')).height;
+            if (typeof h === 'number') {
+              pub1HeightAfterLead = h;
+              if (h >= pub1Target) break;
+            }
+          } catch { /* retry */ }
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        if (pub1HeightAfterLead < pub1Target) {
+          throw new Error(`s7 step 4 phase b-mine: pub1 did not lead frozen fork by ${HONEST_LEAD_OVER_LAN1} within 600s (last height ${pub1HeightAfterLead}, fork ${lan1HeightAtStop})`);
+        }
 
         // Open a page (same browser profile — memory persists); poll
         // until a disagreement of kind 'heavier' stands and the buttons
@@ -495,6 +574,9 @@ export async function run(ctx) {
           lan1PreCutHeight: preCutHeight,
           lan1HeightAtStop,
           forkBlocksPastCut: lan1HeightAtStop - preCutHeight,
+          pub1HeightAfterLead,
+          honestLeadOverFork: pub1HeightAfterLead - lan1HeightAtStop,
+          lan1PeersConnectedAfterCut,
         };
 
         // ----- Phase (c): press *disable it* -----

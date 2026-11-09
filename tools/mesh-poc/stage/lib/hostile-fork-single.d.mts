@@ -19,7 +19,11 @@ export interface NftRule {
 export function buildForkCutArgs(
   topology: Topology,
   name: string,
-  options?: { table?: string; partner?: { addr: string; p2pPort: number } | null },
+  options: {
+    table?: string;
+    partner: { addr: string };
+    browserAddr: string;
+  },
 ): NftRule[];
 
 export function buildForkCutTeardownArgs(
@@ -41,6 +45,7 @@ export function buildForkMinerSpawn(
     minerPct?: number;
     invokingUser?: string;
     miningSecret?: string;
+    nodeBin?: string;
   },
 ): MinerSpawnPlan;
 

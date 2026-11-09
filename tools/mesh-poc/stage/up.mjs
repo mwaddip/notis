@@ -1202,17 +1202,27 @@ if (laggingHostCfg !== undefined) {
 // direct address.
 const hostileForkHostCfg = topology.hosts['hostile-fork'];
 const hostileForkPeerHostCfg = topology.hosts['hostile-fork-peer'];
+// MESH_INTERFACE → Acceptance 6 / MINING_INTERFACE → The peer-readiness
+// gate — the fork pair stops at `cut + FORK_BLOCKS_PAST_CUT` (3), the
+// stage's usual pace (`MINER_PCT=1`) so ASERT does not raise the
+// fork's target bits (fast mining would make 3 fork blocks outweigh
+// the honest segment above the cut, as main's second run showed:
+// `forkBlocksPastCut 32` at `MINER_PCT=100`, 47 honest blocks lost
+// the compare). `HONEST_LEAD_OVER_FORK` (20) is wide enough that the
+// honest chain's work above the cut clearly exceeds the fork's three
+// slow-paced blocks — at the same ASERT-steady difficulty each block
+// weighs about the same, and 20 > 3 by a margin that holds through
+// usual drift.
 const FORK_BLOCKS_PAST_CUT = 3;
-const HONEST_LEAD_OVER_FORK = 10;
+const HONEST_LEAD_OVER_FORK = 20;
+const natCCfg = topology.hosts.natC;
+const browserAddrForPublicFork = natCCfg?.outsideAddr;
 if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
-  const forkPartner = {
-    addr: hostileForkPeerHostCfg.addr,
-    p2pPort: hostileForkPeerHostCfg.node.p2pPort,
-  };
-  const peerPartner = {
-    addr: hostileForkHostCfg.addr,
-    p2pPort: hostileForkHostCfg.node.p2pPort,
-  };
+  if (typeof browserAddrForPublicFork !== 'string') {
+    throw new Error('Phase 8b: topology.hosts.natC.outsideAddr must be a string (the browser\'s NAT address as seen from a public fork host)');
+  }
+  const forkPartner = { addr: hostileForkPeerHostCfg.addr };
+  const peerPartner = { addr: hostileForkHostCfg.addr };
   // Read pub1's pre-cut height; this is the common ancestor the fork
   // and the honest chain share once the cut lands.
   let cutHeight = null;
@@ -1226,28 +1236,66 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
       throw new Error(`Phase 8b: pub1 /blocks/current.height is not a number before fork cut`);
     }
   }
-  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork', { partner: forkPartner })) {
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork', {
+    partner: forkPartner,
+    browserAddr: browserAddrForPublicFork,
+  })) {
     log.shell(argv[0], argv.slice(1), { privileged: true });
   }
-  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork-peer', { partner: peerPartner })) {
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork-peer', {
+    partner: peerPartner,
+    browserAddr: browserAddrForPublicFork,
+  })) {
     log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+  // Verify the cut holds: after the cut, `hostile-fork`'s admin
+  // `/health` reads `peers_connected: 1` (its partner alone). An
+  // earlier shape dropped TCP on the p2p port only and the pair
+  // stayed peered with every honest node over WebRTC-direct (UDP),
+  // relays and the secure WebSocket; `peers_connected > 1` here
+  // fails the bring-up naming the count so a leak does not slip
+  // through to the scenarios.
+  recordWait(`hostile-fork /health peers_connected reads 1 (its partner alone) within 60 s after the cut`);
+  if (!dryRun) {
+    const forkAdminPort = hostileForkHostCfg.node.httpPort + 1;
+    let lastPeersConnected = null;
+    await waitWithTail(
+      `hostile-fork /health peers_connected == 1 after cut`,
+      async () => {
+        const text = execIn(nsOf('hostile-fork'), [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${forkAdminPort}/health`,
+        ], { timeoutMs: 8_000 });
+        const data = JSON.parse(text);
+        if (typeof data.peers_connected !== 'number') return false;
+        lastPeersConnected = data.peers_connected;
+        return data.peers_connected === 1;
+      },
+      logPathFor('notis:hostile-fork'),
+      { timeoutMs: 60_000, pollMs: 1_000 },
+    ).catch((err) => {
+      throw new Error(`Phase 8b: hostile-fork cut leak — last peers_connected ${lastPeersConnected} (expected 1); ${err.message}`);
+    });
   }
   const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {
     minerScript,
-    minerPct: 100,
+    minerPct: 1,
     invokingUser: INVOKING_USER,
     miningSecret: 'stage-mining-secret',
+    nodeBin: NODE_ABS,
   });
   const minerForkChild = log.spawn(
-    userWrap(nsOf('hostile-fork'), forkSpawn.env).concat([minerScript]),
+    forkSpawn.argv,
     { description: 'miner-fork', logPath: logPathFor('miner-fork') },
   );
 
   // Wait for the fork to reach `cutHeight + FORK_BLOCKS_PAST_CUT`,
-  // then stop the miner by PID and drop its row from `pids.json` so
-  // `down` does not try again. The record `fork-pair-cut.json` names
-  // the heights the s6 step 1 drive reads.
-  recordWait(`hostile-fork reads /blocks/current.height >= ${FORK_BLOCKS_PAST_CUT} past the cut; then miner-fork stops`);
+  // stopping the miner on the FIRST poll that reads the target so
+  // no further blocks land past it. Previous MINER_PCT=100 shape
+  // produced blocks faster than the 1 s poll could catch: the stop
+  // came 32 blocks late and the fork outweighed the honest segment
+  // above the cut.
+  recordWait(`hostile-fork reads /blocks/current.height >= cutHeight + ${FORK_BLOCKS_PAST_CUT}; miner-fork stops on the first poll that reads the target`);
   recordWait(`pub1 reads /blocks/current.height >= forkHeightAtStop + ${HONEST_LEAD_OVER_FORK} (the honest chain's lead over the frozen fork)`);
   let forkHeightAtStop = cutHeight;
   let pub1HeightAfterLead = cutHeight;
@@ -1266,14 +1314,11 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
         return h >= forkTarget;
       },
       logPathFor('miner-fork'),
-      { timeoutMs: 300_000, pollMs: 1_000 },
+      { timeoutMs: 300_000, pollMs: 500 },
     );
     try { process.kill(minerForkChild.pid, 'SIGTERM'); } catch { /* already gone */ }
     const idx = log.pids.findIndex((e) => e.description === 'miner-fork');
     if (idx >= 0) log.pids.splice(idx, 1);
-    // Wait for pub1 to lead the frozen fork by HONEST_LEAD_OVER_FORK
-    // blocks. Honest mines at MINER_PCT=2 (one block every few
-    // seconds on devnet), so this holds for under a minute.
     const pub1Target = forkHeightAtStop + HONEST_LEAD_OVER_FORK;
     await waitWithTail(
       `pub1 leads the frozen fork by ${HONEST_LEAD_OVER_FORK} blocks`,
