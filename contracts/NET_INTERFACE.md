@@ -1673,11 +1673,6 @@ first hop.
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
 | `syncPhase()` | `() => 'idle' \| 'syncing' \| 'synced'` | The scheduler's phase (Sync State Machine → "The phases"): `'idle'` before the first claim this node settles — before `start()`, after `stop()`, and on a node that has met no peer; `'syncing'` while a header sync or a block request is open or the best chain is not fully applied; `'synced'` once the best chain is fully applied and every unmarked Active peer's claim is settled — a co-started mesh enters it at its first settled claims, a miner with followers included. A reader wanting "not behind" tests for `'syncing'` absent |
 
-> ⚠ **AHEAD OF CODE (2026-11-09).** `NetNode.start` attaches its listeners and registers its protocols after
-> `createLibp2p` has started libp2p. A connection libp2p opens in between raises its `connection:open` and its peer's
-> `peer:connect` unheard: no handshake opens on it, so the remote end closes it at its deadline, and its peer is never
-> tracked, so a handshake on another connection to it leaves it out of `getConnectedPeers`.
-
 ### Gossip
 
 | Function | Signature | Description |
