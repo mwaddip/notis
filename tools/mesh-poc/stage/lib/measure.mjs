@@ -258,14 +258,17 @@ export function signal(pid, sig) {
  * MESH_INTERFACE → Acceptance — a restart records its PID in pids.json
  * in place of the old one. When `pidsPath` is given, the matching
  * entry on disk is rewritten so a later `stage:down` reads the LIVE
- * pid, not a stale one.
+ * pid, not a stale one. `envOverride` layers over the entry's own
+ * recorded env, so a scenario respawning a node on a different
+ * `BOOTSTRAP_PEERS` (or any other env the first spawn set) names
+ * exactly what the restart runs on and nothing wider.
  */
-export function restartFromEntry(entry, { pidsPath = null } = {}) {
+export function restartFromEntry(entry, { pidsPath = null, envOverride = {} } = {}) {
   if (!entry || !Array.isArray(entry.argv) || entry.argv.length === 0) {
     throw new Error(`restartFromEntry: entry has no argv: ${JSON.stringify(entry)}`);
   }
   const [name, ...argv] = entry.argv;
-  const env = { ...process.env, ...(entry.env ?? {}) };
+  const env = { ...process.env, ...(entry.env ?? {}), ...envOverride };
   const logPath = entry.logPath;
   if (typeof logPath !== 'string' || logPath === '') {
     throw new Error(`restartFromEntry: entry has no logPath: ${JSON.stringify(entry)}`);

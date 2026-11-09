@@ -485,6 +485,39 @@ describe('fix 6 — restart writes new pid to pids.json; down waits for signalle
       void tmpdir;
     }
   });
+  it('restartFromEntry layers envOverride over the entry\'s recorded env — the child sees the override', async () => {
+    const { mkdtempSync, readFileSync: rfs, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { restartFromEntry } = await import('../stage/lib/measure.mjs');
+    const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'mesh-fix6-env-'));
+    try {
+      const logPath = join(dir, 'child.log');
+      const envDumpPath = join(dir, 'env-dump');
+      // The child writes two env values into a file, then exits. The
+      // recorded env sets BOOTSTRAP_PEERS to the OLD value; the
+      // override replaces it. ORIG_KEEP tests that env keys the
+      // override does not touch stay from the recorded env.
+      const entry = {
+        pid: 0, description: 'test:env', logPath,
+        argv: ['sh', '-c', `echo "boot=$BOOTSTRAP_PEERS keep=$ORIG_KEEP" > ${envDumpPath}`],
+        env: { BOOTSTRAP_PEERS: '/old/addr', ORIG_KEEP: 'kept' },
+      };
+      restartFromEntry(entry, {
+        envOverride: { BOOTSTRAP_PEERS: '/new/partner' },
+      });
+      // Wait for the child to write the dump.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (existsSync(envDumpPath)) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const out = rfs(envDumpPath, 'utf8').trim();
+      expect(out).toBe('boot=/new/partner keep=kept');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      void tmpdir;
+    }
+  });
   it("down.mjs's dry-run names a wait-and-SIGKILL path for each PID", async () => {
     const DOWN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'down.mjs');
     const { mkdtempSync, rmSync } = await import('node:fs');
