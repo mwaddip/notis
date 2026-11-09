@@ -1154,17 +1154,28 @@ describe("page/main.ts — the memory wiring", () => {
   type StartMeshFn = NonNullable<StartArgs['startMeshClient']>;
   type StartCapture = { opts: Parameters<StartMeshFn>[0]; triggerChecked: (snap: unknown) => void };
 
-  function buildStartCapture(): { startMeshClient: StartMeshFn; captured: StartCapture[] } {
-    const captured: StartCapture[] = [];
+  type StartCaptureExt = StartCapture & {
+    setChain: (chain: string | null) => void;
+  };
+
+  function buildStartCapture(): { startMeshClient: StartMeshFn; captured: StartCaptureExt[] } {
+    const captured: StartCaptureExt[] = [];
     const startMeshClient: StartMeshFn = async (opts) => {
       let latestChecked: ((snap: unknown) => void) | null = null;
       if (typeof opts.onChecked === 'function') {
         latestChecked = opts.onChecked as (snap: unknown) => void;
       }
-      captured.push({
-        opts,
-        triggerChecked: (snap) => { latestChecked?.(snap); },
-      });
+      // Mutable state so a test can seat a chain before triggering
+      // `onChecked` — the page reads `client.state().chain` to key
+      // the memory record (MESH_INTERFACE → What the client remembers
+      // → "keyed by the genesis the network's profile pins, or by the
+      // client's chain where it pins none").
+      let state: ClientState = {
+        nodeId: null, transport: null, path: null, lastLeft: null,
+        tip: null, agreement: null, checks: 0,
+        traffic: emptyTraffic(), nodes: [], seated: false, proofs: null,
+        anchor: null, chain: null, notContinued: false, disagreement: null,
+      };
       // The returned shape is `MeshClient`; the test does not touch
       // most of its methods, so a minimal one that satisfies the
       // seam's calls suffices (runMain reads `onState`, `state`,
@@ -1174,12 +1185,7 @@ describe("page/main.ts — the memory wiring", () => {
         read: async () => ({ response: new Response(''), nodeId: '', route: 'mesh' as const }),
         order: () => [],
         check: async () => {},
-        state: () => ({
-          nodeId: null, transport: null, path: null, lastLeft: null,
-          tip: null, agreement: null, checks: 0,
-          traffic: emptyTraffic(), nodes: [], seated: false, proofs: null,
-          anchor: null, chain: null, notContinued: false, disagreement: null,
-        } as ClientState),
+        state: () => state,
         onState: () => () => {},
         stop: async () => {},
         addByHand: () => {},
@@ -1191,6 +1197,11 @@ describe("page/main.ts — the memory wiring", () => {
         toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
         libp2p: {} as unknown as import('libp2p').Libp2p,
       };
+      captured.push({
+        opts,
+        triggerChecked: (snap) => { latestChecked?.(snap); },
+        setChain: (chain) => { state = { ...state, chain }; },
+      });
       return client as unknown as MeshClient;
     };
     return { startMeshClient, captured };
@@ -1316,7 +1327,7 @@ describe("page/main.ts — the memory wiring", () => {
     expect(captured[0]!.opts.seeds).toBeUndefined();
   });
 
-  it('onChecked writes the snapshot through the memory store under the lock', async () => {
+  it('onChecked writes the snapshot through the memory store under the lock, keyed by the client\'s chain', async () => {
     const storage = fakeStorage();
     const { startMeshClient, captured } = buildStartCapture();
     const root = document.createElement('div');
@@ -1330,6 +1341,11 @@ describe("page/main.ts — the memory wiring", () => {
       wallClock: () => 0,
     });
     expect(captured).toHaveLength(1);
+    // Seat the client's chain — block 1's hex blockHash — before the
+    // check fires. The page reads it through `state().chain` and keys
+    // the record under it (MESH_INTERFACE → What the client remembers).
+    const chain = 'c'.repeat(64);
+    captured[0]!.setChain(chain);
     const snapshotBytes = new Uint8Array([9, 8, 7]);
     captured[0]!.triggerChecked({
       proof: snapshotBytes,
@@ -1345,9 +1361,103 @@ describe("page/main.ts — the memory wiring", () => {
     const parsed = JSON.parse(raw!);
     expect(parsed.proof).toBe(btoa(String.fromCharCode(9, 8, 7)));
     expect(parsed.nodes).toEqual([{ notisId: 'c'.repeat(64), addrs: [] }]);
-    // The record is keyed by the devnet network name (no genesis pin),
-    // so the `genesis` field on disk is the network name.
-    expect(parsed.genesis).toBe('devnet');
+    // Keyed by the client's chain (block 1's hex hash), so the store's
+    // read keeps the record — it refuses any `genesis` that is not 64 hex.
+    expect(parsed.genesis).toBe(chain);
+  });
+
+  it("onChecked before the client's chain is seated writes nothing — no record under a non-hex key", async () => {
+    const storage = fakeStorage();
+    const { startMeshClient, captured } = buildStartCapture();
+    const root = document.createElement('div');
+    const { runMain } = await import('../page/main.js');
+    await runMain({
+      root,
+      fetch: await loadConfig(),
+      startMeshClient,
+      storage,
+      locks: fakeLocks(),
+      wallClock: () => 0,
+    });
+    // No `setChain` — the client's chain is `null` as it is before the
+    // first check seats one. The onChecked callback skips the write.
+    captured[0]!.triggerChecked({
+      proof: new Uint8Array([1, 2, 3]),
+      nodes: [{ notisId: 'a'.repeat(64), addrs: [] }],
+      dropped: [],
+      answeredForks: [],
+      replace: false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    const raw = storage.getItem('notis.mesh.memory.devnet');
+    expect(raw, 'no record was written before the chain was seated').toBeNull();
+  });
+
+  it("two page starts over one storage: the second start hands the client the first's kept proof and nodes", async () => {
+    // Shared storage — simulates the same browser profile opening the
+    // page twice. The first start writes a record through onChecked;
+    // the second start reads it and hands it to the mesh client as
+    // `seeds` + `memory` (MESH_INTERFACE → What the client remembers).
+    const storage = fakeStorage();
+    const chain = 'b'.repeat(64);
+    const snapshotBytes = new Uint8Array([4, 5, 6]);
+    const rememberedNodes = [{ notisId: 'd'.repeat(64), addrs: [] }];
+
+    // ----- first start -----
+    {
+      const { startMeshClient, captured } = buildStartCapture();
+      const root = document.createElement('div');
+      const { runMain } = await import('../page/main.js');
+      await runMain({
+        root,
+        fetch: await loadConfig(),
+        startMeshClient,
+        storage,
+        locks: fakeLocks(),
+        wallClock: () => 0,
+      });
+      expect(captured).toHaveLength(1);
+      // First start reads an empty storage.
+      expect(captured[0]!.opts.memory).toBeUndefined();
+      expect(captured[0]!.opts.seeds).toBeUndefined();
+      // Seat the chain, fire a check — the write lands on `storage`.
+      captured[0]!.setChain(chain);
+      captured[0]!.triggerChecked({
+        proof: snapshotBytes,
+        nodes: rememberedNodes,
+        dropped: [],
+        answeredForks: [],
+        replace: false,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      // The record is on disk under the chain name; the store's read
+      // (64-hex check) will keep it.
+      const raw = storage.getItem('notis.mesh.memory.devnet');
+      expect(raw, 'the first start wrote a record').not.toBeNull();
+      expect(JSON.parse(raw!).genesis).toBe(chain);
+    }
+
+    // ----- second start -----
+    {
+      const { startMeshClient, captured } = buildStartCapture();
+      const root = document.createElement('div');
+      const { runMain } = await import('../page/main.js');
+      await runMain({
+        root,
+        fetch: await loadConfig(),
+        startMeshClient,
+        storage,
+        locks: fakeLocks(),
+        wallClock: () => 0,
+      });
+      expect(captured).toHaveLength(1);
+      // The second start hands the first start's kept proof + nodes
+      // to the client.
+      expect(captured[0]!.opts.seeds, 'the record\'s nodes come in as seeds').toEqual(rememberedNodes);
+      expect(captured[0]!.opts.memory, 'the record\'s proof comes in as memory').not.toBeUndefined();
+      expect(Array.from(captured[0]!.opts.memory!.proof)).toEqual([4, 5, 6]);
+      expect(captured[0]!.opts.memory!.answeredForks).toEqual([]);
+    }
   });
 
   // MESH_INTERFACE → What the client remembers — the page honours one

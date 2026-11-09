@@ -175,6 +175,15 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   const useRecord = record !== null
     && (pinnedGenesis === null || record.genesis === pinnedGenesis);
 
+  // MESH_INTERFACE → What the client remembers — "keyed by the genesis
+  // the network's profile pins, or by the client's chain where it pins
+  // none" — the chain is the lowercase hex blockHash of block 1
+  // (`MeshClient.state().chain`), non-null once the client has seated.
+  // `onChecked` reads this through `seatedClient`, which is assigned
+  // once `startMeshClient` resolves. Before the chain is held, the
+  // write is skipped — no key spelt from the network's name survives
+  // the store's read (which refuses a `genesis` that is not 64 hex).
+  let seatedClient: MeshClient | null = null;
   const seedsFromConfig = config.seeds ?? [];
   const seedsFromRecord: MeshContact[] = useRecord ? record!.nodes : [];
   // The record's nodes come in as the client's `seeds` — known nodes
@@ -204,13 +213,19 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
       onChecked: (snapshot) => {
         // MESH_INTERFACE → What the client remembers — "A client
         // remembers, per network ... keyed by the genesis the network's
-        // profile pins, or by the network's name where it pins none."
-        // `write` keys on genesis; a profile pinning none hands the
-        // network's name (the store's own key strips the fallback).
-        const genesisForWrite = pinnedGenesis ?? config.network;
+        // profile pins, or by the client's chain where it pins none."
+        // The chain is `MeshClient.state().chain` — block 1's lowercase
+        // hex blockHash, non-null once the client has seated. The
+        // store's `read` refuses a `genesis` that is not 64 hex, so a
+        // write before the chain is held would pin a record no later
+        // read keeps; skip it until the chain is seated.
+        const chainName = seatedClient !== null ? seatedClient.state().chain : null;
+        const genesisForWrite = pinnedGenesis ?? chainName;
+        if (genesisForWrite === null) return;
         void store.write(snapshot, genesisForWrite);
       },
     });
+    seatedClient = client;
   } catch (e) {
     if (e instanceof MeshConfigError) {
       showError(opts.root, `config refused: ${messageOf(e)}`);
