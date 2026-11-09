@@ -958,3 +958,378 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(client.order('older')).not.toContain(oBase);
   }, 120_000);
 });
+
+// MESH_INTERFACE → The client's node list → "A node is judged against
+// the chain the check leaves" — a node's event, distance and
+// agreement verdict are read against the client's chain as the check
+// ends, never against the winner of a contest the client did not
+// take: a fork the reader answered, a question standing, the kept
+// proof's settle. A tip whose verified proof lost is kept as lost
+// only when it lies off that chain. A lie and a failure land as they
+// were read.
+describe("mesh-client — a node is judged against the chain the check leaves", () => {
+  const clients: MeshClient[] = [];
+  afterEach(async () => {
+    for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+  });
+
+  it.fails("after a switch to a heavier chain, the node at the old tip reads behind and serves no tip read", async () => {
+    // Kept = Y's chain of MK blocks. Z extends Y by 30 blocks (past
+    // k = 20 of Y's window). The first check seats the chain, reads
+    // Z's proof — which continues kept — and judge-by-memory picks
+    // Z's proof as best. The chain switches to Z. Y's tip, at height
+    // MK, falls under Z's window (lowest MK + 11) and places off the
+    // chain. The lead says Y reads behind with `behindBy` null and
+    // serves no tip read.
+    const keptProof = proofOf(MK);
+    const zProof = proofOf(MK + 30);
+    const yId = keyPair().notisId;
+    const zId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const zBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(zBase, tipOf(MK + 30));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(zBase, zProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: zId, addrs: [], api: zBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    expect(s.tip?.height).toBe(MK + 30);
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    expect(yEntry).toBeDefined();
+    expect(yEntry!.status).toBe('behind');
+    expect(yEntry!.behindBy).toBeNull();
+    expect(client.order('tip')).not.toContain(yBase);
+    expect(client.order('older')).not.toContain(yBase);
+  }, 120_000);
+
+  it.fails("while a question stands, nodes are judged against the held chain", async () => {
+    // Kept = Y's chain of MK. A heavier O on a different chain (stamp
+    // 60_001 shifts its retarget so it does not continue kept). The
+    // first check raises a heavier disagreement; the chain stays at
+    // kept. The lead says a node naming the held tip reads ok and
+    // the heavier other reads behind off the chain.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    const s = client.state();
+    expect(s.disagreement).not.toBeNull();
+    expect(s.disagreement!.which).toBe('heavier');
+    expect(s.tip?.height).toBe(MK);
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    const oEntry = s.nodes.find((n) => n.notisId === oId);
+    expect(yEntry!.status).toBe('ok');
+    expect(yEntry!.behindBy).toBe(0);
+    expect(oEntry!.status).toBe('behind');
+    expect(oEntry!.behindBy).toBeNull();
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
+
+  it.fails("where the kept proof wins the settle over the resolve's winner, nodes are judged against the kept chain", async () => {
+    // Kept = Y's chain of MK. Z is heavier (MK + 30) on an
+    // incomparable chain: a forced level-10 nonce at height 1 gives
+    // a different genesis, so Z and Y share no block and
+    // `compareProofs` answers `incomparable`. The resolve picks Z
+    // (highest tip); `judgeByMemory` picks Y, since no comparable
+    // proof beats the kept. The lead says Z, whose tip lies off the
+    // kept chain, reads behind and off.
+    const keptProof = proofOf(MK);
+    const zProof = proveWithReader(
+      makeReader(buildMinedChain({
+        count: MK + 30,
+        forceLevels: new Map([[1, 10]]),
+      })),
+      { m: M, k: K },
+    );
+    const zChain = buildMinedChain({
+      count: MK + 30,
+      forceLevels: new Map([[1, 10]]),
+    });
+    const zTipHdr = zChain.headers[zChain.headers.length - 1]!;
+    const zTipHash = blockHash(zTipHdr);
+    if (zTipHash === null) throw new Error('unhashable zTip');
+    const yId = keyPair().notisId;
+    const zId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const zBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(zBase, { height: MK + 30, hash: zTipHash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(zBase, zProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: zId, addrs: [], api: zBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    expect(s.tip?.height).toBe(MK);  // chain stays on kept
+    const zEntry = s.nodes.find((n) => n.notisId === zId);
+    expect(zEntry).toBeDefined();
+    expect(zEntry!.status).toBe('behind');
+    expect(zEntry!.behindBy).toBeNull();
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
+
+  it("after continue, your node counts on the chain in the agreement", async () => {
+    // The heavier memory question: kept = Y's chain of MK, O heavier
+    // on a different chain. After *continue*, the next check reads
+    // the heavier other as behind off the chain and Y as ok. Y
+    // counts on and O counts off.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    client.answer('continue');
+    await client.check();
+
+    const s = client.state();
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    expect(yEntry!.status).toBe('ok');
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
+
+  it("after continue, every node naming your node's tip reads ok", async () => {
+    // A third node w names Y's tip after continue. w's placement
+    // against the client's chain (= Y's) is `tip`; w reads ok.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const wId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    const wBase = 'http://127.0.0.1:3';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.tips.set(wBase, tipOf(MK));  // w names kept's tip (= Y's tip)
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+    h.proofs.set(wBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+        { notisId: wId, addrs: [], api: wBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    client.answer('continue');
+    await client.check();
+
+    const s = client.state();
+    const wEntry = s.nodes.find((n) => n.notisId === wId);
+    expect(wEntry).toBeDefined();
+    expect(wEntry!.status).toBe('ok');
+    expect(wEntry!.behindBy).toBe(0);
+  }, 120_000);
+
+  it("after continue, the client's own tip is not kept as a lost tip", async () => {
+    // After *continue*, the client's chain is Y's. On the next
+    // check, a third node w naming Y's tip reads ok, never
+    // treated as a lost tip via a stale keptVerdicts entry. A
+    // third check follows to catch any carry-over.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const wId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    const wBase = 'http://127.0.0.1:3';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.tips.set(wBase, tipOf(MK));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+    h.proofs.set(wBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+        { notisId: wId, addrs: [], api: wBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    client.answer('continue');
+    await client.check();
+    await client.check();
+
+    const s = client.state();
+    const yEntry = s.nodes.find((n) => n.notisId === yId);
+    const wEntry = s.nodes.find((n) => n.notisId === wId);
+    expect(yEntry!.status).toBe('ok');
+    expect(wEntry!.status).toBe('ok');
+    expect(s.tip?.height).toBe(MK);
+  }, 120_000);
+
+  it("a node whose proof is a lie is blacklisted whatever its tip read placed", async () => {
+    // A node M names a tip above the chain; phase 3b places it
+    // above. In phase 4 M serves a tampered proof — the suffix
+    // head's `powNonce` set to 0, which fails verification. Over a
+    // mesh-authenticated link the lie lands as `blacklisted` (the
+    // node-list table's lie row); at an API base it is demoted to
+    // `retry` (the API-base row — HTTPS authenticates a name, never
+    // a key). Either way the single pass does NOT promote M back to
+    // 'ok' from its tip read's placement. The harness reads M at
+    // its API base, so M reads `retry`.
+    const keptProof = proofOf(MK);
+    const tamperedProof: NipopowProof = {
+      ...keptProof,
+      suffixHead: {
+        ...keptProof.suffixHead,
+        header: { ...keptProof.suffixHead.header, powNonce: 0 },
+      },
+    };
+    const mTipChain = buildMinedChain({ count: MK + 5 });
+    const mTipHdr = mTipChain.headers[mTipChain.headers.length - 1]!;
+    const mTipHash = blockHash(mTipHdr);
+    if (mTipHash === null) throw new Error('unhashable mTip');
+    const yId = keyPair().notisId;
+    const mId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const mBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(mBase, { height: MK + 5, hash: mTipHash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(mBase, tamperedProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: mId, addrs: [], api: mBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const mEntry = s.nodes.find((n) => n.notisId === mId);
+    expect(mEntry).toBeDefined();
+    expect(mEntry!.status).toBe('retry');
+    // The single pass judges M's tip hash above the chain; if it
+    // had wrongly written an event for a lying node, status would
+    // read 'behind' or 'ok'. The assertion stands for the lie path.
+    expect(mEntry!.status).not.toBe('ok');
+    expect(mEntry!.status).not.toBe('trailing');
+    expect(mEntry!.status).not.toBe('behind');
+  }, 120_000);
+});
