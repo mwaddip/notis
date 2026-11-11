@@ -319,7 +319,8 @@ node's speed. A re-read that fails is a failure as any read's is. A re-read that
 to the next check, the node keeping its first read's placement. A check that does not move the tip reads no tip twice.
 
 **A node is judged against the chain the check leaves.** Its event, its distance below the tip and its count in the
-agreement are read against the client's chain as the check ends — its tip placed on that chain by hash, or, where its
+agreement are read against the client's chain as the check ends — its tip placed on that chain by hash, at the height
+the chain holds that hash whatever height the read names, or, where its
 verified proof's tip lies off it, `behind` and off the chain — never against the winner of a contest the client did not
 take: a fork the reader answered, a question standing, the kept proof's settle (→ What the client remembers). A tip
 whose verified proof lost is kept as lost only when it lies off that chain. A lie and a failure land as they were read:
@@ -328,7 +329,8 @@ tip read's placement as any node's do, since the counts say what the nodes name 
 agreement counts").
 
 > ⚠ **AHEAD OF CODE (2026-11-11).** The check's judgement pass skips a `retry` entry its own proof read made and a
-`blacklisted` one, so such a node is in no agreement count though its tip read names a tip on the chain.
+`blacklisted` one, so such a node is in no agreement count though its tip read names a tip on the chain; and it places
+a read by the height the read names, so a tip the chain holds named at another height lands `above` and off the chain.
 
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
