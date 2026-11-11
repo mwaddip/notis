@@ -1545,7 +1545,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
   // counts say what the nodes name" (→ What the client remembers →
   // "The agreement counts").
 
-  it.fails("a node whose proof fails at its API base keeps retry and counts on the chain by the tip it names", async () => {
+  it("a node whose proof fails at its API base keeps retry and counts on the chain by the tip it names", async () => {
     // R and Y at their API bases, both naming the same tip at MK.
     // R's proof is tampered (`powNonce` set to 0 on its suffix head),
     // Y's proof verifies. Phase 4 asks R first by candidate rank
@@ -1613,7 +1613,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     // cases that exercise the shared control flow.
   });
 
-  it.fails("a node whose proof read fails as a transport failure keeps retry and counts by the tip it named", async () => {
+  it("a node whose proof read fails as a transport failure keeps retry and counts by the tip it named", async () => {
     // T and Y at their API bases, both naming the same tip at MK.
     // T has no proof in the resolve map, so the resolve answers it
     // `refuseCode: 'unreachable'`, which `tipEvent` reads as a
@@ -1660,7 +1660,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(client.order('tip')).not.toContain(tBase);
   }, 120_000);
 
-  it.fails("a node off the chain whose proof was refused counts off the chain", async () => {
+  it("a node off the chain whose proof was refused counts off the chain", async () => {
     // Kept = Y's chain at MK. O names an incomparable tip at MK + 5
     // (forced level-7 genesis). Phase 3a's fill against O's base
     // fails (the harness answers 404 for `/blocks/:height`); phase 4

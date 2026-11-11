@@ -2172,8 +2172,12 @@ class MeshClientImpl implements MeshClient {
     // and reads `behind` with its distance; any other `under`,
     // `above` or `unplaced` reads `behind` with `behindBy` null and
     // `off` in the agreement. A lie and a failure land as they were
-    // read: an entry already `blacklisted` or one phase 4's proof
-    // read downgraded to `retry` keeps that status and its event. A
+    // read: an entry phase 4's proof read moved to `retry` and one
+    // the same path left `blacklisted` keep that status and its
+    // event — the pass writes no event over it — while its count in
+    // the agreement and its distance follow its tip read's placement
+    // as any node's do, since the counts say what the nodes name
+    // (→ What the client remembers → "The agreement counts"). A
     // tip answered with no hash was placed by phase 3b with the
     // `behind` event and no agreement verdict. A retry from phase
     // 1's dial alone is not held here — the api that served the
@@ -2182,33 +2186,33 @@ class MeshClientImpl implements MeshClient {
     // pick whom to re-read against the settled chain.
     for (const read of tipReads) {
       if (read.hash === null) continue;
-      if (phase4Downgraded.has(read.id)) continue;
-      const entry = this.nodeList.entry(read.id);
-      if (entry && entry.status === 'blacklisted') continue;
       const base = baseById.get(read.id);
       if (base === undefined) continue;
+      const entry = this.nodeList.entry(read.id);
+      const keepStatus = phase4Downgraded.has(read.id)
+        || (entry !== undefined && entry.status === 'blacklisted');
       const placement = this.chain.place(read.hash, read.height);
       placements.set(read.id, placement);
       const chainTipNow = this.chain.tip();
       if (placement === 'tip') {
-        this.applyEvent({ id: read.id, ev: 'success' }, base.route);
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'success' }, base.route);
         perNodeVerdict.set(read.id, 'on');
         pendingBehindBy.set(read.id, 0);
       } else if (placement === 'one-below') {
-        this.applyEvent({ id: read.id, ev: 'trailing' }, base.route);
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'trailing' }, base.route);
         perNodeVerdict.set(read.id, 'on');
         pendingBehindBy.set(read.id, 1);
       } else if (placement === 'below') {
-        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
         perNodeVerdict.set(read.id, 'on');
         pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
       } else if (placement === 'under' && underMatched.has(read.id)) {
-        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
         perNodeVerdict.set(read.id, 'on');
         pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
       } else {
         // 'above', 'under' (unmatched) or 'unplaced': the tip lies off the chain.
-        this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
         perNodeVerdict.set(read.id, 'off');
         pendingBehindBy.set(read.id, null);
       }
