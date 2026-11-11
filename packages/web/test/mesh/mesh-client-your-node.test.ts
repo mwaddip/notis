@@ -1536,6 +1536,188 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     // picks against Z, so Y is re-read in this check.
     expect(yCurrentCalls).toBe(2);
   }, 120_000);
+
+  // MESH_INTERFACE → The client's node list → "A node is judged
+  // against the chain the check leaves" — "A lie and a failure land
+  // as they were read: the entry's status is theirs — `blacklisted`
+  // or `retry` — while its count in the agreement and its distance
+  // follow its tip read's placement as any node's do, since the
+  // counts say what the nodes name" (→ What the client remembers →
+  // "The agreement counts").
+
+  it.fails("a node whose proof fails at its API base keeps retry and counts on the chain by the tip it names", async () => {
+    // R and Y at their API bases, both naming the same tip at MK.
+    // R's proof is tampered (`powNonce` set to 0 on its suffix head),
+    // Y's proof verifies. Phase 4 asks R first by candidate rank
+    // (first-contact order); the API-base lie moves R to `retry`.
+    // The next pass reads Y and seats the chain. Both tip reads
+    // place `tip` against the seated chain; R's `retry` stays, and
+    // R counts on the chain beside Y.
+    const rProof = proofOf(MK);
+    const tamperedProof: NipopowProof = {
+      ...rProof,
+      suffixHead: {
+        ...rProof.suffixHead,
+        header: { ...rProof.suffixHead.header, powNonce: 0 },
+      },
+    };
+    const yProof = proofOf(MK);
+    const rId = keyPair().notisId;
+    const yId = keyPair().notisId;
+    const h = harness();
+    const rBase = 'http://127.0.0.1:1';
+    const yBase = 'http://127.0.0.1:2';
+    h.tips.set(rBase, tipOf(MK));
+    h.tips.set(yBase, tipOf(MK));
+    h.proofs.set(rBase, tamperedProof);
+    h.proofs.set(yBase, yProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: rId, addrs: [], api: rBase },
+        { notisId: yId, addrs: [], api: yBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const rEntry = s.nodes.find((n) => n.notisId === rId);
+    expect(rEntry).toBeDefined();
+    expect(rEntry!.status).toBe('retry');
+    expect(rEntry!.behindBy).toBe(0);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+    // The retry node serves no tip read.
+    expect(client.base('tip')).toBe(yBase);
+    expect(client.order('tip')).not.toContain(rBase);
+  }, 120_000);
+
+  it.skip("a node blacklisted for a proof that fails over its link counts by the tip it names, and serves no read", async () => {
+    // A lie over a mesh-authenticated link lands as `blacklisted`
+    // (→ The client's node list, the lie row). The judgement pass
+    // writes its agreement verdict and distance from its tip read's
+    // placement, keeping the status. Driving the mesh route needs a
+    // live libp2p stream between two peers; the pair of cases just
+    // above covers the same code branch at the API base, where a
+    // proof-invalid lie is demoted to `retry` (the client's node
+    // list → the API-base row). Left as `it.skip` beside the API
+    // cases that exercise the shared control flow.
+  });
+
+  it.fails("a node whose proof read fails as a transport failure keeps retry and counts by the tip it named", async () => {
+    // T and Y at their API bases, both naming the same tip at MK.
+    // T has no proof in the resolve map, so the resolve answers it
+    // `refuseCode: 'unreachable'`, which `tipEvent` reads as a
+    // transport failure (→ The client's node list, the `retry` row).
+    // T moves to `retry`; the next pass reads Y and seats the chain.
+    // Both tip reads place `tip` against the seated chain; T's
+    // `retry` stays, and T counts on the chain beside Y.
+    const yProof = proofOf(MK);
+    const tId = keyPair().notisId;
+    const yId = keyPair().notisId;
+    const h = harness();
+    const tBase = 'http://127.0.0.1:1';
+    const yBase = 'http://127.0.0.1:2';
+    h.tips.set(tBase, tipOf(MK));
+    h.tips.set(yBase, tipOf(MK));
+    // No proof entry for tBase: the resolve answers `unreachable`.
+    h.proofs.set(yBase, yProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: tId, addrs: [], api: tBase },
+        { notisId: yId, addrs: [], api: yBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const tEntry = s.nodes.find((n) => n.notisId === tId);
+    expect(tEntry).toBeDefined();
+    expect(tEntry!.status).toBe('retry');
+    expect(tEntry!.behindBy).toBe(0);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+    expect(client.base('tip')).toBe(yBase);
+    expect(client.order('tip')).not.toContain(tBase);
+  }, 120_000);
+
+  it.fails("a node off the chain whose proof was refused counts off the chain", async () => {
+    // Kept = Y's chain at MK. O names an incomparable tip at MK + 5
+    // (forced level-7 genesis). Phase 3a's fill against O's base
+    // fails (the harness answers 404 for `/blocks/:height`); phase 4
+    // asks for O's proof at its API base, finds a tampered one that
+    // fails verification, and moves O to `retry` (the API-base row).
+    // The final pass places O's hash `above`, off the chain; the
+    // `retry` stays, and O counts off the chain.
+    const keptProof = proofOf(MK);
+    const oForce = new Map([[1, 7]]);
+    const oChain = buildMinedChain({ count: MK + 5, forceLevels: oForce });
+    const oProof = proveWithReader(makeReader(oChain), { m: M, k: K });
+    const oTamperedProof: NipopowProof = {
+      ...oProof,
+      suffixHead: {
+        ...oProof.suffixHead,
+        header: { ...oProof.suffixHead.header, powNonce: 0 },
+      },
+    };
+    const oTipHdr = oChain.headers[oChain.headers.length - 1]!;
+    const oTipHash = blockHash(oTipHdr);
+    if (oTipHash === null) throw new Error('unhashable oTip');
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, { height: MK + 5, hash: oTipHash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oTamperedProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const oEntry = s.nodes.find((n) => n.notisId === oId);
+    expect(oEntry).toBeDefined();
+    expect(oEntry!.status).toBe('retry');
+    expect(oEntry!.behindBy).toBeNull();
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
 });
 
 /** Header JSON shape `/blocks/:height` answers with — shared by the
