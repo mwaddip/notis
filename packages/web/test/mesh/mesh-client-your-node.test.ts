@@ -24,7 +24,7 @@ import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
 import { DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { NodeTipResult, TipResult, resolveTip } from '@dagsocial/nipopow-client';
 import { blockHash } from '@dagsocial/validation';
-import { gossipTopics, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
+import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import type { HttpFetch } from '@dagsocial/node-reads';
 
 import {
@@ -1601,17 +1601,86 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(client.order('tip')).not.toContain(rBase);
   }, 120_000);
 
-  it.skip("a node blacklisted for a proof that fails over its link counts by the tip it names, and serves no read", async () => {
-    // A lie over a mesh-authenticated link lands as `blacklisted`
-    // (→ The client's node list, the lie row). The judgement pass
-    // writes its agreement verdict and distance from its tip read's
-    // placement, keeping the status. Driving the mesh route needs a
-    // live libp2p stream between two peers; the pair of cases just
-    // above covers the same code branch at the API base, where a
-    // proof-invalid lie is demoted to `retry` (the client's node
-    // list → the API-base row). Left as `it.skip` beside the API
-    // cases that exercise the shared control flow.
-  });
+  it("a node blacklisted by a gossip-block lie counts by the tip it named, and serves no read", async () => {
+    // Y and N at their API bases, both naming the same tip at MK,
+    // both proofs verifying. No memory, so phase 4 resolves the
+    // winner and seats the chain. During that resolveFn call the
+    // topic validator for the ordering-block topic is called with a
+    // malformed block (bytes that fail to decode) and N's peer id as
+    // propagation source: the validator reads a reject with
+    // `lie: true` and the entry for N moves to `blacklisted` with
+    // evidence `gossip-block` (→ The client's node list, the lie
+    // row; → Block gossip → "A refused block is evidence as `net`
+    // weighs it"). The judgement pass reads N's status, leaves it
+    // with no event, and writes its agreement verdict and distance
+    // from its tip read's placement — on the chain at the tip.
+    interface TopicValidator {
+      (peer: unknown, msg: { topic: string; data: Uint8Array }): unknown;
+    }
+    interface Pubsub {
+      topicValidators: { get(topic: string): TopicValidator | undefined };
+    }
+    const topicValidatorHolder: { current: TopicValidator | null } = { current: null };
+
+    const yProof = proofOf(MK);
+    const yId = keyPair().notisId;
+    const nId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const nBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(nBase, tipOf(MK));
+    h.proofs.set(yBase, yProof);
+    h.proofs.set(nBase, yProof);
+
+    const nPeerId = peerIdFromNotisId(nId);
+    let dispatched = false;
+    const underlying = h.resolve;
+    const wrappedResolve: ResolveFn = async (urls, m, k, profile, now, fetch) => {
+      if (!dispatched && topicValidatorHolder.current !== null) {
+        dispatched = true;
+        const topic = gossipTopics(PROFILE.magic).orderingBlock;
+        await topicValidatorHolder.current(nPeerId, {
+          topic,
+          data: new Uint8Array(0),
+        });
+      }
+      return underlying(urls, m, k, profile, now, fetch);
+    };
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: nId, addrs: [], api: nBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: wrappedResolve,
+    });
+    clients.push(client);
+    const pubsub = (client.libp2p as unknown as { services: { pubsub: Pubsub } }).services.pubsub;
+    const topic = gossipTopics(PROFILE.magic).orderingBlock;
+    const validator = pubsub.topicValidators.get(topic);
+    if (validator === undefined) throw new Error('no topic validator for ordering block');
+    topicValidatorHolder.current = validator;
+
+    await client.check();
+    const s = client.state();
+    const nEntry = s.nodes.find((n) => n.notisId === nId);
+    expect(nEntry).toBeDefined();
+    expect(nEntry!.status).toBe('blacklisted');
+    expect(nEntry!.behindBy).toBe(0);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+    // A blacklisted entry serves no read.
+    expect(client.base('tip')).toBe(yBase);
+    expect(client.order('tip')).not.toContain(nBase);
+  }, 120_000);
 
   it("a node whose proof read fails as a transport failure keeps retry and counts by the tip it named", async () => {
     // T and Y at their API bases, both naming the same tip at MK.
@@ -1717,6 +1786,159 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(s.agreement).not.toBeNull();
     expect(s.agreement!.onChain).toBe(1);
     expect(s.agreement!.offChain).toBe(1);
+  }, 120_000);
+
+  // MESH_INTERFACE → The client's node list → "A node is judged
+  // against the chain the check leaves" — "its tip placed on that
+  // chain by hash, at the height the chain holds that hash whatever
+  // height the read names". A read whose hash the window holds is
+  // placed at that hash's chain-held height (tip / one-below /
+  // further down); a read whose hash the window does not hold is
+  // placed by the height it names.
+
+  it.fails("a tip read naming the chain's tip hash at a height above it is placed at the tip", async () => {
+    // Kept = Y's chain at MK. N serves the chain's tip hash with a
+    // height of MK + 1 on `/blocks/current`, and its proof is Y's
+    // (naming the same tip). The chain already holds that hash at
+    // MK, so the pass places N at the tip — N counts on the chain,
+    // and phase 3a attempts no fill of `/blocks/MK+1` (the node has
+    // no such block).
+    const keptProof = proofOf(MK);
+    const yTip = tipOf(MK);
+    const yId = keyPair().notisId;
+    const nId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const nBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, yTip);
+    // N rewrites only the height; the hash is the chain's tip hash.
+    h.tips.set(nBase, { height: MK + 1, hash: yTip.hash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(nBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: nId, addrs: [], api: nBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const nEntry = s.nodes.find((n) => n.notisId === nId);
+    expect(nEntry).toBeDefined();
+    expect(nEntry!.status).toBe('ok');
+    expect(nEntry!.behindBy).toBe(0);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+    expect(client.order('tip')).toContain(nBase);
+  }, 120_000);
+
+  it.fails("a tip read naming the chain's tip hash at a height below it is placed at the tip", async () => {
+    // Kept = Y's chain at MK. N serves the chain's tip hash with a
+    // height of MK − 1 on `/blocks/current`; its proof is Y's. The
+    // window holds the hash at MK, so the pass places N at the tip.
+    const keptProof = proofOf(MK);
+    const yTip = tipOf(MK);
+    const yId = keyPair().notisId;
+    const nId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const nBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, yTip);
+    h.tips.set(nBase, { height: MK - 1, hash: yTip.hash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(nBase, keptProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: nId, addrs: [], api: nBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const nEntry = s.nodes.find((n) => n.notisId === nId);
+    expect(nEntry).toBeDefined();
+    expect(nEntry!.status).toBe('ok');
+    expect(nEntry!.behindBy).toBe(0);
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(2);
+    expect(s.agreement!.offChain).toBe(0);
+    expect(client.order('tip')).toContain(nBase);
+  }, 120_000);
+
+  it("a tip read naming a hash the chain does not hold at a height it holds is off the chain", async () => {
+    // Kept = Y's chain at MK. N serves a hash the chain does not
+    // hold at a height the window holds (MK − 5); N's proof is
+    // tampered, so phase 4 reads a proof-invalid lie at N's API
+    // base. The pass places N off the chain and keeps its `retry`.
+    const keptProof = proofOf(MK);
+    const tamperedProof: NipopowProof = {
+      ...keptProof,
+      suffixHead: {
+        ...keptProof.suffixHead,
+        header: { ...keptProof.suffixHead.header, powNonce: 0 },
+      },
+    };
+    const yId = keyPair().notisId;
+    const nId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const nBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    // A hash the chain does not hold, at a height the window holds.
+    const fakeHash = '00'.repeat(32);
+    h.tips.set(nBase, { height: MK - 5, hash: fakeHash });
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(nBase, tamperedProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: nId, addrs: [], api: nBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+
+    await client.check();
+    const s = client.state();
+    const nEntry = s.nodes.find((n) => n.notisId === nId);
+    expect(nEntry).toBeDefined();
+    expect(nEntry!.status).toBe('retry');
+    expect(nEntry!.behindBy).toBeNull();
+    expect(s.tip?.height).toBe(MK);
+    expect(s.agreement).not.toBeNull();
+    expect(s.agreement!.onChain).toBe(1);
+    expect(s.agreement!.offChain).toBe(1);
+    expect(client.order('tip')).not.toContain(nBase);
   }, 120_000);
 });
 
