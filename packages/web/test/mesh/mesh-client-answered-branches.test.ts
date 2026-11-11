@@ -316,6 +316,17 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
     const s = client.state();
     expect(s.disagreement).not.toBeNull();
     expect(s.disagreement!.which).toBe('heavier');
+
+    // Answer the o2 question — two answered branches now stand.
+    client.answer('continue');
+    expect(client.toRemember().answered.length).toBe(2);
+
+    // Switch back to o1 (its first proof): the first answered entry
+    // suppresses on its own, no question is raised.
+    h.proofs.set(oBase, o1Proof);
+    h.tips.set(oBase, { height: o1Tip.height, hash: blockHash(o1Tip)! });
+    await client.check();
+    expect(client.state().disagreement).toBeNull();
   }, 180_000);
 
   it('while a question stands a gossiped block runs no check', async () => {
@@ -445,5 +456,190 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
 
     await client.check();
     expect(client.state().disagreement).toBeNull();
+  }, 180_000);
+
+  it('after continue on memory, a heavier question about the same branch is not raised', async () => {
+    // The s7 shape: kept = the honest chain, your node on a lighter
+    // fork. First check: memory raise (y loses to kept). The reader
+    // answers *continue*: the client takes y's chain and the old kept
+    // joins the answered branches. The honest chain then grows; a
+    // later check sees it heavier than y but on the branch the reader
+    // already answered — no question is raised, and the answered
+    // proof follows the growing honest chain.
+    const keptProof = proofOf(100);              // honest chain at 100
+    const yoursProof = proofOf(MK, 60_001);      // lighter fork at MK
+    const grownProof = proofOf(105);             // honest chain extended by 5
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK, 60_001));
+    h.proofs.set(yBase, yoursProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    expect(client.state().disagreement!.which).toBe('memory');
+
+    client.answer('continue');
+    expect(client.state().disagreement).toBeNull();
+    // The old kept joined the answered list.
+    expect(client.toRemember().answered.length).toBe(1);
+
+    // The honest chain grows by 5 blocks. Another node serves it.
+    h.tips.set(oBase, tipOf(105));
+    h.proofs.set(oBase, grownProof);
+
+    await client.check();
+    // No question is raised — grownProof extends the answered proof
+    // (A at 100) by 5 < k=20 blocks, so compareProofs finds A100's
+    // tip as the shared highest header and the match replaces the
+    // answered entry with grownProof.
+    expect(client.state().disagreement).toBeNull();
+
+    const snap = client.toRemember();
+    expect(snap.answered.length).toBe(1);
+    expect(Array.from(snap.answered[0]!)).toEqual(Array.from(encodeNipopowProof(grownProof)));
+  }, 180_000);
+
+  it('two proofs of the same two chains that share different highest headers are one answered branch', async () => {
+    // Two proofs of chain A at different lengths keep different
+    // sparse structures, so their lcas with the same chain-B proof
+    // differ — forkKey(keptA, y) and forkKey(y, grownA) name
+    // different shared headers for the same pair of chains (A and
+    // B). The new same-branch test does not use forkKey equality; it
+    // asks whether the competing proof's lca with an answered proof
+    // is the answered proof's tip — which does hold here, so the
+    // branch is recognised and no question is raised.
+    const keptBaseChain = buildMinedChain({ count: 80 });
+    const grownBaseChain = buildMinedChain({ count: 95 });
+    const forkChain = buildMinedBranch({ base: grownBaseChain, fromHeight: 15, count: MK });
+
+    const keptProof = proveWithReader(makeReader(keptBaseChain), { m: M, k: K });
+    const yProof = proveWithReader(makeReader(forkChain), { m: M, k: K });
+    const grownProof = proveWithReader(makeReader(grownBaseChain), { m: M, k: K });
+
+    // Pin the pairing: forkKey(kept, y) is the memory raise's fork,
+    // forkKey(y, grown) is the heavier raise's. The assertion below
+    // runs against the pair (kept, y) and (y, grown); if the values
+    // happen to coincide the test still holds the behavioural
+    // assertion (no raise), which is the one the mutations break.
+    const forkMemory = forkKey(keptProof, yProof, PROFILE, NOW);
+    const forkHeavier = forkKey(yProof, grownProof, PROFILE, NOW);
+    // This is the bug the stage hit: forkKeys of the memory raise
+    // and the heavier raise named different shared headers of the
+    // same two chains. The new check does not rely on forkKey.
+    expect(forkMemory).not.toBeNull();
+    expect(forkHeavier).not.toBeNull();
+
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    const yTipHdr = forkChain.headers[forkChain.headers.length - 1]!;
+    const grownTipHdr = grownBaseChain.headers[grownBaseChain.headers.length - 1]!;
+    h.tips.set(yBase, { height: yTipHdr.height, hash: blockHash(yTipHdr)! });
+    h.proofs.set(yBase, yProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    expect(client.state().disagreement).not.toBeNull();
+    expect(client.state().disagreement!.which).toBe('memory');
+    client.answer('continue');
+
+    // Serve the grown base chain (same chain A, extended by 15 blocks).
+    h.tips.set(oBase, { height: grownTipHdr.height, hash: blockHash(grownTipHdr)! });
+    h.proofs.set(oBase, grownProof);
+
+    await client.check();
+    // No question: grown extends the answered proof by 15 < k=20,
+    // so compareProofs finds the answered proof's tip as the lca
+    // and the suppression fires.
+    expect(client.state().disagreement).toBeNull();
+    const snap = client.toRemember();
+    expect(snap.answered.length).toBe(1);
+    expect(Array.from(snap.answered[0]!)).toEqual(Array.from(encodeNipopowProof(grownProof)));
+  }, 180_000);
+
+  it('a page that loads with an answered branch stored asks nothing about it', async () => {
+    // Simulates the extension's reload: the stored record carries
+    // one answered branch as its competing proof under the side key
+    // `notis.mesh.memory.<network>.answered.0`. `startMeshClient`
+    // decodes each `memory.answered` entry into `answeredProofs` at
+    // construct (`MESH_INTERFACE → What the client remembers`).
+    // On the first check the same competing node is reached — the
+    // stored answered proof matches it and no question is raised.
+    const keptProof = proofOf(MK);
+    const oProof = proofOf(MK + 30, 60_001);
+    const yId = keyPair().notisId;
+    const oId = keyPair().notisId;
+    const h = harness();
+    const yBase = 'http://127.0.0.1:1';
+    const oBase = 'http://127.0.0.1:2';
+    h.tips.set(yBase, tipOf(MK));
+    h.tips.set(oBase, tipOf(MK + 30, 60_001));
+    h.proofs.set(yBase, keptProof);
+    h.proofs.set(oBase, oProof);
+
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: yId, addrs: [], api: yBase },
+        { notisId: oId, addrs: [], api: oBase },
+      ],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      // The stored kept proof and the one answered branch — as the
+      // extension's seam reads them from `localStorage` at load.
+      memory: {
+        proof: encodeNipopowProof(keptProof),
+        answered: [encodeNipopowProof(oProof)],
+      },
+      wallClock: () => NOW,
+      httpFetch: h.httpFetch,
+      resolve: h.resolve,
+    });
+    clients.push(client);
+    client.addByHand(yId, [], true);
+
+    await client.check();
+    // The reader already answered the branch in a prior session;
+    // no question is raised on the first check of the new session.
+    expect(client.state().disagreement).toBeNull();
+    const snap = client.toRemember();
+    expect(snap.answered.length).toBe(1);
+    expect(Array.from(snap.answered[0]!)).toEqual(Array.from(encodeNipopowProof(oProof)));
   }, 180_000);
 });
