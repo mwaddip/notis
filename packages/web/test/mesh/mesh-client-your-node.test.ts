@@ -1796,7 +1796,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
   // further down); a read whose hash the window does not hold is
   // placed by the height it names.
 
-  it.fails("a tip read naming the chain's tip hash at a height above it is placed at the tip", async () => {
+  it("a tip read naming the chain's tip hash at a height above it is placed at the tip", async () => {
     // Kept = Y's chain at MK. N serves the chain's tip hash with a
     // height of MK + 1 on `/blocks/current`, and its proof is Y's
     // (naming the same tip). The chain already holds that hash at
@@ -1844,7 +1844,7 @@ describe("mesh-client — a node is judged against the chain the check leaves", 
     expect(client.order('tip')).toContain(nBase);
   }, 120_000);
 
-  it.fails("a tip read naming the chain's tip hash at a height below it is placed at the tip", async () => {
+  it("a tip read naming the chain's tip hash at a height below it is placed at the tip", async () => {
     // Kept = Y's chain at MK. N serves the chain's tip hash with a
     // height of MK − 1 on `/blocks/current`; its proof is Y's. The
     // window holds the hash at MK, so the pass places N at the tip.

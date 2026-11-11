@@ -95,18 +95,24 @@ export class HeldChain {
     if (hash === null) return 'unplaced';
     if (!this.block1 || this.window.length === 0) return 'unplaced';
     const tip = this.window[this.window.length - 1]!;
+    // MESH_INTERFACE → The client's node list → "A node is judged
+    // against the chain the check leaves" — "its tip placed on that
+    // chain by hash, at the height the chain holds that hash
+    // whatever height the read names". A read whose hash the window
+    // holds is placed at that hash's chain-held height
+    // (tip / one-below / further down); block 1's hash falls through
+    // since the window holds only the chain's last `k` headers.
+    const held = this.byHash.get(hash);
+    if (held !== undefined && held !== this.block1) {
+      if (held.height === tip.height) return 'tip';
+      if (held.height === tip.height - 1) return 'one-below';
+      return 'below';
+    }
+    // A hash the window does not hold: placed by the height it names.
     if (height > tip.height) return 'above';
     const lowestHeight = this.window[0]!.height;
     if (height < lowestHeight) return 'under';
-    // Within the window range. Match by hash at the exact height.
-    const idx = height - lowestHeight;
-    const atHeight = this.window[idx];
-    if (!atHeight) return 'unplaced';
-    const atHash = blockHash(atHeight);
-    if (atHash !== hash) return 'unplaced';
-    if (height === tip.height) return 'tip';
-    if (height === tip.height - 1) return 'one-below';
-    return 'below';
+    return 'unplaced';
   }
 
   headerAt(height: number): BlockHeader | null {
