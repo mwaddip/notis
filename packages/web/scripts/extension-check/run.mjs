@@ -9033,9 +9033,9 @@ function nodeP2pPeerId() {
   return m ? m[1] : null;
 }
 
-// Wait for a node's log to carry `[net] outbound handshake with <peerId>:
-// ok=true` — the one line `packages/net`'s node writer records when an
-// outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
+// Wait for a node's log to carry `[net] outbound handshake with <peerId> on
+// id=<connection id>: ok=true` — the one line `packages/net`'s node writer
+// records when an outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
 // both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
 // false on timeout. A restart appends to the log, so the caller passes
 // the offset into the file where the restart begins — a previous spawn's
@@ -9044,12 +9044,12 @@ function logOffset(logPath) {
   try { return readFileSync(logPath, 'utf8').length; } catch { return 0; }
 }
 async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 180000) {
-  const needle = `outbound handshake with ${peerId}: ok=true`;
+  const needle = new RegExp(`outbound handshake with ${peerId}( on id=\\S+)?: ok=true`);
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     try {
       const data = readFileSync(logPath, 'utf8');
-      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+      if (data.length > sinceOffset && needle.test(data.slice(sinceOffset))) return true;
     } catch {}
     await sleep(500);
   }
