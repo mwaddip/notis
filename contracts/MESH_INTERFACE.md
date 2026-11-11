@@ -203,9 +203,19 @@ or when its own proof does not continue the kept proof (→ What the client reme
 does not. **A disagreement is the reader's question, never the client's choice.** Until the reader answers, the client's
 chain does not move — no switch, no extension by gossip, and where no chain is seated yet none is seated — and its state
 names what disagreed, the two tips and their fork, the highest header `compareProofs` finds in both. The answers: *continue on this node* — the client takes its
-chain, the kept proof becomes its proof, and the fork is recorded, so the same competing branch growing asks nothing
-more (at most `ANSWERED_FORKS_MAX` forks kept); *disable it* — the reader switches it off until switching it on, and the
-client takes the best chain by the rules every other node is held to. A new disagreement asks again.
+chain, the kept proof becomes its proof, and the competing chain's proof is recorded as answered — the other node's
+for *heavier*, the kept proof your node did not continue for *memory* — at most `ANSWERED_FORKS_MAX`, the oldest
+dropped; *disable it* — the reader switches it off until switching it on, and the client takes the best chain by the
+rules every other node is held to. **An answered branch growing asks nothing more**: a competing proof is that branch
+when the highest header `compareProofs` finds in it and an answered proof is that answered proof's tip, or when it is
+that proof — and the answered proof is then replaced by it, so the record follows the branch as it grows. A competing
+chain that does not reach an answered proof's tip that way is a new disagreement, and asks again. While a question
+stands, a gossiped block runs no check: the chain is held, and the checks on the client's cadence read the question
+again.
+
+> ⚠ **AHEAD OF CODE (2026-11-11).** `@dagsocial/web`'s mesh client records an answered fork by `forkKey`, the highest
+header two proofs share, which differs between two proofs of the same two chains; it asks again about a branch the
+reader answered, and while a question stands every gossiped block of the heavier chain runs a check.
 
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
@@ -251,7 +261,8 @@ and the pairing of a base with a key is the list's word. A read at an API base h
 chain, seated from the kept proof as a check's winner seats one (→ What the client remembers). A check's proofs settle it — the
 winner's suffix and its first header — and a switch to another winner replaces it the same way; a winner whose tip the
 client's chain already holds is no switch, and the chain stands. A gossiped block whose parent is the client's tip
-extends it; one whose parent is held below the tip, or not held at all, runs a check at once. A fill — a check's reading
+extends it; one whose parent is held below the tip, or not held at all, runs a check at once — unless a question stands
+(→ Discovery → "An answered branch growing asks nothing more"). A fill — a check's reading
 of a tip above the client's — reads that node's headers by height, `GET /blocks/:height`, from its tip down to the
 client's, each held to its work, its schedule and its link, and no more than `k` of them; a fill that fails, or would
 pass `k`, leaves that tip to a proof. **The tip moves only by a header carrying its work on the client's chain**, never
@@ -364,7 +375,7 @@ status is the write's (`WEB_INTERFACE → The extension → "The mesh is the ext
 | `FAST_SET_SLACK_MS` | `50` | … plus 50 ms |
 | `STUN_SERVERS_MAX` | `3` | the most STUN servers a client's ICE configuration names |
 | `REMEMBERED_NODES_MAX` | `16` | the most known nodes a client remembers — provisional: about 10 KB of memory, and the start-up dial set a check opens |
-| `ANSWERED_FORKS_MAX` | `16` | the most answered forks a client remembers |
+| `ANSWERED_FORKS_MAX` | `16` | the most answered branches a client remembers, each by its competing proof |
 | `BLOCK_READ_BYTES` | `8_388_608` | 8 MiB, the cap on a fill's `GET /blocks/:height` — the header and two 67-byte list entries, a transaction's id and a post's, for every 32 bytes of a body at `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE → Size caps`) stay within it; a block's whole JSON is read for its header, so a fill of full blocks costs more than a proof — `net`'s header sync carries headers alone |
 
 These are local cadences, chosen 2026-10-29 and argued by nothing yet; local cadences are outside
@@ -372,7 +383,7 @@ the constants register (`CONSTANTS → Scope`).
 
 ## What the client remembers
 
-**A client remembers, per network, the nodes it found, the proof of the chain it verified, and the forks the reader
+**A client remembers, per network, the nodes it found, the proof of the chain it verified, and the branches the reader
 answered** (→ Discovery → "A node added by hand") — keyed by the genesis the network's profile pins, or by the network's
 name where it pins none. After each check it records every node naming a tip on its chain, `ok` or `trailing`, with
 the addresses it would dial — no private address, never its own key — the most recently seen first, at most

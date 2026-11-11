@@ -481,11 +481,16 @@ nodes answering; and two nodes under one operator and one DNS zone answer for on
 
 **What the extension remembers.** The mesh client's memory (`MESH_INTERFACE → What the client remembers`) is one record
 in the extension page's `localStorage` under `notis.mesh.memory.<network>`: the genesis it was kept under, the kept
-proof as base64 of its encoding, the known nodes and the answered forks. It is read at load — a record kept under
+proof as base64 of its encoding and the known nodes. **The answered branches are kept apart from it**, each its
+competing proof as base64 under a key of its own beside the record, written when the reader answers and when the branch
+it names grows — never at every check — through the same lock, and cleared with the record. It is read at load — a record kept under
 another genesis than the one the build's profile pins, or one that does not parse, is cleared and the page starts as a
 first-time client — and written after every check through one lock, `notis.mesh.memory`, so two pages write in turn
 and the kept proof only moves forward; the reader's *continue* replaces it. The web build keeps none, and
 `build-release.sh` refuses `notis.mesh.memory` in its bundle.
+
+> ⚠ **AHEAD OF CODE (2026-11-11).** The record carries the answered forks as fork hashes, written with it after every
+check; no competing proof is kept.
 
 **The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
