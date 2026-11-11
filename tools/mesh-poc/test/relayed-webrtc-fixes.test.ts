@@ -73,6 +73,10 @@ const measureMock = vi.hoisted(() => {
       signalCalls.push({ pid, sig });
       return { sent: true, reason: null };
     },
+    signalPid(pid: number, sig: string) {
+      signalCalls.push({ pid, sig });
+      return { sent: true, reason: null };
+    },
     descendantPids(pid: number) { return descendantsOf(pid); },
     leafPids(pid: number) { return leavesOf(pid); },
     findPid(_pids: unknown, _desc: string) { return pidEntry; },
@@ -89,6 +93,7 @@ vi.mock('../stage/lib/measure.mjs', async (importOriginal) => {
     readNftCounterSum: () => 0,
     findPid: (pids: unknown, desc: string) => measureMock.findPid(pids, desc),
     signal: (pid: number, sig: string) => measureMock.signal(pid, sig),
+    signalPid: (pid: number, sig: string) => measureMock.signalPid(pid, sig),
     leafPids: (pid: number) => measureMock.leafPids(pid),
     sigterm: () => {},
     descendantPids: (pid: number) => measureMock.descendantPids(pid),
