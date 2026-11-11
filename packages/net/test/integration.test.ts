@@ -735,10 +735,10 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     // if an upgraded connection had reached either, and both stay silent.
     // B's handshake log is also silent: the handshake runs over a stream
     // the connection carries, and no connection carried one here.
-    expect(all.some((l) => l.includes(`[net] connection:open peer=${bId}`))).toBe(false);
+    expect(all.some((l) => new RegExp(`^\\[net\\] connection:open id=\\S+ peer=${bId} `).test(l))).toBe(false);
     expect(all.some((l) => l.includes(`[net] peer:connect ${bId}`))).toBe(false);
-    expect(all.some((l) => l.includes(`[net] inbound handshake from ${bId}: ok=true`))).toBe(false);
-    expect(all.some((l) => l.includes(`[net] outbound handshake with ${bId}: ok=true`))).toBe(false);
+    expect(all.some((l) => new RegExp(`^\\[net\\] inbound handshake from ${bId}( on id=\\S+)?: ok=true`).test(l))).toBe(false);
+    expect(all.some((l) => new RegExp(`^\\[net\\] outbound handshake with ${bId}( on id=\\S+)?: ok=true`).test(l))).toBe(false);
   }, TIMEOUT);
 });
 
