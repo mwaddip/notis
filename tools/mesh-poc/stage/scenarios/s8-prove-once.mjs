@@ -644,7 +644,7 @@ export async function run(ctx) {
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
       if (firstContactIds.length === 0) {
-        const m = { reason: 's8 step 1: no public anchors in topology with identity' };
+        const m = { reason: 's8 step 1: no public first-contact nodes in topology with identity' };
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
       // MESH_INTERFACE → Acceptance 8 — "every node names a tip on the

@@ -49,8 +49,8 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
     };
     // Dry-run opt-in: the placeholder is only valid under `{ dryRun: true }`.
     const config = buildPageConfig(topology, notisIds, undefined, { dryRun: true });
-    for (const anchor of config.firstContact) {
-      for (const addr of anchor.addrs) {
+    for (const node of config.firstContact) {
+      for (const addr of node.addrs) {
         if (addr.includes('/webrtc-direct/')) {
           expect(addr, `/webrtc-direct/ addr has /certhash/: ${addr}`).toContain('/certhash/');
         }
@@ -89,8 +89,8 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
       ],
     };
     const config = buildPageConfig(topology, notisIds, printed);
-    for (const anchor of config.firstContact) {
-      for (const addr of anchor.addrs) {
+    for (const node of config.firstContact) {
+      for (const addr of node.addrs) {
         if (!addr.includes('/webrtc-direct/')) continue;
         const emittedByNode = Object.values(printed).some((list) => list.includes(addr));
         expect(emittedByNode, `addr ${addr} must equal one a node printed`).toBe(true);

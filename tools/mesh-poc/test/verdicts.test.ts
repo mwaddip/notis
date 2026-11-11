@@ -78,7 +78,7 @@ describe('skipped — missing measurement', () => {
 describe('verdictS1Node — the node is a first-contact node within 60 s, reached over WebRTC-direct', () => {
   const PASS = {
     nodeId: 'a'.repeat(64),
-    isAnchor: true,
+    isFirstContact: true,
     timeMs: 10_000,
     transport: 'webrtc-direct',
     path: 'direct',
@@ -89,8 +89,8 @@ describe('verdictS1Node — the node is a first-contact node within 60 s, reache
   it('nodeId null → FAIL', () => {
     expect(verdictS1Node({ ...PASS, nodeId: null })).toBe('FAIL');
   });
-  it('isAnchor false (a discovered node, not a first-contact node) → FAIL', () => {
-    expect(verdictS1Node({ ...PASS, isAnchor: false })).toBe('FAIL');
+  it('isFirstContact false (a discovered node, not a first-contact node) → FAIL', () => {
+    expect(verdictS1Node({ ...PASS, isFirstContact: false })).toBe('FAIL');
   });
   it('timeMs past 60 s → FAIL', () => {
     expect(verdictS1Node({ ...PASS, timeMs: 60_001 })).toBe('FAIL');
@@ -171,7 +171,7 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
     priv1Failures: 0,
     transport: 'webrtc',
     path: 'direct',
-    anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P',
+    firstContactAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/webrtc/p2p/P',
     connectMs: 1_200,
     iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
     nodeIdInUse: 'f'.repeat(64),
@@ -195,7 +195,7 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
     expect(verdictS2Priv1({ ...PASS, path: 'relay' })).toBe('FAIL');
   });
   it('first-contact node address does not hold /p2p-circuit/webrtc → FAIL', () => {
-    expect(verdictS2Priv1({ ...PASS, anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/p2p/P' })).toBe('FAIL');
+    expect(verdictS2Priv1({ ...PASS, firstContactAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/p2p/P' })).toBe('FAIL');
   });
   it('ICE record carries a host name → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, iceServers: [{ urls: ['stun:stun.example.com:3478'] }] })).toBe('FAIL');
@@ -439,7 +439,7 @@ describe('verdictS4Renewal — across one renewal the probes keep succeeding', (
 
 describe('verdictS5 — impostor: first-contact node not blacklisted, its address dropped', () => {
   const PASS = {
-    anchorStatus: 'ok',
+    pub1Status: 'ok',
     droppedAddrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc'],
     blockedAddr: '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc',
   };
@@ -447,7 +447,7 @@ describe('verdictS5 — impostor: first-contact node not blacklisted, its addres
     expect(verdictS5(PASS)).toBe('PASS');
   });
   it('first-contact node blacklisted → FAIL', () => {
-    expect(verdictS5({ ...PASS, anchorStatus: 'blacklisted' })).toBe('FAIL');
+    expect(verdictS5({ ...PASS, pub1Status: 'blacklisted' })).toBe('FAIL');
   });
   it('address not in droppedAddrs → FAIL', () => {
     expect(verdictS5({ ...PASS, droppedAddrs: [] })).toBe('FAIL');

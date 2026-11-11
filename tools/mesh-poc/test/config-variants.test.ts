@@ -41,7 +41,7 @@ describe('buildPrivateViaRelayVariant', () => {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
       viaPublicNotisId: 'cc'.repeat(32),
-    })).toThrow(/does not name the public anchor/);
+    })).toThrow(/does not name the public first-contact node/);
   });
 
   it('refuses a public first-contact node whose addresses have no webrtc-direct', () => {

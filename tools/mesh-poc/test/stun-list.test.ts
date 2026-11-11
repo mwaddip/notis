@@ -142,9 +142,9 @@ describe('iceConfiguration — client-level', () => {
     // The client: first-contact nodes with no public address. The ICE configuration
     // is `{ iceServers: [] }`, never undefined — libp2p's DNS-named
     // defaults are what the empty array stops.
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      firstContact: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
+      firstContact: [{ notisId: firstContactKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
@@ -154,10 +154,10 @@ describe('iceConfiguration — client-level', () => {
   }, 30_000);
 
   it('a client started from first-contact nodes alone builds its ICE servers from them', async () => {
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
       firstContact: [{
-        notisId: anchorKey.notisId,
+        notisId: firstContactKey.notisId,
         addrs: ['/ip4/11.100.0.11/udp/9999/webrtc-direct'],
       }],
       network: 'devnet', profile: PROFILE,

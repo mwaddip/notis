@@ -34,12 +34,12 @@ export function buildPrivateViaRelayVariant(baseConfig, {
   }
   const viaFirstContact = baseConfig.firstContact.find((a) => a?.notisId === viaPublicNotisId);
   if (!viaFirstContact || !Array.isArray(viaFirstContact.addrs) || viaFirstContact.addrs.length === 0) {
-    throw new Error(`base config does not name the public anchor ${viaPublicNotisId}`);
+    throw new Error(`base config does not name the public first-contact node ${viaPublicNotisId}`);
   }
   // Pick the first webrtc-direct address — a browser dials that first.
   const viaWebrtcDirect = viaFirstContact.addrs.find((s) => s.includes('/webrtc-direct/'));
   if (!viaWebrtcDirect) {
-    throw new Error(`public anchor ${viaPublicNotisId} has no /webrtc-direct/ multiaddr`);
+    throw new Error(`public first-contact node ${viaPublicNotisId} has no /webrtc-direct/ multiaddr`);
   }
   const relayAddr = `${viaWebrtcDirect}/p2p-circuit/p2p/${privPeerIdString}`;
   return {
@@ -128,10 +128,10 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
   // relay over WebRTC-direct, signals SDP across the limited
   // relayed stream, and establishes a direct WebRTC connection to
   // the private.
-  const relayAnchor = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
+  const relayedFirstContactAddr = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
-    firstContact: [{ notisId: privRow.notisId, addrs: [relayAnchor] }],
+    firstContact: [{ notisId: privRow.notisId, addrs: [relayedFirstContactAddr] }],
     seeds: [],
   };
 }

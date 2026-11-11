@@ -10,7 +10,7 @@
 //     wrapper the stage installs through
 //     `Page.addScriptToEvaluateOnNewDocument`; a verdict reads the record,
 //   s2's priv1 step records
-//     `{ transport, path, anchorAddrRelayed, iceServers, … }` and the
+//     `{ transport, path, firstContactAddrRelayed, iceServers, … }` and the
 //     verdict reads the ICE-record rule,
 //   s2's priv2 step walks the state across one held page until priv2's
 //     entry carries at least one failure and the client is on another
@@ -777,7 +777,7 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
       priv1Failures: 0,
       transport: 'webrtc',
       path: 'direct',
-      anchorAddrRelayed: RELAYED_WEBRTC,
+      firstContactAddrRelayed: RELAYED_WEBRTC,
       connectMs: 1200,
       iceServers: [{ urls: ['stun:11.100.0.11:3478'] }],
       nodeIdInUse: 'aa'.repeat(32),
@@ -817,8 +817,8 @@ describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, pat
     expect(verdictS2Priv1({ ...base(), path: 'relay' })).toBe('FAIL');
   });
 
-  it('FAIL when anchorAddrRelayed does not hold /p2p-circuit/webrtc', () => {
-    expect(verdictS2Priv1({ ...base(), anchorAddrRelayed: RELAYED_PLAIN })).toBe('FAIL');
+  it('FAIL when firstContactAddrRelayed does not hold /p2p-circuit/webrtc', () => {
+    expect(verdictS2Priv1({ ...base(), firstContactAddrRelayed: RELAYED_PLAIN })).toBe('FAIL');
   });
 
   it('FAIL when the ICE-server record carries a host name', () => {
@@ -943,13 +943,13 @@ const TOPOLOGY_FIXTURE = {
 const RELAY_PEER_FIXTURE = '12D3KooWDyxzGUQPtwgrK7VZmkuGSLdh6W12LcC9saK1o6xxiBqH';
 const PRIV_PEER_FIXTURE = '12D3KooWFvHBAbhX5X9P4ViwiTcJiy2diw7rk7rp1BhtvZtvEyr4';
 
-function makeOutDir(opts: { anchorNotisId: string; identities: Record<string, unknown> }): string {
+function makeOutDir(opts: { firstContactNotisId: string; identities: Record<string, unknown> }): string {
   const outDir = mkdtempSync(join(tmpdir(), 'mesh-scenario-'));
   mkdirSync(join(outDir, 'browser'), { recursive: true });
   const config = {
     network: 'devnet',
     firstContact: [{
-      notisId: opts.anchorNotisId,
+      notisId: opts.firstContactNotisId,
       addrs: [`/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/uEiA/p2p/${RELAY_PEER_FIXTURE}`],
     }],
     seeds: [],
@@ -979,23 +979,23 @@ describe('s1 wires the ICE-record step through cdp.mjs poll-ice', () => {
   // is answered with a canned stdout, and the step's recorded verdict
   // reads the record from the `poll-ice` answer.
 
-  const anchorNotisId = 'aa'.repeat(32);
+  const firstContactNotisId = 'aa'.repeat(32);
 
   it('s1 issues one poll-ice call with the stage-canned ICE record and PASSes the step', async () => {
     execInMock.reset();
-    const canned = { value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] };
+    const canned = { value: JSON.stringify({ nodeId: firstContactNotisId }), iceRecord: [{ urls: [] }] };
     execInMock.setResponder((_ns, argv) => {
       if (argv.includes('poll-ice')) {
         return JSON.stringify(canned);
       }
       if (argv.includes('poll')) {
-        return JSON.stringify({ nodeId: anchorNotisId });
+        return JSON.stringify({ nodeId: firstContactNotisId });
       }
       return '{}';
     });
     const outDir = makeOutDir({
-      anchorNotisId,
-      identities: { pub1: { notisId: anchorNotisId, httpPort: 3100 } },
+      firstContactNotisId,
+      identities: { pub1: { notisId: firstContactNotisId, httpPort: 3100 } },
     });
     try {
       const result = await s1Scenario.run(ctxFor(outDir));
@@ -1017,7 +1017,7 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
   // non-null `transport` — reach, not ranking (priv1 may rank below
   // pub1 at check time, and the browser still reached it). Measurement:
   // `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
-  //    anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
+  //    firstContactAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
 
   const priv1NotisId = 'aa'.repeat(32);
   const pub1NotisId = 'pp'.repeat(32);
@@ -1071,7 +1071,7 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
       }
       return '{}';
     });
-    const outDir = makeOutDir({ anchorNotisId: priv1NotisId, identities: identitiesFixture() });
+    const outDir = makeOutDir({ firstContactNotisId: priv1NotisId, identities: identitiesFixture() });
     try {
       const result = await s2Scenario.run(ctxFor(outDir));
       const pollIceCalls = execInMock.calls.filter((c) => c.argv.includes('poll-ice'));
@@ -1089,8 +1089,8 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
       expect(priv1Step?.measurement, 'priv1 step records connectMs as a number')
         .toHaveProperty('connectMs');
       expect(typeof (priv1Step?.measurement as { connectMs?: unknown })?.connectMs).toBe('number');
-      expect(priv1Step?.measurement, 'priv1 step records the dialled anchor address')
-        .toHaveProperty('anchorAddrRelayed');
+      expect(priv1Step?.measurement, 'priv1 step records the dialled first-contact address')
+        .toHaveProperty('firstContactAddrRelayed');
       expect(priv1Step?.verdict, 'priv1 PASSes on reach, even though it ranks behind pub1').toBe('PASS');
     } finally {
       rmSync(outDir, { recursive: true, force: true });
@@ -1110,7 +1110,7 @@ describe('s2\'s priv1 step measures reach, not ranking', () => {
       }
       return '{}';
     });
-    const outDir = makeOutDir({ anchorNotisId: priv1NotisId, identities: identitiesFixture() });
+    const outDir = makeOutDir({ firstContactNotisId: priv1NotisId, identities: identitiesFixture() });
     try {
       await s2Scenario.run(ctxFor(outDir));
       const evalCalls = execInMock.calls.filter((c) => c.argv.includes('eval'));
@@ -1194,7 +1194,7 @@ describe('s2\'s priv2 step', () => {
       }
       return '{}';
     });
-    const outDir = makeOutDir({ anchorNotisId: priv2NotisId, identities: identitiesFixture() });
+    const outDir = makeOutDir({ firstContactNotisId: priv2NotisId, identities: identitiesFixture() });
     try {
       await s2Scenario.run(ctxFor(outDir));
       const evalCalls = execInMock.calls.filter((c) => c.argv.includes('eval'));
@@ -1219,14 +1219,14 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
   // every process in the miner's tree: the recorded pid plus every
   // descendant, wrappers included.
 
-  // s1 reaches the pause/resume branch only when its `anchorNodeId`
+  // s1 reaches the pause/resume branch only when its `firstContactNodeId`
   // step succeeds AND `identities.json` holds a row for the resolved
   // host. The scenario fixture below mirrors the s2 case: identities,
   // out dir, and a canned `#state` that reads a connected first-contact node.
-  const anchorNotisId = 'aa'.repeat(32);
+  const firstContactNotisId = 'aa'.repeat(32);
 
   function s1IdentitiesFixture(): Record<string, unknown> {
-    return { pub1: { notisId: anchorNotisId, httpPort: 3100 } };
+    return { pub1: { notisId: firstContactNotisId, httpPort: 3100 } };
   }
 
   it('SIGCONT reaches the recorded pid and every descendant on resume, not the leaf alone', async () => {
@@ -1237,15 +1237,15 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
     measureMock.setLeaves(() => [400]);
     execInMock.setResponder((_ns, argv) => {
       if (argv.includes('poll-ice')) {
-        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+        return JSON.stringify({ value: JSON.stringify({ nodeId: firstContactNotisId }), iceRecord: [{ urls: [] }] });
       }
       if (argv.includes('poll')) {
-        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+        return JSON.stringify(JSON.stringify({ nodeId: firstContactNotisId }));
       }
       return '{}';
     });
     const outDir = makeOutDir({
-      anchorNotisId,
+      firstContactNotisId,
       identities: s1IdentitiesFixture(),
     });
     try {
@@ -1268,15 +1268,15 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
     measureMock.setLeaves(() => []);
     execInMock.setResponder((_ns, argv) => {
       if (argv.includes('poll-ice')) {
-        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+        return JSON.stringify({ value: JSON.stringify({ nodeId: firstContactNotisId }), iceRecord: [{ urls: [] }] });
       }
       if (argv.includes('poll')) {
-        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+        return JSON.stringify(JSON.stringify({ nodeId: firstContactNotisId }));
       }
       return '{}';
     });
     const outDir = makeOutDir({
-      anchorNotisId,
+      firstContactNotisId,
       identities: s1IdentitiesFixture(),
     });
     try {
@@ -1301,15 +1301,15 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
     measureMock.setLeaves(() => [400, 500]); // two leaves
     execInMock.setResponder((_ns, argv) => {
       if (argv.includes('poll-ice')) {
-        return JSON.stringify({ value: JSON.stringify({ nodeId: anchorNotisId }), iceRecord: [{ urls: [] }] });
+        return JSON.stringify({ value: JSON.stringify({ nodeId: firstContactNotisId }), iceRecord: [{ urls: [] }] });
       }
       if (argv.includes('poll')) {
-        return JSON.stringify(JSON.stringify({ nodeId: anchorNotisId }));
+        return JSON.stringify(JSON.stringify({ nodeId: firstContactNotisId }));
       }
       return '{}';
     });
     const outDir = makeOutDir({
-      anchorNotisId,
+      firstContactNotisId,
       identities: s1IdentitiesFixture(),
     });
     try {

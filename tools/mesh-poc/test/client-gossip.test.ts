@@ -183,14 +183,14 @@ describe('mesh-client in block gossip', () => {
     // to K+2 before any new check, and traffic.forwarded is + 1.
     const chain = makeLinkedChain(K + 1, PROFILE);
     const started = await startNode(chain); openNodes.push(started);
-    const anchorAddr = started.webrtcAddr;
-    const anchorId = started.id;
+    const firstContactAddr = started.webrtcAddr;
+    const firstContactId = started.id;
 
     const client = await startMeshClient({
-      firstContact: [{ notisId: anchorId, addrs: [anchorAddr] }],
+      firstContact: [{ notisId: firstContactId, addrs: [firstContactAddr] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      resolve: chainResolve((url) => url.includes(anchorId) ? chain : 'unreachable', K),
+      resolve: chainResolve((url) => url.includes(firstContactId) ? chain : 'unreachable', K),
     });
     openClients.push(client);
     await client.check(); // settle

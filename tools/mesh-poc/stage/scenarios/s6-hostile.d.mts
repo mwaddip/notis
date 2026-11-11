@@ -1,6 +1,6 @@
 export declare const NAME: 's6';
 export declare function describe(): string[];
-export declare function anchorBlockArgs(topology: unknown): {
+export declare function honestBlockArgs(topology: unknown): {
   addTable: string[]; addChain: string[]; drops: string[][]; deleteTable: string[];
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;

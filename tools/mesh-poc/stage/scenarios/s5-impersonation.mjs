@@ -15,7 +15,7 @@
 //      (MESH_INTERFACE → Transports → "Every link is authenticated by
 //      the key it was dialled for"). Bind pub1's address.
 //   3. Poll `state.nodes[pub1-id].droppedAddrs` for pub1's own address;
-//      measure `anchorStatus` from `state.nodes[pub1-id].status`.
+//      measure `pub1Status` from `state.nodes[pub1-id].status`.
 //   4. Stop the impostor through `stopTree` so the kernel has released
 //      its sockets, restart pub1's notis from the recorded argv, and
 //      check pub1's `/health` reads `peers_connected >= 1` before this
@@ -46,7 +46,7 @@ const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
 export function describe() {
   return [
-    'impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted',
+    'impostor on pub1 address: refused at the link, address dropped, pub1 not blacklisted',
     'impostor stopped and pub1 restarted, mesh networking up',
   ];
 }
@@ -224,7 +224,7 @@ export async function run(ctx) {
       const blockedAddr = pub1Node?.droppedAddrs?.[0] ?? null;
       const m = {
         impostorNotisId,
-        anchorStatus: pub1Node?.status ?? null,
+        pub1Status: pub1Node?.status ?? null,
         droppedAddrs: pub1Node?.droppedAddrs ?? [],
         blockedAddr: blockedAddr ?? '<none>',
       };

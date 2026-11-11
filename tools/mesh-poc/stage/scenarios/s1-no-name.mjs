@@ -22,7 +22,7 @@ export const NAME = 's1';
 
 export function describe() {
   return [
-    'nodeId is an anchor within 60 s, reached over WebRTC-direct',
+    'nodeId is a first-contact node within 60 s, reached over WebRTC-direct',
     'probe /blocks/current matches the node direct',
     'probe /nipopow/proof/24/20 matches the node direct',
     'the DNS log holds no line and the nft 53/853 counter did not move',
@@ -106,7 +106,7 @@ export async function run(ctx) {
   // FAIL for THAT step and the next step still runs (MESH_INTERFACE →
   // Acceptance). The scenario's one `finally` runs `log.removeAll()`
   // whatever each step did AND releases the paused miner.
-  let anchorNodeId = null;
+  let firstContactNodeId = null;
   // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the node's
   // direct HTTP answers byte for byte". The chain's tip moves at mining
   // speed; the probe and the direct reads both come off a tip that may
@@ -141,10 +141,10 @@ export async function run(ctx) {
       // `path` are read from the same `#state` payload so the
       // measurement names the link reached inside the 60 s window.
       const state = JSON.parse(stateJson);
-      anchorNodeId = state.nodeId;
+      firstContactNodeId = state.nodeId;
       const m = {
         nodeId: state.nodeId,
-        isAnchor: firstContactIds.has(state.nodeId),
+        isFirstContact: firstContactIds.has(state.nodeId),
         timeMs: Date.now() - step1Start,
         transport: state.transport,
         path: state.path,
@@ -155,7 +155,7 @@ export async function run(ctx) {
 
     // Probe steps 2 and 3 need an identity row. If step 1 failed or
     // the id is not in identities.json, those steps read `skipped`.
-    const hostName = anchorNodeId !== null ? hostOfNodeId(identities, anchorNodeId) : null;
+    const hostName = firstContactNodeId !== null ? hostOfNodeId(identities, firstContactNodeId) : null;
     const hostRow = hostName !== null ? identities[hostName] : null;
     if (hostName !== null && hostRow !== null && minerEntry !== null) {
       pausedPids = leafPids(minerEntry.pid);
@@ -202,12 +202,12 @@ export async function run(ctx) {
       // MESH_INTERFACE → Acceptance 1 — the browser host's DNS log
       // holds no query; this is PASS only on positive evidence that the
       // page connected. A page that never reached a node has no DNS
-      // traffic vacuously. `anchorNodeId` is the nodeId Step 1 found
+      // traffic vacuously. `firstContactNodeId` is the nodeId Step 1 found
       // (null if step 1 FAILed).
       const m = {
         dnsLines: dnsLinesEnd - dnsLinesStart,
         nftCounterPackets: nftCounterEnd - nftCounterStart,
-        connected: anchorNodeId !== null,
+        connected: firstContactNodeId !== null,
       };
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });

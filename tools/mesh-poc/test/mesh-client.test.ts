@@ -72,9 +72,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // when the real `startMeshClient` reaches it with a DNS first-contact node
   // (MESH_INTERFACE → Discovery / NAT).
   it('assertClientConfig refuses a /dns4/ first-contact node without creating a node', () => {
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     expect(() => assertClientConfig({
-      firstContact: [{ notisId: anchorKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
+      firstContact: [{ notisId: firstContactKey.notisId, addrs: ['/dns4/example.com/tcp/1'] }],
     })).toThrow(MeshConfigError);
   });
 
@@ -82,11 +82,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // the three DNS prefixes a multiaddr may carry.
   for (const prefix of ['/dns4/example.com/tcp/1', '/dns6/example.com/tcp/1', '/dnsaddr/example.com/tcp/1']) {
     it(`a DNS first-contact node is refused — ${prefix}`, async () => {
-      const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+      const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
       let thrown: unknown;
       try {
         await startMeshClient({
-          firstContact: [{ notisId: anchorKey.notisId, addrs: [prefix] }],
+          firstContact: [{ notisId: firstContactKey.notisId, addrs: [prefix] }],
           network: 'devnet',
           profile: PROFILE,
           agentName: 'notis-mesh-poc',
@@ -123,14 +123,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // outside the first-contact list in `new` status, which `NodeList.candidates()`
   // lists.
   it('a seed is a candidate', async () => {
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — a first-contact node with neither addrs nor api is refused, so
     // this first-contact node carries an api base alone. The address is never
     // reached in this case.
     const client = await startMeshClient({
-      firstContact: [{ notisId: anchorKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
+      firstContact: [{ notisId: firstContactKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
       seeds: [{ notisId: seedKey.notisId, addrs: [] }],
       network: 'devnet',
       profile: PROFILE,
@@ -161,13 +161,13 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dirSeed = mkdtempSync(join(tmpdir(), 'mesh-client-seed-')); dirs.push(dirSeed);
     const seed = await startNode(upSeed, dirSeed); nodes.push(seed.node);
 
-    const upAnchor = await chainUpstream(SHARED_CHAIN); ups.push(upAnchor);
-    const dirAnchor = mkdtempSync(join(tmpdir(), 'mesh-client-anchor-')); dirs.push(dirAnchor);
-    const anchor = await startNode(upAnchor, dirAnchor); // not pushed: stopped at once
-    await anchor.node.stop();
+    const upFirstContact = await chainUpstream(SHARED_CHAIN); ups.push(upFirstContact);
+    const dirFirstContact = mkdtempSync(join(tmpdir(), 'mesh-client-first-contact-')); dirs.push(dirFirstContact);
+    const firstContactNode = await startNode(upFirstContact, dirFirstContact); // not pushed: stopped at once
+    await firstContactNode.node.stop();
 
     const client = await startMeshClient({
-      firstContact: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      firstContact: [{ notisId: firstContactNode.id, addrs: [firstContactNode.webrtcAddr] }],
       seeds: [{ notisId: seed.id, addrs: [seed.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
@@ -184,9 +184,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const seedEntry = s.nodes.find((n) => n.notisId === seed.id);
     expect(seedEntry!.firstContact).toBe(false);
     expect(seedEntry!.status).toBe('retry');
-    const anchorEntry = s.nodes.find((n) => n.notisId === anchor.id);
-    expect(anchorEntry!.firstContact).toBe(true);
-    expect(anchorEntry!.status).toBe('retry');
+    const firstContactEntry = s.nodes.find((n) => n.notisId === firstContactNode.id);
+    expect(firstContactEntry!.firstContact).toBe(true);
+    expect(firstContactEntry!.status).toBe('retry');
   }, 90_000);
 
   it('a routed read reaches the one first-contact node and nodeId names it', async () => {
@@ -838,10 +838,10 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // transport and the libp2p host sees no dial as a side effect.
     const up = await chainUpstream(SHARED_CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mesh-client-no-conn-')); dirs.push(dir);
-    const anchor = await startNode(up, dir); nodes.push(anchor.node);
+    const firstContactNode = await startNode(up, dir); nodes.push(firstContactNode.node);
 
     const client = await startMeshClient({
-      firstContact: [{ notisId: anchor.id, addrs: [anchor.webrtcAddr] }],
+      firstContact: [{ notisId: firstContactNode.id, addrs: [firstContactNode.webrtcAddr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -1294,8 +1294,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
 
   it('agreement counts come from the latest check', async () => {
     // MESH_INTERFACE → What the client remembers → "The agreement counts" —
-    // after each check `state.agreement` holds `{ agreeing,
-    // agreeingAnchors, notAgreeing }` from the latest `TipResult`.
+    // after each check `state.agreement` holds `{ onChain,
+    // offChain }` from the latest `TipResult`.
     const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
     const upB = await chainUpstream(CHAIN_K_PLUS_1_TRAIL); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'ag-a-')); dirs.push(dirA);

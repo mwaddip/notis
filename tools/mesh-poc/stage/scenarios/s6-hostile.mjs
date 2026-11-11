@@ -121,7 +121,7 @@ export function otherRejectSourcesIn(outDir, honestHosts, publisherPeerIdString)
  * `role: 'hostile'` hosts alone, so the fork pair stays reachable
  * for session 2's measurement.
  */
-export function anchorBlockArgs(topology) {
+export function honestBlockArgs(topology) {
   const ns = 'notismesh-browser';
   const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', BLOCK_TABLE];
   const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', BLOCK_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
@@ -140,11 +140,11 @@ export function anchorBlockArgs(topology) {
 }
 
 export function applyFaults(log, topology) {
-  const a = anchorBlockArgs(topology);
-  log.apply('browser-anchor-block-add-table', a.addTable, a.deleteTable);
-  log.apply('browser-anchor-block-add-chain', a.addChain, null);
+  const a = honestBlockArgs(topology);
+  log.apply('browser-honest-block-add-table', a.addTable, a.deleteTable);
+  log.apply('browser-honest-block-add-chain', a.addChain, null);
   for (let i = 0; i < a.drops.length; i += 1) {
-    log.apply(`browser-anchor-drop-${i}`, a.drops[i], null);
+    log.apply(`browser-honest-drop-${i}`, a.drops[i], null);
   }
 }
 
@@ -269,12 +269,12 @@ export async function run(ctx) {
       const keptTipHeight = firstState.tip?.height ?? null;
 
       // ----- (ii) second session with honest nodes blocked -----
-      const a = anchorBlockArgs(ctx.topology);
-      runFault(log, 'browser-anchor-block-add-table', a.addTable);
+      const a = honestBlockArgs(ctx.topology);
+      runFault(log, 'browser-honest-block-add-table', a.addTable);
       applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
-      runFault(log, 'browser-anchor-block-add-chain', a.addChain);
+      runFault(log, 'browser-honest-block-add-chain', a.addChain);
       for (let i = 0; i < a.drops.length; i += 1) {
-        runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
+        runFault(log, `browser-honest-drop-${i}`, a.drops[i]);
       }
       // Build a fork-only variant: firstContact stays pub1 + pub2 (now
       // blocked) and seeds carries the hostile-fork host alone — a
@@ -358,7 +358,7 @@ export async function run(ctx) {
       removeTable('notismesh-browser', BLOCK_TABLE);
       const idx = applied.findIndex((e) => e.table === BLOCK_TABLE);
       if (idx >= 0) applied.splice(idx, 1);
-      log.records.push(`[fault:remove:${NAME}:browser-anchor-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
+      log.records.push(`[fault:remove:${NAME}:browser-honest-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
       writeConfigVariant(ctx.outDir, variant);
       const malformedId = seedsByHost['hostile-malformed'];
       const invalidId = seedsByHost['hostile-invalid'];

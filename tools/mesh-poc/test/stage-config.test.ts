@@ -87,7 +87,7 @@ describe('stage/topology.json is whole', () => {
     );
     expect(config.firstContact.length).toBeGreaterThan(0);
     for (const a of config.firstContact) {
-      expect(publicIds.has(a.notisId), `anchor ${a.notisId} is a public mesh node`).toBe(true);
+      expect(publicIds.has(a.notisId), `first-contact node ${a.notisId} is a public mesh node`).toBe(true);
     }
   });
 
@@ -110,9 +110,9 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
-    expect(config.firstContact.length, 'the stage has anchors').toBeGreaterThan(0);
+    expect(config.firstContact.length, 'the stage has first-contact nodes').toBeGreaterThan(0);
     for (const a of config.firstContact) {
-      expect(a.addrs.length, `anchor ${a.notisId} has addresses`).toBeGreaterThan(0);
+      expect(a.addrs.length, `first-contact node ${a.notisId} has addresses`).toBeGreaterThan(0);
       for (const addr of a.addrs) {
         expect(addr).not.toMatch(/\/dns4\/|\/dns6\/|\/dnsaddr\//);
       }

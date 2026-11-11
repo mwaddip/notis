@@ -61,19 +61,19 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   const peerA = peerIdFromNotisId(idA).toString();
   const peerB = peerIdFromNotisId(idB).toString();
   // A configured first-contact node's address for key A: a 10.0.0.5 private IP.
-  const anchorBareA = '/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA';
-  const anchorAddrA = `${anchorBareA}/p2p/${peerA}`;
+  const firstContactBareA = '/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA';
+  const firstContactAddrA = `${firstContactBareA}/p2p/${peerA}`;
   const configuredAddrsOf = (id: string): readonly string[] =>
-    id === idA ? [anchorAddrA] : [];
+    id === idA ? [firstContactAddrA] : [];
 
   it('a hand-entered private address passes the gater for its own key', () => {
-    const ma = multiaddr(anchorAddrA);
+    const ma = multiaddr(firstContactAddrA);
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(false);
   });
 
   it("a first-contact entry's private address passes for its own key; a seed's is refused", () => {
-    const anchorMa = multiaddr(anchorAddrA);
-    expect(clientDenyDialMultiaddr(anchorMa, configuredAddrsOf)).toBe(false);
+    const firstContactMa = multiaddr(firstContactAddrA);
+    expect(clientDenyDialMultiaddr(firstContactMa, configuredAddrsOf)).toBe(false);
     // A seed's private address (another IP under another key, that
     // the configuration does not name) is refused.
     const seedAddr = `/ip4/10.0.0.9/udp/4001/webrtc-direct/certhash/uEiA/p2p/${peerB}`;
@@ -85,12 +85,12 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
     // trailing `/p2p/`. The gater reads the key from the trailing
     // `/p2p/<id>`, so configured for idA does not pass this address
     // under idB.
-    const ma = multiaddr(`${anchorBareA}/p2p/${peerB}`);
+    const ma = multiaddr(`${firstContactBareA}/p2p/${peerB}`);
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(true);
   });
 
   it('a private address from the DHT for a hand-added key is refused', () => {
-    // The hand-added key is idA (configured as anchorAddrA). A
+    // The hand-added key is idA (configured as firstContactAddrA). A
     // different private address under idA — one the DHT, a seed or a
     // peer list offered — is not in configured, so the gater refuses
     // it. Review Focus 3.

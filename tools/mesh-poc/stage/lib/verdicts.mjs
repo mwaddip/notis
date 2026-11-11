@@ -32,11 +32,7 @@ function missing(m) {
 export function verdictS1Node(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
-  // The measurement names the first-contact test `isFirstContact` or
-  // `isAnchor` (s1 writes `isAnchor`); this verdict reads whichever is
-  // present. A FAIL requires neither to be `true`.
-  const matched = m.isFirstContact === true || m.isAnchor === true;
-  if (!matched) return 'FAIL';
+  if (m.isFirstContact !== true) return 'FAIL';
   if (typeof m.timeMs !== 'number' || m.timeMs > 60_000) return 'FAIL';
   if (m.transport !== 'webrtc-direct') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
@@ -160,7 +156,7 @@ export function verdictS2Priv1(m) {
   if (m.priv1Status !== 'ok' && m.priv1Status !== 'trailing' && m.priv1Status !== 'behind') return 'FAIL';
   if (m.transport !== 'webrtc') return 'FAIL';
   if (m.path !== 'direct') return 'FAIL';
-  const relayed = typeof m.relayedAddr === 'string' ? m.relayedAddr : m.anchorAddrRelayed;
+  const relayed = typeof m.relayedAddr === 'string' ? m.relayedAddr : m.firstContactAddrRelayed;
   if (typeof relayed !== 'string') return 'FAIL';
   if (!relayed.includes('/p2p-circuit/webrtc')) return 'FAIL';
   if (typeof m.connectMs !== 'number') return 'FAIL';
@@ -324,15 +320,10 @@ export function verdictS4Renewal(m) {
 // not blacklisted". The honest first-contact node's status may be
 // `ok`, `trailing`, `retry` or `behind` — never `blacklisted`.
 // Measurement:
-//   `{ firstContactStatus: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
+//   `{ pub1Status: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
 export function verdictS5(m) {
   if (missing(m)) return 'skipped';
-  // The measurement names pub1's status `firstContactStatus` or
-  // `anchorStatus` (s5 writes `anchorStatus`); this verdict reads whichever
-  // is present.
-  const status = typeof m.firstContactStatus === 'string'
-    ? m.firstContactStatus
-    : m.anchorStatus;
+  const status = m.pub1Status;
   if (status === 'blacklisted') return 'FAIL';
   if (typeof status !== 'string') return 'FAIL';
   if (!Array.isArray(m.droppedAddrs)) return 'FAIL';

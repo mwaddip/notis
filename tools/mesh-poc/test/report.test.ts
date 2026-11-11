@@ -18,7 +18,7 @@ function sampleScenarios(): ScenarioResult[] {
       startedAt: 1_700_000_000_000,
       endedAt: 1_700_000_060_000,
       steps: [
-        { name: 'nodeId is a first-contact node within 60 s', verdict: 'PASS', measurement: { nodeId: 'a'.repeat(64), isAnchor: true, timeMs: 10_000 }, timeMs: 10_000 },
+        { name: 'nodeId is a first-contact node within 60 s', verdict: 'PASS', measurement: { nodeId: 'a'.repeat(64), isFirstContact: true, timeMs: 10_000 }, timeMs: 10_000 },
         { name: 'probe matches node direct', verdict: 'PASS', measurement: { probe: { sha256: 'ab', bytes: 123 }, direct: { sha256: 'ab', bytes: 123 } }, timeMs: 20 },
         { name: 'DNS silent', verdict: 'skipped', measurement: null, timeMs: 0 },
       ],
