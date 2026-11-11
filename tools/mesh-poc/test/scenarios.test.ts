@@ -230,13 +230,16 @@ describe('s4 (transport cut)', () => {
 });
 
 describe('s5 (impersonation)', () => {
-  it('describe() lists one step', () => {
-    expect(s5.describe()).toEqual(['impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted']);
+  it('describe() lists two steps', () => {
+    expect(s5.describe()).toEqual([
+      'impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted',
+      'impostor stopped and pub1 restarted, mesh networking up',
+    ]);
   });
   it('run({dryRun:true}) prints the stop + impostor notis spawn with pub1 bind addr', async () => {
     const r = await s5.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s5');
-    expect(r.steps.length).toBe(1);
+    expect(r.steps.length).toBe(2);
     const stopLine = r.faults.find((f) => f.includes('stop-pub1-notis'));
     expect(stopLine, 'stop line names the notis target').toBeDefined();
     const spawnLine = r.faults.find((f) => f.includes('impostor-notis'));
