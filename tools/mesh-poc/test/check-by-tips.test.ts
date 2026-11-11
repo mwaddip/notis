@@ -1789,7 +1789,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // MESH_INTERFACE → The client's node list → "An entry may carry an
     // API base" — a dial whose certhash does not match the peer's
     // fails as transport, and the entry falls back to its api. The
-    // reachable anchor's reads stay on the mesh. The route the client
+    // reachable first-contact node's reads stay on the mesh. The route the client
     // picks is
     // visible on each entry's `transport`/`path` pair.
     const K_DEFAULT = 20;
@@ -1873,7 +1873,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     // proof that fails verification … the same at an entry's API base
     // — the host, not the key — HTTPS authenticates a name, never a
     // node key — `retry`, as a transport failure; never `blacklisted`".
-    // The anchor carries an api alone (no addrs), so phase 1 dials
+    // The first-contact node carries an api alone (no addrs), so phase 1 dials
     // nothing and phase 2's api read is the only move on the entry.
     const liar = await handBuilt(async (req, res) => {
       if (req.url === '/blocks/current') {

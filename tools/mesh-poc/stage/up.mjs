@@ -1653,7 +1653,7 @@ const CHROMIUM_QUIET_FLAGS = [
 // resolves, and so does every public IP literal in the stage's internet
 // segment (`EXCLUDE 11.100.0.*`, derived from `topology.internet.subnet`).
 // Chromium's `MAP * ~NOTFOUND` matches an IP-literal host too, so without
-// the subnet EXCLUDE the browser refuses every anchor address with
+// the subnet EXCLUDE the browser refuses every first-contact address with
 // `net::ERR_NAME_NOT_RESOLVED`.
 const internetSubnetPrefix = topology.internet.subnet.replace(/\.0\/\d+$/, '.*');
 const CHROMIUM_HOST_RESOLVER_RULES = `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE ${internetSubnetPrefix}`;

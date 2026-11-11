@@ -279,7 +279,7 @@ describe('s6 (hostile)', () => {
     expect(names[1]).toMatch(/hostile seeds/);
     expect(names[2]).toMatch(/publisher/);
   });
-  it('anchorBlockArgs builds an add-table + add-chain + per-anchor drop rule', () => {
+  it('anchorBlockArgs builds an add-table + add-chain + per-node drop rule', () => {
     const a = s6.anchorBlockArgs(TOPOLOGY);
     expect(a.addTable[4]).toBe('notismesh-browser');
     expect(a.addChain[4]).toBe('notismesh-browser');
@@ -575,7 +575,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step1_hostile');
     // Honest hosts are not dropped — a drop to pub1 would break the
-    // step's baseline (no anchor reached).
+    // step's baseline (no first-contact node reached).
     for (const { argv } of a.drops) {
       expect(argv.join(' ')).not.toContain('11.100.0.11');
       expect(argv.join(' ')).not.toContain('11.100.0.12');
@@ -629,7 +629,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step4_hostile');
     // Honest hosts are not dropped — a drop to pub1 would break the
-    // step's baseline, as a drop to a mesh anchor would in step 1.
+    // step's baseline, as a drop to a mesh first-contact node would in step 1.
     for (const { argv } of a.drops) {
       expect(argv.join(' ')).not.toContain('11.100.0.11');
       expect(argv.join(' ')).not.toContain('11.100.0.12');
@@ -726,7 +726,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // tracker state. The observer captures a baseline on the first
   // state with the chain settled (`checks >= 1`, `proofReads >= 1`)
   // where every honest node the list HOLDS reads `ok`, `trailing` or
-  // `behind` AND both anchors are held; the final, five completed
+  // `behind` AND both first-contact nodes are held; the final, five completed
   // checks later, the same rule.
   const ANCHOR_A = 'a'.repeat(64);
   const ANCHOR_B = 'b'.repeat(64);
@@ -735,7 +735,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   function nodeEntry(id: string, status: string) {
     return { notisId: id, status };
   }
-  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both anchors held, held honest in range', () => {
+  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both first-contact nodes held, held honest in range', () => {
     const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
     const s = {
@@ -758,7 +758,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
-  it('s8NoProofsObserve: baseline NOT captured if one anchor is missing from the list', () => {
+  it('s8NoProofsObserve: baseline NOT captured if one first-contact node is missing from the list', () => {
     const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const s = {
@@ -780,9 +780,9 @@ describe('s8 (prove once, follow by gossip)', () => {
     const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
-  it('s8NoProofsObserve: baseline captured when a non-anchor honest is NOT in the list (held subset)', () => {
+  it('s8NoProofsObserve: baseline captured when an honest node that is not a first-contact node is NOT in the list (held subset)', () => {
     // priv1 and priv2 only come in by DHT; the stage reaches a baseline
-    // once both anchors are held and the honest nodes it DOES hold are
+    // once both first-contact nodes are held and the honest nodes it DOES hold are
     // in range — a honest node absent from the list is not asserted.
     const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
@@ -818,7 +818,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       { notisId: ANCHOR_B, status: 'trailing' },
     ]);
   });
-  it('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if a first-contact node was dropped (status \'absent\' goes into the measurement)', () => {
     const firstContactIds = [ANCHOR_A, ANCHOR_B];
     const honestIds = [ANCHOR_A, ANCHOR_B];
     const base = {
@@ -1025,7 +1025,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     });
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
-  // the honest-id set, the anchor set and the lagging node's id into
+  // the honest-id set, the first-contact set and the lagging node's id into
   // the live page's tracker; the substitutions use `JSON.stringify` so
   // a notisId with special characters cannot break the expression. A
   // hex notisId round-trips through `JSON.stringify` as a quoted

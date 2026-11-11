@@ -25,13 +25,13 @@ const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const RUN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'run.mjs');
 
 describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct address', () => {
-  it('exec-mode: a public anchor whose realMultiaddrs lack /certhash/ fails fast', () => {
+  it('exec-mode: a public first-contact node whose realMultiaddrs lack /certhash/ fails fast', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const notisIds: Record<string, string> = {
       pub1: 'a'.repeat(64),
       pub2: 'b'.repeat(64),
     };
-    // Exec-mode: if a public anchor's mesh node did not print a /certhash/
+    // Exec-mode: if a public first-contact node's mesh node did not print a /certhash/
     // WebRTC-direct multiaddr, the browser gater refuses to dial. The
     // builder has to raise rather than silently emit a non-certhash
     // address.

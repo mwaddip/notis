@@ -1202,7 +1202,7 @@ export const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE = `if (v === null) return fal
     if (globalThis.__s7CheckBaseline === undefined) globalThis.__s7CheckBaseline = s.checks;
     return s.checks > globalThis.__s7CheckBaseline;`;
 
-// MESH_INTERFACE → No anchor reached → "The agreement counts" / The
+// MESH_INTERFACE → What the client remembers → "The agreement counts." / The
 // client's node list → "how many checks it has completed" — one page
 // polled from a fresh target until its state carries `checks >=
 // minChecks`, the parsed state returned. Collapses the wait and the
@@ -1249,10 +1249,10 @@ async function waitLan1Reached(ctx, url, lan1NotisId) {
   return JSON.parse(value);
 }
 
-// MESH_INTERFACE → Discovery → "Seeds" — a seed is a contact without
-// trust; no answer from it makes `anchorReached` true. The variant
-// keeps the stage's own anchors AND names lan1 at its localAddrs as a
-// seed. A lan1 row without `localAddrs` fails the step: the fallback
+// MESH_INTERFACE → Discovery → "Known nodes." — a seed is a contact
+// without trust; no answer from it makes it a first-contact node or
+// your node. The variant keeps the stage's own first-contact nodes AND
+// names lan1 at its localAddrs as a seed. A lan1 row without `localAddrs` fails the step: the fallback
 // to the announced relay addresses would measure the relay path, not
 // the private one.
 export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
@@ -1270,9 +1270,9 @@ export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
 }
 
 // MESH_INTERFACE → Discovery → "A node added by hand" — a variant
-// with no anchors and lan1 added by hand at its localAddrs. `trusted`
-// decides whether `anchorReached` reads true from lan1's answer
-// alone. A lan1 row without `localAddrs` fails the step: the step
+// with no first-contact nodes and lan1 added by hand at its localAddrs.
+// `trusted` decides whether lan1 is your node (`yours`) once it has
+// answered. A lan1 row without `localAddrs` fails the step: the step
 // measures the private address.
 export function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
   if (!lan1Row || typeof lan1Row.notisId !== 'string') {

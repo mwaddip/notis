@@ -1,4 +1,4 @@
-// MESH_INTERFACE → Acceptance / Discovery / No anchor reached — the stage's
+// MESH_INTERFACE → Acceptance and Discovery → "First contact." — the stage's
 // unit checks: the topology's shape, the page config holds no DNS and passes
 // the client's refusals, the hostile upstream's two bodies, and `--dry-run`
 // touches nothing. These run in CI without root, without the stage, and
@@ -77,7 +77,7 @@ describe('stage/topology.json is whole', () => {
     }
   });
 
-  it('every anchor the page config names is a public mesh node', () => {
+  it('every first-contact node the page config names is a public mesh node', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     const publicIds = new Set(
@@ -143,7 +143,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
 });
 
 // MESH_INTERFACE → Discovery / Identity — every `/p2p/<peer id>` an
-// anchor's or seed's address names must be the peer id derived from the
+// first-contact node's or seed's address names must be the peer id derived from the
 // entry's own `notisId`. The check is on the FINAL `/p2p/` component so
 // a relay hop's `/p2p/<R>/p2p-circuit/…/p2p/<X>` reads <X> as the entry's
 // id (NAT → "a relay reservation on each public node"). A mismatch
@@ -164,7 +164,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
   const matchingId = 'a'.repeat(64);
   const otherId = 'b'.repeat(64);
 
-  it("throws naming the host when an anchor addr's final /p2p/ is not peerIdStringOf(notisId)", () => {
+  it("throws naming the host when a first-contact node addr's final /p2p/ is not peerIdStringOf(notisId)", () => {
     const wrongPeer = peerIdStringOf(otherId);
     const realMultiaddrs = {
       pub1: [
@@ -176,7 +176,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
     ).toThrow(/pub1/);
   });
 
-  it("accepts an anchor addr whose final /p2p/ matches peerIdStringOf(notisId)", () => {
+  it("accepts a first-contact node addr whose final /p2p/ matches peerIdStringOf(notisId)", () => {
     const rightPeer = peerIdStringOf(matchingId);
     const realMultiaddrs = {
       pub1: [
@@ -191,7 +191,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
   // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
   // each public node". A relayed address names the relay hop's peer id
   // before `/p2p-circuit/`; the entry's own peer id is the final `/p2p/`.
-  // The check reads the final component so a relayed anchor does not
+  // The check reads the final component so a relayed first-contact node does not
   // false-positive on the relay hop's id.
   it("skips the relay hop's /p2p/ before /p2p-circuit when more than one /p2p/ is present", () => {
     const rightPeer = peerIdStringOf(matchingId);

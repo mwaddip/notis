@@ -1,12 +1,12 @@
 // MESH_INTERFACE → Acceptance 1 — "No name, no hosted page". The client
-// reads a node's API by key from anchors alone; the mesh's answers equal
+// reads a node's API by key from its first-contact nodes alone; the mesh's answers equal
 // the node's direct HTTP answers byte for byte; and the browser host's
 // DNS log holds no query (every background query of the browser's own
 // goes through Chromium's `--host-resolver-rules` resolver, which
 // answers `~NOTFOUND` for every name but `localhost`).
 //
 // No faults; `applyFaults` is a no-op. The scenario reads the stage's
-// own `config.json` as `up` wrote it: anchors = pub1 + pub2.
+// own `config.json` as `up` wrote it: first contact = pub1 + pub2.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -59,7 +59,7 @@ export function hostOfNodeId(identities, nodeId) {
 }
 
 /**
- * Pure: the set of `notisId`s that `config.json` lists as anchors.
+ * Pure: the set of `notisId`s that `config.json` lists in `firstContact[]`.
  */
 export function firstContactIdSet(config) {
   const out = new Set();
@@ -137,7 +137,7 @@ export async function run(ctx) {
         60_000, 500,
       );
       // MESH_INTERFACE → Acceptance 1 — "The client reads a node's API
-      // by key from anchors alone, over WebRTC-direct". `transport` and
+      // by key from its first-contact nodes alone, over WebRTC-direct". `transport` and
       // `path` are read from the same `#state` payload so the
       // measurement names the link reached inside the 60 s window.
       const state = JSON.parse(stateJson);

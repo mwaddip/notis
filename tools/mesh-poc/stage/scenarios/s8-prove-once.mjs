@@ -17,7 +17,7 @@
 //      moving `proofReads`. The baseline is the first state with the
 //      chain settled (`checks >= 1`, `proofReads >= 1`) where every
 //      honest node the list HOLDS reads `ok`, `trailing` or `behind`
-//      and both anchors are held; the final, five completed checks
+//      and both first-contact nodes are held; the final, five completed checks
 //      later, the same rule. `verdictS8NoProofs`: PASS when
 //      `proofReads` did not move and every held honest node read
 //      `ok`, `trailing` or `behind`.
@@ -374,7 +374,7 @@ export function honestMeshHosts(topology) {
 // completed checks past a settled baseline. The pure observer below
 // captures the baseline — first state with the chain settled
 // (`checks >= 1`, `proofReads >= 1`) where every honest node the list
-// HOLDS reads `ok`, `trailing` or `behind` AND both anchors are held;
+// HOLDS reads `ok`, `trailing` or `behind` AND both first-contact nodes are held;
 // final records at `base.checks + 5` whatever the statuses are, and
 // every honest id's status at that moment — 'absent' when the list
 // does not hold it — goes into the measurement so `verdictS8NoProofs`
@@ -624,9 +624,9 @@ export async function run(ctx) {
   // The honest set for steps 1 and 4 — the honest mesh hosts the
   // stage-default config can reach, excluding `lan1` (browser's own
   // network) and every hostile host. See `honestMeshHosts` above for
-  // the rule. The anchor set is the subset the client's config.json
+  // the rule. The first-contact set is the subset the client's config.json
   // names (every public mesh node) — step 1's baseline requires both
-  // anchors to be in the state's node list.
+  // first-contact nodes to be in the state's node list.
   const honestHosts = honestMeshHosts(ctx.topology);
   const honestIds = honestHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
   const firstContactHosts = publicMeshHosts(ctx.topology).map(({ name }) => name);

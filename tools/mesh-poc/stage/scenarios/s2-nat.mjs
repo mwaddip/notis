@@ -6,7 +6,7 @@
 // `retry` for want of a direct path, never `blacklisted`."
 //
 // Two sub-steps, each writing its own `config.json` variant:
-//   priv1 (endpoint-independent NAT) — the single anchor is priv1 by
+//   priv1 (endpoint-independent NAT) — the single first-contact node is priv1 by
 //     its `/p2p-circuit/webrtc/p2p/<priv1>` address through a public
 //     node's WebRTC-direct address. The config carries no
 //     `stunServers` — the client derives its ICE list from the public
@@ -18,7 +18,7 @@
 //     non-null entry transport, and records
 //     `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
 //        anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
-//   priv2 (symmetric NAT) — the single anchor is priv2 by BOTH its
+//   priv2 (symmetric NAT) — the single first-contact node is priv2 by BOTH its
 //     `/p2p-circuit/webrtc` and plain `/p2p-circuit` relayed
 //     addresses. The step waits for a routed read to land on priv2
 //     and records `{ expectedNodeId, priv2Status, priv2Path,

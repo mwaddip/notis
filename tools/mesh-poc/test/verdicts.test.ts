@@ -75,7 +75,7 @@ describe('skipped — missing measurement', () => {
   }
 });
 
-describe('verdictS1Node — the node is an anchor within 60 s, reached over WebRTC-direct', () => {
+describe('verdictS1Node — the node is a first-contact node within 60 s, reached over WebRTC-direct', () => {
   const PASS = {
     nodeId: 'a'.repeat(64),
     isAnchor: true,
@@ -89,7 +89,7 @@ describe('verdictS1Node — the node is an anchor within 60 s, reached over WebR
   it('nodeId null → FAIL', () => {
     expect(verdictS1Node({ ...PASS, nodeId: null })).toBe('FAIL');
   });
-  it('isAnchor false (a discovered node, not an anchor) → FAIL', () => {
+  it('isAnchor false (a discovered node, not a first-contact node) → FAIL', () => {
     expect(verdictS1Node({ ...PASS, isAnchor: false })).toBe('FAIL');
   });
   it('timeMs past 60 s → FAIL', () => {
@@ -162,7 +162,7 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   // MESH_INTERFACE → Acceptance 2 — reach, not ranking: priv1's entry
   // reads `status` ok, trailing or behind (all three say a checked
   // answer; `trailing` and `behind` are ranking, not reach) with a
-  // WebRTC-direct link on the relayed anchor address and an IP-only
+  // WebRTC-direct link on the relayed first-contact node address and an IP-only
   // ICE-server record. `nodeIdInUse` and `priv1Failures` are
   // recorded, not conditions.
   const PASS = {
@@ -194,7 +194,7 @@ describe('verdictS2Priv1 — endpoint-independent NAT: WebRTC signalled through 
   it('path still relay → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, path: 'relay' })).toBe('FAIL');
   });
-  it('anchor address does not hold /p2p-circuit/webrtc → FAIL', () => {
+  it('first-contact node address does not hold /p2p-circuit/webrtc → FAIL', () => {
     expect(verdictS2Priv1({ ...PASS, anchorAddrRelayed: '/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiA/p2p/R/p2p-circuit/p2p/P' })).toBe('FAIL');
   });
   it('ICE record carries a host name → FAIL', () => {
@@ -437,16 +437,16 @@ describe('verdictS4Renewal — across one renewal the probes keep succeeding', (
   });
 });
 
-describe('verdictS5 — impostor: anchor not blacklisted, its address dropped', () => {
+describe('verdictS5 — impostor: first-contact node not blacklisted, its address dropped', () => {
   const PASS = {
     anchorStatus: 'ok',
     droppedAddrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc'],
     blockedAddr: '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/abc',
   };
-  it('address dropped, anchor not blacklisted → PASS', () => {
+  it('address dropped, first-contact node not blacklisted → PASS', () => {
     expect(verdictS5(PASS)).toBe('PASS');
   });
-  it('anchor blacklisted → FAIL', () => {
+  it('first-contact node blacklisted → FAIL', () => {
     expect(verdictS5({ ...PASS, anchorStatus: 'blacklisted' })).toBe('FAIL');
   });
   it('address not in droppedAddrs → FAIL', () => {
@@ -692,7 +692,7 @@ describe("verdictS7Lan — a local node by the reader's hand", () => {
   // the browser's own network, named only by a seed, is never
   // dialled; added by hand, it is reached at its private address and
   // takes precedence." The `yours` flag on the entry is the trust
-  // assertion; `anchorReached` is retired.
+  // assertion.
   const PASS = {
     seedPhase: { lan1EverConnected: false, lan1InboundLogged: false },
     trustedPhase: { lan1Status: 'ok', transport: 'webrtc-direct', path: 'direct', yours: true },

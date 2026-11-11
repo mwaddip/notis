@@ -60,7 +60,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   const idB = bytesToHex(kpB.publicKey);
   const peerA = peerIdFromNotisId(idA).toString();
   const peerB = peerIdFromNotisId(idB).toString();
-  // A configured anchor's address for key A: a 10.0.0.5 private IP.
+  // A configured first-contact node's address for key A: a 10.0.0.5 private IP.
   const anchorBareA = '/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA';
   const anchorAddrA = `${anchorBareA}/p2p/${peerA}`;
   const configuredAddrsOf = (id: string): readonly string[] =>
@@ -81,7 +81,7 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   });
 
   it('the same private address under another key is refused', () => {
-    // Same host/port/certhash as the anchor's — but with peerB's
+    // Same host/port/certhash as the first-contact node's — but with peerB's
     // trailing `/p2p/`. The gater reads the key from the trailing
     // `/p2p/<id>`, so configured for idA does not pass this address
     // under idB.
@@ -424,7 +424,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
       agentName: 'notis-mesh-poc',
       resolve: emptyResolve(),
     });
-    // Before the first check ends, the anchor's api is the pre-check
+    // Before the first check ends, the first-contact node's api is the pre-check
     // fallback (the connection is not open).
     const b = client.base('tip');
     expect(b).toBe('https://a.example');

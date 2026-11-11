@@ -20,7 +20,7 @@ const PACKAGE_ROOT = dirname(HERE);
 const SRC_S1 = join(PACKAGE_ROOT, 'stage', 'scenarios', 's1-no-name.mjs');
 const SRC_MEASURE = join(PACKAGE_ROOT, 'stage', 'lib', 'measure.mjs');
 
-// A base config a stage would hand each scenario — anchors are the two
+// A base config a stage would hand each scenario — first-contact nodes are the two
 // public mesh hosts' WebRTC-direct addresses with certhash.
 const BASE_CONFIG = {
   network: 'devnet',

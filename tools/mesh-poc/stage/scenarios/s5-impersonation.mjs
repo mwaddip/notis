@@ -1,8 +1,9 @@
 // MESH_INTERFACE → Acceptance 5 — "A node with its own key and a copy
-// of an anchor's certificate, at the anchor's address: refused at the
-// link, that address dropped, the anchor not blacklisted."
+// of a first-contact node's certificate, at that node's address: refused
+// at the link, that address dropped, the node not blacklisted."
 //
-// One step with three measurements:
+// Two steps. The first measures the impostor (1-3), the second restores
+// pub1 (4):
 //   1. Stop pub1's notis node and wait for its tree to be gone before
 //      the impostor binds its ports (`stopTree` on the recorded PID of
 //      `notis:pub1`; the mesh functionality lives in the integrated

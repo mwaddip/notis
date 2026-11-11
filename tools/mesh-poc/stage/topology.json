@@ -1,6 +1,6 @@
 {
   "network": "devnet",
-  "_comment_subnet": "The internet segment uses 11.100.0.0/24, outside @libp2p/utils/private-ip's PRIVATE_IP_RANGES. The browser's connection gater refuses every address inside that list (10/8, 100.64/10, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 240/4, ...), so a stage internet segment inside those would make the browser refuse every public anchor it is handed. 11/8 is public (US DoD) and the stage namespaces have no route out, so no real host at 11.100.0.x is ever reached. NAT-inside segments stay inside the private list.",
+  "_comment_subnet": "The internet segment uses 11.100.0.0/24, outside @libp2p/utils/private-ip's PRIVATE_IP_RANGES. The browser's connection gater refuses every address inside that list (10/8, 100.64/10, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 240/4, ...), so a stage internet segment inside those would make the browser refuse every public node it is handed. 11/8 is public (US DoD) and the stage namespaces have no route out, so no real host at 11.100.0.x is ever reached. NAT-inside segments stay inside the private list.",
   "internet": {
     "bridgeName": "notismesh-br0",
     "subnet": "11.100.0.0/24",

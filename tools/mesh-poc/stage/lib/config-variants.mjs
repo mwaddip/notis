@@ -13,7 +13,7 @@
 // id from a notisId — same function `buildPageConfig` already uses.
 
 /**
- * Build a config variant whose single anchor is `<privHost>` reached
+ * Build a config variant whose single first-contact node is `<privHost>` reached
  * through `<viaPublicHost>`. The variant leaves `seeds` empty; the
  * client's STUN list is derived from the public nodes it holds
  * (MESH_INTERFACE → NAT → "A client's STUN list comes from the public
@@ -50,7 +50,7 @@ export function buildPrivateViaRelayVariant(baseConfig, {
 }
 
 /**
- * Build a config variant whose single anchor is a private node reached
+ * Build a config variant whose single first-contact node is a private node reached
  * through the relay the private node ACTUALLY reserved on, taken from
  * its own announced circuit multiaddr. A private node picks its relay
  * at run time; the stage cannot name the via-public node in advance.
@@ -138,7 +138,7 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
 
 /**
  * MESH_INTERFACE → NAT → "A relay carries data" — a variant whose
- * single anchor is a private node reached through the relay it
+ * single first-contact node is a private node reached through the relay it
  * reserved on, with BOTH its `/p2p-circuit/webrtc` and plain
  * `/p2p-circuit` addresses. The signalled WebRTC path over the
  * circuit's webrtc form fails when the private is behind a symmetric
@@ -204,9 +204,9 @@ export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, 
 }
 
 /**
- * Build a config variant that keeps the stage's own anchors AND adds a
- * list of hostile seed anchors. The seeds are refused by
- * `assertClientConfig` under the same rules anchors are, so each seed's
+ * Build a config variant that keeps the stage's own first-contact nodes AND adds a
+ * list of hostile seeds. The seeds are refused by
+ * `assertClientConfig` under the same rules first-contact nodes are, so each seed's
  * `addrs` has to be IP-only.
  */
 export function buildWithHostileSeedsVariant(baseConfig, seeds) {

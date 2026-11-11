@@ -544,7 +544,7 @@ describe('mesh-client in block gossip', () => {
   }, 180_000);
 
   it('a block from A reaches B through the client\'s forward', async () => {
-    // Two mesh nodes A and B, each an anchor of the client, kept apart
+    // Two mesh nodes A and B, each a first-contact node of the client, kept apart
     // this way: neither has the other in `bootstrap`, neither is told
     // about the other's addresses by hand, and no identify response
     // carries a third-party address (libp2p 3.5's identify shares the
@@ -635,7 +635,7 @@ describe('mesh-client in block gossip', () => {
   }, 240_000);
 
   it('before settlement, a valid gossiped block is forwarded, nothing moves, no check fires', async () => {
-    // The first check completes with every anchor's proof `unreachable`:
+    // The first check completes with every first-contact node's proof `unreachable`:
     // `HeldChain.settled()` stays `false`. A valid block arrives through
     // gossip, the validator accepts it (standing is `null`,
     // `scheduledTargetBits` is `null` with no `block1` held, so the

@@ -1,7 +1,7 @@
-// MESH_INTERFACE → Discovery / Identity / No anchor reached — the page's
+// MESH_INTERFACE → Identity and Discovery → "First contact." — the page's
 // `config.json`, built by a pure function of the topology, the public mesh
 // nodes' notisIds, and (optional) the mesh nodes' printed multiaddrs. Every
-// anchor's `addrs` carries a WebRTC-direct multiaddr; `pub1`'s also carries
+// first-contact node's `addrs` carries a WebRTC-direct multiaddr; `pub1`'s also carries
 // a WSS address (`/tls/ws` over its bare IP). Seeds default to none (a
 // scenario writes its own); the client takes its STUN servers from the
 // public nodes it holds (MESH_INTERFACE → NAT → "A client's STUN list
@@ -81,7 +81,7 @@ export function buildPageConfig(topology, nodeIdentities, realMultiaddrs, opts) 
 
 /**
  * MESH_INTERFACE → Discovery / Identity — every `/p2p/<peer id>` in an
- * anchor's or seed's address must be the peer id derived from that
+ * first-contact node's or seed's address must be the peer id derived from that
  * entry's `notisId`. The check reads the FINAL `/p2p/<id>` component,
  * so a relay hop (`/p2p/<relay>/p2p-circuit/…/p2p/<target>`) is read
  * as naming `<target>` — the relay's own id is the hop, not the entry's.

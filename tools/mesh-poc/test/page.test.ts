@@ -1348,9 +1348,7 @@ describe("page/main.ts — the memory wiring", () => {
       }
       // Mutable state so a test can seat a chain before triggering
       // `onChecked` — the page reads `client.state().chain` to key
-      // the memory record (MESH_INTERFACE → What the client remembers
-      // → "keyed by the genesis the network's profile pins, or by the
-      // client's chain where it pins none").
+      // the memory record (MESH_INTERFACE → What the client remembers).
       let state: ClientState = {
         nodeId: null, transport: null, path: null, lastLeft: null,
         tip: null, agreement: null, checks: 0,

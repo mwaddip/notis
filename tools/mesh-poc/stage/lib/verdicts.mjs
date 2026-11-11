@@ -32,9 +32,9 @@ function missing(m) {
 export function verdictS1Node(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.nodeId !== 'string') return 'FAIL';
-  // The field was `isAnchor`; the measurement keeps both spellings so a
-  // scenario in flight reads either, and this verdict reads the one
-  // that is present. A FAIL requires neither to be `true`.
+  // The measurement names the first-contact test `isFirstContact` or
+  // `isAnchor` (s1 writes `isAnchor`); this verdict reads whichever is
+  // present. A FAIL requires neither to be `true`.
   const matched = m.isFirstContact === true || m.isAnchor === true;
   if (!matched) return 'FAIL';
   if (typeof m.timeMs !== 'number' || m.timeMs > 60_000) return 'FAIL';
@@ -327,7 +327,9 @@ export function verdictS4Renewal(m) {
 //   `{ firstContactStatus: 'ok'|'trailing'|'retry'|'behind', droppedAddrs: string[], blockedAddr: string }`.
 export function verdictS5(m) {
   if (missing(m)) return 'skipped';
-  // Accept both the current spelling and the legacy `anchorStatus`.
+  // The measurement names pub1's status `firstContactStatus` or
+  // `anchorStatus` (s5 writes `anchorStatus`); this verdict reads whichever
+  // is present.
   const status = typeof m.firstContactStatus === 'string'
     ? m.firstContactStatus
     : m.anchorStatus;

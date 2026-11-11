@@ -1,6 +1,6 @@
 // MESH_INTERFACE → Discovery / NAT — pure config.json variants a scenario
 // writes beside the stage's own file: a private node reached through a
-// public relay, and the stage's anchors plus hostile seeds.
+// public relay, and the stage's first-contact nodes plus hostile seeds.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -36,7 +36,7 @@ describe('buildPrivateViaRelayVariant', () => {
     expect('stunServers' in r).toBe(false);
   });
 
-  it('refuses a base config that does not name the via public anchor', () => {
+  it('refuses a base config that does not name the via public first-contact node', () => {
     expect(() => buildPrivateViaRelayVariant(BASE_CONFIG, {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
@@ -44,7 +44,7 @@ describe('buildPrivateViaRelayVariant', () => {
     })).toThrow(/does not name the public anchor/);
   });
 
-  it('refuses a public anchor whose addresses have no webrtc-direct', () => {
+  it('refuses a public first-contact node whose addresses have no webrtc-direct', () => {
     const noWebrtc = { ...BASE_CONFIG, firstContact: [{ notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/tcp/443/tls/ws/p2p/PUB1PEER'] }] };
     expect(() => buildPrivateViaRelayVariant(noWebrtc, {
       privNotisId: 'ff'.repeat(32),
@@ -55,7 +55,7 @@ describe('buildPrivateViaRelayVariant', () => {
 });
 
 describe('buildWithHostileSeedsVariant', () => {
-  it('keeps anchors and appends the given seeds', () => {
+  it('keeps first-contact nodes and appends the given seeds', () => {
     const seeds = [{ notisId: 'cc'.repeat(32), addrs: ['/ip4/10.100.0.31/tcp/4002/p2p/HM'] }];
     const r = buildWithHostileSeedsVariant(BASE_CONFIG, seeds);
     expect(r.firstContact.length).toBe(2);

@@ -754,13 +754,13 @@ describe('verdictIceServers reads the record per MESH_INTERFACE → NAT', () => 
 
 // --- verdictS2Priv1 --------------------------------------------------------
 
-describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, path, anchor address and ICE', () => {
+describe('verdictS2Priv1 reads reach — priv1Status (ok|behind), transport, path, first-contact node address and ICE', () => {
   // MESH_INTERFACE → Acceptance 2 — "The browser reaches the node behind
   // the endpoint-independent NAT over WebRTC signalled through a relay,
   // its data direct." Reach is `status ok or behind` on priv1's entry
   // (both say the client got a checked answer; `behind` is a ranking
   // outcome, not a reach failure) and a WebRTC-direct link on the
-  // relayed-WebRTC anchor address. `nodeIdInUse` is recorded in the
+  // relayed-WebRTC first-contact node address. `nodeIdInUse` is recorded in the
   // measurement — a reader can see which node the client stayed on —
   // but it is not a condition: priv1 may rank below pub1 and still be
   // reached.
@@ -1222,7 +1222,7 @@ describe('s1 resumes the miner\'s whole tree with SIGCONT, wrappers included', (
   // s1 reaches the pause/resume branch only when its `anchorNodeId`
   // step succeeds AND `identities.json` holds a row for the resolved
   // host. The scenario fixture below mirrors the s2 case: identities,
-  // out dir, and a canned `#state` that reads a connected anchor.
+  // out dir, and a canned `#state` that reads a connected first-contact node.
   const anchorNotisId = 'aa'.repeat(32);
 
   function s1IdentitiesFixture(): Record<string, unknown> {

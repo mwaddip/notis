@@ -69,7 +69,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // `assertClientConfig` is the one check `startMeshClient` runs first.
   // The function itself is pure — a direct call throws before any libp2p
   // state could be created, which is the property the page relies on
-  // when the real `startMeshClient` reaches it with a DNS anchor
+  // when the real `startMeshClient` reaches it with a DNS first-contact node
   // (MESH_INTERFACE → Discovery / NAT).
   it('assertClientConfig refuses a /dns4/ first-contact node without creating a node', () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
@@ -126,8 +126,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const seedKey = nodeKeyFromKeyPair(generateKeyPair());
     // MESH_INTERFACE → The client's node list → "An entry may carry an
-    // API base" — an anchor with neither addrs nor api is refused, so
-    // this anchor carries an api base alone. The address is never
+    // API base" — a first-contact node with neither addrs nor api is refused, so
+    // this first-contact node carries an api base alone. The address is never
     // reached in this case.
     const client = await startMeshClient({
       firstContact: [{ notisId: anchorKey.notisId, addrs: [], api: 'http://127.0.0.1:1' }],
@@ -151,8 +151,8 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
   // MESH_INTERFACE → Transports → "A client dials a private address only
   // when its own configuration names it" + Discovery → "Seeds" — a seed's
   // addresses are not configured, so the client's gater refuses a seed on
-  // a private address, and the seed never answers. Both anchor and seed
-  // are on loopback (private); the anchor is configured, so the anchor's
+  // a private address, and the seed never answers. Both first-contact node and seed
+  // are on loopback (private); the first-contact node is configured, so the first-contact node's
   // dial reaches libp2p and fails against its stopped node — status
   // retry — and the client's chain stays empty because the configured node
   // never answers.
@@ -224,7 +224,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — after a check, a node that was `ok` or
     // `trailing` before it and is neither after it goes into
-    // `state.lastLeft` with its latest event. Two anchors ok after
+    // `state.lastLeft` with its latest event. Two first-contact nodes ok after
     // check 1; A stops; after check 2 A moves to retry and `lastLeft`
     // names A with its failure reason.
     const upA = await chainUpstream(CHAIN_K_PLUS_1); ups.push(upA);
@@ -307,12 +307,12 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const dirK1 = mkdtempSync(join(tmpdir(), 'mesh-client-k1-')); dirs.push(dirK1);
     const k1 = await startNode(upK1, dirK1); nodes.push(k1.node);
 
-    // A real anchor so the check has a reachable candidate alongside K2.
+    // A real first-contact node so the check has a reachable candidate alongside K2.
     const upGood = await chainUpstream(SHARED_CHAIN); ups.push(upGood);
     const dirGood = mkdtempSync(join(tmpdir(), 'mesh-client-good-')); dirs.push(dirGood);
     const good = await startNode(upGood, dirGood); nodes.push(good.node);
 
-    // A fresh notis id — the anchor names K2 at K1's WebRTC-direct
+    // A fresh notis id — the first-contact node names K2 at K1's WebRTC-direct
     // address (which answers with K1's key, not K2's), plus a loopback
     // TCP address (which the mesh client has no transport for).
     const k2 = nodeKeyFromKeyPair(generateKeyPair());
@@ -446,11 +446,11 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const a = await startNode(upA, dirA); nodes.push(a.node);
     const b = await startNode(upB, dirB); nodes.push(b.node);
 
-    // The anchor lists A's id with B's address first, A's own second.
+    // The first-contact node lists A's id with B's address first, A's own second.
     // The one-dial-per-peer path hands libp2p both and reads whichever
-    // address succeeds; the anchor is not blacklisted (a key-authenticated
+    // address succeeds; the first-contact node is not blacklisted (a key-authenticated
     // mismatch stays below the lie threshold — the contract reads
-    // "the address lied, not the key"), and the anchor was reached.
+    // "the address lied, not the key"), and the first-contact node was reached.
     //
     // MESH_INTERFACE → The client's node list — the exact address-drop
     // granularity (which specific address answered with the wrong key)
@@ -473,7 +473,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const entry = s.nodes.find((n) => n.notisId === a.id);
     expect(entry).toBeDefined();
     expect(entry!.status).not.toBe('blacklisted');
-    // The anchor reached through one of its addresses.
+    // The first-contact node reached through one of its addresses.
     expect(s.nodeId).toBe(a.id);
   }, 90_000);
 
@@ -530,7 +530,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     const s = client.state();
     expect(s.chain).toBeNull();
     // The first-contact entry survives the failed dial — the client reached it
-    // and recorded the failure, so a reader can tell "no anchor reached"
+    // and recorded the failure, so a reader can tell "no node answered"
     // from "the client ran no check at all".
     expect(s.nodes.length).toBe(1);
     expect(s.nodes[0]!.notisId).toBe(started.id);
@@ -541,7 +541,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" + "A read opens no connection" — "a
     // failed routed read runs a check at once, which dials from the
-    // list". Two anchors on chain A at the start; after a successful
+    // list". Two first-contact nodes on chain A at the start; after a successful
     // routed read, A stops and B advances to a different chain (one
     // the client's held chain cannot place). The triggered check's
     // phase 4 reads B's proof, the winner's tip replaces the chain's,
@@ -874,7 +874,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // a key — in its order, without the addresses it dropped — never
     // an address libp2p keeps for the key from elsewhere." A real
     // node K1 answers at its WebRTC-direct address; K2 is a fresh key
-    // the anchor list points at K1's address. The DHT would also put
+    // the first-contact list points at K1's address. The DHT would also put
     // K1's address into libp2p's peer store under K2's peer id; we
     // merge it by hand so a read that dialled by key would reach K1
     // again. Under the rule, phase 1 drops K1's address for
@@ -984,7 +984,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list — the node-list table's
     // first row: a tip the client's chain already holds at the tip
     // reads `ok`, the winner and every verified tie with it. Both
-    // anchors verified `behind === 0`, both read ok.
+    // first-contact nodes verified `behind === 0`, both read ok.
     const upA = await chainUpstream(SHARED_CHAIN); ups.push(upA);
     const upB = await chainUpstream(SHARED_CHAIN); ups.push(upB);
     const dirA = mkdtempSync(join(tmpdir(), 'tie-a-')); dirs.push(dirA);
@@ -1166,7 +1166,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(client.state().nodeId).toBe(r1.nodeId);
     const r2 = await client.read('/blocks/current', 'tip');
     expect(client.state().nodeId).toBe(r2.nodeId);
-    // Across two reads with (0, 0.99) sweep, the two anchors are both
+    // Across two reads with (0, 0.99) sweep, the two first-contact nodes are both
     // picked at least once each.
     expect(new Set([r1.nodeId, r2.nodeId]).size).toBe(2);
   }, 120_000);
@@ -1175,7 +1175,7 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     // MESH_INTERFACE → The client's node list → "A routed read goes to
     // a node its need allows" — the state carries, after a check, a
     // node that was `ok` or `trailing` before it and is neither after
-    // it. Three anchors ok after check 1; the second stops; after
+    // it. Three first-contact nodes ok after check 1; the second stops; after
     // check 2 the second is in retry while the first stays `ok`, and
     // `lastLeft`
     // names the one that left.

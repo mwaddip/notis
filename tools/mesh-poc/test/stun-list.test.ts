@@ -139,7 +139,7 @@ describe('iceConfiguration — client-level', () => {
         addrs: ['/ip4/11.100.0.5/udp/0/webrtc-direct'] }),
     ], 3)).toEqual([]);
 
-    // The client: anchors with no public address. The ICE configuration
+    // The client: first-contact nodes with no public address. The ICE configuration
     // is `{ iceServers: [] }`, never undefined — libp2p's DNS-named
     // defaults are what the empty array stops.
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
@@ -153,7 +153,7 @@ describe('iceConfiguration — client-level', () => {
     expect(client.iceConfiguration().iceServers).toEqual([]);
   }, 30_000);
 
-  it('a client started from anchors alone builds its ICE servers from them', async () => {
+  it('a client started from first-contact nodes alone builds its ICE servers from them', async () => {
     const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
       firstContact: [{
