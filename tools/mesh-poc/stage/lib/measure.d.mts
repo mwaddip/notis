@@ -16,8 +16,25 @@ export declare function readNftCounterSum(ns: string, table: string, opts?: { ti
 export declare function findPid(pids: PidEntry[] | undefined, description: string): PidEntry | null;
 export declare function sigterm(pid: number): { sent: boolean; reason: string | null };
 export declare function signal(pid: number, sig: NodeJS.Signals): { sent: boolean; reason: string | null };
+export declare function signalPid(pid: number, sig: NodeJS.Signals): { sent: boolean; reason: string | null };
+export declare function isPidAlive(pid: number): boolean;
 export declare function descendantPids(pid: number): number[];
 export declare function leafPids(pid: number): number[];
+export declare function stopTree(rootPid: number, opts?: {
+  timeoutMs?: number;
+  pollMs?: number;
+  killGraceMs?: number;
+}): Promise<{
+  initialTree: number[];
+  termSent: number[];
+  killSent: number[];
+  survivors: number[];
+}>;
+export declare function waitNetworkingUp(ns: string, adminPort: number, opts?: {
+  timeoutMs?: number;
+  pollMs?: number;
+  user?: string | null;
+}): Promise<{ peers_connected: number } & Record<string, unknown>>;
 export declare function restartFromEntry(entry: PidEntry, opts?: {
   pidsPath?: string | null;
   envOverride?: Record<string, string>;

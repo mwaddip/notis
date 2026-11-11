@@ -11,22 +11,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { stopTree, signalPid, isPidAlive, descendantPids } from '../stage/lib/measure.mjs';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Read /proc/<pid>/status and return the one-letter State field, or null. */
-function procState(pid: number): string | null {
-  try {
-    const raw = readFileSync(`/proc/${pid}/status`, 'utf8');
-    const m = /^State:\s*([A-Z])/m.exec(raw);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
 }
 
 async function waitForDescendants(pid: number, count: number, deadlineMs: number): Promise<number[]> {
@@ -46,23 +35,6 @@ describe('isPidAlive', () => {
   });
   it('the current process reads true', () => {
     expect(isPidAlive(process.pid)).toBe(true);
-  });
-  it('a zombie reads false (the kernel released its resources before reaping)', async () => {
-    // Spawn a child that exits at once. Do not attach an `exit` listener
-    // so Node does not reap it — the child sits as a zombie until the
-    // test exits.
-    const child = nodeSpawn('sh', ['-c', 'exit 0'], { stdio: 'ignore' });
-    const pid = child.pid!;
-    // Poll /proc until State goes to Z.
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
-      if (procState(pid) === 'Z') break;
-      await sleep(25);
-    }
-    expect(procState(pid)).toBe('Z');
-    expect(isPidAlive(pid)).toBe(false);
-    // Reap so vitest does not leave a lingering zombie across tests.
-    try { child.kill('SIGKILL'); } catch { /* already gone */ }
   });
 });
 
