@@ -328,10 +328,6 @@ the entry's status is theirs — `blacklisted` or `retry` — while its count in
 tip read's placement as any node's do, since the counts say what the nodes name (→ What the client remembers → "The
 agreement counts").
 
-> ⚠ **AHEAD OF CODE (2026-11-11).** The check's judgement pass skips a `retry` entry its own proof read made and a
-`blacklisted` one, so such a node is in no agreement count though its tip read names a tip on the chain; and it places
-a read by the height the read names, so a tip the chain holds named at another height lands `above` and off the chain.
-
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
 `ok` or a `trailing` node; a `behind` node serves no read. Freshness is the last check's: between checks the client
