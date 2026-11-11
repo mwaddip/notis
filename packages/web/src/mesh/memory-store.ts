@@ -1,11 +1,22 @@
 // MESH_INTERFACE → What the client remembers — "A client remembers,
 // per network, the nodes it found, the proof of the chain it verified,
-// and the forks the reader answered — keyed by the genesis the
+// and the branches the reader answered — keyed by the genesis the
 // network's profile pins, or by the network's name where it pins
 // none." The browser-safe store that holds that record under one lock
 // (`notis.mesh.memory`): seams for storage and the lock manager, a
 // `continues` seam over byte arrays so the store itself carries no
 // `@dagsocial/nipopow` import.
+//
+// WEB_INTERFACE → The extension → "What the extension remembers" —
+// "The answered branches are kept apart from it, each its competing
+// proof as base64 under a key of its own beside the record, written
+// when the reader answers and when the branch it names grows". The
+// main record carries the genesis, the kept proof's base64 and the
+// known nodes; each answered branch holds its competing proof as
+// base64 under `notis.mesh.memory.<network>.answered.<n>`, slot 0 the
+// oldest and the last slot the newest. A side key that does not
+// parse as base64 or whose bytes a caller rejects as undecodable is
+// dropped alone.
 //
 // Browser-safe (`MESH_INTERFACE → Place in the workspace`): no `node:`
 // import, `atob`/`btoa` from the DOM lib, no global state.
@@ -29,21 +40,23 @@ export interface StorageLike {
  * the store holds. `proof` the base64 of `encodeNipopowProof` of the
  * kept proof; `genesis` 64 lowercase hex, the pin the record is keyed
  * under; `nodes` the known nodes the client would dial at its next
- * start, latest first; `answeredForks` the forks the reader has
- * answered.
+ * start, latest first; `answered` the competing proofs the reader has
+ * answered, each the bytes of `encodeNipopowProof`, decoded from the
+ * side keys at read time.
  */
 export interface MeshMemoryRecord {
   genesis: string;
   proof: string;
   nodes: MeshContact[];
-  answeredForks: string[];
+  answered: Uint8Array[];
 }
 
 /**
  * The snapshot a check hands to `write`. `proof` the bytes of
  * `encodeNipopowProof` of the proof to write — `null` keeps the stored
  * one. `nodes` the nodes to prepend; `dropped` their keys to drop from
- * the merged list; `answeredForks` to merge in. `replace` the
+ * the merged list; `answered` the full current answered-branches set,
+ * one `encodeNipopowProof` per entry, slot 0 oldest. `replace` the
  * reader's *continue* (`→ "What the client remembers"`): the kept proof
  * moves to `proof` whatever `continues(stored, proof)` answers.
  */
@@ -51,7 +64,7 @@ export interface MemorySnapshot {
   proof: Uint8Array | null;
   nodes: MeshContact[];
   dropped: string[];
-  answeredForks: string[];
+  answered: Uint8Array[];
   replace: boolean;
 }
 
@@ -74,18 +87,53 @@ const LOCK_NAME = 'notis.mesh.memory';
 
 /**
  * MESH_INTERFACE → What the client remembers — the per-network key the
- * record is held under: `notis.mesh.memory.<network name>`. The record's
- * `genesis` field pins the chain inside the record; the key is always
- * the network's name.
+ * main record is held under: `notis.mesh.memory.<network name>`. The
+ * record's `genesis` field pins the chain inside the record; the key
+ * is always the network's name.
  */
 function storageKey(network: string): string {
   return `notis.mesh.memory.${network}`;
+}
+
+/**
+ * WEB_INTERFACE → The extension → "What the extension remembers" —
+ * the side key one answered branch sits under: the main key, then
+ * `.answered.<n>`, slot 0 oldest, up to `ANSWERED_FORKS_MAX - 1`.
+ */
+function answeredSlotKey(network: string, n: number): string {
+  return `notis.mesh.memory.${network}.answered.${n}`;
 }
 
 export function createMeshMemoryStore(
   opts: CreateMeshMemoryStoreOptions,
 ): MeshMemoryStore {
   const key = storageKey(opts.network);
+
+  function readAnsweredFromStorage(): Uint8Array[] {
+    const out: Uint8Array[] = [];
+    for (let n = 0; n < ANSWERED_FORKS_MAX; n++) {
+      const k = answeredSlotKey(opts.network, n);
+      const raw = opts.storage.getItem(k);
+      if (raw === null) continue;
+      if (!BASE64_RE.test(raw)) {
+        // A stored proof that does not decode is dropped alone.
+        opts.storage.removeItem(k);
+        continue;
+      }
+      try {
+        out.push(base64ToBytes(raw));
+      } catch {
+        opts.storage.removeItem(k);
+      }
+    }
+    return out;
+  }
+
+  function clearAnsweredSideKeys(): void {
+    for (let n = 0; n < ANSWERED_FORKS_MAX; n++) {
+      opts.storage.removeItem(answeredSlotKey(opts.network, n));
+    }
+  }
 
   function readRaw(): MeshMemoryRecord | null {
     const raw = opts.storage.getItem(key);
@@ -95,30 +143,55 @@ export function createMeshMemoryStore(
       parsed = JSON.parse(raw);
     } catch {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
       return null;
     }
     if (!isRecord(parsed)) {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
       return null;
     }
-    const { genesis, proof, nodes, answeredForks } = parsed as Record<string, unknown>;
+    const { genesis, proof, nodes } = parsed as Record<string, unknown>;
     if (typeof genesis !== 'string' || !HEX64_RE.test(genesis)) {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
       return null;
     }
     if (typeof proof !== 'string' || !BASE64_RE.test(proof)) {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
       return null;
     }
     if (!Array.isArray(nodes) || !nodes.every(isMeshContact)) {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
       return null;
     }
-    if (!Array.isArray(answeredForks) || !answeredForks.every(s => typeof s === 'string')) {
-      opts.storage.removeItem(key);
-      return null;
+    const answered = readAnsweredFromStorage();
+    return {
+      genesis,
+      proof,
+      nodes: nodes as MeshContact[],
+      answered,
+    };
+  }
+
+  function writeAnsweredSideKeys(answered: Uint8Array[]): void {
+    // "written only when answered or advanced, never at a check that
+    // changes none of them": the side-key write diffs slot by slot
+    // against what is stored and only hands the storage a changed
+    // value.
+    const upper = Math.min(answered.length, ANSWERED_FORKS_MAX);
+    for (let n = 0; n < upper; n++) {
+      const k = answeredSlotKey(opts.network, n);
+      const want = bytesToBase64(answered[n]!);
+      const have = opts.storage.getItem(k);
+      if (have !== want) opts.storage.setItem(k, want);
     }
-    return { genesis, proof, nodes: nodes as MeshContact[], answeredForks: answeredForks as string[] };
+    for (let n = upper; n < ANSWERED_FORKS_MAX; n++) {
+      const k = answeredSlotKey(opts.network, n);
+      if (opts.storage.getItem(k) !== null) opts.storage.removeItem(k);
+    }
   }
 
   return {
@@ -141,18 +214,18 @@ export function createMeshMemoryStore(
         }
         if (keptBytes === null) return;
         const nodes = mergeNodes(snapshot.nodes, basis?.nodes ?? [], snapshot.dropped);
-        const forks = mergeForks(basis?.answeredForks ?? [], snapshot.answeredForks);
-        const record: MeshMemoryRecord = {
+        const record = {
           genesis,
           proof: bytesToBase64(keptBytes),
           nodes,
-          answeredForks: forks,
         };
         opts.storage.setItem(key, JSON.stringify(record));
+        writeAnsweredSideKeys(snapshot.answered);
       });
     },
     clear(): void {
       opts.storage.removeItem(key);
+      clearAnsweredSideKeys();
     },
   };
 }
@@ -180,19 +253,6 @@ function mergeNodes(
     if (out.length >= REMEMBERED_NODES_MAX) return out;
   }
   return out;
-}
-
-function mergeForks(stored: readonly string[], fresh: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const combined: string[] = [];
-  for (const f of [...stored, ...fresh]) {
-    if (seen.has(f)) continue;
-    seen.add(f);
-    combined.push(f);
-  }
-  // "The latest `ANSWERED_FORKS_MAX` kept": the tail of the combined
-  // list is the newer end (stored then fresh).
-  return combined.slice(Math.max(0, combined.length - ANSWERED_FORKS_MAX));
 }
 
 function copyContact(c: MeshContact): MeshContact {

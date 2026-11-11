@@ -64,7 +64,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     answer: (): void => {},
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
-    toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
+    toRemember: () => ({ proof: null, nodes: [], dropped: [], answered: [], replace: false }),
     libp2p: {} as unknown as MeshClient['libp2p'],
   };
 }
@@ -279,7 +279,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     // record is read, and `write` re-stamps the stored one as it goes.
     const GENESIS = 'ab'.repeat(32);
     const storage = fakeStorage({
-      'notis.mesh.memory.devnet': JSON.stringify({ genesis: GENESIS, proof: badB64, nodes: [], answeredForks: [] }),
+      'notis.mesh.memory.devnet': JSON.stringify({ genesis: GENESIS, proof: badB64, nodes: [] }),
     });
     let capturedOnChecked: ((s: import('../../src/mesh/index.js').MemorySnapshot) => void) | null = null;
     // Devnet pins no genesis, so startExtensionMesh takes the chain from
@@ -305,7 +305,7 @@ describe('startExtensionMesh — the lifecycle', () => {
       proof: nextBytes,
       nodes: [],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     };
     capturedOnChecked!(snapshot);

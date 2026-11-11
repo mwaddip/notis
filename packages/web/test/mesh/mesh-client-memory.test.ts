@@ -221,7 +221,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -263,7 +263,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -309,7 +309,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -336,7 +336,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       // A wall clock far enough back: block 1's stamp is 1_000_000; the
       // chain extends by `idealMs` per block (devnet 60_000). The last
       // header's stamp is above 1_000_000. A clock of 0 is well before
@@ -357,14 +357,16 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     const a = keyPair();
     const h = harness();
     const base = 'http://127.0.0.1:1';
+    const answeredBytes = encodeNipopowProof(proofOf(MK));
 
     const client = await startMeshClient({
       firstContact: [{ notisId: a.notisId, addrs: [], api: base }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      // Random bytes that do not decode as a `NipopowProof`.
-      memory: { proof: new Uint8Array([0, 1, 2, 3, 4]), answeredForks: ['f1'] },
+      // Random bytes that do not decode as a `NipopowProof` for the
+      // kept proof; a valid encoded proof for the one answered entry.
+      memory: { proof: new Uint8Array([0, 1, 2, 3, 4]), answered: [answeredBytes] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -376,8 +378,9 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     expect(s.chain).toBeNull();
     const snap = client.toRemember();
     expect(snap.proof).toBeNull();
-    // `answeredForks` is held through the session.
-    expect(snap.answeredForks).toEqual(['f1']);
+    // The answered branches are held through the session.
+    expect(snap.answered.length).toBe(1);
+    expect(Array.from(snap.answered[0]!)).toEqual(Array.from(answeredBytes));
   }, 60_000);
 
   it('every verified proof incomparable with the kept one: memory is dropped and the best proof seats', async () => {
@@ -405,7 +408,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -433,7 +436,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -471,7 +474,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -523,7 +526,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
@@ -676,7 +679,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: wrappedResolve,
@@ -731,7 +734,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
       network: 'devnet',
       profile: PROFILE_UNPINNED,
       agentName: 'notis-mesh-poc',
-      memory: { proof: encodeNipopowProof(keptProof), answeredForks: [] },
+      memory: { proof: encodeNipopowProof(keptProof), answered: [] },
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,

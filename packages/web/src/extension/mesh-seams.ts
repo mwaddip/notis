@@ -286,7 +286,7 @@ export async function startExtensionMesh(
     startOpts.seeds = stored.nodes;
     startOpts.memory = {
       proof: base64ToBytes(stored.proof),
-      answeredForks: stored.answeredForks,
+      answered: stored.answered,
     };
   }
   const client = await opts.startMeshClient(startOpts);

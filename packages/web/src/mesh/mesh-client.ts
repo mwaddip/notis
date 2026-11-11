@@ -462,11 +462,11 @@ export interface MeshClient {
    * standing disagreement. With no disagreement, nothing. *continue*:
    * settle the chain to your node's proof (the proof read in the
    * check that raised it), move the kept proof to it, record the
-   * fork so the same competing branch growing does not ask again
-   * (at most `ANSWERED_FORKS_MAX` forks kept, the oldest dropped),
-   * the next snapshot `replace: true`, the disagreement cleared, a
-   * check at once. *disable*: `removeByHand` on your node, the
-   * disagreement cleared, a check at once.
+   * competing proof so the same branch growing does not ask again
+   * (at most `ANSWERED_FORKS_MAX` answered branches kept, the oldest
+   * dropped), the next snapshot `replace: true`, the disagreement
+   * cleared, a check at once. *disable*: `removeByHand` on your node,
+   * the disagreement cleared, a check at once.
    */
   answer(decision: 'continue' | 'disable'): void;
   /**
@@ -503,9 +503,10 @@ export interface MeshClient {
    * at the end of a check or on stop: the kept proof's bytes (or null),
    * the known nodes the client would dial at its next start — latest first,
    * at most `REMEMBERED_NODES_MAX` — the keys blacklisted this session (to
-   * drop from the stored list), and the answered-forks list held through
-   * the session. `replace: false` so the store moves the kept proof only
-   * when `continues` answers so.
+   * drop from the stored list), and the answered branches' competing
+   * proofs as their `encodeNipopowProof` bytes, oldest first. `replace:
+   * false` so the store moves the kept proof only when `continues`
+   * answers so.
    */
   toRemember(): MemorySnapshot;
   /**
@@ -571,13 +572,14 @@ export interface StartMeshClientOptions {
   httpFetch?: HttpFetch;
   /**
    * MESH_INTERFACE → What the client remembers — the record the client
-   * resumes from: the last kept proof's bytes and the answered-forks list.
-   * The proof is decoded and verified at construct; one that does not
-   * decode or verify is dropped and the client starts with no chain
-   * (`→ "The kept proof"`). `answeredForks` is held for the session and
-   * carried through the snapshot unchanged.
+   * resumes from: the last kept proof's bytes and the answered branches
+   * as their competing proofs. The proof is decoded and verified at
+   * construct; one that does not decode or verify is dropped and the
+   * client starts with no chain (`→ "The kept proof"`). Each answered
+   * proof is decoded alone; one that does not decode is dropped alone
+   * (`WEB_INTERFACE → The extension → "What the extension remembers"`).
    */
-  memory?: { proof: Uint8Array; answeredForks: string[] };
+  memory?: { proof: Uint8Array; answered: Uint8Array[] };
   /**
    * MESH_INTERFACE → What the client remembers — called at the end of
    * every check with `toRemember()`, after `emitStateChange()`. The call
@@ -752,6 +754,14 @@ class MeshClientImpl implements MeshClient {
     yourId: string;
     proof: NipopowProof;
     verifyResult: VerifyResult;
+    /**
+     * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+     * question, never the client's choice" — the competing proof the
+     * raise named: the other node's proof for `heavier`, the kept
+     * proof your node did not continue for `memory`. The reader's
+     * *continue* pushes this into `answeredProofs`.
+     */
+    competing: NipopowProof;
   } | null = null;
   /**
    * MESH_INTERFACE → Discovery → "A disagreement is the reader's
@@ -761,12 +771,18 @@ class MeshClientImpl implements MeshClient {
    */
   private replaceNextSnapshot: boolean = false;
   /**
-   * MESH_INTERFACE → What the client remembers — the forks the reader
-   * answered, held through the session and carried through
-   * `toRemember()` unchanged. Seated from `memory.answeredForks` at
-   * construct.
+   * MESH_INTERFACE → What the client remembers — the competing proofs
+   * the reader answered, held through the session and carried through
+   * `toRemember()` as their `encodeNipopowProof` bytes. Seated from
+   * `memory.answered` at construct: each entry decoded alone; one
+   * that does not decode is dropped alone. A later check that finds
+   * a competing proof whose highest shared header with an entry is
+   * that entry's tip replaces the entry with the competing one — so
+   * the branch the record names follows it as it grows
+   * (`MESH_INTERFACE → Discovery → "An answered branch growing asks
+   * nothing more"`).
    */
-  private readonly answeredForks: string[];
+  private readonly answeredProofs: NipopowProof[];
   private readonly ownId: string;
   private readonly onChecked: ((s: MemorySnapshot) => void) | undefined;
   /**
@@ -853,13 +869,16 @@ class MeshClientImpl implements MeshClient {
       }
     }
     this.ownId = ownId;
-    this.answeredForks = o.memory !== undefined ? [...o.memory.answeredForks] : [];
+    this.answeredProofs = [];
     this.onChecked = o.onChecked;
     // MESH_INTERFACE → What the client remembers — "The kept proof is the
     // last proof the client verified of the chain it holds". At construct,
     // decode and verify `memory.proof`: one that does not decode or verify
     // is dropped (the client starts with no chain); one that verifies seats
-    // the chain as a check's winner does and is held as `this.kept`.
+    // the chain as a check's winner does and is held as `this.kept`. Each
+    // answered proof decodes alone; one that does not decode is dropped
+    // alone (`WEB_INTERFACE → The extension → "What the extension
+    // remembers"`).
     if (o.memory !== undefined) {
       let decoded: NipopowProof | null = null;
       try {
@@ -876,6 +895,11 @@ class MeshClientImpl implements MeshClient {
           this.chain.settle(suffix, vr.headers[0]!);
           this.kept = decoded;
         }
+      }
+      for (const bytes of o.memory.answered) {
+        try {
+          this.answeredProofs.push(decodeNipopowProof(bytes));
+        } catch { /* bad bytes for this entry — drop it alone */ }
       }
     }
     this.state_ = {
@@ -1104,20 +1128,15 @@ class MeshClientImpl implements MeshClient {
       this.emitStateChange();
       return;
     }
-    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
-    // question, never the client's choice" — "its chain does not move
-    // — no switch, no extension by gossip". A block whose parent is
-    // the tip is dropped before `this.chain.extend`; one whose parent
-    // is held below the tip or not held still runs a check at once.
+    // MESH_INTERFACE → The client's node list → "The client's chain" —
+    // "a gossiped block whose parent is held below the tip, or not held
+    // at all, runs a check at once — unless a question stands"; →
+    // Discovery → "while a question stands, a gossiped block runs no
+    // check: the chain is held, and the checks on the client's cadence
+    // read the question again". Every gossiped block is dropped and
+    // no check is run while a disagreement stands.
     if (this.state_.disagreement !== null) {
-      const tipHdr = this.chain.tip();
-      const tipHash = tipHdr !== null ? blockHash(tipHdr) : null;
-      if (tipHash !== null && block.header.prevBlockHash === tipHash) {
-        this.emitStateChange();
-        return;
-      }
       this.emitStateChange();
-      this.triggerImmediateCheck();
       return;
     }
     const r = this.chain.extend(block.header);
@@ -1358,9 +1377,10 @@ class MeshClientImpl implements MeshClient {
    * key — the most recently seen first, at most `REMEMBERED_NODES_MAX`".
    * `proof`: the kept proof's bytes or `null`; `nodes`: the entries to
    * remember; `dropped`: the keys blacklisted this session, so the store
-   * drops them from the merged list; `answeredForks`: the held list;
-   * `replace: false` so the store moves the stored proof only when
-   * `continues` answers so.
+   * drops them from the merged list; `answered`: the competing proofs
+   * the reader answered, each as its `encodeNipopowProof` bytes, oldest
+   * first; `replace: false` so the store moves the stored proof only
+   * when `continues` answers so.
    */
   toRemember(): MemorySnapshot {
     const entries = this.nodeList.entries();
@@ -1375,9 +1395,35 @@ class MeshClientImpl implements MeshClient {
       proof: this.kept !== null ? encodeNipopowProof(this.kept) : null,
       nodes,
       dropped,
-      answeredForks: [...this.answeredForks],
+      answered: this.answeredProofs.map((p) => encodeNipopowProof(p)),
       replace,
     };
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "An answered branch growing asks
+   * nothing more" — the index in `answeredProofs` the given competing
+   * proof names as its branch, or `null`. A competing proof names an
+   * answered branch when the highest header `compareProofs` finds in
+   * it and the answered proof is the answered proof's tip, or when it
+   * is that proof (same tip); `compareProofs`'s `incomparable` arm —
+   * reachable only on a network pinning no `genesisId` — is no match.
+   */
+  private findAnsweredMatch(competing: NipopowProof): number | null {
+    const vp = verifierProfile(this.profile, this.wallClock());
+    const params = { m: DEFAULT_M, k: DEFAULT_K };
+    for (let i = 0; i < this.answeredProofs.length; i++) {
+      const a = this.answeredProofs[i]!;
+      const aTipHdr = a.suffixTail.length > 0
+        ? a.suffixTail[a.suffixTail.length - 1]!
+        : a.suffixHead.header;
+      const aTipHash = blockHash(aTipHdr);
+      if (aTipHash === null) continue;
+      const r = compareProofs(competing, a, params, vp);
+      if (r.verdict === 'incomparable') continue;
+      if (blockHash(r.lca) === aTipHash) return i;
+    }
+    return null;
   }
 
   /**
@@ -1423,10 +1469,12 @@ class MeshClientImpl implements MeshClient {
    * MESH_INTERFACE → Discovery → "A disagreement is the reader's
    * question, never the client's choice" — the reader's answer. With
    * no disagreement, nothing. *continue*: settle the chain to your
-   * node's proof, move `this.kept` to it, record the fork, the next
-   * snapshot `replace: true`, the disagreement cleared, a check at
-   * once. *disable*: `removeByHand` on your node, the disagreement
-   * cleared, a check at once.
+   * node's proof, move `this.kept` to it, record the competing proof
+   * as an answered branch, the next snapshot `replace: true`, the
+   * disagreement cleared, a check at once; `onChecked` fires once
+   * before the check so the answered branch persists even before the
+   * check lands. *disable*: `removeByHand` on your node, the
+   * disagreement cleared, a check at once.
    */
   answer(decision: 'continue' | 'disable'): void {
     const d = this.state_.disagreement;
@@ -1440,8 +1488,9 @@ class MeshClientImpl implements MeshClient {
         // the disagreement). The suffix is `[suffixHead.header,
         // ...suffixTail]`; the window's first header is the proof's
         // verified tip's own block 1. `this.kept` moves to the proof;
-        // the fork joins `answeredForks`, at most ANSWERED_FORKS_MAX
-        // with the oldest dropped; the next snapshot `replace: true`.
+        // the competing proof joins `answeredProofs`, at most
+        // ANSWERED_FORKS_MAX with the oldest dropped; the next
+        // snapshot `replace: true`.
         const proof = standing.proof;
         const vr = standing.verifyResult;
         if (vr.ok === true) {
@@ -1450,9 +1499,9 @@ class MeshClientImpl implements MeshClient {
           this.keptVerdicts.clear();
         }
         this.kept = proof;
-        this.answeredForks.push(d.fork);
-        while (this.answeredForks.length > ANSWERED_FORKS_MAX) {
-          this.answeredForks.shift();
+        this.answeredProofs.push(standing.competing);
+        while (this.answeredProofs.length > ANSWERED_FORKS_MAX) {
+          this.answeredProofs.shift();
         }
         this.replaceNextSnapshot = true;
       }
@@ -1461,6 +1510,13 @@ class MeshClientImpl implements MeshClient {
       this.nodeList.removeByHand(standing !== null ? standing.yourId : '');
     }
     this.emitStateChange();
+    // MESH_INTERFACE → What the client remembers — "written when the
+    // reader answers". The snapshot carries the answered branches'
+    // bytes so the extension's seam persists them before the
+    // immediate check lands.
+    if (decision === 'continue' && this.onChecked !== undefined) {
+      this.onChecked(this.toRemember());
+    }
     this.triggerImmediateCheck();
   }
 
@@ -1625,6 +1681,7 @@ class MeshClientImpl implements MeshClient {
       yourId: string;
       proof: NipopowProof;
       verifyResult: VerifyResult;
+      competing: NipopowProof;
     } | null = null;
 
     // Phase 1: pre-dial every candidate the client has not already
@@ -2022,14 +2079,30 @@ class MeshClientImpl implements MeshClient {
               // y is behind on the same chain, no disagreement. A
               // fork strictly below y's tip does disagree.
               const fork = forkKey(this.kept!, yProof, this.profile, this.wallClock());
-              if (fork !== null && fork !== yTipHash && !this.answeredForks.includes(fork)) {
-                raisedThisCheck = {
-                  which: 'memory',
-                  yours: { height: yTip.height, hash: yTipHash },
-                  other: null,
-                  fork,
-                };
-                standingRaisedThisCheck = { yourId: yId, proof: yProof, verifyResult: yVr };
+              if (fork !== null && fork !== yTipHash) {
+                // MESH_INTERFACE → Discovery → "An answered branch
+                // growing asks nothing more" — the competing proof for
+                // `memory` is the kept proof your node did not
+                // continue. Where that proof extends an answered
+                // branch, nothing is raised and the answered proof is
+                // replaced by it.
+                const matchIdx = this.findAnsweredMatch(this.kept!);
+                if (matchIdx !== null) {
+                  this.answeredProofs[matchIdx] = this.kept!;
+                } else {
+                  raisedThisCheck = {
+                    which: 'memory',
+                    yours: { height: yTip.height, hash: yTipHash },
+                    other: null,
+                    fork,
+                  };
+                  standingRaisedThisCheck = {
+                    yourId: yId,
+                    proof: yProof,
+                    verifyResult: yVr,
+                    competing: this.kept!,
+                  };
+                }
               }
             } else {
               // which: 'heavier' — a verified, not-lost o ≠ y whose tip
@@ -2073,12 +2146,19 @@ class MeshClientImpl implements MeshClient {
                 // result is no evidence against y — the ordinary
                 // settle advances the chain to o's.
                 if (fork !== null && fork !== yTipHash) {
-                  if (this.answeredForks.includes(fork)) {
-                    // Answered fork: settle to y's chain. o's event,
-                    // distance and agreement verdict come from the
-                    // single pass over the final chain
-                    // (MESH_INTERFACE → "A node is judged against the
-                    // chain the check leaves").
+                  // MESH_INTERFACE → Discovery → "An answered branch
+                  // growing asks nothing more" — the competing proof
+                  // for `heavier` is the other node's. Where that
+                  // proof extends an answered branch, nothing is
+                  // raised, the chain settles to your node's and
+                  // the answered proof is replaced. o's event,
+                  // distance and agreement verdict come from the
+                  // single pass over the final chain (MESH_INTERFACE
+                  // → "A node is judged against the chain the check
+                  // leaves").
+                  const matchIdx = this.findAnsweredMatch(best.proof);
+                  if (matchIdx !== null) {
+                    this.answeredProofs[matchIdx] = best.proof;
                     judgedWinner = y;
                     judgedTip = yTip;
                   } else {
@@ -2090,7 +2170,12 @@ class MeshClientImpl implements MeshClient {
                         other: { height: best.tipHdr.height, hash: bestTipHash },
                         fork,
                       };
-                      standingRaisedThisCheck = { yourId: yId, proof: yProof, verifyResult: yVr };
+                      standingRaisedThisCheck = {
+                        yourId: yId,
+                        proof: yProof,
+                        verifyResult: yVr,
+                        competing: best.proof,
+                      };
                     }
                   }
                 }

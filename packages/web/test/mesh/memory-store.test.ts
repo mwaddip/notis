@@ -1,14 +1,15 @@
 // MESH_INTERFACE → What the client remembers — the per-network store
 // the client holds the kept proof, the remembered nodes and the
-// answered forks under one lock. The store takes a `continues` seam
-// over byte arrays, so these cases need no proof — a fake `continues`
-// over bytes stands for the compare, and a fake lock runs one callback
-// at a time, in order.
+// answered branches under one lock. Each answered branch sits in its
+// own side key beside the main record (`WEB_INTERFACE → The extension
+// → "What the extension remembers"`). The store takes a `continues`
+// seam over byte arrays, so these cases need no proof — a fake
+// `continues` over bytes stands for the compare, and a fake lock runs
+// one callback at a time, in order.
 
 import { describe, it, expect } from 'vitest';
 import {
   createMeshMemoryStore,
-  type MeshMemoryRecord,
   type MemorySnapshot,
   type StorageLike,
 } from '../../src/mesh/memory-store.js';
@@ -82,10 +83,10 @@ function record(
   genesis: string,
   proof: string,
   nodes: MeshContact[] = [],
-  answeredForks: string[] = [],
 ): string {
-  const r: MeshMemoryRecord = { genesis, proof, nodes, answeredForks };
-  return JSON.stringify(r);
+  // The main record is `{ genesis, proof, nodes }`; the store attaches
+  // the answered proofs from its side keys at read time.
+  return JSON.stringify({ genesis, proof, nodes });
 }
 
 const idA = idOf(0xa);
@@ -110,7 +111,7 @@ describe('mesh memory store', () => {
       proof: bytesFromAscii('new'),
       nodes: [{ notisId: idB, addrs: ['/ip4/2.2.2.2/tcp/1'] }],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     };
     await store.write(snapshot, g1);
@@ -136,7 +137,7 @@ describe('mesh memory store', () => {
         proof: bytesFromAscii('reader-continue'),
         nodes: [],
         dropped: [],
-        answeredForks: [],
+        answered: [],
         replace: true,
       },
       g1,
@@ -168,7 +169,7 @@ describe('mesh memory store', () => {
         proof: null,
         nodes: [],
         dropped: [idA],
-        answeredForks: [],
+        answered: [],
         replace: false,
       },
       g1,
@@ -200,14 +201,14 @@ describe('mesh memory store', () => {
       proof: bytesFromAscii('Chi'),
       nodes: [],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     };
     const older: MemorySnapshot = {
       proof: bytesFromAscii('Alo'),
       nodes: [],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     };
     await Promise.all([store.write(newer, g1), store.write(older, g1)]);
@@ -241,7 +242,7 @@ describe('mesh memory store', () => {
       genesis: g1,
       proof: base64FromAscii('kept'),
       nodes: [{ addrs: ['/ip4/1.1.1.1/tcp/1'] }],
-      answeredForks: [],
+      answered: [],
     });
     const s4 = fakeStorage({ [key]: s4Raw });
     const r4 = createMeshMemoryStore({ storage: s4, locks: fakeLocks(), network: 'devnet', continues: () => true });
@@ -255,7 +256,7 @@ describe('mesh memory store', () => {
     // Stored record is under g1 and carries nodes to merge in.
     storage.setItem(
       key,
-      record(g1, base64FromAscii('oldKept'), [{ notisId: idA, addrs: ['/ip4/1.1.1.1/tcp/1'] }], ['oldFork']),
+      record(g1, base64FromAscii('oldKept'), [{ notisId: idA, addrs: ['/ip4/1.1.1.1/tcp/1'] }]),
     );
     // `continues` returns false so a stored record would keep the old
     // proof; writing under g2 must ignore that record whole.
@@ -270,7 +271,7 @@ describe('mesh memory store', () => {
         proof: bytesFromAscii('fresh'),
         nodes: [{ notisId: idB, addrs: ['/ip4/2.2.2.2/tcp/1'] }],
         dropped: [],
-        answeredForks: ['freshFork'],
+        answered: [bytesFromAscii('freshBranch')],
         replace: false,
       },
       g2,
@@ -280,10 +281,11 @@ describe('mesh memory store', () => {
     expect(stored!.genesis).toBe(g2);
     expect(b64ToAscii(stored!.proof)).toBe('fresh');
     expect(stored!.nodes.map(n => n.notisId)).toEqual([idB]);
-    expect(stored!.answeredForks).toEqual(['freshFork']);
+    expect(stored!.answered.length).toBe(1);
+    expect(b64ToAscii(btoa(String.fromCharCode(...stored!.answered[0]!)))).toBe('freshBranch');
   });
 
-  it('nodes and answered forks capped at REMEMBERED_NODES_MAX and ANSWERED_FORKS_MAX', async () => {
+  it('a snapshot with ANSWERED_FORKS_MAX + 4 answered branches keeps the first ANSWERED_FORKS_MAX', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const store = createMeshMemoryStore({
@@ -292,32 +294,149 @@ describe('mesh memory store', () => {
       network: 'devnet',
       continues: () => true,
     });
-    // Two writes, each carrying REMEMBERED_NODES_MAX + 4 nodes and
-    // ANSWERED_FORKS_MAX + 4 forks. After the merge the caps hold.
+    // One write carrying ANSWERED_FORKS_MAX + 4 entries: the store
+    // writes up to ANSWERED_FORKS_MAX slots and removes every slot
+    // past them; a read answers the first ANSWERED_FORKS_MAX entries.
+    const answered: Uint8Array[] = [];
+    for (let i = 0; i < ANSWERED_FORKS_MAX + 4; i++) {
+      answered.push(bytesFromAscii(`a${i}`));
+    }
+    await store.write({ proof: bytesFromAscii('p1'), nodes: [], dropped: [], answered, replace: false }, g1);
+    const stored = store.read();
+    expect(stored).not.toBeNull();
+    expect(stored!.answered.length).toBe(ANSWERED_FORKS_MAX);
+    // The store writes slots 0..ANSWERED_FORKS_MAX - 1 in order, so
+    // the kept entries are the first ANSWERED_FORKS_MAX of the
+    // snapshot — the mesh client's `answeredProofs` enforces the
+    // oldest-dropped rule before it hands the snapshot to the store.
+    for (let i = 0; i < ANSWERED_FORKS_MAX; i++) {
+      expect(b64ToAscii(btoa(String.fromCharCode(...stored!.answered[i]!)))).toBe(`a${i}`);
+    }
+  });
+
+  it('nodes capped at REMEMBERED_NODES_MAX', async () => {
+    const storage = fakeStorage();
+    const locks = fakeLocks();
+    const store = createMeshMemoryStore({
+      storage,
+      locks,
+      network: 'devnet',
+      continues: () => true,
+    });
     const nodes1: MeshContact[] = [];
     const nodes2: MeshContact[] = [];
     for (let i = 0; i < REMEMBERED_NODES_MAX + 4; i++) {
       nodes1.push({ notisId: idOf(0x100 + i), addrs: [`/ip4/10.0.0.${i + 1}/tcp/1`] });
       nodes2.push({ notisId: idOf(0x200 + i), addrs: [`/ip4/20.0.0.${i + 1}/tcp/1`] });
     }
-    const forks1 = Array.from({ length: ANSWERED_FORKS_MAX + 4 }, (_, i) => `f1-${i}`);
-    const forks2 = Array.from({ length: ANSWERED_FORKS_MAX + 4 }, (_, i) => `f2-${i}`);
-    await store.write({ proof: bytesFromAscii('p1'), nodes: nodes1, dropped: [], answeredForks: forks1, replace: false }, g1);
-    await store.write({ proof: bytesFromAscii('p2'), nodes: nodes2, dropped: [], answeredForks: forks2, replace: false }, g1);
+    await store.write({ proof: bytesFromAscii('p1'), nodes: nodes1, dropped: [], answered: [], replace: false }, g1);
+    await store.write({ proof: bytesFromAscii('p2'), nodes: nodes2, dropped: [], answered: [], replace: false }, g1);
     const stored = store.read();
     expect(stored).not.toBeNull();
     expect(stored!.nodes.length).toBe(REMEMBERED_NODES_MAX);
-    expect(stored!.answeredForks.length).toBe(ANSWERED_FORKS_MAX);
-    // The latest `ANSWERED_FORKS_MAX` kept — the last `ANSWERED_FORKS_MAX`
-    // values of `forks1 ++ forks2`, duplicates dropped.
-    const combined = [...forks1, ...forks2];
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const f of combined) {
-      if (seen.has(f)) continue;
-      seen.add(f);
-      deduped.push(f);
-    }
-    expect(stored!.answeredForks).toEqual(deduped.slice(-ANSWERED_FORKS_MAX));
+  });
+
+  it('answered proofs are kept under their own keys and not written at a check that changes none', async () => {
+    const storage = fakeStorage();
+    const locks = fakeLocks();
+    // Spy on setItem calls that target the side keys.
+    const sideWrites: Array<{ key: string; value: string }> = [];
+    const spy: StorageLike = {
+      getItem: (k) => storage.map.get(k) ?? null,
+      setItem: (k, v) => {
+        if (k.startsWith('notis.mesh.memory.devnet.answered.')) {
+          sideWrites.push({ key: k, value: v });
+        }
+        storage.map.set(k, v);
+      },
+      removeItem: (k) => { storage.map.delete(k); },
+    };
+    const store = createMeshMemoryStore({
+      storage: spy,
+      locks,
+      network: 'devnet',
+      continues: () => true,
+    });
+    const branchBytes = bytesFromAscii('branch1');
+    const snapshot: MemorySnapshot = {
+      proof: bytesFromAscii('p1'),
+      nodes: [],
+      dropped: [],
+      answered: [branchBytes],
+      replace: false,
+    };
+    await store.write(snapshot, g1);
+    expect(storage.map.get('notis.mesh.memory.devnet.answered.0'))
+      .toBe(btoa('branch1'));
+    const firstWriteCount = sideWrites.length;
+    expect(firstWriteCount).toBe(1);
+    // A second write with the same answered: no side-key setItem.
+    await store.write(snapshot, g1);
+    expect(sideWrites.length).toBe(firstWriteCount);
+  });
+
+  it('clear removes every answered side key beside the main record', async () => {
+    const storage = fakeStorage();
+    const locks = fakeLocks();
+    const store = createMeshMemoryStore({
+      storage,
+      locks,
+      network: 'devnet',
+      continues: () => true,
+    });
+    await store.write({
+      proof: bytesFromAscii('p'),
+      nodes: [],
+      dropped: [],
+      answered: [bytesFromAscii('a'), bytesFromAscii('b')],
+      replace: false,
+    }, g1);
+    expect(storage.map.get('notis.mesh.memory.devnet')).toBeDefined();
+    expect(storage.map.get('notis.mesh.memory.devnet.answered.0')).toBeDefined();
+    expect(storage.map.get('notis.mesh.memory.devnet.answered.1')).toBeDefined();
+    store.clear();
+    expect(storage.map.get('notis.mesh.memory.devnet')).toBeUndefined();
+    expect(storage.map.get('notis.mesh.memory.devnet.answered.0')).toBeUndefined();
+    expect(storage.map.get('notis.mesh.memory.devnet.answered.1')).toBeUndefined();
+  });
+
+  it('a damaged main record also clears the answered side keys', () => {
+    const key = `notis.mesh.memory.devnet`;
+    const storage = fakeStorage({ [key]: '{not json' });
+    // A side key under the same network that would otherwise outlive
+    // the main record.
+    storage.setItem('notis.mesh.memory.devnet.answered.0', btoa('a'));
+    const store = createMeshMemoryStore({
+      storage,
+      locks: fakeLocks(),
+      network: 'devnet',
+      continues: () => true,
+    });
+    expect(store.read()).toBeNull();
+    expect(storage.map.has('notis.mesh.memory.devnet.answered.0')).toBe(false);
+  });
+
+  it('an answered side key that does not decode is dropped alone', () => {
+    const storage = fakeStorage();
+    const key = `notis.mesh.memory.devnet`;
+    storage.setItem(key, record(g1, base64FromAscii('kept')));
+    storage.setItem('notis.mesh.memory.devnet.answered.0', btoa('ok0'));
+    storage.setItem('notis.mesh.memory.devnet.answered.1', 'not*valid base64!');
+    storage.setItem('notis.mesh.memory.devnet.answered.2', btoa('ok2'));
+    const store = createMeshMemoryStore({
+      storage,
+      locks: fakeLocks(),
+      network: 'devnet',
+      continues: () => true,
+    });
+    const stored = store.read();
+    expect(stored).not.toBeNull();
+    expect(stored!.answered.length).toBe(2);
+    expect(btoa(String.fromCharCode(...stored!.answered[0]!))).toBe(btoa('ok0'));
+    expect(btoa(String.fromCharCode(...stored!.answered[1]!))).toBe(btoa('ok2'));
+    // The bad slot is removed; the valid slots stay.
+    expect(storage.map.has('notis.mesh.memory.devnet.answered.1')).toBe(false);
+    expect(storage.map.has('notis.mesh.memory.devnet.answered.0')).toBe(true);
+    expect(storage.map.has('notis.mesh.memory.devnet.answered.2')).toBe(true);
   });
 });

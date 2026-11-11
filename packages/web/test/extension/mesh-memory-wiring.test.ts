@@ -56,7 +56,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     answer: () => {},
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
-    toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
+    toRemember: () => ({ proof: null, nodes: [], dropped: [], answered: [], replace: false }),
     libp2p: {} as unknown as MeshClient['libp2p'],
   };
 }
@@ -92,14 +92,14 @@ async function pump(): Promise<void> {
 type Opts = any;
 
 describe('startExtensionMesh — memory wiring', () => {
-  it('a stored record seeds the client and hands it the kept proof and the answered forks', async () => {
+  it('a stored record seeds the client and hands it the kept proof and the answered branches', async () => {
     const storage = fakeStorage({
       [KEY('testnet')]: JSON.stringify({
         genesis: TESTNET_GENESIS,
         proof: PROOF_B64,
         nodes: [{ notisId: NODE_HEX, addrs: ['/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg'] }],
-        answeredForks: ['f1'.repeat(32)],
       }),
+      [`${KEY('testnet')}.answered.0`]: PROOF_B64,
     });
     let captured: StartMeshClientOptions | null = null;
     const startMeshClient = vi.fn(async (o: StartMeshClientOptions): Promise<MeshClient> => {
@@ -115,7 +115,8 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(captured).not.toBeNull();
     expect(captured!.seeds).toEqual([{ notisId: NODE_HEX, addrs: ['/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg'] }]);
     expect(captured!.memory).toBeDefined();
-    expect(captured!.memory!.answeredForks).toEqual(['f1'.repeat(32)]);
+    expect(captured!.memory!.answered.length).toBe(1);
+    expect(Array.from(captured!.memory!.answered[0]!)).toEqual(Array.from(PROOF_BYTES));
     expect(Array.from(captured!.memory!.proof)).toEqual(Array.from(PROOF_BYTES));
   });
 
@@ -125,7 +126,6 @@ describe('startExtensionMesh — memory wiring', () => {
         genesis: OTHER_GENESIS,
         proof: PROOF_B64,
         nodes: [{ notisId: NODE_HEX, addrs: [] }],
-        answeredForks: [],
       }),
     });
     let captured: StartMeshClientOptions | null = null;
@@ -183,11 +183,12 @@ describe('startExtensionMesh — memory wiring', () => {
     };
     await startExtensionMesh(opts);
     expect(onChecked).toBeDefined();
+    const answeredBytes = new Uint8Array([9, 9, 9]);
     const snapshot: MemorySnapshot = {
       proof: PROOF_BYTES,
       nodes: [{ notisId: NODE_HEX, addrs: ['/ip4/1.2.3.4/udp/4001/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg'] }],
       dropped: [],
-      answeredForks: ['aa'.repeat(32)],
+      answered: [answeredBytes],
       replace: false,
     };
     onChecked!(snapshot);
@@ -195,10 +196,12 @@ describe('startExtensionMesh — memory wiring', () => {
     expect(lockNames).toContain('notis.mesh.memory');
     const stored = storage.map.get(KEY('testnet'));
     expect(stored).toBeDefined();
-    const parsed: { genesis: string; proof: string; answeredForks: string[] } = JSON.parse(stored!);
+    const parsed: { genesis: string; proof: string } = JSON.parse(stored!);
     expect(parsed.genesis).toBe(TESTNET_GENESIS);
     expect(parsed.proof).toBe(PROOF_B64);
-    expect(parsed.answeredForks).toEqual(['aa'.repeat(32)]);
+    // The answered branch is kept under its own side key.
+    expect(storage.map.get(`${KEY('testnet')}.answered.0`))
+      .toBe(btoa(String.fromCharCode(9, 9, 9)));
   });
 
   it("on a network pinning no genesis the snapshot is keyed by the client's chain name, and none is written before a chain", async () => {
@@ -219,7 +222,7 @@ describe('startExtensionMesh — memory wiring', () => {
     await startExtensionMesh(opts);
     expect(onChecked).toBeDefined();
     const snapshot: MemorySnapshot = {
-      proof: PROOF_BYTES, nodes: [], dropped: [], answeredForks: [], replace: false,
+      proof: PROOF_BYTES, nodes: [], dropped: [], answered: [], replace: false,
     };
     // Chain is null — the write is skipped.
     onChecked!(snapshot);
@@ -258,7 +261,7 @@ describe('startExtensionMesh — memory wiring', () => {
       await startExtensionMesh(opts);
       expect(onChecked).toBeDefined();
       const snapshot: MemorySnapshot = {
-        proof: PROOF_BYTES, nodes: [], dropped: [], answeredForks: [], replace: false,
+        proof: PROOF_BYTES, nodes: [], dropped: [], answered: [], replace: false,
       };
       // The call must not throw — a rejected write stays inside the seam.
       expect(() => onChecked!(snapshot)).not.toThrow();
