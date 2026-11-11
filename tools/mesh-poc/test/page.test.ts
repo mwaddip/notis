@@ -1308,7 +1308,7 @@ describe('page/render.ts — a standing disagreement', () => {
 // network, the nodes it found, the proof of the chain it verified, and
 // the forks the reader answered". `runMain` opens the per-network
 // `localStorage` record, reads it at start as `seeds: record.nodes` +
-// `memory: { proof, answeredForks }`, hands `onChecked` to the client,
+// `memory: { proof, answered }`, hands `onChecked` to the client,
 // and the callback writes the snapshot under one lock. These cases
 // hold the wiring through a fake `startMeshClient` and a fake storage.
 
@@ -1373,7 +1373,7 @@ describe("page/main.ts — the memory wiring", () => {
         base: () => null,
         configuredAddrs: () => [],
         iceConfiguration: () => ({ iceServers: [] }),
-        toRemember: () => ({ proof: null, nodes: [], dropped: [], answeredForks: [], replace: false }),
+        toRemember: () => ({ proof: null, nodes: [], dropped: [], answered: [], replace: false }),
         libp2p: {} as unknown as import('libp2p').Libp2p,
       };
       captured.push({
@@ -1424,14 +1424,16 @@ describe("page/main.ts — the memory wiring", () => {
     const key = `notis.mesh.memory.devnet`;
     // Seed a record with real base64 bytes (the page's `continues`
     // seam catches a decode throw and answers false — the wiring does
-    // not need a verifiable proof, only a well-formed record).
+    // not need a verifiable proof, only a well-formed record). The
+    // answered branches sit under their own side keys.
     const b64Bytes = btoa(String.fromCharCode(1, 2, 3, 4));
+    const branchB64 = btoa(String.fromCharCode(5, 6, 7));
     storage.setItem(key, JSON.stringify({
       genesis: G1,
       proof: b64Bytes,
       nodes: [{ notisId: 'd'.repeat(64), addrs: [] }],
-      answeredForks: ['f'.repeat(64)],
     }));
+    storage.setItem(`${key}.answered.0`, branchB64);
     const { startMeshClient, captured } = buildStartCapture();
     const root = document.createElement('div');
     const { runMain } = await import('../page/main.js');
@@ -1448,8 +1450,9 @@ describe("page/main.ts — the memory wiring", () => {
     expect(opts.network).toBe('devnet');
     expect(opts.seeds, 'the record\'s nodes come in as seeds').not.toBeUndefined();
     expect(opts.seeds).toEqual([{ notisId: 'd'.repeat(64), addrs: [] }]);
-    expect(opts.memory, 'the record\'s proof + forks come in as memory').not.toBeUndefined();
-    expect(opts.memory!.answeredForks).toEqual(['f'.repeat(64)]);
+    expect(opts.memory, 'the record\'s proof + branches come in as memory').not.toBeUndefined();
+    expect(opts.memory!.answered.length).toBe(1);
+    expect(Array.from(opts.memory!.answered[0]!)).toEqual([5, 6, 7]);
     expect(opts.memory!.proof).toBeInstanceOf(Uint8Array);
     expect(Array.from(opts.memory!.proof)).toEqual([1, 2, 3, 4]);
   });
@@ -1463,7 +1466,6 @@ describe("page/main.ts — the memory wiring", () => {
       genesis: otherGenesis,
       proof: b64Bytes,
       nodes: [{ notisId: 'd'.repeat(64), addrs: [] }],
-      answeredForks: [],
     }));
     const { startMeshClient, captured } = buildStartCapture();
     const root = document.createElement('div');
@@ -1530,7 +1532,7 @@ describe("page/main.ts — the memory wiring", () => {
       proof: snapshotBytes,
       nodes: [{ notisId: 'c'.repeat(64), addrs: [] }],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     });
     // The write is async under the fake lock; await a microtask.
@@ -1564,7 +1566,7 @@ describe("page/main.ts — the memory wiring", () => {
       proof: new Uint8Array([1, 2, 3]),
       nodes: [{ notisId: 'a'.repeat(64), addrs: [] }],
       dropped: [],
-      answeredForks: [],
+      answered: [],
       replace: false,
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -1605,7 +1607,7 @@ describe("page/main.ts — the memory wiring", () => {
         proof: snapshotBytes,
         nodes: rememberedNodes,
         dropped: [],
-        answeredForks: [],
+        answered: [],
         replace: false,
       });
       await new Promise((r) => setTimeout(r, 0));
@@ -1635,7 +1637,7 @@ describe("page/main.ts — the memory wiring", () => {
       expect(captured[0]!.opts.seeds, 'the record\'s nodes come in as seeds').toEqual(rememberedNodes);
       expect(captured[0]!.opts.memory, 'the record\'s proof comes in as memory').not.toBeUndefined();
       expect(Array.from(captured[0]!.opts.memory!.proof)).toEqual([4, 5, 6]);
-      expect(captured[0]!.opts.memory!.answeredForks).toEqual([]);
+      expect(captured[0]!.opts.memory!.answered).toEqual([]);
     }
   });
 
@@ -1713,7 +1715,7 @@ describe("page/main.ts — the memory wiring", () => {
         genesis: 'a'.repeat(64),
         proof: btoa('x'),
         nodes: [],
-        answeredForks: [],
+        answered: [],
       });
       const map = new Map<string, string>([
         ['notis.mesh.memory.devnet', wellFormed],

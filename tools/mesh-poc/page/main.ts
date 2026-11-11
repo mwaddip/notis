@@ -206,7 +206,7 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
         ? {
             memory: {
               proof: bytesFromBase64(record!.proof),
-              answeredForks: [...record!.answeredForks],
+              answered: record!.answered.map((b) => b.slice()),
             },
           }
         : {}),
