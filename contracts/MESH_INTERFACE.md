@@ -213,10 +213,6 @@ chain that does not reach an answered proof's tip that way is a new disagreement
 stands, a gossiped block runs no check: the chain is held, and the checks on the client's cadence read the question
 again.
 
-> ⚠ **AHEAD OF CODE (2026-11-11).** `@dagsocial/web`'s mesh client records an answered fork by `forkKey`, the highest
-header two proofs share, which differs between two proofs of the same two chains; it asks again about a branch the
-reader answered, and while a question stands every gossiped block of the heavier chain runs a check.
-
 **The DHT is Notis's own.** Kademlia runs on the protocol `/notis/<network>/kad/1.0.0`, `<network>` one of `devnet`,
 `testnet`, `mainnet` — never on libp2p's default, which is the public IPFS DHT. Public nodes serve it, each listening
 on WebRTC-direct so a browser can walk it; private nodes and browsers run it as clients. It finds further nodes, and a

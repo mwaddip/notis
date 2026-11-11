@@ -489,9 +489,6 @@ first-time client — and written after every check through one lock, `notis.mes
 and the kept proof only moves forward; the reader's *continue* replaces it. The web build keeps none, and
 `build-release.sh` refuses `notis.mesh.memory` in its bundle.
 
-> ⚠ **AHEAD OF CODE (2026-11-11).** The record carries the answered forks as fork hashes, written with it after every
-check; no competing proof is kept.
-
 **The chain's name.** A tip run answers `chain` beside its verdict and its anchor: the hash of block 1 the client's
 chain keeps — the first header of the proof that seated it, the header `verifyProof` holds to the profile's
 `genesisId` where one is pinned (`NIPOPOW_INTERFACE → verifyProof`), the tool's `genesisHash` for that proof. It is
