@@ -16,7 +16,7 @@
 //
 // A live run shows the pair-up in `stage/out/notis:<host>.log`:
 //   `[net] peer:connect <partner peerId> (total=1)`
-//   `[net] outbound handshake with <partner peerId>: ok=true ...`
+//   `[net] outbound handshake with <partner peerId> on id=<connection id>: ok=true ...`
 // (or an inbound handshake on the other side), and NO
 // `[net] peer:disconnect <partner peerId>` after boot; the honest
 // nodes' peerIds never appear in either log. The dry-run only prints

@@ -227,15 +227,14 @@ export async function run(ctx) {
       const lan1EverConnected = lan1Entry !== null && lan1Entry.transport !== null;
       // lan1's notis log holds no `connection:open`/`connection:close`
       // line naming an inbound from the browser. `net` logs every
-      // open as `[net] connection:open peer=<id> dir=inbound` (no
-      // remote addr on that line) and every close as `[net]
-      // connection:close peer=<id> addr=<multiaddr> dir=inbound ...`
+      // open as `[net] connection:open id=<id> peer=<id> dir=inbound
+      // addr=<multiaddr>` and every close as `[net]
+      // connection:close id=<id> peer=<id> addr=<multiaddr> dir=inbound ...`
       // with the remote address (`packages/net/src/node.ts`'s
       // `connectionManager:*` listeners). The browser's libp2p peer id
       // is Chromium-ephemeral and is not exposed in the page's `#state`,
       // so the browser is identified by its remote address
-      // (`10.103.0.11`) on the connection:close line — the one `net`
-      // line that carries it. A connection that landed but did not
+      // (`10.103.0.11`) on the connection:close line. A connection that landed but did not
       // close in the window is still caught by the client-side
       // signal `lan1EverConnected` (above).
       const lan1InboundLogged = lan1InboundLoggedSince(lan1NotisLog, seedPhaseLogOffset);
