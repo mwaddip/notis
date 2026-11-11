@@ -322,7 +322,13 @@ to the next check, the node keeping its first read's placement. A check that doe
 agreement are read against the client's chain as the check ends — its tip placed on that chain by hash, or, where its
 verified proof's tip lies off it, `behind` and off the chain — never against the winner of a contest the client did not
 take: a fork the reader answered, a question standing, the kept proof's settle (→ What the client remembers). A tip
-whose verified proof lost is kept as lost only when it lies off that chain. A lie and a failure land as they were read.
+whose verified proof lost is kept as lost only when it lies off that chain. A lie and a failure land as they were read:
+the entry's status is theirs — `blacklisted` or `retry` — while its count in the agreement and its distance follow its
+tip read's placement as any node's do, since the counts say what the nodes name (→ What the client remembers → "The
+agreement counts").
+
+> ⚠ **AHEAD OF CODE (2026-11-11).** The check's judgement pass skips a `retry` entry its own proof read made and a
+`blacklisted` one, so such a node is in no agreement count though its tip read names a tip on the chain.
 
 **A routed read goes to a node its need allows.** A routed read is one the client sends to a node it picks, not to a key
 the caller names. One that needs the tip goes to an `ok` node; a read of content older than the newest block goes to an
