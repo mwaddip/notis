@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent, verdictIceServers } from '../lib/verdicts.mjs';
 import {
-  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids, descendantPids,
+  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, signalPid, leafPids, descendantPids,
 } from '../lib/measure.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -236,13 +236,19 @@ export async function run(ctx) {
     // SIGCONT on the leaf alone leaves the wrapper `T` and the
     // stage's `down` cannot pass SIGTERM through it. The resume
     // sends SIGCONT to the whole tree: the recorded pid and every
-    // descendant, wrappers included. A pid that died mid-run reads
-    // ESRCH and is a no-op.
+    // descendant, wrappers included. The stage's spawns run through
+    // `sudo ip netns exec ... sudo -u <user>`, so every outer wrapper
+    // on `log.pids` is root-owned; `signalPid` falls back to
+    // `sudo kill -CONT` on EPERM so the root-owned wrappers are
+    // reached too. A pid that died mid-run reads ESRCH and is a
+    // no-op.
     if (pausedPids.length > 0 && minerEntry !== null) {
       const treePids = [minerEntry.pid, ...descendantPids(minerEntry.pid)];
       for (const pid of treePids) {
-        try { signal(pid, 'SIGCONT'); }
-        catch (err) { process.stderr.write(`[s1 teardown] SIGCONT ${pid}: ${err?.message ?? err}\n`); }
+        const r = signalPid(pid, 'SIGCONT');
+        if (!r.sent && r.reason !== 'ESRCH') {
+          process.stderr.write(`[s1 teardown] SIGCONT ${pid}: ${r.reason}\n`);
+        }
       }
       log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${treePids.join(' ')} (tree of ${minerEntry.pid})`);
     }
