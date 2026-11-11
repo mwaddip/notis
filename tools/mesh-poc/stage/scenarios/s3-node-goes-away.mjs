@@ -8,9 +8,11 @@
 // chain from them."
 //
 // Five sub-steps, in order:
-//   1. stop pub1's notis node (`kill -TERM` the recorded PID of
+//   1. stop pub1's notis node (`stopTree` on the recorded PID of
 //      `notis:pub1`; a mesh host carries its mesh functionality inside
-//      the node, NODE_INTERFACE → Configuration);
+//      the node, NODE_INTERFACE → Configuration; the kernel releases
+//      pub1's ports before this function returns, so step 2's restart
+//      binds the same ports with no `EADDRINUSE`);
 //      poll until the client's `state.nodes[pub1].status === 'retry'`
 //      AND, if pub1 was last named by a routed read,
 //      `state.nodeId !== pub1`.
@@ -52,7 +54,7 @@ import { verdictS3Moved, verdictS3Recovered, verdictS3KnownNodes } from '../lib/
 import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mjs';
 import {
   execIn, findPid, nftApply,
-  restartFromEntry, sigterm,
+  restartFromEntry, stopTree, waitNetworkingUp,
 } from '../lib/measure.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
@@ -201,9 +203,9 @@ export async function run(ctx) {
     // the fault.
     await rec.step(describe()[0], async () => {
       const checksBefore = typeof stateBefore.checks === 'number' ? stateBefore.checks : 0;
-      const stopResult = sigterm(pub1Entry.pid);
-      pub1Stopped = stopResult.sent;
-      log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-notis] kill -TERM ${pub1Entry.pid}`);
+      const stopResult = await stopTree(pub1Entry.pid, { timeoutMs: 15_000 });
+      pub1Stopped = stopResult.termSent.length > 0 || stopResult.killSent.length > 0;
+      log.records.push(`[fault:${NAME}:stop-${TARGET_HOST}-notis] stopTree tree=${stopResult.initialTree.join(',')} term=${stopResult.termSent.length} kill=${stopResult.killSent.length}`);
       const afterStop = await pollStateUntil(
         `if (v === null) return false;
          let s;
@@ -234,6 +236,14 @@ export async function run(ctx) {
       const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
       pub1Entry.pid = newPid;
       pub1Stopped = false;
+      // MESH_INTERFACE → Acceptance 3 — before the tip catch-up poll,
+      // check pub1's mesh networking is up: a `/health` with
+      // `peers_connected >= 1` is positive evidence `net.start()`
+      // bound the listen addresses.
+      await waitNetworkingUp(`notismesh-${TARGET_HOST}`, ctx.topology.hosts.pub1.node.httpPort + 1, {
+        timeoutMs: 60_000,
+        user: ctx.invokingUser,
+      });
       await waitPub1WithinOneBlockOfPub2(ctx);
       const after = await pollNextCompletedCheck(pollStateUntil, 'pub1 recovery check landed');
       const entry = findEntry(after, pub1Id);
@@ -478,11 +488,18 @@ export async function run(ctx) {
       log.records.push(`[fault:remove:${NAME}:browser-s3-known-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${KNOWN_TABLE}`);
     }
   } finally {
-    // Teardown: if we stopped pub1 and did not restart it, restart now.
+    // Teardown: if a step stopped pub1 and did not restart it, restart
+    // through the same path a step takes — the stop already ran
+    // `stopTree`, so the kernel has released the ports before this.
     if (pub1Stopped) {
       try {
         const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
         pub1Entry.pid = newPid;
+        pub1Stopped = false;
+        await waitNetworkingUp(`notismesh-${TARGET_HOST}`, ctx.topology.hosts.pub1.node.httpPort + 1, {
+          timeoutMs: 60_000,
+          user: ctx.invokingUser,
+        });
       } catch (err) {
         process.stderr.write(`[s3 teardown] failed to restart ${TARGET_NOTIS_DESC}: ${err?.message ?? err}\n`);
       }

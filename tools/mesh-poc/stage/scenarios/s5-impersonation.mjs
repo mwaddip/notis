@@ -3,7 +3,8 @@
 // link, that address dropped, the anchor not blacklisted."
 //
 // One step with three measurements:
-//   1. Stop pub1's notis node (`sigterm` the recorded PID of
+//   1. Stop pub1's notis node and wait for its tree to be gone before
+//      the impostor binds its ports (`stopTree` on the recorded PID of
 //      `notis:pub1`; the mesh functionality lives in the integrated
 //      node, NODE_INTERFACE → Configuration).
 //   2. Spawn an impostor notis node whose `.mesh` directory is a copy
@@ -14,7 +15,10 @@
 //      the key it was dialled for"). Bind pub1's address.
 //   3. Poll `state.nodes[pub1-id].droppedAddrs` for pub1's own address;
 //      measure `anchorStatus` from `state.nodes[pub1-id].status`.
-//   4. Stop the impostor; restart pub1's notis from the recorded argv.
+//   4. Stop the impostor through `stopTree` so the kernel has released
+//      its sockets, restart pub1's notis from the recorded argv, and
+//      check pub1's `/health` reads `peers_connected >= 1` before this
+//      step returns.
 //
 // Pass condition: pub1's status is not `blacklisted` (an impostor on
 // a key-authenticated link is a key mismatch, not a lie); the dropped
@@ -26,7 +30,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS5 } from '../lib/verdicts.mjs';
 import {
-  execIn, findPid, pollUntil, restartFromEntry, sigterm,
+  execIn, findPid, restartFromEntry, stopTree, waitNetworkingUp,
 } from '../lib/measure.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -42,6 +46,7 @@ const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 export function describe() {
   return [
     'impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted',
+    'impostor stopped and pub1 restarted, mesh networking up',
   ];
 }
 
@@ -138,14 +143,15 @@ export async function run(ctx) {
   // (`stage/out/pub1/notis.db` → `stage/out/pub1/notis.mesh`).
   const pub1MeshDir = join(ctx.outDir, 'pub1', 'notis.mesh');
 
-  // 1. Stop pub1's notis node.
+  // 1. Stop pub1's notis node and wait for its tree to be gone, so the
+  //    kernel has released pub1's mesh and HTTP ports before the
+  //    impostor binds them.
   let pub1Stopped = false;
   let impostorPid = null;
   log.records.push(`[fault:${NAME}:stop-pub1-notis] kill -TERM ${pub1Entry.pid}`);
-  const r = sigterm(pub1Entry.pid);
-  pub1Stopped = r.sent;
-  // Wait a moment for the OS to free the ports.
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  const stopResult = await stopTree(pub1Entry.pid, { timeoutMs: 15_000 });
+  pub1Stopped = stopResult.termSent.length > 0 || stopResult.killSent.length > 0;
+  log.records.push(`[fault:${NAME}:stop-pub1-notis:gone] tree ${stopResult.initialTree.join(',')} (term ${stopResult.termSent.length}, kill ${stopResult.killSent.length})`);
 
   try {
     await rec.step(describe()[0], async () => {
@@ -223,21 +229,61 @@ export async function run(ctx) {
       };
       return { verdict: verdictS5(m), measurement: m };
     });
-  } finally {
-    // Stop impostor, restart pub1.
-    if (impostorPid !== null) {
-      try { sigterm(impostorPid); } catch (err) {
-        process.stderr.write(`[s5 teardown] impostor sigterm: ${err?.message ?? err}\n`);
+
+    // MESH_INTERFACE → Acceptance 5 — hand the stage back with pub1
+    // reachable: stop the impostor through `stopTree` (the kernel
+    // releases its sockets before the function returns, so pub1's
+    // `net.start()` binds the same ports with no `EADDRINUSE`),
+    // restart pub1 from its recorded argv, and check its networking
+    // is up. A failure here fails the step: a scenario after s5 reads
+    // a mesh with pub1 or it reads a FAIL this scenario surfaced.
+    await rec.step(describe()[1], async () => {
+      const t0 = Date.now();
+      let impostorStop = null;
+      if (impostorPid !== null) {
+        impostorStop = await stopTree(impostorPid, { timeoutMs: 20_000 });
+        impostorPid = null;
       }
-    }
-    if (pub1Stopped) {
-      try {
-        // Give the impostor a moment to release the ports.
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+      let pub1Restart = null;
+      let pub1Health = null;
+      if (pub1Stopped) {
         // `pidsPath` rewrites `pids.json` with the new pid in place of
         // the stale one, so `stage:down` signals the live process.
         const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
         pub1Entry.pid = newPid;
+        pub1Stopped = false;
+        pub1Restart = { pid: newPid };
+        pub1Health = await waitNetworkingUp(`notismesh-${TARGET_HOST}`, pub1Host.node.httpPort + 1, {
+          timeoutMs: 60_000,
+          user: ctx.invokingUser,
+        });
+      }
+      const measurement = {
+        impostorStop: impostorStop === null ? null : {
+          initialTree: impostorStop.initialTree,
+          termSent: impostorStop.termSent.length,
+          killSent: impostorStop.killSent.length,
+        },
+        pub1Restart,
+        pub1Health,
+        timeMs: Date.now() - t0,
+      };
+      return { verdict: 'PASS', measurement };
+    });
+  } finally {
+    // Safety only — the step above does the stop-then-start on the
+    // happy path. If the step threw before reaching the restart, stop
+    // the impostor and restart pub1 here so the stage is handed back.
+    if (impostorPid !== null) {
+      try { await stopTree(impostorPid, { timeoutMs: 20_000 }); } catch (err) {
+        process.stderr.write(`[s5 teardown] impostor stopTree: ${err?.message ?? err}\n`);
+      }
+    }
+    if (pub1Stopped) {
+      try {
+        const newPid = restartFromEntry(pub1Entry, { pidsPath: ctx.pidsPath });
+        pub1Entry.pid = newPid;
+        pub1Stopped = false;
       } catch (err) {
         process.stderr.write(`[s5 teardown] pub1 restart: ${err?.message ?? err}\n`);
       }

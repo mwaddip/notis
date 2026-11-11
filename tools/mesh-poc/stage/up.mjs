@@ -31,7 +31,7 @@ import { readTopology, natRouters, publicMeshHosts, hostsBehindBrowserNat } from
 import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
-import { descendantPids, restartFromEntry } from './lib/measure.mjs';
+import { descendantPids, restartFromEntry, stopTree } from './lib/measure.mjs';
 import {
   partnerOf,
   pairBootstrapAddr,
@@ -1313,20 +1313,12 @@ if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
     const peerEntry = log.pids.find((e) => e.description === 'notis:hostile-fork-peer');
     if (!forkEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork');
     if (!peerEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork-peer');
-    // Stop both pair nodes.
+    // Stop both pair nodes: `stopTree` SIGTERMs each tree, polls /proc
+    // until every pid is gone (the kernel released its sockets), past
+    // the bound SIGKILLs the survivors deepest-first and polls again.
+    // The respawn below reads the same ports as free.
     for (const entry of [forkEntry, peerEntry]) {
-      try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
-    }
-    // Give each wrapper up to 10 s to exit; if it is still alive,
-    // SIGKILL — a stuck process under the old PID holds the port
-    // and the respawn would fail to bind.
-    for (const entry of [forkEntry, peerEntry]) {
-      const stopDeadline = Date.now() + 10_000;
-      while (Date.now() < stopDeadline) {
-        try { process.kill(entry.pid, 0); } catch { break; } // ESRCH → dead
-        await sleep(200);
-      }
-      try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+      await stopTree(entry.pid, { timeoutMs: 10_000 });
     }
     // MESH_INTERFACE → Acceptance 6 — each fork pair host's first
     // spawn carries `BOOTSTRAP_PEERS` naming `pub1` (the honest

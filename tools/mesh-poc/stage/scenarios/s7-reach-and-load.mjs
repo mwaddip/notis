@@ -66,7 +66,7 @@ import {
   verdictS7Question,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
-import { execIn, nftApply, signal, findPid, restartFromEntry } from '../lib/measure.mjs';
+import { execIn, nftApply, signal, findPid, restartFromEntry, stopTree } from '../lib/measure.mjs';
 import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -434,19 +434,12 @@ export async function run(ctx) {
         const lan1PeerEntry = findPid(ctx.pids?.pids, 'notis:lan1-peer');
         if (!lan1Entry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1 entry');
         if (!lan1PeerEntry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1-peer entry');
+        // `stopTree` SIGTERMs each tree, polls /proc until every pid is
+        // gone (the kernel released its sockets), past the bound
+        // SIGKILLs the survivors deepest-first and polls again. The
+        // respawn below reads the same ports as free.
         for (const entry of [lan1Entry, lan1PeerEntry]) {
-          try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ }
-        }
-        // Give each wrapper up to 10 s to exit; else SIGKILL — a
-        // stuck process under the old PID holds the port and the
-        // respawn would fail to bind.
-        for (const entry of [lan1Entry, lan1PeerEntry]) {
-          const stopDeadline = Date.now() + 10_000;
-          while (Date.now() < stopDeadline) {
-            try { process.kill(entry.pid, 0); } catch { break; }
-            await new Promise((r) => setTimeout(r, 200));
-          }
-          try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+          await stopTree(entry.pid, { timeoutMs: 10_000 });
         }
         // MESH_INTERFACE → Acceptance 7 — lan1 and lan1-peer are both
         // private, and private nodes run the DHT as clients, so they
