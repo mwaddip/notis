@@ -28,7 +28,6 @@ import { MAX_MODIFIER_REQUEST_FRAME_BYTES, MAX_SERVE_BODY_BYTES } from '../msg-g
 import {
   readStreamBounded,
   sinkWithDeadline,
-  StreamReadTimeout,
 } from '../util.js';
 
 /**
@@ -171,14 +170,12 @@ export function postTextsHandler(
           MAX_MODIFIER_REQUEST_FRAME_BYTES,
           AbortSignal.timeout(o.timeoutMs),
         );
-      } catch (err) {
-        if (err instanceof StreamReadTimeout) return;
-        // The source itself threw — treat as the peer having gone away,
-        // and end the stream unanswered.
+      } catch {
+        // A read that times out or fails ends the stream unanswered —
+        // `answerPostTextsRequest` does not run on bytes the peer never sent.
         return;
       }
       if (raw === null) return;      // over the request-frame bound.
-      if (raw.length === 0) return;   // the peer closed with nothing.
 
       const answer = await answerPostTextsRequest(raw, o.magic, o.texts);
       if (answer === 'refuse') return;
