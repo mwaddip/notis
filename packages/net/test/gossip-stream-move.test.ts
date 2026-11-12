@@ -392,9 +392,10 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // the replaced one. R then resets the first manual stream from its
   // side (`stream.abort`): yamux writes a RST frame, N reads it and the
   // stream's source iterator throws in N's `pipePeerReadStream`,
-  // feeding `handlePeerReadStreamError` the stream that is no longer
-  // current. Before the patch, that call removes the peer unconditionally
-  // and the forwarded block does not reach R.
+  // feeding `handlePeerReadStreamError` the stream whose entry on the
+  // inbound map has already been replaced. Before the patch, that call
+  // removes the peer unconditionally and the forwarded block does not
+  // reach R.
   //
   // The loopback-proxy arrangement from case 1 would exercise this path
   // too under WebRTC (a stream close over a silent connection waits
@@ -668,7 +669,7 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       // last: a block entering at M after the older connection closes
       // reaches R. Without A's "never older" clause, N's outbound to
       // R moved to conn1 at the second manual stream, so closing conn1
-      // deletes the outbound and N can no longer send R the block;
+      // ends that outbound and `sendRpc` finds none to send on;
       // `deliveries.length` stays at 1.
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
