@@ -159,10 +159,7 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   failure it rolls back exactly what it created (SIGTERMs each recorded PID, deletes each
   namespace in reverse order, removes `/etc/netns/notismesh-*`).
 - **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all eight,
-  `s6 s1 s2 s3 s4 s5 s7 s8` — `MESH_INTERFACE → Block gossip → "A router scores its peers by
-  gossipsub's defaults"` kicks in past ten peers from one NAT address and keeps the penalty an
-  hour, so s6's publisher reads the client's score as zero when the client has to be the only
-  browser peer at that address). Writes `stage/out/scenarios/<name>.json` per scenario:
+  `s1 s2 s3 s4 s5 s6 s7 s8`). Writes `stage/out/scenarios/<name>.json` per scenario:
   `{ scenario, startedAt, endedAt, steps, faults }`, each step `{ name, verdict, measurement,
   timeMs }`. **A step that times out or throws is `FAIL`; the scenario's faults are removed and
   the run goes on. A step that did not run reads `skipped`, never a pass.** Each scenario writes

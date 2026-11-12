@@ -165,12 +165,17 @@ and a header the receiver knows record nothing. A node weighs the sender by `net
 Handshake → "Ban policy"`), and each penalty it records reaches its journal as a `peer_penalised` event naming the
 sender's peer id.
 
-**A router scores its peers by gossipsub's defaults.** A node's router and a client's keep libp2p
-gossipsub's default peer scores, its IP colocation penalty among them: past ten peers a router has seen from one IP
-address, each of them scores −5 × (n − 10)², a score a peer keeps for an hour after it leaves. From twelve such peers a
-router forwards them nothing, from fourteen it publishes nothing to them, and from fifteen it ignores what they send
-(gossipsub's gossip, publish and graylist thresholds: −10, −50, −80). Browsers behind one NAT share an address, and so
-does a node on their network: past that count they follow the chain by checks alone.
+**A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing.** A node's router and a
+client's keep libp2p gossipsub's default peer scores and thresholds but one: the IP colocation factor weighs 0
+(`GOSSIP_IP_COLOCATION_WEIGHT`, `CONSTANTS → net`), so the count of peers a router has seen from one IP address moves
+no peer's score. Gossipsub's default weight, −5, scores each peer past ten from one address −5 × (n − 10)² and keeps
+that score an hour after the peer leaves; from the twelfth such peer, below the gossip threshold (−10), a router
+forwards them nothing. Each page load is a libp2p key of its own and readers behind one NAT share an address, so at the
+default a reader reloading a dozen times an hour, or the twelfth reader behind one NAT, would follow the chain by checks
+alone. An address count guards nothing the rules leave open: every block meets the ordering-block topic's checks before
+it is forwarded, whatever its sender's score (→ "A block is checked before it is forwarded, and never applied"); a node
+chooses its chain by work, from what its sync asks of its peers as well as from what gossip brings (`NET_INTERFACE →
+Sync State Machine`); and a client's tip is its own check's (→ The client's node list).
 
 ## Discovery
 

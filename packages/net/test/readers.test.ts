@@ -7,16 +7,18 @@
 // nodeName. The handshake frame is built through `net`'s own
 // `buildHandshakeFrame`, net's one path for the handshake body
 // (NET_INTERFACE → Handshake Body).
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Connection, Libp2p, Stream } from '@libp2p/interface';
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@libp2p/noise';
 import { yamux } from '@libp2p/yamux';
 import { gossipsub } from '@libp2p/gossipsub';
+import type { GossipSub } from '@libp2p/gossipsub';
 import { identify } from '@libp2p/identify';
 import { multiaddr } from '@multiformats/multiaddr';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
+import type { OrderingBlock } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -36,6 +38,7 @@ import { decodeFrame, MAGIC_TESTNET } from '../src/frame.js';
 import { gossipTopics, gossipsubOptions } from '../src/gossip-rules.js';
 import { MAX_HANDSHAKE_FRAME_BYTES } from '../src/msg-guards.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
+import { makeBlockAt } from './helpers/devnet-block.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 
 const validators: NetValidators = {
@@ -52,6 +55,14 @@ const validators: NetValidators = {
 };
 
 const TIMEOUT = 25_000;
+
+// libp2p 3.5.1's connection manager refuses an inbound connection from a host
+// that has opened `inboundConnectionThreshold` connections (default 5) in the
+// last second — the refused socket is closed and the dialler reads ECONNRESET.
+// The twelfth-reader case dials nodeA at 127.0.0.1 twelve times in all (eleven
+// come-and-go readers, then the twelfth), so it paces them at least this many
+// milliseconds apart — four a second at most in any window.
+const READER_DIAL_GAP_MS = 250;
 
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return makeBaseConfig(overrides);
@@ -488,4 +499,170 @@ describe('NET_INTERFACE → Readers', () => {
     expect(nodeA.getConnectedPeers()).toHaveLength(1);
     expect(nodeA.getConnectedPeers()).not.toContain(nodeC.peerId());
   }, TIMEOUT);
+
+  // MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's
+  // defaults, and a shared address costs a peer nothing". Eleven readers dial
+  // nodeA from 127.0.0.1, are seen by nodeA's gossipsub router, and leave; a
+  // twelfth dials and subscribes to the ordering-block topic; a block that
+  // enters at nodeB and that nodeA forwards reaches the twelfth reader.
+  //
+  // Each reader is a fresh libp2p key — the way page reloads come and go.
+  // Readers are run one at a time: Dhi is 12 (`@libp2p/gossipsub`'s own
+  // default), and a dozen readers connected at once would test the mesh's
+  // size, not the score.
+  //
+  // nodeB joins before the readers come, so its subscription to the
+  // ordering-block topic reaches nodeA — and nodeA's reaches nodeB — while
+  // both sides' scores are 0. nodeA is nodeB's only peer at 127.0.0.1, so
+  // nodeA's score at nodeB is 0 whatever nodeA's own score of nodeB is;
+  // `broadcastOrderingBlock` publishes under gossipsub's default
+  // `floodPublish: true` and sends the block to every topic peer above the
+  // publish threshold (−50), nodeA among them.
+  //
+  // nodeB also dials nodeA at 127.0.0.1, so it is counted at nodeA's score
+  // too. At gossipsub's default `IPColocationFactorWeight` of −5, with eleven
+  // retained readers, the twelfth reader active and nodeB active, the count
+  // at 127.0.0.1 is 13 and the surplus over the threshold of 10 is 3:
+  // nodeB's score at nodeA is −5 × 3² = −45, above the graylist threshold
+  // (−80), so `acceptFrom` admits nodeB's RPCs and nodeA runs the
+  // ordering-block topic validator on the published block. The twelfth
+  // reader's score at nodeA is −45 too — outside nodeA's mesh (nodeA refuses
+  // a graft at negative score) and below the gossip threshold (−10, so no
+  // IHAVE reaches it), and the case fails at its last assertion and nowhere
+  // before.
+  it(
+    'a node forwards a block to the twelfth reader seen from one address',
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+
+      const addrA = nodeTcpAddress(nodeA);
+
+      const nodeAPubsub = (nodeA.libp2pNode as unknown as {
+        services: {
+          pubsub: GossipSub & {
+            getPeers(): Array<{ toString(): string }>;
+            getSubscribers(topic: string): Array<{ toString(): string }>;
+          };
+        };
+      }).services.pubsub;
+      const topicsPair = gossipTopics(MAGIC_TESTNET);
+
+      const nodeADeliveries: OrderingBlock[] = [];
+      nodeA.onOrderingBlock((b) => {
+        nodeADeliveries.push(b);
+      });
+
+      // nodeB joins first, while scores are 0. Its subscription reaches
+      // nodeA — and nodeA's reaches nodeB — before readers come.
+      const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+      nodes.push(nodeB);
+      await nodeB.start();
+      const nodeBPubsub = (nodeB.libp2pNode as unknown as {
+        services: {
+          pubsub: GossipSub & {
+            getSubscribers(topic: string): Array<{ toString(): string }>;
+          };
+        };
+      }).services.pubsub;
+
+      // control: nodeB is held as a chain-serving peer, and the two have
+      // heard each other's ordering-block subscription.
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+          expect(
+            nodeAPubsub.getSubscribers(topicsPair.orderingBlock).map((p) => p.toString()),
+          ).toContain(nodeB.peerId());
+          expect(
+            nodeBPubsub.getSubscribers(topicsPair.orderingBlock).map((p) => p.toString()),
+          ).toContain(nodeA.peerId());
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+
+      // Eleven readers dial nodeA at 127.0.0.1, are seen by its gossipsub
+      // router, and leave. A fresh libp2p key each time; each departure
+      // keeps the IP counted (retainScore), the way page reloads do.
+      // The dials are paced at least `READER_DIAL_GAP_MS` apart so no
+      // window holds more than four, under libp2p's `inboundConnectionThreshold`.
+      let lastDialAt = 0;
+      for (let i = 0; i < 11; i++) {
+        await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
+        const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+        const readerId = reader.peerId.toString();
+        lastDialAt = Date.now();
+        await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+        await vi.waitFor(
+          () => {
+            expect(nodeAPubsub.getPeers().map((p) => p.toString())).toContain(readerId);
+          },
+          { timeout: 10_000, interval: 50 },
+        );
+        await reader.stop();
+        // Wait on the departure the next iteration's dial races —
+        // `removePeer` has run, so `peerIPs[127.0.0.1]` holds the pstats
+        // as a retained slot rather than a live peer.
+        await vi.waitFor(
+          () => {
+            expect(nodeAPubsub.getPeers().map((p) => p.toString())).not.toContain(readerId);
+          },
+          { timeout: 10_000, interval: 50 },
+        );
+      }
+
+      // The twelfth reader stays through the publish; it subscribes to the
+      // ordering-block topic and records every message its router delivers
+      // on that topic. Paced under `inboundConnectionThreshold` like the
+      // eleven before it.
+      await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
+      const twelfth = await makeReaderLibp2p(MAGIC_TESTNET);
+      hosts.push(twelfth);
+      await runReaderHandshake(twelfth, addrA, MAGIC_TESTNET);
+      const twelfthPubsub = (twelfth as unknown as {
+        services: { pubsub: GossipSub };
+      }).services.pubsub;
+      const twelfthDeliveries: Uint8Array[] = [];
+      twelfthPubsub.addEventListener('gossipsub:message', (evt) => {
+        const detail = evt.detail as { msg?: { topic: string; data: Uint8Array } } | undefined;
+        if (detail?.msg?.topic === topicsPair.orderingBlock) {
+          twelfthDeliveries.push(detail.msg.data);
+        }
+      });
+      twelfthPubsub.subscribe(topicsPair.orderingBlock);
+
+      // control: nodeA has heard the twelfth reader's subscription (so the
+      // forward's destination is a topic peer).
+      await vi.waitFor(
+        () => {
+          expect(
+            nodeAPubsub.getSubscribers(topicsPair.orderingBlock).map((p) => p.toString()),
+          ).toContain(twelfth.peerId.toString());
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+
+      // A validator-signed block that passes NET_INTERFACE → Stage 1.
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      await nodeB.broadcastOrderingBlock(block);
+
+      // control: nodeA receives it — its own handler fires.
+      await vi.waitFor(
+        () => {
+          expect(nodeADeliveries.length).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: 15_000, interval: 100 },
+      );
+
+      // last: the forwarded block reaches the twelfth reader.
+      await vi.waitFor(
+        () => {
+          expect(twelfthDeliveries.length).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+    },
+    120_000,
+  );
 });

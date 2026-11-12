@@ -67,8 +67,11 @@ export {
 } from './capabilities.js';
 
 // NET_INTERFACE → Gossip Topics.
+// MESH_INTERFACE → Block gossip — `GOSSIP_IP_COLOCATION_WEIGHT`, the weight
+// `gossipsubOptions` carries for gossipsub's IP colocation factor.
 export {
   GOSSIP_SEEN_WINDOW_MS,
+  GOSSIP_IP_COLOCATION_WEIGHT,
   gossipTopics,
   gossipMessageId,
   gossipsubOptions,

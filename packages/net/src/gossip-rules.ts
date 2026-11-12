@@ -38,6 +38,14 @@ export function gossipTopics(magic: number): GossipTopics {
 export const GOSSIP_SEEN_WINDOW_MS = 120_000;
 
 /**
+ * MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's
+ * defaults, and a shared address costs a peer nothing". The weight
+ * `gossipsubOptions` hands gossipsub for its IP colocation factor;
+ * `CONSTANTS → net`.
+ */
+export const GOSSIP_IP_COLOCATION_WEIGHT = 0;
+
+/**
  * NET_INTERFACE → Gossip Topics → "A message is named by its bytes" —
  * `hash32(lpUtf8(topic) ‖ data)` for a message this node publishes as for
  * one it receives.
@@ -63,6 +71,12 @@ export function gossipMessageId(topic: string, data: Uint8Array): Uint8Array {
  *  - `asyncValidation: true` — "An ordering block is forwarded once Stage 1
  *    passes; a transaction once this node admits it".
  *  - `fallbackToFloodsub: false` — NET_INTERFACE → libp2p Stack.
+ *  - `scoreParams: { IPColocationFactorWeight: GOSSIP_IP_COLOCATION_WEIGHT }`
+ *    — MESH_INTERFACE → Block gossip → "A router scores its peers by
+ *    gossipsub's defaults, and a shared address costs a peer nothing".
+ *    gossipsub's `createPeerScoreParams` merges this partial over its
+ *    defaults, so every other score parameter stands; the options name no
+ *    `scoreThresholds`, so `createPeerScoreThresholds` keeps every default.
  */
 export interface GossipsubOptions {
   globalSignaturePolicy: 'StrictNoSign';
@@ -73,6 +87,7 @@ export interface GossipsubOptions {
   allowPublishToZeroTopicPeers: boolean;
   asyncValidation: boolean;
   fallbackToFloodsub: boolean;
+  scoreParams: { IPColocationFactorWeight: number };
 }
 
 export function gossipsubOptions(
@@ -88,5 +103,6 @@ export function gossipsubOptions(
     allowPublishToZeroTopicPeers: true,
     asyncValidation: true,
     fallbackToFloodsub: false,
+    scoreParams: { IPColocationFactorWeight: GOSSIP_IP_COLOCATION_WEIGHT },
   };
 }

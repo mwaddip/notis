@@ -14,10 +14,9 @@
 // chain is bypassed — `execFileSync`'s timeout and `tracker.kill()`
 // both signal the process. `createTerminationRegistry` holds the open
 // targets' closes and runs them before `process.exit`, so a scenario
-// that ends a driver it spawned leaves no target open behind
-// (MESH_INTERFACE → Block gossip → "A router scores its peers by
-// gossipsub's defaults" — a leaked page keeps a browser peer in the
-// mesh and the IP colocation penalty accumulates).
+// that ends a driver it spawned leaves no target open behind — a
+// leaked target is a client left connected to the nodes for the rest of
+// the run.
 //
 // CLI shape:
 //   node cdp.mjs eval <url> <expression>
@@ -440,8 +439,7 @@ async function main(argv) {
   // `tracker.kill()`; SIGINT from a hand-run ^C. Each runs every open
   // target's close through the module-level registry before the
   // process exits, so a scenario that times out or ends its tracker
-  // leaves no page open in Chromium (MESH_INTERFACE → Block gossip →
-  // "A router scores its peers by gossipsub's defaults").
+  // leaves no page open in Chromium.
   process.on('SIGTERM', () => { void terminationRegistry.run('SIGTERM'); });
   process.on('SIGINT', () => { void terminationRegistry.run('SIGINT'); });
   const [cmd, ...rest] = argv;

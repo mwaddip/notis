@@ -1,8 +1,6 @@
-// MESH_INTERFACE → Block gossip → "A router scores its peers by
-// gossipsub's defaults" — a `cdp.mjs poll` or `eval` that is signalled
-// before its `finally` runs leaks the open target in Chromium, and the
-// leaked page keeps a browser peer in the mesh for the rest of the
-// run. The termination registry's rule: every page-opening call
+// A `cdp.mjs poll` or `eval` that is signalled before its `finally`
+// runs leaks the open target in Chromium, and a leaked target is a
+// client left connected to the nodes for the rest of the run. The termination registry's rule: every page-opening call
 // registers its target close here, and a SIGTERM or SIGINT runs each
 // registered close before the process exits. The handler fires at
 // most once, so a repeated signal does not double-close.
