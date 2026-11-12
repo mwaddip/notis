@@ -9,7 +9,7 @@
 // both ways, as for a reader whose network changed, which the nodes
 // never hear close — its tip catches up by headers with no proof
 // read, and gossip extends it after: a block whose parent is the
-// client's tip reaches it by gossip with no check between."
+// client's tip reaches it by gossip with no check between …"
 //
 // Four sub-steps, in order:
 //   1. No proof after the first — stage default + a step-scoped
