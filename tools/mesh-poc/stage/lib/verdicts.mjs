@@ -710,11 +710,14 @@ export function verdictS8Fork(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
-// blocks and restored, its tip catches up by headers with no proof
-// read, and gossip extends it after: a block whose parent is the
-// client's tip reaches it by gossip with no check between". The
-// verdict reads what acceptance 8 says, from records after `liftAtMs`:
+// MESH_INTERFACE → Acceptance 8 — "the browser cut off from every
+// mesh node for three blocks and let back on new connections alone —
+// every flow it held at the cut stays dropped both ways, as for a
+// reader whose network changed, which the nodes never hear close —
+// its tip catches up by headers with no proof read, and gossip
+// extends it after: a block whose parent is the client's tip reaches
+// it by gossip with no check between". The verdict reads what
+// acceptance 8 says, from records after `liftAtMs`:
 // PASS when `proofReads` did not move across the step, the final tip
 // is within two of pub1's read, AND a record in tipHist whose atMs is
 // at or after `liftAtMs` rises with `checks` equal to the record

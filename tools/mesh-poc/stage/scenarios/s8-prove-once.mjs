@@ -3,9 +3,13 @@
 // chain; a block mined on a node reaches the browser by gossip and
 // moves the client's tip before its next check; a node on another
 // chain … has its proof read when its tip moves, with the client's
-// own, and the client's tip stays the honest chain's; the browser's
-// gossip cut for three blocks and restored, its tip catches up by
-// headers with no proof read."
+// own, and the client's tip stays the honest chain's; the browser
+// cut off from every mesh node for three blocks and let back on new
+// connections alone — every flow it held at the cut stays dropped
+// both ways, as for a reader whose network changed, which the nodes
+// never hear close — its tip catches up by headers with no proof
+// read, and gossip extends it after: a block whose parent is the
+// client's tip reaches it by gossip with no check between."
 //
 // Four sub-steps, in order:
 //   1. No proof after the first — stage default + a step-scoped
@@ -135,7 +139,7 @@ export function describe() {
     'no proof read across five completed checks on the stage default',
     'three new blocks reach the browser by gossip within 5 s each',
     'the lagging fork reads behind, client tip stays on pub1\'s chain, exactly two proofs that check',
-    'the browser\'s gossip cut for three blocks and restored: tip catches up by headers, no proof read',
+    'the browser cut off from every mesh node for three blocks and let back on new connections alone, its held flows dropped both ways: tip catches up by headers with no proof read, gossip extends it after',
   ];
 }
 
@@ -179,11 +183,14 @@ export function s8Step4HostileFirewallArgs(topology) {
   return hostileFirewallArgs(topology, STEP4_HOSTILE_TABLE);
 }
 
-// MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for
-// three blocks and restored". The gap firewall drops output from the
-// browser namespace to every mesh host's address (every host whose
-// topology config carries `mesh`), so the client's existing links
-// break and new dials fail until the firewall is removed.
+// MESH_INTERFACE → Acceptance 8 — "the browser cut off from every
+// mesh node for three blocks and let back on new connections alone".
+// The gap firewall drops output from the browser namespace to every
+// mesh host's address (every host whose topology config carries
+// `mesh`), so the client's existing links break and new dials fail
+// until the firewall is removed; the held-flows table carries the
+// mark and the drop-marked rules that keep a held flow dropped past
+// the lift (→ `s8HeldFlowsMarkArgs`).
 export function s8GapFirewallArgs(topology) {
   const ns = 'notismesh-browser';
   const meshHosts = [];
