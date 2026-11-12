@@ -339,9 +339,6 @@ under → Size caps.
 | `MISBEHAVIOR_SCORE` | `100` | the score one `Misbehavior` penalty accrues — five at one instant ban, one more for each decay interval they spread across | policy | one fifth of the ban threshold, and the decay a peer sheds per `PENALTY_DECAY_INTERVAL_MS`, pro rata, so the break-even is one invalid message per interval; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 | `TRANSIENT_SCORE` | `50` | the score one `Transient` penalty accrues — half a misbehavior | policy | a compatibility mismatch or a refuted claim weighs half an invalid message; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 
-> ⚠ **AHEAD OF CODE (2026-11-12).** `@dagsocial/net` exports no `GOSSIP_IP_COLOCATION_WEIGHT`; its row fails the drift
-test until it does.
-
 ### node
 
 `packages/node` — its literals, outside the drift test (→ The drift test).

@@ -177,9 +177,6 @@ it is forwarded, whatever its sender's score (→ "A block is checked before it 
 chooses its chain by work, from what its sync asks of its peers as well as from what gossip brings (`NET_INTERFACE →
 Sync State Machine`); and a client's tip is its own check's (→ The client's node list).
 
-> ⚠ **AHEAD OF CODE (2026-11-12).** `gossipsubOptions` passes gossipsub no score parameter and `@dagsocial/net` exports
-no `GOSSIP_IP_COLOCATION_WEIGHT`: a node's router and a client's run gossipsub's default colocation weight, −5.
-
 ## Discovery
 
 **First contact.** A client starts from a list of first-contact nodes, each `(notisId, addrs)`: a key and the addresses
