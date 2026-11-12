@@ -711,7 +711,7 @@ describe('s8 (prove once, follow by gossip)', () => {
       laggingId: 'c'.repeat(64),
     }))).toBe(true);
   });
-  // MESH_INTERFACE → Acceptance 8 → "a block whose parent is the
+  // MESH_INTERFACE → Acceptance 8 — "a block whose parent is the
   // client's tip reaches it by gossip with no check between". The
   // predicate reads the tracker's `final`, which the observer sets
   // once the sampled `checks` has advanced three past the baseline;
