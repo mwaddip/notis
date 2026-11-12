@@ -29,7 +29,7 @@ import {
   type Socket,
   type AddressInfo,
 } from 'node:net';
-import type { Connection, Libp2p } from '@libp2p/interface';
+import type { Connection, Libp2p, Stream } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
@@ -336,6 +336,18 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
+      // Capture N's current outbound stream to R — the one the forward
+      // of block1 just rode — so the last assertion can read the stream's
+      // writable end after the redial, and know the router closed its
+      // replaced outbound.
+      const outboundMap = (pubsubOf(nodeN) as unknown as {
+        streamsOutbound: Map<string, { readonly rawStream: Stream }>;
+      }).streamsOutbound;
+      const oldOutbound = outboundMap.get(readerId);
+      expect(oldOutbound).toBeDefined();
+      const oldOutboundRawStream = oldOutbound!.rawStream;
+      expect(oldOutboundRawStream.writeStatus).toBe('writable');
+
       // The proxy stops forwarding (no close on N's side), and R aborts
       // its own side of conn1. R's libp2p fires peer:disconnect, R's
       // gossipsub removes the peer and its outbound. N holds the silent
@@ -372,15 +384,30 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
-      // last: a block entering at M after the redial reaches R on the
-      // new connection. Unpatched, N's outbound to R is still on the
-      // silent conn1, so the forwarded RPC writes to a dead stream and
+      // a block entering at M after the redial reaches R on the new
+      // connection. Unpatched, N's outbound to R is still on the silent
+      // conn1, so the forwarded RPC writes to a dead stream and
       // `deliveries.length` stays at 1.
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
       await vi.waitFor(
         () => { expect(deliveries.length).toBe(2); },
         { timeout: 30_000, interval: 200 },
+      );
+
+      // last: the router closed its replaced outbound to R. yamux's
+      // `sendCloseWrite` resolves locally over the silent conn1 (writes
+      // one FIN frame), and the stream's write side transitions to
+      // 'closed' (`node_modules/.pnpm/@libp2p+utils@7.4.5/.../abstract-stream.ts`
+      // close(): `writeStatus = 'closed'` after `sendCloseWrite`). Without
+      // the router's `existing.close()` on the replaced outbound, nothing
+      // closes it from N's side and the write side stays 'writable';
+      // over the silent connection, R's abort is invisible to N.
+      await vi.waitFor(
+        () => {
+          expect(oldOutboundRawStream.writeStatus).toBe('closed');
+        },
+        { timeout: 10_000, interval: 100 },
       );
     },
     TIMEOUT,
