@@ -113,32 +113,43 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
   });
 
   it.fails('stops at MAX_SERVE_BODY_BYTES, the first body always sent', async () => {
-    // Each held text's `encodePostBody` is longer than half the cap, so two
-    // fit and the third pushes the total past `MAX_SERVE_BODY_BYTES`.
-    // No legal post is this long; the provider is the case's own.
-    const bigText = 'x'.repeat(MAX_SERVE_BODY_BYTES);
+    // Three held texts whose `encodePostBody` is 1.5 MiB each — two fit under
+    // `MAX_SERVE_BODY_BYTES` (4 MiB), the third would push the total past it.
+    // No legal post is this long; the provider is the case's own. The size
+    // sits below `MAX_ORDERING_BLOCK_BYTES` (2 MiB) so the response reads
+    // back through `decodeModifierResponse`'s per-data bound.
+    const chunk = 1_500_000;
+    const text = 'x'.repeat(chunk);
     const provider: PostTextProvider = async () => new Map([
-      [id1, bigText],
-      [id2, bigText],
+      [id1, text], [id2, text], [id3, text],
     ]);
-    const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [id1, id2] });
+    const req = encodeModifierRequest(MAGIC, {
+      typeId: MODIFIER_POST_BODY,
+      ids: [id1, id2, id3],
+    });
     const resp = await answerPostTextsRequest(req, MAGIC, provider).catch(() => null);
     const decoded = safeDecodeResp(resp);
 
-    // The first body alone — above the cap — is still carried.
-    const soloProvider: PostTextProvider = async () => new Map([[id1, bigText]]);
-    const soloReq = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [id1] });
-    const soloResp = await answerPostTextsRequest(soloReq, MAGIC, soloProvider).catch(() => null);
-    const soloDecoded = safeDecodeResp(soloResp);
+    // The first body alone — above the cap, so no legal post in this range
+    // and so past `decodeModifierResponse`'s per-data bound as well. The
+    // check is on the raw bytes: the response frame carries the oversized
+    // body and its length is at least `MAX_SERVE_BODY_BYTES`.
+    const soloText = 'y'.repeat(MAX_SERVE_BODY_BYTES);
+    const soloProvider: PostTextProvider = async () => new Map([[id1, soloText]]);
+    const soloReq = encodeModifierRequest(MAGIC, {
+      typeId: MODIFIER_POST_BODY,
+      ids: [id1],
+    });
+    const soloResp = await answerPostTextsRequest(soloReq, MAGIC, soloProvider)
+      .catch(() => 'threw' as const);
+    const soloBytes = soloResp instanceof Uint8Array ? soloResp.length : 0;
 
     expect({
       twoReqIds: decoded?.pairs.map((p) => p.id) ?? null,
-      soloCount: soloDecoded?.pairs.length ?? null,
-      soloText: soloDecoded?.pairs[0]?.text.length ?? null,
+      soloCarries: soloBytes > MAX_SERVE_BODY_BYTES,
     }).toEqual({
-      twoReqIds: [id1],
-      soloCount: 1,
-      soloText: bigText.length,
+      twoReqIds: [id1, id2],
+      soloCarries: true,
     });
   });
 
