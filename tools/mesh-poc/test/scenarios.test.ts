@@ -710,15 +710,31 @@ describe('s8 (prove once, follow by gossip)', () => {
       laggingId: 'c'.repeat(64),
     }))).toBe(true);
   });
-  it('S8_GAP_PREDICATE is true only once the tracker records the fill', () => {
+  // MESH_INTERFACE → Acceptance 8 → "a block whose parent is the
+  // client's tip reaches it by gossip with no check between". The
+  // predicate reads the tracker's `final`, which the observer sets
+  // once the sampled `checks` has advanced three past the baseline;
+  // an earlier state (no base, or base set but final still null) is
+  // not ready. The predicate reads `final !== null` alone; the base
+  // and tipHist carry fields the observer writes for the verdict.
+  it('S8_GAP_PREDICATE is true only once the tracker records a final state', () => {
     const fn = buildPredicate(s8.S8_GAP_PREDICATE);
     expect(fn(null)).toBe(false);
-    expect(fn(JSON.stringify({ base: null, lastTipHeight: null, final: null }))).toBe(false);
-    expect(fn(JSON.stringify({ base: { tipHeight: 100, proofReads: 6 }, lastTipHeight: 100, final: null }))).toBe(false);
+    expect(fn(JSON.stringify({ base: null, lastTipHeight: null, tipHist: [], final: null }))).toBe(false);
     expect(fn(JSON.stringify({
-      base: { tipHeight: 100, proofReads: 6 },
-      lastTipHeight: 104,
-      final: { tipHeight: 104, proofReads: 6, jump: 4 },
+      base: { tipHeight: 100, proofReads: 6, checks: 1, gossipBytes: 50 },
+      lastTipHeight: 100,
+      tipHist: [],
+      final: null,
+    }))).toBe(false);
+    expect(fn(JSON.stringify({
+      base: { tipHeight: 100, proofReads: 6, checks: 1, gossipBytes: 50 },
+      lastTipHeight: 106,
+      tipHist: [
+        { height: 105, atMs: 25_000, checks: 2, proofReads: 6, gossipBytes: 50 },
+        { height: 106, atMs: 26_000, checks: 2, proofReads: 6, gossipBytes: 150 },
+      ],
+      final: { tipHeight: 106, proofReads: 6, checks: 4, gossipBytes: 200 },
     }))).toBe(true);
   });
   // MESH_INTERFACE → Acceptance 8 — step 1's expression carries a pure
@@ -896,132 +912,151 @@ describe('s8 (prove once, follow by gossip)', () => {
     st = s8.s8NoProofsObserve(st, atSeven, honestIds, firstContactIds);
     expect(st.final).toBe(fin);
   });
-  // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
-  // observer that reads a snapshot of `#state` and returns the next
-  // tracker state. The observer captures a baseline on the first
-  // completed check, waits for a fill (a jump of three or more at
-  // once) and then for one more tip change (gossip extending the tip
-  // past the fill — the client is at the head). `final` is captured
-  // at the one-block-after-fill point; `jump` keeps the fill's size
-  // so `verdictS8Gap` reads `jump >= 3`.
-  it('s8GapObserve: a tip that advances one at a time (gossip pace) does not end', () => {
+  // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a
+  // pure observer that reads a snapshot of `#state` and returns the
+  // next tracker state. The observer captures a baseline on the first
+  // completed check, records every tip change after it in `tipHist`
+  // (height, atMs, checks, proofReads, gossipBytes), and ends once
+  // the sampled `checks` has advanced three past the baseline — one
+  // check interval past the lift in the worst-case cut, so a gossip
+  // extension at the catch-up `checks` has a chance to land before
+  // the final state.
+  it('s8GapObserve: a tip that advances one at a time (gossip pace) does not end before checks pass base + 3', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
-      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
-      { checks: 1, tip: { height: 102 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5, gossipBytes: 150 } },
+      { checks: 1, tip: { height: 102 }, traffic: { proofReads: 5, gossipBytes: 250 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5, gossipBytes: 350 } },
     ];
     let st: unknown = null;
     let now = 1_000;
     for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(103);
-    expect((st as { fillJump: unknown }).fillJump).toBeNull();
   });
-  it('s8GapObserve: a jump of three or more alone records the fill, final still null (waiting for one-block-after)', () => {
+  // Retarget: the fill concept is retired. A jump of three or more
+  // without the checks terminator is just a tip change recorded in
+  // tipHist; final stays null until checks has advanced three past
+  // the baseline.
+  it('s8GapObserve: a jump of three past the baseline records a tipHist entry and leaves final null while checks has not advanced three past it', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
-      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5, gossipBytes: 150 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5, gossipBytes: 150 } },
     ];
     let st: unknown = null;
     let now = 1_000;
     for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
-    expect((st as { fillJump: number }).fillJump).toBe(4);
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(105);
+    const tipHist = (st as { tipHist: Array<{ height: number; checks: number }> }).tipHist;
+    expect(tipHist.map((r) => r.height)).toEqual([101, 105]);
+  });
+  // Retarget: the "fill then one-more" end condition is retired. A
+  // jump of three plus one more tip change, both still at checks<=2,
+  // leaves final null — the end is on `checks` passing base + 3.
+  // The pre-fix observer still ends on fill + one more, so the last
+  // assertion fails until the fix:
+  //   AssertionError: expected { tipHeight: 106, ... } to be null
+  it.fails('s8GapObserve: a jump of three plus one more tip change, both at checks<=2 from a base at checks=1, leaves final null', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
+      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5, gossipBytes: 150 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5, gossipBytes: 150 } },
+      { checks: 2, tip: { height: 106 }, traffic: { proofReads: 5, gossipBytes: 250 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: unknown }).final).toBeNull();
+    expect((st as { lastTipHeight: number }).lastTipHeight).toBe(106);
+  });
+  // Retarget: the tracker ends once `checks` has advanced three past
+  // the baseline (one check interval past the lift in the worst-case
+  // cut). A base at checks=1, a catch-up at checks=2, a gossip
+  // extension at checks=2, then the next check at checks=3 — final
+  // still null (checks hasn't yet reached base + 3 = 4). The pre-fix
+  // observer ends on fill + one more at the second tip change:
+  //   AssertionError: expected { tipHeight: 105, ... } to be null
+  it.fails('s8GapObserve: a catch-up, gossip extension and the next check (checks=3 from base=1) leave final null', () => {
+    const sequence = [
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5, gossipBytes: 150 } },
+      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5, gossipBytes: 250 } },
+      { checks: 3, tip: { height: 105 }, traffic: { proofReads: 5, gossipBytes: 250 } },
+    ];
+    let st: unknown = null;
+    let now = 1_000;
+    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
+    expect((st as { final: unknown }).final).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(105);
   });
-  it('s8GapObserve: fill then one more tip change records final at the head, jump from the fill', () => {
+  // Retarget: the "jump=3 is the smallest fill" edge is retired.
+  // A jump of exactly three from a base at checks=1, with checks=2
+  // and checks=3 observed, still does not end the tracker — the
+  // terminator reads `checks >= base + 3`.
+  it.fails('s8GapObserve: a baseline at checks=1 and a snapshot at checks=4 records final with the snapshot\'s figures', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
-      { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 106 }, traffic: { proofReads: 5 } },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7, gossipBytes: 20 } },
+      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7, gossipBytes: 20 } },
+      { checks: 2, tip: { height: 104 }, traffic: { proofReads: 7, gossipBytes: 120 } },
+      { checks: 4, tip: { height: 110 }, traffic: { proofReads: 7, gossipBytes: 220 } },
     ];
     let st: unknown = null;
     let now = 1_000;
     for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
-    expect((st as { final: { tipHeight: number; proofReads: number; jump: number } }).final).toEqual({
-      tipHeight: 106,
-      proofReads: 5,
-      jump: 4,
-    });
-  });
-  it('s8GapObserve: fill then one-block-after at any size records final (even a jump of two post-fill)', () => {
-    // Once the fill lands, the tracker ends at the FIRST tip change
-    // past it — gossip moves one at a time, so the usual post-fill
-    // jump is 1; a race between the end of the gap and gossip's own
-    // batching may deliver 2 at once, and `final` lands either way.
-    const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } },
-      { checks: 2, tip: { height: 105 }, traffic: { proofReads: 5 } },
-    ];
-    let st: unknown = null;
-    let now = 1_000;
-    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
-    expect((st as { final: { tipHeight: number; jump: number } }).final).toEqual({
-      tipHeight: 105,
-      proofReads: 5,
-      jump: 3,
-    });
-  });
-  it('s8GapObserve: a jump of exactly three (the smallest fill) + one more records final with jump=3', () => {
-    const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
-      { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7 } },
-      { checks: 2, tip: { height: 104 }, traffic: { proofReads: 7 } },
-    ];
-    let st: unknown = null;
-    let now = 1_000;
-    for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
-    expect((st as { final: { jump: number; tipHeight: number } }).final).toEqual({
-      tipHeight: 104,
+    expect((st as { final: { tipHeight: number; proofReads: number; checks: number; gossipBytes: number } }).final).toEqual({
+      tipHeight: 110,
       proofReads: 7,
-      jump: 3,
+      checks: 4,
+      gossipBytes: 220,
     });
   });
-  it('s8GapObserve: a jump of two does not record a fill (still phase A, final null)', () => {
+  // Retarget: the "jump of two does not record a fill" edge is
+  // retired with the fill concept. A jump of two is just a tip
+  // change: the observer records it in tipHist and final stays null
+  // while checks has not passed base + 3.
+  it('s8GapObserve: a jump of two is recorded in tipHist and leaves final null while checks has not passed base + 3', () => {
     const sequence = [
-      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7 } },
-      { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7 } },
+      { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7, gossipBytes: 10 } },
+      { checks: 2, tip: { height: 102 }, traffic: { proofReads: 7, gossipBytes: 110 } },
     ];
     let st: unknown = null;
     let now = 1_000;
     for (const s of sequence) { st = s8.s8GapObserve(st, s, now); now += 100; }
     expect((st as { final: unknown }).final).toBeNull();
-    expect((st as { fillJump: unknown }).fillJump).toBeNull();
     expect((st as { lastTipHeight: number }).lastTipHeight).toBe(102);
+    const tipHist = (st as { tipHist: Array<{ height: number }> }).tipHist;
+    expect(tipHist.map((r) => r.height)).toEqual([102]);
   });
   it('s8GapObserve: baseline NOT captured before the first completed check', () => {
-    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0 } }, 1_000);
+    const st = s8.s8GapObserve(null, { checks: 0, tip: { height: 100 }, traffic: { proofReads: 0, gossipBytes: 0 } }, 1_000);
     expect((st as { base: unknown }).base).toBeNull();
   });
-  it('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks and proofReads', () => {
-    // The tracker keeps the full sequence so a run shows every tip
-    // change past the baseline — a fill of three, then a tip that
-    // went back by one, shows both moves.
+  // Retarget: tipHist now carries gossipBytes beside height, atMs,
+  // checks and proofReads. The end condition is on `checks` passing
+  // base + 3, not on a fill-plus-one-more.
+  it.fails('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks, proofReads and gossipBytes', () => {
     const sequence = [
-      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_000 }, // baseline
-      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5 } }, nowMs: 1_100 }, // same height — no record
-      { snap: { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5 } }, nowMs: 1_200 }, // fill
-      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5 } }, nowMs: 1_300 }, // one more change — tip went back
-      { snap: { checks: 2, tip: { height: 104 }, traffic: { proofReads: 6 } }, nowMs: 1_400 }, // past final — no record
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } }, nowMs: 1_000 },
+      { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } }, nowMs: 1_100 },
+      { snap: { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5, gossipBytes: 150 } }, nowMs: 1_200 },
+      { snap: { checks: 2, tip: { height: 102 }, traffic: { proofReads: 5, gossipBytes: 150 } }, nowMs: 1_300 },
+      { snap: { checks: 4, tip: { height: 104 }, traffic: { proofReads: 6, gossipBytes: 250 } }, nowMs: 1_400 },
     ];
     let st: unknown = null;
     for (const r of sequence) st = s8.s8GapObserve(st, r.snap, r.nowMs);
-    const tipHist = (st as { tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number }> }).tipHist;
+    const tipHist = (st as { tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number; gossipBytes: number }> }).tipHist;
     expect(tipHist).toEqual([
-      { height: 103, atMs: 1_200, checks: 2, proofReads: 5 },
-      { height: 102, atMs: 1_300, checks: 2, proofReads: 5 },
+      { height: 103, atMs: 1_200, checks: 2, proofReads: 5, gossipBytes: 150 },
+      { height: 102, atMs: 1_300, checks: 2, proofReads: 5, gossipBytes: 150 },
+      { height: 104, atMs: 1_400, checks: 4, proofReads: 6, gossipBytes: 250 },
     ]);
-    // The end condition is unchanged: a fill of three then one more
-    // tip change — regardless of direction — locks final with the
-    // fill's jump.
-    expect((st as { final: { jump: number; tipHeight: number; proofReads: number } }).final).toEqual({
-      tipHeight: 102,
-      proofReads: 5,
-      jump: 3,
+    expect((st as { final: { tipHeight: number; proofReads: number; checks: number; gossipBytes: number } }).final).toEqual({
+      tipHeight: 104,
+      proofReads: 6,
+      checks: 4,
+      gossipBytes: 250,
     });
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
@@ -1212,7 +1247,12 @@ describe('s8 (prove once, follow by gossip)', () => {
 // shared parser.
 describe("s8 — parseTrackerValue reads cdp.mjs' double-encoded stdout", () => {
   it('parses a double-encoded tracker value as the inner object', () => {
-    const inner = { base: { tipHeight: 100, proofReads: 1 }, lastTipHeight: 103, final: { tipHeight: 103, proofReads: 1, jump: 3 } };
+    const inner = {
+      base: { tipHeight: 100, proofReads: 1, checks: 1, gossipBytes: 50 },
+      lastTipHeight: 103,
+      tipHist: [{ height: 103, atMs: 1_200, checks: 2, proofReads: 1, gossipBytes: 150 }],
+      final: { tipHeight: 103, proofReads: 1, checks: 4, gossipBytes: 250 },
+    };
     const stdout = JSON.stringify(JSON.stringify(inner));
     const r = s8.parseTrackerValue(stdout);
     expect(r).toEqual(inner);

@@ -1262,49 +1262,90 @@ describe('verdictS8Fork — the lagging fork is behind; the client stays on the 
   });
 });
 
-describe('verdictS8Gap — the browser\'s tip catches up by headers with no proof read', () => {
+describe('verdictS8Gap — the browser\'s tip catches up by headers with no proof read, gossip extends it after', () => {
   // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
   // blocks and restored, its tip catches up by headers with no proof
-  // read". PASS when `proofReads` did not move across the window, the
-  // tracker's jump was three or more blocks at once (a fill — gossip
-  // moves the tip one block at a time), and the tip the fill landed on
-  // is within two of pub1's read.
+  // read, and gossip extends it after: a block whose parent is the
+  // client's tip reaches it by gossip with no check between". The
+  // verdict reads the records after `liftAtMs`: PASS when `proofReads`
+  // did not move across the step, the final tip is within two of
+  // pub1's read, and a later record whose atMs is at or after
+  // `liftAtMs` rises with `checks` equal to the record before it (the
+  // gossip clause, from MESH_INTERFACE → Block gossip; a record before
+  // the lift never satisfies it).
   const PASS = {
-    proofReadsBefore: 6,
-    proofReadsAfter: 6,
-    tipHeightBefore: 100,
-    tipHeightFinal: 104,
-    jump: 4,
-    pub1HeightFinal: 105,
+    liftAtMs: 20_000,
+    tipHist: [
+      { height: 100, atMs: 1_000, checks: 1, proofReads: 6, gossipBytes: 40 },
+      { height: 105, atMs: 25_000, checks: 2, proofReads: 6, gossipBytes: 40 },
+      { height: 106, atMs: 26_000, checks: 2, proofReads: 6, gossipBytes: 120 },
+    ],
+    proofReadsBaseline: 6,
+    proofReadsFinal: 6,
+    tipHeightFinal: 106,
+    pub1HeightFinal: 107,
   };
-  it('every pass condition holds → PASS', () => {
+  // The pre-fix verdict reads old fields that the retargeted shape no
+  // longer carries and returns FAIL on the first `typeof` check; the
+  // last assertion of each PASS retarget asks for PASS, which the
+  // pre-fix verdict fails:
+  //   AssertionError: expected 'FAIL' to be 'PASS'
+  it.fails('every pass condition holds → PASS', () => {
     expect(verdictS8Gap(PASS)).toBe('PASS');
   });
-  it('tip is level with pub1 (within zero) → PASS', () => {
-    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 105 })).toBe('PASS');
+  it.fails('tip is level with pub1 (within zero) → PASS', () => {
+    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 107, pub1HeightFinal: 107 })).toBe('PASS');
   });
-  it('tip is two blocks past pub1 (pub1 trailing the client within two) → PASS', () => {
+  it.fails('tip is two blocks past pub1 (pub1 trailing the client within two) → PASS', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 107, pub1HeightFinal: 105 })).toBe('PASS');
   });
-  it('jump is exactly three (the smallest fill) → PASS', () => {
-    expect(verdictS8Gap({ ...PASS, jump: 3 })).toBe('PASS');
+  // The former "jump is exactly three" PASS covered the smallest fill
+  // under the old rule; the catch-up moving the tip by exactly three
+  // blocks is the same edge in the new tipHist (the record at `checks`
+  // 2 rises three blocks above the baseline record at `checks` 1).
+  it.fails('the catch-up record rises the tip by exactly three → PASS', () => {
+    expect(verdictS8Gap({
+      ...PASS,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 6, gossipBytes: 40 },
+        { height: 103, atMs: 25_000, checks: 2, proofReads: 6, gossipBytes: 40 },
+        { height: 104, atMs: 26_000, checks: 2, proofReads: 6, gossipBytes: 120 },
+      ],
+      tipHeightFinal: 104,
+      pub1HeightFinal: 105,
+    })).toBe('PASS');
   });
-  it('proofReads moved during the window → FAIL (a proof was read)', () => {
-    expect(verdictS8Gap({ ...PASS, proofReadsAfter: 7 })).toBe('FAIL');
+  it('proofReads moved during the step → FAIL (a proof was read)', () => {
+    expect(verdictS8Gap({ ...PASS, proofReadsFinal: 7 })).toBe('FAIL');
   });
-  it('jump is two (gossip-paced, not a header fill) → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, jump: 2 })).toBe('FAIL');
+  // The former "jump is two" FAIL covered a gossip-paced catch-up that
+  // did not read a header fill. Under the new rule the fill concept is
+  // retired; the equivalent is a run where no record after the lift
+  // rises at an unchanged `checks` — the gossip clause does not fire.
+  it('no record after the lift rises at an unchanged `checks` → FAIL', () => {
+    expect(verdictS8Gap({
+      ...PASS,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 6, gossipBytes: 40 },
+        { height: 102, atMs: 25_000, checks: 2, proofReads: 6, gossipBytes: 40 },
+      ],
+      tipHeightFinal: 102,
+      pub1HeightFinal: 102,
+    })).toBe('FAIL');
   });
-  it('jump missing → FAIL, never PASS', () => {
+  // The former "jump missing" FAIL covered a measurement with a
+  // required old field absent. The new rule names `liftAtMs` as a
+  // required field; a measurement without it FAILs by its name.
+  it('liftAtMs missing → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };
-    delete m['jump'];
+    delete m['liftAtMs'];
     expect(verdictS8Gap(m)).toBe('FAIL');
   });
   it('pub1 is three past the client (tip not within two) → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, pub1HeightFinal: 107 })).toBe('FAIL');
+    expect(verdictS8Gap({ ...PASS, pub1HeightFinal: 109 })).toBe('FAIL');
   });
   it('pub1 is three behind the client (tip not within two) → FAIL', () => {
-    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 108, pub1HeightFinal: 105 })).toBe('FAIL');
+    expect(verdictS8Gap({ ...PASS, tipHeightFinal: 109, pub1HeightFinal: 106 })).toBe('FAIL');
   });
   it('pub1HeightFinal missing → FAIL, never PASS', () => {
     const m: Record<string, unknown> = { ...PASS };
