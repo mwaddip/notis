@@ -1315,8 +1315,11 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 | Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well (→ The mesh) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`) |
 | Peer identity | the node key's libp2p peer id — Ed25519 alone (→ The node key) |
+
+> ⚠ **AHEAD OF CODE (2026-11-12).** The PubSub row's score: `gossipsubOptions` passes gossipsub no score parameter, so
+every router runs gossipsub's default IP colocation weight, −5.
 
 ### The node key
 

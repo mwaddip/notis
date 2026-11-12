@@ -335,8 +335,12 @@ under → Size caps.
 | `MAX_TRACKED_BANS` | `10_000` | banned peer ids kept | policy | none stated for the number; a ban keys on a peer id, which regenerates freely, so the set is a bounded hint | CHOSEN | `NET_INTERFACE → Ban surfaces are unified` |
 | `MAX_BANNED_ADDRS` | `10_000` | banned addresses kept | policy | none stated for the number; the address surface of the same bounded hint | CHOSEN | `NET_INTERFACE → Ban surfaces are unified` |
 | `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
+| `GOSSIP_IP_COLOCATION_WEIGHT` | `0` | the weight of gossipsub's penalty on peers sharing an IP address: none | policy | user ruling, 2026-11-12 — a reader's libp2p key is new at every page load and readers behind one NAT share an address, so a count of peers per address says nothing of the parties behind it; gossipsub's default, −5, leaves the twelfth such peer without forwarded blocks | RULED | `MESH_INTERFACE → Block gossip` |
 | `MISBEHAVIOR_SCORE` | `100` | the score one `Misbehavior` penalty accrues — five at one instant ban, one more for each decay interval they spread across | policy | one fifth of the ban threshold, and the decay a peer sheds per `PENALTY_DECAY_INTERVAL_MS`, pro rata, so the break-even is one invalid message per interval; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 | `TRANSIENT_SCORE` | `50` | the score one `Transient` penalty accrues — half a misbehavior | policy | a compatibility mismatch or a refuted claim weighs half an invalid message; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
+
+> ⚠ **AHEAD OF CODE (2026-11-12).** `@dagsocial/net` exports no `GOSSIP_IP_COLOCATION_WEIGHT`; its row fails the drift
+test until it does.
 
 ### node
 
