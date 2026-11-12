@@ -14,7 +14,8 @@ import { decodeFrame } from './frame.js';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
 export { HANDSHAKE_PROTOCOL } from './handshake-codec.js';
-export const SYNC_PROTOCOL = '/dagsocial/sync/1';
+export { SYNC_PROTOCOL } from './sync-protocol.js';
+import { SYNC_PROTOCOL } from './sync-protocol.js';
 
 // ---------------------------------------------------------------------------
 // The scheduler's two chain queries — GetHeaders (14) and GetBlocks (16)
