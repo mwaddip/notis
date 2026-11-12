@@ -818,9 +818,7 @@ describe('NET_INTERFACE → Readers', () => {
     });
   }, TIMEOUT);
 
-  // Last assertion against the current tree:
-  //   AssertionError: expected [] to deeply equal [ Array(1) ]
-  it.fails('onReaderActive does not fire for a reader past maxReaders', async () => {
+  it('onReaderActive does not fire for a reader past maxReaders', async () => {
     const nodeA = new NetNode(makeConfig({ maxReaders: 1 }), validators);
     nodes.push(nodeA);
     await nodeA.start();
