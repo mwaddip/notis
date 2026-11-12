@@ -395,14 +395,11 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 30_000, interval: 200 },
       );
 
-      // last: the router closed its replaced outbound to R. yamux's
-      // `sendCloseWrite` resolves locally over the silent conn1 (writes
-      // one FIN frame), and the stream's write side transitions to
-      // 'closed' (`node_modules/.pnpm/@libp2p+utils@7.4.5/.../abstract-stream.ts`
-      // close(): `writeStatus = 'closed'` after `sendCloseWrite`). Without
-      // the router's `existing.close()` on the replaced outbound, nothing
-      // closes it from N's side and the write side stays 'writable';
-      // over the silent connection, R's abort is invisible to N.
+      // last: the router closed its replaced outbound to R. A yamux
+      // close writes one FIN frame and settles the stream's write
+      // side locally — over the silent conn1 only the router's own
+      // close moves the write side off 'writable'; R's abort on the
+      // proxy connection is invisible to N.
       await vi.waitFor(
         () => {
           expect(oldOutboundRawStream.writeStatus).toBe('closed');
