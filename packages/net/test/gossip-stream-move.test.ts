@@ -262,7 +262,7 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // conn1: `createOutboundStream` returns early when R's new inbound
   // arrives on conn2 (`streamsOutbound.has(id)`), so the forwarded
   // block writes to the dead outbound and R reads nothing.
-  it.fails(
+  it(
     'a reader that redialled after its link fell silent is forwarded a block on the new connection',
     async () => {
       const topics = gossipTopics(MAGIC_TESTNET);
@@ -405,7 +405,7 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // here; the failure mode the rule holds against is the same —
   // `handlePeerReadStreamError` carrying a stream the router has
   // already replaced.
-  it.fails(
+  it(
     'a reader stays the router\'s peer when a replaced inbound stream resets',
     async () => {
       const topics = gossipTopics(MAGIC_TESTNET);
@@ -540,7 +540,7 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // The current inbound ends gracefully too (yamux FIN, no error), so
   // the peer stays and the delivery count distinguishes the two
   // behaviours on its own.
-  it.fails(
+  it(
     'the router keeps its outbound on the newer connection when the peer\'s stream arrives on an older one',
     async () => {
       const topics = gossipTopics(MAGIC_TESTNET);
