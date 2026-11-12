@@ -2,11 +2,11 @@
 // connection". Three cases exercise `@libp2p/gossipsub`'s router against a
 // peer that holds, has held, or holds twice at once a connection to the
 // router:
-//   1. a reader that redialled after its link fell silent is forwarded a
+//   - a reader that redialled after its link fell silent is forwarded a
 //      block on the new connection;
-//   2. a reader stays the router's peer when the link its replaced inbound
+//   - a reader stays the router's peer when the link its replaced inbound
 //      stream ran on ends with an error;
-//   3. the router keeps its outbound on the newer connection when the
+//   - the router keeps its outbound on the newer connection when the
 //      peer's gossip stream arrives on an older one, so a graceful close
 //      of the older connection leaves the router's outbound alive.
 //
@@ -255,7 +255,7 @@ describe(`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newes
     nodes.length = 0;
   });
 
-  // Case 1 — the reader redials after its link fell silent, and a block
+  // The reader redials after its link fell silent, and a block
   // entering at M reaches the reader on the new connection.
   //
   // Unpatched, the router's outbound to R runs on the silent conn1:
@@ -410,7 +410,7 @@ describe(`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newes
     TIMEOUT,
   );
 
-  // Case 2 — R opens two gossipsub streams in a row to N. N's
+  // R opens two gossipsub streams in a row to N. N's
   // `createInboundStream` replaces its inbound map entry with each; the
   // second manual stream becomes N's current inbound, and the first is
   // the replaced one. R then resets the first manual stream from its
@@ -420,7 +420,7 @@ describe(`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newes
   // inbound map has already been replaced. Unpatched, that call removes
   // the peer unconditionally and the forwarded block does not reach R.
   //
-  // The loopback-proxy arrangement from case 1 would exercise this path
+  // The loopback-proxy arrangement of the redial case would exercise this path
   // too under WebRTC (a stream close over a silent connection waits
   // DEFAULT_FIN_ACK_TIMEOUT and throws AggregateError), but over TCP +
   // yamux the muxer's `onTransportClosed` does not propagate as an
@@ -548,7 +548,7 @@ describe(`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newes
     TIMEOUT,
   );
 
-  // Case 3 — R holds two connections to N. R opens a gossipsub stream
+  // R holds two connections to N. R opens a gossipsub stream
   // by hand on the newer one, which arrives at N as an inbound: the
   // patch moves N's outbound onto that newer connection. Then R opens
   // a gossipsub stream on the older one: under the patch N keeps its
