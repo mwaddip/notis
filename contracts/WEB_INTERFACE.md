@@ -391,7 +391,8 @@ three later tags"):
 ```json
 [
   { "notisId": "68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09",
-    "addrs": ["/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],
+    "addrs": ["/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa",
+              "/ip4/70.34.243.81/tcp/443/tls/ws/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],
     "api": "https://notis.fun/testnet/api" },
   { "notisId": "e6380c4a6f836f44d6076cde32c8226324b159ef1d909e88dcafdd96a5ca9e72",
     "addrs": ["/ip4/65.20.105.28/udp/9733/webrtc-direct/certhash/uEiANgUbw3RldQddGIXGt_xk6i52NPumh1hAIG2nMKkHQRQ/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq"],
@@ -401,7 +402,12 @@ three later tags"):
 
 A certhash is the node's for the life of its key while its mesh directory is kept (`MESH_INTERFACE → Transports →
 "The WebRTC-direct certificate persists"`); a node whose certhash changed is reached at its API base until a release
-names the new one.
+names the new one. notis.fun's second address is its secure WebSocket, on port 443 of an IPv4 address of its own
+(`MESH_INTERFACE → The IP certificate`): the client dials it after the WebRTC-direct address (`MESH_INTERFACE → The
+client's node list → "The secure WebSocket is the fallback"`), and its certificate renews with no change to the address.
+
+> ⚠ **AHEAD OF CODE (2026-11-12).** notis.fun's secure WebSocket address in the list above: the `VITE_NODES` default in
+`packages/web/scripts/build-extension.sh` names notis.fun's WebRTC-direct address alone.
 
 **The mesh is the extension's first path.** The page reaches nodes by key over libp2p through the mesh client
 (`MESH_INTERFACE → The client's node list`), the client's own `src/mesh/`, which the extension build alone hands the
