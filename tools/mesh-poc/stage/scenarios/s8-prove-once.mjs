@@ -871,6 +871,7 @@ export async function run(ctx) {
         const pub1HeightFinal = readPub1Height(ctx, pub1Port);
         const m = {
           liftAtMs,
+          baseline: { height: r.base.tipHeight, checks: r.base.checks },
           tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
           proofReadsBaseline: r.base.proofReads,
           proofReadsFinal: r.final.proofReads,

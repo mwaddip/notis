@@ -719,17 +719,21 @@ export function verdictS8Fork(m) {
 // is within two of pub1's read, AND a record in tipHist whose atMs is
 // at or after `liftAtMs` rises with `checks` equal to the record
 // before it — a tip that moved with no check between, which is a
-// gossip extension (MESH_INTERFACE → Block gossip). A record before
-// the lift never satisfies the gossip clause. A missing field FAILs
-// the step with its name.
+// gossip extension (MESH_INTERFACE → The client's node list). A
+// record before the lift never satisfies the gossip clause. The
+// baseline is the record before `tipHist[0]`: a first tip change
+// after the lift at the base's `checks` fires the clause against
+// the base's `height`. A missing field FAILs the step with its name.
 // Measurement:
-//   `{ liftAtMs, tipHist: [{height, atMs, checks, proofReads,
-//      gossipBytes}, …], proofReadsBaseline, proofReadsFinal,
-//      tipHeightFinal, pub1HeightFinal }`.
+//   `{ liftAtMs, baseline: {height, checks}, tipHist: [{height, atMs,
+//      checks, proofReads, gossipBytes}, …], proofReadsBaseline,
+//      proofReadsFinal, tipHeightFinal, pub1HeightFinal }`.
 export function verdictS8Gap(m) {
   if (missing(m)) return 'skipped';
   if (typeof m.liftAtMs !== 'number') return 'FAIL';
   if (!Array.isArray(m.tipHist)) return 'FAIL';
+  if (m.baseline === null || typeof m.baseline !== 'object') return 'FAIL';
+  if (typeof m.baseline.height !== 'number' || typeof m.baseline.checks !== 'number') return 'FAIL';
   if (typeof m.proofReadsBaseline !== 'number') return 'FAIL';
   if (typeof m.proofReadsFinal !== 'number') return 'FAIL';
   if (typeof m.tipHeightFinal !== 'number') return 'FAIL';
@@ -737,12 +741,14 @@ export function verdictS8Gap(m) {
   if (m.proofReadsFinal !== m.proofReadsBaseline) return 'FAIL';
   if (Math.abs(m.pub1HeightFinal - m.tipHeightFinal) > 2) return 'FAIL';
   let gossipFound = false;
-  for (let i = 1; i < m.tipHist.length; i += 1) {
+  for (let i = 0; i < m.tipHist.length; i += 1) {
     const curr = m.tipHist[i];
     if (curr === null || typeof curr !== 'object') return 'FAIL';
     if (typeof curr.atMs !== 'number' || typeof curr.checks !== 'number' || typeof curr.height !== 'number') return 'FAIL';
     if (curr.atMs < m.liftAtMs) continue;
-    const prev = m.tipHist[i - 1];
+    const prev = i === 0
+      ? { height: m.baseline.height, checks: m.baseline.checks }
+      : m.tipHist[i - 1];
     if (prev === null || typeof prev !== 'object') return 'FAIL';
     if (typeof prev.checks !== 'number' || typeof prev.height !== 'number') return 'FAIL';
     if (curr.checks === prev.checks && curr.height > prev.height) {

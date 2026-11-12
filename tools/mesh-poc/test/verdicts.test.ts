@@ -1275,6 +1275,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // the lift never satisfies it).
   const PASS = {
     liftAtMs: 20_000,
+    baseline: { height: 99, checks: 1 },
     tipHist: [
       { height: 100, atMs: 1_000, checks: 1, proofReads: 6, gossipBytes: 40 },
       { height: 105, atMs: 25_000, checks: 2, proofReads: 6, gossipBytes: 40 },
@@ -1374,6 +1375,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('a gossip extension rises at an unchanged `checks` after the lift → PASS (new rule)', () => {
     const m = {
       liftAtMs: 20_000,
+      baseline: { height: 99, checks: 1 },
       tipHist: [
         { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
         { height: 105, atMs: 25_000, checks: 2, proofReads: 5, gossipBytes: 50 },
@@ -1409,6 +1411,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('run2 recorded sequence: cut, lift, one catch-up check with no gossip between → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 1_794_482_160_000,
+      baseline: { height: 789, checks: 1 },
       tipHist: [
         { height: 790, atMs: 1_794_482_137_035, checks: 1, proofReads: 0, gossipBytes: 0 },
         { height: 791, atMs: 1_794_482_138_035, checks: 1, proofReads: 0, gossipBytes: 0 },
@@ -1450,6 +1453,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('s8.json recorded sequence: cut, lift, two catch-up checks with no gossip between → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 1_794_446_980_000,
+      baseline: { height: 1116, checks: 1 },
       tipHist: [
         { height: 1117, atMs: 1_794_446_953_070, checks: 1, proofReads: 0, gossipBytes: 0 },
         { height: 1118, atMs: 1_794_446_956_270, checks: 1, proofReads: 0, gossipBytes: 0 },
@@ -1477,6 +1481,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('a gossip extension lives in tipHist but before the lift → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
+      baseline: { height: 99, checks: 1 },
       tipHist: [
         { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
         { height: 101, atMs: 2_000, checks: 1, proofReads: 5, gossipBytes: 100 },
@@ -1498,6 +1503,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('every rise after the lift moved `checks` → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
+      baseline: { height: 99, checks: 1 },
       tipHist: [
         { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
         { height: 105, atMs: 15_000, checks: 2, proofReads: 5, gossipBytes: 50 },
@@ -1520,6 +1526,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   it('`proofReads` moved across the step → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
+      baseline: { height: 99, checks: 1 },
       tipHist: [
         { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
         { height: 105, atMs: 15_000, checks: 2, proofReads: 6, gossipBytes: 150 },
@@ -1543,7 +1550,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // leaves `tipHist[0]` uncompared, and FAILs the step; the last
   // assertion asks for PASS:
   //   AssertionError: expected 'FAIL' to be 'PASS'
-  it.fails('tipHist[0] is the post-lift gossip extension at the base\'s `checks` → PASS (new rule)', () => {
+  it('tipHist[0] is the post-lift gossip extension at the base\'s `checks` → PASS (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
       baseline: { height: 100, checks: 1 },
@@ -1562,5 +1569,11 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
     expect(m.tipHist[0]!.checks).toBe(m.baseline.checks);
     // Last: the verdict is PASS — the gossip clause fires against the base.
     expect(verdictS8Gap(m)).toBe('PASS');
+  });
+
+  it('baseline missing → FAIL, never PASS', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['baseline'];
+    expect(verdictS8Gap(m)).toBe('FAIL');
   });
 });
