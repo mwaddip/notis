@@ -485,12 +485,13 @@ The mesh holds when every step of the eight scenarios passes on what it measured
    tip on the client's chain; a block mined on a node reaches the browser by gossip and moves the
    client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
    its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
-   browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read, and gossip
-   extends it after: a block whose parent is the client's tip reaches it by gossip with no check between (→ Block
-   gossip → "A peer's gossip follows its newest connection").
+   browser cut off from every mesh node for three blocks and let back on new connections alone — every flow it held at
+   the cut stays dropped both ways, as for a reader whose network changed, which the nodes never hear close — its tip
+   catches up by headers with no proof read, and gossip extends it after: a block whose parent is the client's tip
+   reaches it by gossip with no check between (→ Block gossip → "A peer's gossip follows its newest connection").
 
-   > ⚠ **AHEAD OF CODE (2026-11-12).** The stage's s8 step 4 ends at the first tip change after any jump of three or
-   > more, before the cut or after it, whatever moved either, so a check that moves the tip passes it.
+   > ⚠ **AHEAD OF CODE (2026-11-12).** The stage's s8 step 4 lifts its cut whole: a flow the browser held at the cut
+   > carries again after the lift, and its close can reach a node before the browser's new connection does.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.
