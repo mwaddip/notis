@@ -38,11 +38,10 @@ describe("@dagsocial/net/browser builds without reaching a Node built-in", () =>
     }
   });
 
-  // NET_INTERFACE → The browser entry → "a serving reader's answer":
-  // `SYNC_PROTOCOL`, `PostTextProvider`, `answerPostTextsRequest`,
-  // `postTextsHandler` and `SERVING_READER_CAPABILITIES` reach the
-  // browser through `@dagsocial/net/browser`, beside
-  // `MAX_MODIFIER_REQUEST_FRAME_BYTES`.
+  // NET_INTERFACE → The browser entry — `SYNC_PROTOCOL`,
+  // `PostTextProvider`, `answerPostTextsRequest`, `postTextsHandler` and
+  // `SERVING_READER_CAPABILITIES` reach the browser through
+  // `@dagsocial/net/browser`, beside `MAX_MODIFIER_REQUEST_FRAME_BYTES`.
   it('exports the serving reader names', () => {
     const ns = browserEntry as unknown as Record<string, unknown>;
     expect({
