@@ -17,6 +17,7 @@ export {
   gossipTopics,
   gossipMessageId,
   GOSSIP_SEEN_WINDOW_MS,
+  GOSSIP_IP_COLOCATION_WEIGHT,
 } from './gossip.js';
 export type { GossipTopics } from './gossip.js';
 export {

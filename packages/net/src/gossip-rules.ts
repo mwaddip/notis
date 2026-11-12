@@ -38,6 +38,14 @@ export function gossipTopics(magic: number): GossipTopics {
 export const GOSSIP_SEEN_WINDOW_MS = 120_000;
 
 /**
+ * MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's
+ * defaults, and a shared address costs a peer nothing". The weight
+ * `gossipsubOptions` hands gossipsub for its IP colocation factor;
+ * `CONSTANTS → net`.
+ */
+export const GOSSIP_IP_COLOCATION_WEIGHT = 0;
+
+/**
  * NET_INTERFACE → Gossip Topics → "A message is named by its bytes" —
  * `hash32(lpUtf8(topic) ‖ data)` for a message this node publishes as for
  * one it receives.
@@ -73,6 +81,7 @@ export interface GossipsubOptions {
   allowPublishToZeroTopicPeers: boolean;
   asyncValidation: boolean;
   fallbackToFloodsub: boolean;
+  scoreParams?: { IPColocationFactorWeight: number };
 }
 
 export function gossipsubOptions(

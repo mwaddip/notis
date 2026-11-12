@@ -47,6 +47,7 @@ export interface Libp2pGossip {
 // still finds them at this module's name.
 export {
   GOSSIP_SEEN_WINDOW_MS,
+  GOSSIP_IP_COLOCATION_WEIGHT,
   gossipMessageId,
   gossipTopics,
 } from './gossip-rules.js';

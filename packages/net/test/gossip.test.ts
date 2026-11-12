@@ -51,6 +51,7 @@ import {
   gossipMessageId,
   GOSSIP_SEEN_WINDOW_MS,
 } from '../src/gossip.js';
+import { gossipsubOptions, GOSSIP_IP_COLOCATION_WEIGHT } from '../src/gossip-rules.js';
 import type { Libp2pGossip } from '../src/gossip.js';
 import { PeerManager } from '../src/peer-mgr.js';
 import { PenaltyKind } from '../src/types.js';
@@ -1310,6 +1311,32 @@ describe('gossipMessageId — hash32(lpUtf8(topic) ‖ data)', () => {
     const id = gossipMessageId(topics.orderingBlock, new Uint8Array([0]));
     expect(id).toBeInstanceOf(Uint8Array);
     expect(id.length).toBe(32);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gossipsubOptions carries one score parameter — MESH_INTERFACE → Block gossip
+// → "A router scores its peers by gossipsub's defaults, and a shared address
+// costs a peer nothing". The options object a gossipsub router is built from
+// names `IPColocationFactorWeight` alone; gossipsub's `createPeerScoreParams`
+// merges it with its defaults, so every other score parameter stays the
+// default — and `createPeerScoreThresholds` keeps every threshold's default
+// since the options name no `scoreThresholds` at all.
+// ---------------------------------------------------------------------------
+
+describe('gossipsubOptions carries one score parameter', () => {
+  // Last assertion's failure, paste:
+  //   AssertionError: expected undefined to deeply equal { IPColocationFactorWeight: +0 }
+  //   ❯ test/gossip.test.ts > gossipsubOptions sets one score parameter, the colocation weight
+  //       expect(opts.scoreParams).toEqual({
+  it.fails('gossipsubOptions sets one score parameter, the colocation weight', () => {
+    const t = gossipTopics(MAGIC_TESTNET);
+    const opts = gossipsubOptions(MAGIC_TESTNET, [t.orderingBlock, t.tx]);
+    expect(opts.scoreParams).toEqual({
+      IPColocationFactorWeight: GOSSIP_IP_COLOCATION_WEIGHT,
+    });
+    expect(GOSSIP_IP_COLOCATION_WEIGHT).toBe(0);
+    expect('scoreThresholds' in opts).toBe(false);
   });
 });
 
