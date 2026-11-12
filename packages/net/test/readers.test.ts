@@ -752,9 +752,7 @@ describe('NET_INTERFACE → Readers', () => {
     expect(readerStreams.count()).toBe(0);
   }, TIMEOUT);
 
-  // Last assertion against the current tree:
-  //   AssertionError: expected [] to deeply equal [ Array(1) ]
-  it.fails('getServingReaders lists a serving reader alone', async () => {
+  it('getServingReaders lists a serving reader alone', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
