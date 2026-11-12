@@ -3,9 +3,13 @@
 // chain; a block mined on a node reaches the browser by gossip and
 // moves the client's tip before its next check; a node on another
 // chain … has its proof read when its tip moves, with the client's
-// own, and the client's tip stays the honest chain's; the browser's
-// gossip cut for three blocks and restored, its tip catches up by
-// headers with no proof read."
+// own, and the client's tip stays the honest chain's; the browser
+// cut off from every mesh node for three blocks and let back on new
+// connections alone — every flow it held at the cut stays dropped
+// both ways, as for a reader whose network changed, which the nodes
+// never hear close — its tip catches up by headers with no proof
+// read, and gossip extends it after: a block whose parent is the
+// client's tip reaches it by gossip with no check between …"
 //
 // Four sub-steps, in order:
 //   1. No proof after the first — stage default + a step-scoped
@@ -58,31 +62,40 @@
 //      paired with the client's. `verdictS8Fork`: PASS when lagging
 //      reads `behind`, the client's tip hash equals pub1's node's
 //      block hash at that height, and the delta is exactly two.
-//   4. A gap filled by headers — stage default plus a step-scoped
-//      hostile firewall from the browser to every hostile host
-//      (same rule as step 1, a `FaultLog` fault, removed in `finally`).
-//      The hostile firewall keeps the gap-fill measurement honest:
-//      without it the client's DHT walk reaches each hostile mesh
-//      node and its proof is read at a check — one proof read per
-//      hostile host, which would mask the fill. Beside the hostile
-//      firewall, the gap cut: firewall the browser from every mesh
-//      node until pub1's node is three blocks past the client's tip
-//      at the moment the cut landed; remove the cut; wait for the
-//      tracker to signal a fill followed by one more gossip-paced
-//      tip change. The cut is short — gossip moves the tip one
-//      block at a time, so the cut ends before any check sees it.
-//      The tracker ends at the first one-block tip change AFTER its
-//      first jump of three or more (the fill, then gossip extending
-//      the tip it reached — the client is at the head), recording
-//      `proofReads` and the tip at that one-block-after point; the
-//      scenario then reads pub1. `verdictS8Gap`: PASS when
-//      `proofReads` did not move, the fill `jump` was three or more,
-//      and the tip is within two of pub1's read. The step keeps one
-//      page open through a non-blocking spawn of `cdp.mjs poll`; a
-//      fresh page's first check reads a proof, which would mask the
-//      "no proof" conclusion. The pure `s8GapObserve` carries the
-//      state transition; `buildS8GapExpression` inlines it so the
-//      live tracker and the Node tests run the same logic.
+//   4. A gap filled by headers and gossip extending it after — the
+//      browser cut off from every mesh node for three blocks and let
+//      back on new connections alone, as for a reader whose network
+//      changed. A step-scoped hostile firewall from the browser to
+//      every hostile host (same rule as step 1, a `FaultLog` fault,
+//      removed in `finally`) keeps the measurement honest: without
+//      it the client's DHT walk reaches each hostile mesh node and
+//      its proof is read at a check — one proof read per hostile
+//      host, which would mask the gossip clause. Before the tracker
+//      page spawns the held-flows table marks each flow the browser
+//      opens to a mesh node (`ct mark set 0x1` in its output chain),
+//      so every conntrack entry held at the cut carries the mark.
+//      The cut: apply the gap drops from the browser to every mesh
+//      host AND flush the held-flows out chain so flows dialled
+//      during the cut leave their entries unmarked. The lift: add
+//      the drop-marked rules — `ct mark 0x1 drop` on an out and an
+//      in chain, both ways — before removing the gap drops, so the
+//      held flows never flow again; record `liftAtMs` = Date.now()
+//      right after. The tracker ends once its sampled `checks` has
+//      advanced three past the baseline — one check interval past
+//      the worst-case lift. `verdictS8Gap`: PASS when `proofReads`
+//      did not move across the step, the final tip is within two
+//      of pub1's read, AND a record in tipHist whose atMs is at or
+//      after `liftAtMs` rises with `checks` equal to the record
+//      before it — a tip that moved with no check between, which
+//      is a gossip extension (MESH_INTERFACE → The client's node
+//      list; a record before the lift never satisfies the clause).
+//      The baseline is the record before `tipHist[0]`. The step
+//      keeps one page open through a non-blocking spawn of
+//      `cdp.mjs poll`; a fresh page's first check reads a proof,
+//      which would mask the "no proof" conclusion. The pure
+//      `s8GapObserve` carries the state transition;
+//      `buildS8GapExpression` inlines it so the live tracker and the
+//      Node tests run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -106,8 +119,9 @@ const POLL_MS = 500;
 const LONG_WAIT_MS = 240_000;
 // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page while the
 // client's own namespace black-holes every hostile host. A dropped
-// packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, from
-// `packages/web/src/mesh/protocols.ts`) per hostile dial until the retry back-off takes
+// packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s;
+// MESH_INTERFACE → The client's node list — the constants table at
+// the section's end) per hostile dial until the retry back-off takes
 // those nodes out of the candidates. A check runs one dial deadline
 // per candidate; step 1's five completed checks past settlement, and
 // step 4's 20 s warmup, up-to-120 s of pub1 advancement and ~3 min of
@@ -118,13 +132,14 @@ export const BLACK_HOLE_WAIT_MS = 600_000;
 const GAP_TABLE = 's8_gap';
 const STEP1_HOSTILE_TABLE = 's8_step1_hostile';
 const STEP4_HOSTILE_TABLE = 's8_step4_hostile';
+const HELD_FLOWS_TABLE = 's8_held_flows';
 
 export function describe() {
   return [
     'no proof read across five completed checks on the stage default',
     'three new blocks reach the browser by gossip within 5 s each',
     'the lagging fork reads behind, client tip stays on pub1\'s chain, exactly two proofs that check',
-    'the browser\'s gossip cut for three blocks and restored: tip catches up by headers, no proof read',
+    'the browser cut off from every mesh node for three blocks and let back on new connections alone, its held flows dropped both ways: tip catches up by headers with no proof read, gossip extends it after',
   ];
 }
 
@@ -168,11 +183,14 @@ export function s8Step4HostileFirewallArgs(topology) {
   return hostileFirewallArgs(topology, STEP4_HOSTILE_TABLE);
 }
 
-// MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for
-// three blocks and restored". The gap firewall drops output from the
-// browser namespace to every mesh host's address (every host whose
-// topology config carries `mesh`), so the client's existing links
-// break and new dials fail until the firewall is removed.
+// MESH_INTERFACE → Acceptance 8 — "the browser cut off from every
+// mesh node for three blocks and let back on new connections alone".
+// The gap firewall drops output from the browser namespace to every
+// mesh host's address (every host whose topology config carries
+// `mesh`), so the client's existing links break and new dials fail
+// until the firewall is removed; the held-flows table carries the
+// mark and the drop-marked rules that keep a held flow dropped past
+// the lift (→ `s8HeldFlowsMarkArgs`).
 export function s8GapFirewallArgs(topology) {
   const ns = 'notismesh-browser';
   const meshHosts = [];
@@ -189,6 +207,50 @@ export function s8GapFirewallArgs(topology) {
   }));
   const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', GAP_TABLE];
   return { addTable, addChain, drops, deleteTable };
+}
+
+// MESH_INTERFACE → Acceptance 8 — "the browser cut off from every
+// mesh node for three blocks and let back on new connections alone —
+// every flow it held at the cut stays dropped both ways, as for a
+// reader whose network changed, which the nodes never hear close".
+// The held-flows table is installed before the tracker page spawns:
+// its output chain runs `ct mark set 0x1` on each flow the browser
+// opens to a mesh node, so every conntrack entry held at the cut
+// carries the mark. At the cut the marking rules are flushed (so a
+// flow dialled during the cut leaves its entry unmarked) and the
+// gap drops go in; at the lift the drops are swapped for rules
+// dropping `ct mark 0x1` on the out and in chains, both ways, and
+// the gap drops are removed. A flow created during the cut is
+// unmarked and its packets pass after the lift.
+export function s8HeldFlowsMarkArgs(topology) {
+  const ns = 'notismesh-browser';
+  const meshHosts = [];
+  for (const [host, hostConfig] of Object.entries(topology.hosts)) {
+    if (hostConfig?.mesh === undefined) continue;
+    if (typeof hostConfig.addr !== 'string') continue;
+    meshHosts.push({ name: host, addr: hostConfig.addr });
+  }
+  const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', HELD_FLOWS_TABLE];
+  const addOutChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', HELD_FLOWS_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
+  const marks = meshHosts.map(({ name, addr }) => ({
+    name,
+    argv: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', HELD_FLOWS_TABLE, 'out', 'ip', 'daddr', addr, 'ct', 'mark', 'set', '0x1'],
+  }));
+  const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', HELD_FLOWS_TABLE];
+  return { addTable, addOutChain, marks, deleteTable };
+}
+
+export function s8HeldFlowsStopMarkingArgs() {
+  const ns = 'notismesh-browser';
+  return ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'flush', 'chain', 'ip', HELD_FLOWS_TABLE, 'out'];
+}
+
+export function s8HeldFlowsDropArgs() {
+  const ns = 'notismesh-browser';
+  const addInChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', HELD_FLOWS_TABLE, 'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}'];
+  const dropOut = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', HELD_FLOWS_TABLE, 'out', 'ct', 'mark', '0x1', 'drop'];
+  const dropIn = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', HELD_FLOWS_TABLE, 'in', 'ct', 'mark', '0x1', 'drop'];
+  return { addInChain, dropOut, dropIn };
 }
 
 export function applyFaults(log, topology) {
@@ -215,6 +277,17 @@ export function applyFaults(log, topology) {
   for (const { name, argv } of f.drops) {
     log.apply(`browser-gap-drop-${name}`, argv, null);
   }
+  const held = s8HeldFlowsMarkArgs(topology);
+  log.apply('browser-held-flows-add-table', held.addTable, held.deleteTable);
+  log.apply('browser-held-flows-add-out-chain', held.addOutChain, null);
+  for (const { name, argv } of held.marks) {
+    log.apply(`browser-held-flows-mark-${name}`, argv, null);
+  }
+  log.apply('browser-held-flows-stop-marking', s8HeldFlowsStopMarkingArgs(), null);
+  const drop = s8HeldFlowsDropArgs();
+  log.apply('browser-held-flows-add-in-chain', drop.addInChain, null);
+  log.apply('browser-held-flows-drop-out-marked', drop.dropOut, null);
+  log.apply('browser-held-flows-drop-in-marked', drop.dropIn, null);
 }
 
 // MESH_INTERFACE → Acceptance 8 — step 2 reads `#state` through a page
@@ -510,66 +583,74 @@ export function buildS8ForkExpression(laggingId) {
 export const S8_FORK_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
 
-// MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a baseline
-// on the first completed check, then waits for a fill (a tip change
-// of three or more blocks at once, since gossip moves the tip one
-// block at a time) followed by one more tip change (the client is at
-// the head: gossip extends past the fill as pub1 keeps mining).
-// `final` is captured at that one-block-after-fill point, so the
-// measurement reads `proofReads` and `tipHeight` at the head — not at
-// the moment the fill landed, when pub1 is still ahead by the chain's
-// own pace. `jump` keeps the fill's size (`verdictS8Gap` reads
-// `jump >= 3`); `fillJump` is the intermediate the state carries
-// between the fill and the next tip change.
+// MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a
+// baseline on the first completed check, records every tip change
+// after it in `tipHist`, and ends once the sampled `checks` has
+// advanced three past the baseline — one check interval past the
+// worst-case lift, so a gossip extension at the catch-up `checks` has
+// a chance to land before the final state. Each tipHist entry carries
+// height, atMs, checks, `traffic.proofReads` and `traffic.gossipBytes`
+// so the Node-side verdict reads the gossip clause from records after
+// `liftAtMs`: "a block whose parent is the client's tip reaches it by
+// gossip with no check between" (MESH_INTERFACE → The client's node
+// list — the client moves its tip by extending it with a gossiped
+// block whose parent is its tip, which runs no check, or by a check,
+// which counts; a gossiped block whose parent is held below the tip
+// or not at all runs a check at once).
 //
 // `s8GapObserve` is pure (no DOM, no `window` access; the wall clock
 // is `nowMs`, read once per call by the caller) so the Node suite
 // drives it with a sequence of simulated `#state` snapshots and
-// reads the resulting state's `tipHist` and `final` fields.
+// reads the resulting state's `tipHist`, `base` and `final` fields.
 // `tipHist` records every tip change past the baseline — height,
-// atMs, checks, proofReads — so a run shows the whole sequence,
-// including a tip that goes back.
+// atMs, checks, proofReads, gossipBytes — so a run shows the whole
+// sequence, including a tip that goes back.
 export function s8GapObserve(prev, s, nowMs) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
   if (s.traffic === null || typeof s.traffic !== 'object') return prev;
   if (typeof s.traffic.proofReads !== 'number') return prev;
+  if (typeof s.traffic.gossipBytes !== 'number') return prev;
   if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
   if (typeof nowMs !== 'number') return prev;
   var next = prev === null || typeof prev !== 'object'
-    ? { base: null, lastTipHeight: null, fillJump: null, tipHist: [], final: null }
+    ? { base: null, lastTipHeight: null, tipHist: [], final: null }
     : {
         base: prev.base,
         lastTipHeight: prev.lastTipHeight,
-        fillJump: prev.fillJump,
         tipHist: Array.isArray(prev.tipHist) ? prev.tipHist.slice() : [],
         final: prev.final,
       };
   if (next.base === null && s.checks >= 1) {
-    next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
+    next.base = {
+      tipHeight: s.tip.height,
+      proofReads: s.traffic.proofReads,
+      checks: s.checks,
+      gossipBytes: s.traffic.gossipBytes,
+    };
     next.lastTipHeight = s.tip.height;
     return next;
   }
   if (next.base === null) return next;
   if (next.final !== null) return next;
-  if (s.tip.height === next.lastTipHeight) return next;
-  var jump = s.tip.height - next.lastTipHeight;
-  next.lastTipHeight = s.tip.height;
-  next.tipHist.push({
-    height: s.tip.height,
-    atMs: nowMs,
-    checks: s.checks,
-    proofReads: s.traffic.proofReads,
-  });
-  if (next.fillJump === null) {
-    // Phase A: waiting for the fill — a tip change of three or more
-    // at once names the headers-driven catch-up.
-    if (jump >= 3) next.fillJump = jump;
-    return next;
+  if (s.tip.height !== next.lastTipHeight) {
+    next.lastTipHeight = s.tip.height;
+    next.tipHist.push({
+      height: s.tip.height,
+      atMs: nowMs,
+      checks: s.checks,
+      proofReads: s.traffic.proofReads,
+      gossipBytes: s.traffic.gossipBytes,
+    });
   }
-  // Phase B: fill reached, waiting for one more tip change — gossip
-  // extending the tip past the fill. The client is at the head.
-  next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads, jump: next.fillJump };
+  if (s.checks >= next.base.checks + 3) {
+    next.final = {
+      tipHeight: s.tip.height,
+      proofReads: s.traffic.proofReads,
+      checks: s.checks,
+      gossipBytes: s.traffic.gossipBytes,
+    };
+  }
   return next;
 }
 
@@ -788,6 +869,18 @@ export async function run(ctx) {
       for (const { name, argv } of hostileArgs.drops) {
         log.apply(`browser-step4-hostile-drop-${name}`, argv, null);
       }
+      // MESH_INTERFACE → Acceptance 8 — the held-flows table marks
+      // each flow the browser opens to a mesh node (`ct mark set
+      // 0x1` in its output chain). Installed BEFORE the tracker
+      // page spawns, so every conntrack entry held at the cut
+      // carries the mark. The table deletion cascades on the
+      // scenario's `removeAll` teardown.
+      const heldArgs = s8HeldFlowsMarkArgs(ctx.topology);
+      log.apply('browser-held-flows-add-table', heldArgs.addTable, heldArgs.deleteTable);
+      log.apply('browser-held-flows-add-out-chain', heldArgs.addOutChain, null);
+      for (const { name, argv } of heldArgs.marks) {
+        log.apply(`browser-held-flows-mark-${name}`, argv, null);
+      }
       // Spawn cdp.mjs poll non-blocking: the stage's execIn uses
       // execFileSync, so a plain cdpPoll would freeze the main event
       // loop and block the firewall apply/remove calls. A spawn lets
@@ -804,16 +897,22 @@ export async function run(ctx) {
         // reading pub1 and applying the firewall.
         await sleep(20_000);
         const pubAtFirewall = readPub1Height(ctx, pub1Port);
-        // Apply the firewall (log.apply records removal argvs for the
-        // scenario's `finally`, so a step throw after this still
-        // undoes it). The firewall drops output to every mesh host,
-        // so the client's tip stops advancing from here on.
+        // Apply the gap firewall (log.apply records removal argvs
+        // for the scenario's `finally`, so a step throw after this
+        // still undoes it). The firewall drops output to every mesh
+        // host, so the client's tip stops advancing from here on.
         log.apply('browser-gap-add-table', gapArgs.addTable, gapArgs.deleteTable);
         gapFirewallApplied = true;
         log.apply('browser-gap-add-chain', gapArgs.addChain, null);
         for (const { name, argv } of gapArgs.drops) {
           log.apply(`browser-gap-drop-${name}`, argv, null);
         }
+        // Stop marking: flush the held-flows out chain so a flow
+        // dialled during the cut leaves its conntrack entry
+        // unmarked. The gap drops block its packets during the cut
+        // either way; after the lift, its entry is unmarked and
+        // the drop-marked rules do not match it.
+        log.apply('browser-held-flows-stop-marking', s8HeldFlowsStopMarkingArgs(), null);
         // Wait until pub1 has advanced three blocks past its own
         // tip at firewall moment — pub1 ≥ pubAtFirewall + 3. Blocks
         // propagate from pub1 fast, so the client's tip at the firewall
@@ -837,12 +936,25 @@ export async function run(ctx) {
             || pubAtRemoval < pubAtFirewall + 3) {
           throw new Error(`s8 step 4: pub1 did not advance 3 blocks within 120 s (${pubAtFirewall} → ${pubAtRemoval})`);
         }
-        // Remove the firewall; the client's retry cadence reconnects
-        // to the mesh and fills by headers.
+        // Drop the held flows for good: add the input chain and the
+        // drop-marked rules on out and in before removing the gap
+        // drops, so a packet of a held flow has no window where it
+        // flows. The client's retry cadence opens new connections —
+        // unmarked — and the tip fills by headers.
+        const dropArgs = s8HeldFlowsDropArgs();
+        log.apply('browser-held-flows-add-in-chain', dropArgs.addInChain, null);
+        log.apply('browser-held-flows-drop-out-marked', dropArgs.dropOut, null);
+        log.apply('browser-held-flows-drop-in-marked', dropArgs.dropIn, null);
+        // The scenario's wall clock and the page's are this
+        // machine's — the lift's `Date.now()` is read on the same
+        // clock as each tipHist entry's `atMs`, so the verdict's
+        // `atMs >= liftAtMs` comparison stands.
         log.remove('browser-gap-add-table');
         gapFirewallApplied = false;
-        // Wait for the tracker to signal a fill (a tip change of ≥ 3
-        // at once past its baseline), capped at 3 minutes.
+        const liftAtMs = Date.now();
+        // Wait for the tracker to pass one check interval after the
+        // cut lifted — the observer ends once `checks` has advanced
+        // three past the baseline (MESH_INTERFACE → Acceptance 8).
         const value = await tracker.promise;
         const r = parseTrackerValue(value);
         if (r === null) {
@@ -855,15 +967,15 @@ export async function run(ctx) {
         }
         const pub1HeightFinal = readPub1Height(ctx, pub1Port);
         const m = {
-          proofReadsBefore: r.base.proofReads,
-          proofReadsAfter: r.final.proofReads,
-          tipHeightBefore: r.base.tipHeight,
+          liftAtMs,
+          baseline: { height: r.base.tipHeight, checks: r.base.checks },
+          tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
+          proofReadsBaseline: r.base.proofReads,
+          proofReadsFinal: r.final.proofReads,
           tipHeightFinal: r.final.tipHeight,
-          jump: r.final.jump,
           pub1HeightFinal,
           pubAtFirewall,
           pubAtRemoval,
-          tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
         };
         return { verdict: verdictS8Gap(m), measurement: m };
       } finally {

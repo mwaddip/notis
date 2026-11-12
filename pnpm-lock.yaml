@@ -10,6 +10,9 @@ overrides:
   proxy-addr@<2.0.8: ^2.0.8
 
 patchedDependencies:
+  '@libp2p/gossipsub@17.2.1':
+    hash: f820b530888f3a4d0f2c4dda371b7a34bebbb4de3aef00ca7fd29fe8911be398
+    path: patches/@libp2p__gossipsub@17.2.1.patch
   '@libp2p/http-fetch@4.0.4':
     hash: 8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41
     path: patches/@libp2p__http-fetch@4.0.4.patch
@@ -99,7 +102,7 @@ importers:
         version: 3.0.32
       '@libp2p/gossipsub':
         specifier: 17.2.1
-        version: 17.2.1
+        version: 17.2.1(patch_hash=f820b530888f3a4d0f2c4dda371b7a34bebbb4de3aef00ca7fd29fe8911be398)
       '@libp2p/http':
         specifier: 2.0.6
         version: 2.0.6
@@ -366,7 +369,7 @@ importers:
         version: link:../validation
       '@libp2p/gossipsub':
         specifier: 17.2.1
-        version: 17.2.1
+        version: 17.2.1(patch_hash=f820b530888f3a4d0f2c4dda371b7a34bebbb4de3aef00ca7fd29fe8911be398)
       '@libp2p/interface':
         specifier: 3.4.0
         version: 3.4.0
@@ -519,7 +522,7 @@ importers:
         version: 5.2.0
       '@libp2p/gossipsub':
         specifier: 17.2.1
-        version: 17.2.1
+        version: 17.2.1(patch_hash=f820b530888f3a4d0f2c4dda371b7a34bebbb4de3aef00ca7fd29fe8911be398)
       '@libp2p/http-fetch':
         specifier: 4.0.4
         version: 4.0.4(patch_hash=8dc5c1cd5c95e76add4403182d5380b8e420604f266a1b47677c92348078da41)
@@ -4195,7 +4198,7 @@ snapshots:
       protons-runtime: 7.0.0
       uint8arraylist: 3.0.2
 
-  '@libp2p/gossipsub@17.2.1':
+  '@libp2p/gossipsub@17.2.1(patch_hash=f820b530888f3a4d0f2c4dda371b7a34bebbb4de3aef00ca7fd29fe8911be398)':
     dependencies:
       '@libp2p/crypto': 5.2.0
       '@libp2p/interface': 3.4.0

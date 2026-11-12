@@ -19,6 +19,18 @@ export declare function s8GapFirewallArgs(topology: unknown): {
   drops: Array<{ name: string; argv: string[] }>;
   deleteTable: string[];
 };
+export declare function s8HeldFlowsMarkArgs(topology: unknown): {
+  addTable: string[];
+  addOutChain: string[];
+  marks: Array<{ name: string; argv: string[] }>;
+  deleteTable: string[];
+};
+export declare function s8HeldFlowsStopMarkingArgs(): string[];
+export declare function s8HeldFlowsDropArgs(): {
+  addInChain: string[];
+  dropOut: string[];
+  dropIn: string[];
+};
 export declare function applyFaults(log: unknown, topology: unknown): void;
 export declare const S8_GOSSIP_EXPR: string;
 export declare const S8_GOSSIP_PREDICATE: string;
@@ -47,11 +59,10 @@ export declare function buildS8ForkExpression(laggingId: string): string;
 export declare const S8_FORK_PREDICATE: string;
 export declare function buildS8GapExpression(): string;
 export declare function s8GapObserve(prev: unknown, s: unknown, nowMs: number): {
-  base: null | { tipHeight: number; proofReads: number };
+  base: null | { tipHeight: number; proofReads: number; checks: number; gossipBytes: number };
   lastTipHeight: null | number;
-  fillJump: null | number;
-  tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number }>;
-  final: null | { tipHeight: number; proofReads: number; jump: number };
+  tipHist: Array<{ height: number; atMs: number; checks: number; proofReads: number; gossipBytes: number }>;
+  final: null | { tipHeight: number; proofReads: number; checks: number; gossipBytes: number };
 };
 export declare const S8_GAP_PREDICATE: string;
 export declare function run(ctx: { dryRun: boolean; topology: unknown; [k: string]: unknown }): Promise<{
