@@ -1,22 +1,34 @@
 diff --git a/dist/src/gossipsub.js b/dist/src/gossipsub.js
-index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4289b0c4d 100644
+index a341a31acbd8bee8fa49754d4e08c186578d4deb..885198faf7b3cf4cfadd0d8d2f6d9e3973eb6e45 100644
 --- a/dist/src/gossipsub.js
 +++ b/dist/src/gossipsub.js
-@@ -41,6 +41,13 @@ export class GossipSub extends TypedEventEmitter {
+@@ -41,6 +41,14 @@ export class GossipSub extends TypedEventEmitter {
      peers = new Map();
      streamsInbound = new Map();
      streamsOutbound = new Map();
 +    /**
 +     * MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
 +     * connection". The connection each outbound stream runs on, read by
-+     * `moveOutboundToNewerConnection` to decide whether a newer connection
-+     * carrying the peer's own stream deserves the router's own.
++     * `createOutboundStream` on a call from `onIncomingStream` to decide
++     * whether the newer connection the peer's own stream rides on
++     * deserves the router's own.
 +     */
 +    streamOutboundConnections = new Map();
      /** Ensures outbound streams are created sequentially */
      outboundInflightQueue = pushable({ objectMode: true });
      /** Direct peers */
-@@ -401,6 +408,7 @@ export class GossipSub extends TypedEventEmitter {
+@@ -308,8 +316,8 @@ export class GossipSub extends TypedEventEmitter {
+         // This ensures that outbound stream creation happens sequentially
+         this.outboundInflightQueue = pushable({ objectMode: true });
+         pipe(this.outboundInflightQueue, async (source) => {
+-            for await (const { peerId, connection } of source) {
+-                await this.createOutboundStream(peerId, connection);
++            for await (const { peerId, connection, fromInbound } of source) {
++                await this.createOutboundStream(peerId, connection, fromInbound);
+             }
+         }).catch((e) => { this.log.error('outbound inflight queue error', e); });
+         // set direct peer addresses in the address book
+@@ -401,6 +409,7 @@ export class GossipSub extends TypedEventEmitter {
              closePromises.push(outboundStream.close());
          }
          this.streamsOutbound.clear();
@@ -24,29 +36,85 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
          for (const inboundStream of this.streamsInbound.values()) {
              closePromises.push(inboundStream.close());
          }
-@@ -454,6 +462,10 @@ export class GossipSub extends TypedEventEmitter {
+@@ -454,8 +463,12 @@ export class GossipSub extends TypedEventEmitter {
          this.addPeer(peerId, connection.direction, connection.remoteAddr);
          // create inbound stream
          this.createInboundStream(peerId, stream);
+-        // attempt to create outbound stream
+-        this.outboundInflightQueue.push({ peerId, connection });
 +        // MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
-+        // connection". The inflight queue below opens an outbound where none
-+        // exists; this helper replaces one that runs on an older connection.
-+        void this.moveOutboundToNewerConnection(peerId, connection);
-         // attempt to create outbound stream
-         this.outboundInflightQueue.push({ peerId, connection });
++        // connection". The `fromInbound: true` marker tells the inflight
++        // queue's consumer this call came from a peer's gossip stream;
++        // `createOutboundStream` honours the move onto a newer connection
++        // only for that path.
++        this.outboundInflightQueue.push({ peerId, connection, fromInbound: true });
      }
-@@ -498,6 +510,10 @@ export class GossipSub extends TypedEventEmitter {
+     /**
+      * Registrar notifies an established connection with pubsub protocol
+@@ -477,7 +490,7 @@ export class GossipSub extends TypedEventEmitter {
+         this.log('connection ended %p', peerId);
+         this.removePeer(peerId);
+     }
+-    async createOutboundStream(peerId, connection) {
++    async createOutboundStream(peerId, connection, fromInbound) {
+         if (!this.isStarted()) {
+             return;
+         }
+@@ -487,9 +500,26 @@ export class GossipSub extends TypedEventEmitter {
+         }
+         // TODO make this behavior more robust
+         // This behavior is different than for inbound streams
+-        // If an outbound stream already exists, don't create a new stream
+-        if (this.streamsOutbound.has(id)) {
+-            return;
++        // If an outbound stream already exists, don't create a new stream —
++        // except on a call from `onIncomingStream` whose connection is
++        // strictly newer than the one the existing outbound rides on.
++        // MESH_INTERFACE → Block gossip → "A peer's gossip follows its
++        // newest connection": the router's outbound moves onto the newer
++        // connection, never onto an older or the same one.
++        const existing = this.streamsOutbound.get(id);
++        if (existing !== undefined) {
++            if (fromInbound !== true) {
++                return;
++            }
++            const existingConnection = this.streamOutboundConnections.get(id);
++            if (existingConnection === undefined) {
++                return;
++            }
++            const existingOpen = existingConnection.timeline?.open ?? 0;
++            const newOpen = connection.timeline?.open ?? 0;
++            if (newOpen <= existingOpen) {
++                return;
++            }
+         }
+         try {
+             const rawStream = await connection.newStream(this.protocols, {
+@@ -497,7 +527,23 @@ export class GossipSub extends TypedEventEmitter {
+             });
              const stream = new OutboundStream(rawStream, (e) => { this.log.error('outbound pipe error', e); }, { maxBufferSize: this.opts.maxOutboundBufferSize });
              this.log('create outbound stream %p', peerId);
++            // Account for the replaced outbound before overwriting the
++            // map: the old stream's close listener's guard
++            // (`streamsOutbound.get(id) === stream`) will fire false once
++            // the map is overwritten, so its own -1 / floodsubPeers.delete
++            // never runs.
++            if (existing !== undefined) {
++                const oldProtocol = existing.protocol;
++                this.metrics?.peersPerProtocol.inc({ protocol: oldProtocol }, -1);
++                if (oldProtocol === constants.FloodsubID) {
++                    this.floodsubPeers.delete(id);
++                }
++            }
              this.streamsOutbound.set(id, stream);
 +            // MESH_INTERFACE → Block gossip → "A peer's gossip follows its
 +            // newest connection": record the connection this outbound rides
-+            // on so the move helper can compare `timeline.open` stamps.
++            // on, read on the next `onIncomingStream` call to decide a move.
 +            this.streamOutboundConnections.set(id, connection);
              const protocol = stream.protocol;
              if (protocol === constants.FloodsubID) {
                  this.floodsubPeers.add(id);
-@@ -506,6 +522,7 @@ export class GossipSub extends TypedEventEmitter {
+@@ -506,6 +552,7 @@ export class GossipSub extends TypedEventEmitter {
              rawStream.addEventListener('close', () => {
                  if (this.streamsOutbound.get(id) === stream) {
                      this.streamsOutbound.delete(id);
@@ -54,95 +122,20 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
                      this.floodsubPeers.delete(id);
                      this.metrics?.peersPerProtocol.inc({ protocol }, -1);
                  }
-@@ -520,6 +537,87 @@ export class GossipSub extends TypedEventEmitter {
-             this.log.error('createOutboundStream error', e);
+@@ -515,6 +562,12 @@ export class GossipSub extends TypedEventEmitter {
+                 this.log('send subscriptions to', id);
+                 this.sendSubscriptions(id, Array.from(this.subscriptions), true);
+             }
++            // Close the replaced outbound. Its close listener's guard reads
++            // the map, which now points at the new stream, so it fires and
++            // skips the cleanup already done above.
++            if (existing !== undefined) {
++                existing.close().catch((err) => { this.log.error(err); });
++            }
          }
-     }
-+    /**
-+     * MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
-+     * connection". Called from `onIncomingStream`: if the router's outbound
-+     * to the peer runs on a strictly older connection than the one the
-+     * peer's stream just arrived on, open a new outbound on that newer
-+     * connection, send the router's subscriptions as a new outbound does,
-+     * and close the old. Never moves to an older connection or to the same
-+     * one — only the inbound path moves the stream.
-+     */
-+    async moveOutboundToNewerConnection(peerId, connection) {
-+        if (!this.isStarted()) {
-+            return;
-+        }
-+        const id = peerId.toString();
-+        if (!this.peers.has(id)) {
-+            return;
-+        }
-+        const existing = this.streamsOutbound.get(id);
-+        const existingConnection = this.streamOutboundConnections.get(id);
-+        if (existing === undefined || existingConnection === undefined) {
-+            return;
-+        }
-+        const existingOpen = existingConnection.timeline?.open ?? 0;
-+        const newOpen = connection.timeline?.open ?? 0;
-+        // A's clause — never moves to an older connection or to the same one.
-+        if (newOpen <= existingOpen) {
-+            return;
-+        }
-+        try {
-+            const rawStream = await connection.newStream(this.protocols, {
-+                runOnLimitedConnection: this.runOnLimitedConnection
-+            });
-+            // Re-check after the await: another path may have replaced the
-+            // outbound while the new stream was opening. If so, close the
-+            // stream just made and leave the current one alone.
-+            if (this.streamsOutbound.get(id) !== existing ||
-+                this.streamOutboundConnections.get(id) !== existingConnection) {
-+                await rawStream.close().catch((err) => { this.log.error(err); });
-+                return;
-+            }
-+            const stream = new OutboundStream(rawStream, (e) => { this.log.error('outbound pipe error', e); }, { maxBufferSize: this.opts.maxOutboundBufferSize });
-+            this.log('move outbound stream for %p to newer connection', peerId);
-+            // Decrement the OLD protocol's count here: the old stream's
-+            // close listener's guard (`streamsOutbound.get(id) === stream`)
-+            // will fire false once the map is overwritten, so its own -1
-+            // never runs.
-+            const oldProtocol = existing.protocol;
-+            this.metrics?.peersPerProtocol.inc({ protocol: oldProtocol }, -1);
-+            if (oldProtocol === constants.FloodsubID) {
-+                this.floodsubPeers.delete(id);
-+            }
-+            this.streamsOutbound.set(id, stream);
-+            this.streamOutboundConnections.set(id, connection);
-+            const protocol = stream.protocol;
-+            if (protocol === constants.FloodsubID) {
-+                this.floodsubPeers.add(id);
-+            }
-+            this.metrics?.peersPerProtocol.inc({ protocol }, 1);
-+            rawStream.addEventListener('close', () => {
-+                if (this.streamsOutbound.get(id) === stream) {
-+                    this.streamsOutbound.delete(id);
-+                    this.streamOutboundConnections.delete(id);
-+                    this.floodsubPeers.delete(id);
-+                    this.metrics?.peersPerProtocol.inc({ protocol }, -1);
-+                }
-+            }, { once: true });
-+            // Send the router's subscriptions on the new stream, as a new
-+            // outbound does.
-+            if (this.subscriptions.size > 0) {
-+                this.log('send subscriptions to', id);
-+                this.sendSubscriptions(id, Array.from(this.subscriptions), true);
-+            }
-+            // Close the old outbound. Its close listener's guard reads the
-+            // map, which now points at the new stream, so that listener
-+            // fires and skips.
-+            existing.close().catch((err) => { this.log.error(err); });
-+        }
-+        catch (e) {
-+            this.log.error('moveOutboundToNewerConnection error', e);
-+        }
-+    }
-     createInboundStream(peerId, stream) {
-         if (!this.isStarted()) {
-             return;
-@@ -540,7 +638,7 @@ export class GossipSub extends TypedEventEmitter {
+         catch (e) {
+             this.log.error('createOutboundStream error', e);
+@@ -540,7 +593,7 @@ export class GossipSub extends TypedEventEmitter {
          this.log('create inbound stream %s', id);
          const inboundStream = new InboundStream(stream, { maxDataLength: this.opts.maxInboundDataLength });
          this.streamsInbound.set(id, inboundStream);
@@ -151,7 +144,7 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
      }
      /**
       * Add a peer to the router
-@@ -585,6 +683,7 @@ export class GossipSub extends TypedEventEmitter {
+@@ -585,6 +638,7 @@ export class GossipSub extends TypedEventEmitter {
          inboundStream?.close().catch((err) => { this.log.error(err); });
          // remove streams
          this.streamsOutbound.delete(id);
@@ -159,7 +152,7 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
          this.streamsInbound.delete(id);
          // remove peer from topics map
          for (const [topic, peers] of this.topics) {
-@@ -670,7 +769,7 @@ export class GossipSub extends TypedEventEmitter {
+@@ -670,7 +724,7 @@ export class GossipSub extends TypedEventEmitter {
      /**
       * Responsible for processing each RPC message received by other peers.
       */
@@ -168,7 +161,7 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
          try {
              await pipe(stream, async (source) => {
                  for await (const data of source) {
-@@ -710,15 +809,23 @@ export class GossipSub extends TypedEventEmitter {
+@@ -710,15 +764,23 @@ export class GossipSub extends TypedEventEmitter {
          }
          catch (err) {
              this.metrics?.onPeerReadStreamError();
@@ -195,25 +188,40 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..50bf05bf1eae09d750d1540f4c62a6a4
      }
      /**
 diff --git a/src/gossipsub.ts b/src/gossipsub.ts
-index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611658a0856 100644
+index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..6cea54bff389c3ad37ee61bad2bf785dbe308e2d 100644
 --- a/src/gossipsub.ts
 +++ b/src/gossipsub.ts
-@@ -119,6 +119,14 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -119,8 +119,17 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
    public readonly streamsInbound = new Map<PeerIdStr, InboundStream>()
    public readonly streamsOutbound = new Map<PeerIdStr, OutboundStream>()
  
 +  /**
 +   * MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
 +   * connection". The connection each outbound stream runs on, read by
-+   * `moveOutboundToNewerConnection` to decide whether a newer connection
-+   * carrying the peer's own stream deserves the router's own.
++   * `createOutboundStream` on a call from `onIncomingStream` to decide
++   * whether the newer connection the peer's own stream rides on deserves
++   * the router's own.
 +   */
 +  public readonly streamOutboundConnections = new Map<PeerIdStr, Connection>()
 +
    /** Ensures outbound streams are created sequentially */
-   private outboundInflightQueue = pushable<{ peerId: PeerId, connection: Connection }>({ objectMode: true })
+-  private outboundInflightQueue = pushable<{ peerId: PeerId, connection: Connection }>({ objectMode: true })
++  private outboundInflightQueue = pushable<{ peerId: PeerId, connection: Connection, fromInbound?: boolean }>({ objectMode: true })
  
-@@ -574,6 +582,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+   /** Direct peers */
+   public readonly direct = new Set<PeerIdStr>()
+@@ -457,8 +466,8 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+     // This ensures that outbound stream creation happens sequentially
+     this.outboundInflightQueue = pushable({ objectMode: true })
+     pipe(this.outboundInflightQueue, async (source) => {
+-      for await (const { peerId, connection } of source) {
+-        await this.createOutboundStream(peerId, connection)
++      for await (const { peerId, connection, fromInbound } of source) {
++        await this.createOutboundStream(peerId, connection, fromInbound)
+       }
+     }).catch((e) => { this.log.error('outbound inflight queue error', e) })
+ 
+@@ -574,6 +583,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
        closePromises.push(outboundStream.close())
      }
      this.streamsOutbound.clear()
@@ -221,29 +229,86 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
  
      for (const inboundStream of this.streamsInbound.values()) {
        closePromises.push(inboundStream.close())
-@@ -634,6 +643,10 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -634,8 +644,12 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
      this.addPeer(peerId, connection.direction, connection.remoteAddr)
      // create inbound stream
      this.createInboundStream(peerId, stream)
+-    // attempt to create outbound stream
+-    this.outboundInflightQueue.push({ peerId, connection })
 +    // MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
-+    // connection". The inflight queue below opens an outbound where none
-+    // exists; this helper replaces one that runs on an older connection.
-+    void this.moveOutboundToNewerConnection(peerId, connection)
-     // attempt to create outbound stream
-     this.outboundInflightQueue.push({ peerId, connection })
++    // connection". The `fromInbound: true` marker tells the inflight
++    // queue's consumer this call came from a peer's gossip stream;
++    // `createOutboundStream` honours the move onto a newer connection
++    // only for that path.
++    this.outboundInflightQueue.push({ peerId, connection, fromInbound: true })
    }
-@@ -692,6 +705,10 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+ 
+   /**
+@@ -661,7 +675,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+     this.removePeer(peerId)
+   }
+ 
+-  private async createOutboundStream (peerId: PeerId, connection: Connection): Promise<void> {
++  private async createOutboundStream (peerId: PeerId, connection: Connection, fromInbound?: boolean): Promise<void> {
+     if (!this.isStarted()) {
+       return
+     }
+@@ -674,9 +688,26 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+ 
+     // TODO make this behavior more robust
+     // This behavior is different than for inbound streams
+-    // If an outbound stream already exists, don't create a new stream
+-    if (this.streamsOutbound.has(id)) {
+-      return
++    // If an outbound stream already exists, don't create a new stream —
++    // except on a call from `onIncomingStream` whose connection is
++    // strictly newer than the one the existing outbound rides on.
++    // MESH_INTERFACE → Block gossip → "A peer's gossip follows its
++    // newest connection": the router's outbound moves onto the newer
++    // connection, never onto an older or the same one.
++    const existing = this.streamsOutbound.get(id)
++    if (existing !== undefined) {
++      if (fromInbound !== true) {
++        return
++      }
++      const existingConnection = this.streamOutboundConnections.get(id)
++      if (existingConnection === undefined) {
++        return
++      }
++      const existingOpen = existingConnection.timeline?.open ?? 0
++      const newOpen = connection.timeline?.open ?? 0
++      if (newOpen <= existingOpen) {
++        return
++      }
+     }
+ 
+     try {
+@@ -691,7 +722,24 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+ 
        this.log('create outbound stream %p', peerId)
  
++      // Account for the replaced outbound before overwriting the map:
++      // the old stream's close listener's guard
++      // (`streamsOutbound.get(id) === stream`) will fire false once the
++      // map is overwritten, so its own -1 / floodsubPeers.delete never
++      // runs.
++      if (existing !== undefined) {
++        const oldProtocol = existing.protocol
++        this.metrics?.peersPerProtocol.inc({ protocol: oldProtocol }, -1)
++        if (oldProtocol === constants.FloodsubID) {
++          this.floodsubPeers.delete(id)
++        }
++      }
++
        this.streamsOutbound.set(id, stream)
 +      // MESH_INTERFACE → Block gossip → "A peer's gossip follows its
-+      // newest connection": record the connection this outbound rides on
-+      // so the move helper can compare `timeline.open` stamps.
++      // newest connection": record the connection this outbound rides
++      // on, read on the next `onIncomingStream` call to decide a move.
 +      this.streamOutboundConnections.set(id, connection)
  
        const protocol = stream.protocol
        if (protocol === constants.FloodsubID) {
-@@ -702,6 +719,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -702,6 +750,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
        rawStream.addEventListener('close', () => {
          if (this.streamsOutbound.get(id) === stream) {
            this.streamsOutbound.delete(id)
@@ -251,112 +316,21 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
            this.floodsubPeers.delete(id)
            this.metrics?.peersPerProtocol.inc({ protocol }, -1)
          }
-@@ -717,6 +735,104 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -712,6 +761,13 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+         this.log('send subscriptions to', id)
+         this.sendSubscriptions(id, Array.from(this.subscriptions), true)
+       }
++
++      // Close the replaced outbound. Its close listener's guard reads
++      // the map, which now points at the new stream, so it fires and
++      // skips the cleanup already done above.
++      if (existing !== undefined) {
++        existing.close().catch(err => { this.log.error(err) })
++      }
+     } catch (e) {
+       this.log.error('createOutboundStream error', e)
      }
-   }
- 
-+  /**
-+   * MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest
-+   * connection". Called from `onIncomingStream`: if the router's outbound
-+   * to the peer runs on a strictly older connection than the one the
-+   * peer's stream just arrived on, open a new outbound on that newer
-+   * connection, send the router's subscriptions as a new outbound does,
-+   * and close the old. Never moves to an older connection or to the same
-+   * one — only the inbound path moves the stream.
-+   */
-+  private async moveOutboundToNewerConnection (peerId: PeerId, connection: Connection): Promise<void> {
-+    if (!this.isStarted()) {
-+      return
-+    }
-+
-+    const id = peerId.toString()
-+
-+    if (!this.peers.has(id)) {
-+      return
-+    }
-+
-+    const existing = this.streamsOutbound.get(id)
-+    const existingConnection = this.streamOutboundConnections.get(id)
-+    if (existing === undefined || existingConnection === undefined) {
-+      return
-+    }
-+
-+    const existingOpen = existingConnection.timeline?.open ?? 0
-+    const newOpen = connection.timeline?.open ?? 0
-+    // A's clause — never moves to an older connection or to the same one.
-+    if (newOpen <= existingOpen) {
-+      return
-+    }
-+
-+    try {
-+      const rawStream = await connection.newStream(this.protocols, {
-+        runOnLimitedConnection: this.runOnLimitedConnection
-+      })
-+
-+      // Re-check after the await: another path may have replaced the
-+      // outbound while the new stream was opening. If so, close the stream
-+      // just made and leave the current one alone.
-+      if (this.streamsOutbound.get(id) !== existing ||
-+        this.streamOutboundConnections.get(id) !== existingConnection) {
-+        await rawStream.close().catch(err => { this.log.error(err) })
-+        return
-+      }
-+
-+      const stream = new OutboundStream(
-+        rawStream,
-+        (e) => { this.log.error('outbound pipe error', e) },
-+        { maxBufferSize: this.opts.maxOutboundBufferSize }
-+      )
-+
-+      this.log('move outbound stream for %p to newer connection', peerId)
-+
-+      // Decrement the OLD protocol's count here: the old stream's close
-+      // listener's guard (`streamsOutbound.get(id) === stream`) will fire
-+      // false once the map is overwritten, so its own -1 never runs.
-+      const oldProtocol = existing.protocol
-+      this.metrics?.peersPerProtocol.inc({ protocol: oldProtocol }, -1)
-+      if (oldProtocol === constants.FloodsubID) {
-+        this.floodsubPeers.delete(id)
-+      }
-+
-+      this.streamsOutbound.set(id, stream)
-+      this.streamOutboundConnections.set(id, connection)
-+
-+      const protocol = stream.protocol
-+      if (protocol === constants.FloodsubID) {
-+        this.floodsubPeers.add(id)
-+      }
-+      this.metrics?.peersPerProtocol.inc({ protocol }, 1)
-+
-+      rawStream.addEventListener('close', () => {
-+        if (this.streamsOutbound.get(id) === stream) {
-+          this.streamsOutbound.delete(id)
-+          this.streamOutboundConnections.delete(id)
-+          this.floodsubPeers.delete(id)
-+          this.metrics?.peersPerProtocol.inc({ protocol }, -1)
-+        }
-+      }, { once: true })
-+
-+      // Send the router's subscriptions on the new stream, as a new
-+      // outbound does.
-+      if (this.subscriptions.size > 0) {
-+        this.log('send subscriptions to', id)
-+        this.sendSubscriptions(id, Array.from(this.subscriptions), true)
-+      }
-+
-+      // Close the old outbound. Its close listener's guard reads the map,
-+      // which now points at the new stream, so that listener fires and
-+      // skips.
-+      existing.close().catch(err => { this.log.error(err) })
-+    } catch (e) {
-+      this.log.error('moveOutboundToNewerConnection error', e)
-+    }
-+  }
-+
-   private createInboundStream (peerId: PeerId, stream: Stream): void {
-     if (!this.isStarted()) {
-       return
-@@ -743,7 +859,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -743,7 +799,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
      const inboundStream = new InboundStream(stream, { maxDataLength: this.opts.maxInboundDataLength })
      this.streamsInbound.set(id, inboundStream)
  
@@ -365,7 +339,7 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
    }
  
    /**
-@@ -798,6 +914,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -798,6 +854,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
  
      // remove streams
      this.streamsOutbound.delete(id)
@@ -373,7 +347,7 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
      this.streamsInbound.delete(id)
  
      // remove peer from topics map
-@@ -898,7 +1015,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -898,7 +955,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
    /**
     * Responsible for processing each RPC message received by other peers.
     */
@@ -382,7 +356,7 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
      try {
        await pipe(stream, async (source) => {
          for await (const data of source) {
-@@ -936,7 +1053,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -936,7 +993,7 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
        })
      } catch (err) {
        this.metrics?.onPeerReadStreamError()
@@ -391,7 +365,7 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..29d1ba8d590a7510d0209c9dd9f9f611
      }
    }
  
-@@ -944,8 +1061,16 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+@@ -944,8 +1001,16 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
     * Handle error when read stream pipe throws, less of the functional use but more
     * to for testing purposes to spy on the error handling
     */

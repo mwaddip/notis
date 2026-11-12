@@ -18,9 +18,9 @@
 // to go silent, then forwards nothing and holds `N`'s side open; a case
 // that wants an error on `N`'s side destroys the proxy's upstream socket.
 //
-// `N`'s connection monitor is off (`node.ts` line 913), and TCP keepalive
-// does not fire within a case's timeout, so a silent connection stays open
-// on `N`'s side until a party on either end closes it.
+// `N` runs with libp2p's connection monitor off, and TCP keepalive does
+// not fire within a case's timeout, so a silent connection stays open on
+// `N`'s side until a party on either end closes it.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   createServer as createNetServer,
@@ -258,10 +258,10 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // Case 1 — the reader redials after its link fell silent, and a block
   // entering at M reaches the reader on the new connection.
   //
-  // Before the patch, the router's outbound to R runs on the silent
-  // conn1: `createOutboundStream` returns early when R's new inbound
-  // arrives on conn2 (`streamsOutbound.has(id)`), so the forwarded
-  // block writes to the dead outbound and R reads nothing.
+  // Unpatched, the router's outbound to R runs on the silent conn1:
+  // `createOutboundStream` returns early when R's new inbound arrives
+  // on conn2 (`streamsOutbound.has(id)`), so the forwarded block writes
+  // to the dead outbound and R reads nothing.
   it(
     'a reader that redialled after its link fell silent is forwarded a block on the new connection',
     async () => {
@@ -373,9 +373,9 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       );
 
       // last: a block entering at M after the redial reaches R on the
-      // new connection. Before the patch, N's outbound to R is still
-      // on the silent conn1, so the forwarded RPC writes to a dead
-      // stream and `deliveries.length` stays at 1.
+      // new connection. Unpatched, N's outbound to R is still on the
+      // silent conn1, so the forwarded RPC writes to a dead stream and
+      // `deliveries.length` stays at 1.
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
       await vi.waitFor(
@@ -393,9 +393,8 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // side (`stream.abort`): yamux writes a RST frame, N reads it and the
   // stream's source iterator throws in N's `pipePeerReadStream`,
   // feeding `handlePeerReadStreamError` the stream whose entry on the
-  // inbound map has already been replaced. Before the patch, that call
-  // removes the peer unconditionally and the forwarded block does not
-  // reach R.
+  // inbound map has already been replaced. Unpatched, that call removes
+  // the peer unconditionally and the forwarded block does not reach R.
   //
   // The loopback-proxy arrangement from case 1 would exercise this path
   // too under WebRTC (a stream close over a silent connection waits
@@ -511,9 +510,9 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       streamA.abort(new Error('reset the replaced stream'));
 
       // last: a block entering at M after the reset reaches R.
-      // Before the patch, the error on the replaced stream removes R
-      // from the router, so `deliveries.length` stays at 1. Named
-      // through so the host's teardown closes it rather than leaking.
+      // Unpatched, the error on the replaced stream removes R from
+      // the router, so `deliveries.length` stays at 1. Named through
+      // so the host's teardown closes it rather than leaking.
       void streamB;
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
@@ -529,18 +528,19 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
   // by hand on the newer one, which arrives at N as an inbound: the
   // patch moves N's outbound onto that newer connection. Then R opens
   // a gossipsub stream on the older one: under the patch N keeps its
-  // outbound on the newer connection (never moves to an older one).
-  // R gracefully closes the older connection; N's outbound on the newer
-  // stays alive and a block entering at M reaches R.
+  // outbound on the newer connection (never moves onto an older or
+  // the same one). R gracefully closes the older connection; N's
+  // outbound on the newer stays alive and a block entering at M
+  // reaches R.
   //
-  // Were the "never older" clause removed, N's outbound would move onto
-  // the older connection at the second manual stream. The graceful
-  // close of the older connection would end that outbound stream (its
-  // `'close'` listener deletes the map entry), `sendRpc` would then
-  // find no stream to R, and the forwarded block would never reach R.
-  // The current inbound ends gracefully too (yamux FIN, no error), so
-  // the peer stays and the delivery count distinguishes the two
-  // behaviours on its own.
+  // Were the rule relaxed to move onto any different connection, N's
+  // outbound would move onto the older connection at the second manual
+  // stream. The graceful close of the older connection would end that
+  // outbound stream (its `'close'` listener deletes the map entry),
+  // `sendRpc` would then find no stream to R, and the forwarded block
+  // would never reach R. The current inbound ends gracefully too
+  // (yamux FIN, no error), so the peer stays and the delivery count
+  // distinguishes the two behaviours on its own.
   it(
     'the router keeps its outbound on the newer connection when the peer\'s stream arrives on an older one',
     async () => {
@@ -597,9 +597,8 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       // suffix) with `force: true`, so libp2p's connection manager
       // keeps the new connection even though it resolves to the same
       // remoteAddr the first dial carries once Noise authenticates its
-      // peer (libp2p 3.5.1 `connection-manager/index.ts` line 596 —
-      // `Duplicate multiaddr connection`). conn2 opens later than
-      // conn1, so its `timeline.open` is strictly greater.
+      // peer (libp2p's `Duplicate multiaddr connection`). conn2 opens
+      // later than conn1, so its `timeline.open` is strictly greater.
       const conn2 = await reader.dial(multiaddr(addrNBare), { force: true });
       await runReaderHandshakeOnConn(conn2, MAGIC_TESTNET);
       await vi.waitFor(
@@ -622,36 +621,68 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
+      // N's inbound and outbound stream maps, and N's two Connection
+      // objects. N's outbound to R starts on conn1 — the only connection
+      // open at the time its automatic `onPeerConnected` fired.
+      const inboundMap = (pubsubOf(nodeN) as unknown as {
+        streamsInbound: Map<string, unknown>;
+      }).streamsInbound;
+      const outboundMap = (pubsubOf(nodeN) as unknown as {
+        streamsOutbound: Map<string, { readonly rawStream: { id: string } }>;
+      }).streamsOutbound;
+      const nReaderPeerId = peerIdFromString(readerId);
+      const nNewer = (): Connection => {
+        const nConns = nodeN.libp2pNode!.getConnections(nReaderPeerId);
+        expect(nConns.length).toBe(2);
+        return [...nConns].sort((a, b) => a.timeline.open - b.timeline.open)[1]!;
+      };
+      const inboundBeforeNew = inboundMap.get(readerId);
+      const outboundBeforeNew = outboundMap.get(readerId);
+
       // Open a gossipsub stream by hand on the NEWER connection. N sees
-      // this as a new inbound; under the patch, N opens a new outbound
-      // on conn2 and closes the old outbound on conn1.
+      // this as a new inbound and, under the patch, opens a new outbound
+      // on N's view of conn2 (closing the old outbound on conn1).
       const streamNew = await conn2.newStream(
         ['/meshsub/1.2.0', '/meshsub/1.1.0', '/meshsub/1.0.0'],
         { signal: AbortSignal.timeout(10_000) },
       );
-      // Open a gossipsub stream by hand on the OLDER connection. N
-      // sees this as another new inbound; under the patch, N's outbound
-      // stays on conn2 (never moves to an older connection).
+      // Wait for N's createInboundStream to replace the inbound entry,
+      // and for N's outbound to move onto N's view of conn2 — a new
+      // OutboundStream whose rawStream sits among the newer connection's
+      // streams. Unpatched, the outbound sits on conn1 and this wait
+      // times out.
+      await vi.waitFor(
+        () => {
+          expect(inboundMap.get(readerId)).not.toBe(inboundBeforeNew);
+          const outboundNow = outboundMap.get(readerId);
+          expect(outboundNow).toBeDefined();
+          expect(outboundNow).not.toBe(outboundBeforeNew);
+          const rawId = outboundNow!.rawStream.id;
+          expect(nNewer().streams.some((s) => s.id === rawId)).toBe(true);
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+
+      // Open a gossipsub stream by hand on the OLDER connection. Under
+      // the patch N's outbound stays on conn2 (never moves onto an older
+      // or the same connection).
+      const inboundBeforeOld = inboundMap.get(readerId);
       const streamOld = await conn1.newStream(
         ['/meshsub/1.2.0', '/meshsub/1.1.0', '/meshsub/1.0.0'],
         { signal: AbortSignal.timeout(10_000) },
       );
-      // Let gossipsub process the two inbound-stream events.
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await vi.waitFor(
+        () => {
+          expect(inboundMap.get(readerId)).not.toBe(inboundBeforeOld);
+        },
+        { timeout: 10_000, interval: 50 },
+      );
 
-      // control: R still has two connections to N, and N still holds
-      // an outbound to R.
-      {
-        const rp = peerIdFromString(readerId);
-        expect(reader.getConnections(peerIdFromString(nodeN.peerId())).length)
-          .toBeGreaterThanOrEqual(2);
-        expect(nodeN.libp2pNode!.getConnections(rp).length)
-          .toBeGreaterThanOrEqual(2);
-        const outMap = (pubsubOf(nodeN) as unknown as {
-          streamsOutbound: Map<string, unknown>;
-        }).streamsOutbound;
-        expect(outMap.has(readerId)).toBe(true);
-      }
+      // control: R still has two connections to N.
+      expect(reader.getConnections(peerIdFromString(nodeN.peerId())).length)
+        .toBeGreaterThanOrEqual(2);
+      expect(nodeN.libp2pNode!.getConnections(nReaderPeerId).length)
+        .toBeGreaterThanOrEqual(2);
 
       // R gracefully closes the OLDER connection. On N, every yamux
       // stream on conn1 ends with FIN (no error), so no stream fires
@@ -667,9 +698,10 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       );
 
       // last: a block entering at M after the older connection closes
-      // reaches R. Without A's "never older" clause, N's outbound to
-      // R moved to conn1 at the second manual stream, so closing conn1
-      // ends that outbound and `sendRpc` finds none to send on;
+      // reaches R. Were the rule relaxed to move onto any different
+      // connection, N's outbound to R would have moved onto conn1 at
+      // the second manual stream, so closing conn1 would end that
+      // outbound and `sendRpc` would find none to send on;
       // `deliveries.length` stays at 1.
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
