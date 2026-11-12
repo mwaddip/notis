@@ -31,15 +31,17 @@ are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
-— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Three pinned
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Four pinned
 packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
 the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
 "The WebRTC-direct certificate persists"); `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to its
-stream and whose Node-side server adapter is kept out of the browser's import path; and `@libp2p/http-fetch`, whose
+stream and whose Node-side server adapter is kept out of the browser's import path; `@libp2p/http-fetch`, whose
 request line carries the URL's query, whose string and bytes bodies keep the `content-type` the caller set, and whose
 string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
-JSON body, as over HTTP (→ The node endpoint). A pin that moves carries its patch to the new version, the cases deciding
-that it still applies and still holds.
+JSON body, as over HTTP (→ The node endpoint); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
+the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
+"A peer's gossip follows its newest connection"). A pin that moves carries its patch to the new version, the cases
+deciding that it still applies and still holds.
 
 ## Identity
 
@@ -176,6 +178,21 @@ alone. An address count guards nothing the rules leave open: every block meets t
 it is forwarded, whatever its sender's score (→ "A block is checked before it is forwarded, and never applied"); a node
 chooses its chain by work, from what its sync asks of its peers as well as from what gossip brings (`NET_INTERFACE →
 Sync State Machine`); and a client's tip is its own check's (→ The client's node list).
+
+**A peer's gossip follows its newest connection.** A peer can hold two connections to a router at once: a reader
+redials when its connection falls silent, and a router that has heard no close still holds the silent one. A router
+reads a peer's newest gossip stream and closes the one before; when that stream arrives on a connection that opened
+later than the one the router's own stream to the peer runs on, the router opens its stream on the newer connection and
+closes the old one. It never moves its stream to an older connection, so two routers holding two connections between
+them settle. A failure on a stream the router has replaced closes that stream alone: the peer stays the router's peer
+while a connection to it stands. So a reader whose connection was cut and restored is forwarded blocks on the
+connection it holds. Unpatched, gossipsub 17.2.1 keeps its stream on the first connection and takes a replaced
+stream's failure for the peer leaving — a WebRTC stream's close over a silent connection fails at its 10 s FIN_ACK
+wait — so that reader would follow the chain by checks alone until it held no connection to the router (→ Place in
+the workspace → "libp2p is pinned").
+
+> ⚠ **AHEAD OF CODE (2026-11-12).** `@libp2p/gossipsub` carries no local patch: a router keeps its stream to a peer on
+> the first connection it opened it on, and an error on a replaced inbound stream removes the peer from the router.
 
 ## Discovery
 
@@ -468,7 +485,12 @@ The mesh holds when every step of the eight scenarios passes on what it measured
    tip on the client's chain; a block mined on a node reaches the browser by gossip and moves the
    client's tip before its next check; a node on another chain — on the stage, a chain mined from its own genesis — has
    its proof read when its tip moves, with the client's own, and the client's tip stays the honest chain's; the
-   browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read.
+   browser's gossip cut for three blocks and restored, its tip catches up by headers with no proof read, and gossip
+   extends it after: a block whose parent is the client's tip reaches it by gossip with no check between (→ Block
+   gossip → "A peer's gossip follows its newest connection").
+
+   > ⚠ **AHEAD OF CODE (2026-11-12).** The stage's s8 step 4 ends at the first tip change after any jump of three or
+   > more, before the cut or after it, whatever moved either, so a check that moves the tip passes it.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.
