@@ -662,8 +662,9 @@ describe('s8 (prove once, follow by gossip)', () => {
   // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page where
   // the client dials hostile hosts the stage DHT names and whose
   // packets drop at the browser's own namespace. A dropped packet is
-  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, in
-  // `packages/web/src/mesh/protocols.ts`) per hostile dial until the retry back-off
+  // no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s;
+  // MESH_INTERFACE → The client's node list — the constants table at
+  // the section's end) per hostile dial until the retry back-off
   // takes those nodes out of the candidates. The cap at 600 s is the
   // deadline a step's poll holds under this cost, not a bound on the
   // stage's own pace.

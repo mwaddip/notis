@@ -108,8 +108,9 @@ const POLL_MS = 500;
 const LONG_WAIT_MS = 240_000;
 // MESH_INTERFACE → Acceptance 8 — steps 1 and 4 poll a page while the
 // client's own namespace black-holes every hostile host. A dropped
-// packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s, from
-// `packages/web/src/mesh/protocols.ts`) per hostile dial until the retry back-off takes
+// packet is no refusal: libp2p waits `PEER_DIAL_MIN_MS` (20 s;
+// MESH_INTERFACE → The client's node list — the constants table at
+// the section's end) per hostile dial until the retry back-off takes
 // those nodes out of the candidates. A check runs one dial deadline
 // per candidate; step 1's five completed checks past settlement, and
 // step 4's 20 s warmup, up-to-120 s of pub1 advancement and ~3 min of
@@ -521,11 +522,11 @@ export const S8_FORK_PREDICATE = `if (v === null) return false;
 // height, atMs, checks, `traffic.proofReads` and `traffic.gossipBytes`
 // so the Node-side verdict reads the gossip clause from records after
 // `liftAtMs`: "a block whose parent is the client's tip reaches it by
-// gossip with no check between" (MESH_INTERFACE → Block gossip; the
-// client moves its tip either by extending it with a gossiped block
-// — `packages/web/src/mesh/mesh-client.ts`'s `handleGossipMessage`
-// sets the tip without incrementing `checks` — or by `runCheck`,
-// which increments `checks` and then sets the tip from the chain).
+// gossip with no check between" (MESH_INTERFACE → The client's node
+// list — the client moves its tip by extending it with a gossiped
+// block whose parent is its tip, which runs no check, or by a check,
+// which counts; a gossiped block whose parent is held below the tip
+// or not at all runs a check at once).
 //
 // `s8GapObserve` is pure (no DOM, no `window` access; the wall clock
 // is `nowMs`, read once per call by the caller) so the Node suite

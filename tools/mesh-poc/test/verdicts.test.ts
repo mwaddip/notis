@@ -1359,13 +1359,14 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // check between". The verdict reads records after the firewall's
   // removal (`liftAtMs`): PASS only when, after the lift, the tip
   // caught up to within two of pub1 AND a later tipHist record rises
-  // with `checks` equal to the record before it (a gossip extension,
-  // since the client's tip moves only by a gossiped block whose parent
-  // is its tip or by a check (packages/web/src/mesh/mesh-client.ts —
-  // `handleGossipMessage` sets the tip without incrementing `checks`;
-  // `runCheck` increments `checks` and then sets the tip from the
-  // chain). A record whose `atMs` is before `liftAtMs` never satisfies
-  // the gossip clause. `proofReads` must not move across the step.
+  // with `checks` equal to the record before it — a gossip extension
+  // (MESH_INTERFACE → The client's node list — the client moves its
+  // tip by extending it with a gossiped block whose parent is its
+  // tip, which runs no check, or by a check, which counts; a gossiped
+  // block whose parent is held below the tip or not at all runs a
+  // check at once). A record whose `atMs` is before `liftAtMs` never
+  // satisfies the gossip clause. `proofReads` must not move across
+  // the step.
 
   // The new-shape PASS hybrid: new fields fire the clause, no `jump`
   // field (so the pre-fix verdict reads this measurement as FAIL on
