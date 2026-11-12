@@ -1325,11 +1325,7 @@ describe('gossipMessageId — hash32(lpUtf8(topic) ‖ data)', () => {
 // ---------------------------------------------------------------------------
 
 describe('gossipsubOptions carries one score parameter', () => {
-  // Last assertion's failure, paste:
-  //   AssertionError: expected undefined to deeply equal { IPColocationFactorWeight: +0 }
-  //   ❯ test/gossip.test.ts > gossipsubOptions sets one score parameter, the colocation weight
-  //       expect(opts.scoreParams).toEqual({
-  it.fails('gossipsubOptions sets one score parameter, the colocation weight', () => {
+  it('gossipsubOptions sets one score parameter, the colocation weight', () => {
     const t = gossipTopics(MAGIC_TESTNET);
     const opts = gossipsubOptions(MAGIC_TESTNET, [t.orderingBlock, t.tx]);
     expect(opts.scoreParams).toEqual({

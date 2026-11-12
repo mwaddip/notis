@@ -513,12 +513,7 @@ describe('NET_INTERFACE → Readers', () => {
   // active, the count at 127.0.0.1 is 13 and nodeB's score at nodeA is above
   // the graylist threshold (−80), so `acceptFrom` admits nodeB's RPCs and
   // nodeA runs the ordering-block topic validator on the published block.
-  //
-  // Last assertion's failure, paste:
-  //   AssertionError: expected 0 to be greater than or equal to 1
-  //   ❯ vi.waitFor.timeout test/readers.test.ts
-  //         expect(twelfthDeliveries.length).toBeGreaterThanOrEqual(1);
-  it.fails(
+  it(
     'a node forwards a block to the twelfth reader seen from one address',
     async () => {
       const nodeA = new NetNode(makeConfig(), validators);
