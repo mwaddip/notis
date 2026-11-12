@@ -13,7 +13,6 @@ import {
   ReaderError,
   decodeHeader,
   decodeOrderingBlock,
-  decodeStruct,
   encodeHeader,
   encodeOrderingBlock,
   encodeStruct,
@@ -45,9 +44,14 @@ import { modifierRequestCodec, modifierResponseCodec } from './modifier-codec.js
 
 // The byte-capped lpUtf8 and count-checked capability readers live in
 // `./codec-helpers.js` (browser-safe) and are re-exported here so the
-// stream codecs continue to pick them up at the one import site.
+// stream codecs continue to pick them up at the one import site. The
+// error-to-null decode wrapper `tryDecodeStruct` lives beside them.
 export { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
-import { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
+import {
+  readBoundedLpUtf8,
+  readBoundedCapabilities,
+  tryDecodeStruct,
+} from './codec-helpers.js';
 
 // ---------------------------------------------------------------------------
 // SyncInfo (2) — NET_INTERFACE → SyncInfo (code 2)
@@ -329,22 +333,6 @@ function lpItemsCodec<T>(
       return items;
     },
   };
-}
-
-/**
- * Decode a positional body, converting every `ReaderError` into `null`.
- *
- * TYPES_INTERFACE → The boundary check →
- * "Callers convert `ReaderError` into a verdict" — discharged in the shape the rest of this file uses:
- * decoders at net's boundary never throw, they return `null`, and the caller
- * decides what a `null` means for the peer that sent it.
- */
-function tryDecodeStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null {
-  try {
-    return decodeStruct(codec, bytes);
-  } catch {
-    return null;
-  }
 }
 
 function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {

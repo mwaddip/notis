@@ -17,8 +17,8 @@ import type { HashFn } from '../frame-codec.js';
 import {
   modifierRequestCodec,
   modifierResponseCodec,
-  tryDecodeModifierStruct,
 } from '../modifier-codec.js';
+import { tryDecodeStruct } from '../codec-helpers.js';
 import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
@@ -72,7 +72,7 @@ export async function answerPostTextsRequest(
   }
   if (framed.code !== MSG_MODIFIER_REQUEST) return 'refuse';
 
-  const req = tryDecodeModifierStruct(modifierRequestCodec, framed.body);
+  const req = tryDecodeStruct(modifierRequestCodec, framed.body);
   if (req === null) return 'refuse';
   if (req.typeId !== MODIFIER_POST_BODY) return 'refuse';
 

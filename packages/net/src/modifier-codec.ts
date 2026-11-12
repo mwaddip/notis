@@ -1,14 +1,13 @@
 // NET_INTERFACE → ModifierRequest, NET_INTERFACE → ModifierResponse —
 // the struct codecs for the two modifier messages. Browser-safe: imports
-// `@dagsocial/types`, `./msg-guards.js`, `./sync-types.js` and `./types.js`
-// alone. The frame wrappers that glue the codecs to `./frame.js`
+// `@dagsocial/types`, `./msg-guards.js` and `./sync-types.js` alone. The
+// frame wrappers that glue the codecs to `./frame.js`
 // (`encodeModifierRequest`, `decodeModifierRequest` and the response
-// pair) live in `./sync-codec.js`, which is the Node binding and
-// re-exports these codecs for the drift test's grammar.
+// pair) live in `./sync-codec.js`, which re-exports the codecs so
+// `@dagsocial/net`'s barrel keeps exporting them.
 
 import {
   ReaderError,
-  decodeStruct,
   readHexN,
   readU8,
   readVlqU,
@@ -105,16 +104,3 @@ export const modifierResponseCodec: StructCodec<ModifierResponse> = {
   },
 };
 
-/**
- * NET_INTERFACE → Validation (and untrusted-input safety) — a decode of a
- * positional body that converts every `ReaderError` into `null`. Shared
- * by the frame wrappers in `./sync-codec.js` and the browser's serving
- * reader in `./mesh/serve-post-texts.js`.
- */
-export function tryDecodeModifierStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null {
-  try {
-    return decodeStruct(codec, bytes);
-  } catch {
-    return null;
-  }
-}
