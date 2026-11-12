@@ -782,9 +782,7 @@ describe('NET_INTERFACE → Readers', () => {
     expect(nodeA.getServingReaders()).toEqual([servingId]);
   }, TIMEOUT);
 
-  // Last assertion against the current tree:
-  //   AssertionError: expected { reader: [], …(1) } to deeply equal { …(2) }
-  it.fails('onReaderActive fires for a reader and onPeerActive does not', async () => {
+  it('onReaderActive fires for a reader and onPeerActive does not', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
