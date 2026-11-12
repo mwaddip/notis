@@ -19,6 +19,18 @@ export declare function s8GapFirewallArgs(topology: unknown): {
   drops: Array<{ name: string; argv: string[] }>;
   deleteTable: string[];
 };
+export declare function s8HeldFlowsMarkArgs(topology: unknown): {
+  addTable: string[];
+  addOutChain: string[];
+  marks: Array<{ name: string; argv: string[] }>;
+  deleteTable: string[];
+};
+export declare function s8HeldFlowsStopMarkingArgs(): string[];
+export declare function s8HeldFlowsDropArgs(): {
+  addInChain: string[];
+  dropOut: string[];
+  dropIn: string[];
+};
 export declare function applyFaults(log: unknown, topology: unknown): void;
 export declare const S8_GOSSIP_EXPR: string;
 export declare const S8_GOSSIP_PREDICATE: string;

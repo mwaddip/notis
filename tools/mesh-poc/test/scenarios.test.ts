@@ -549,7 +549,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // and the gap drops go in; at the lift the drops are swapped for
   // rules dropping marked flows both ways. A flow created during the
   // cut is unmarked and its packets pass after the lift.
-  it.fails('s8HeldFlowsMarkArgs builds a table + out chain + per-mesh-host "ct mark set 0x1" rule + delete-table inside the browser namespace', () => {
+  it('s8HeldFlowsMarkArgs builds a table + out chain + per-mesh-host "ct mark set 0x1" rule + delete-table inside the browser namespace', () => {
     const a = (s8 as unknown as { s8HeldFlowsMarkArgs: (t: unknown) => {
       addTable: string[]; addOutChain: string[];
       marks: Array<{ name: string; argv: string[] }>;
@@ -574,7 +574,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // during the cut leaves its conntrack entry unmarked. The chain
   // and the table itself stay, for the drop-marked rules the lift
   // adds in their place.
-  it.fails('s8HeldFlowsStopMarkingArgs builds an nft flush chain argv for the s8_held_flows out chain', () => {
+  it('s8HeldFlowsStopMarkingArgs builds an nft flush chain argv for the s8_held_flows out chain', () => {
     const argv = (s8 as unknown as { s8HeldFlowsStopMarkingArgs: () => string[] }).s8HeldFlowsStopMarkingArgs();
     expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
     expect(argv.join(' ')).toContain('nft flush chain ip s8_held_flows out');
@@ -585,7 +585,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // `ct mark 0x1`, so a flow held at the cut stays dropped both
   // ways. The table and the out chain already exist, from the
   // pre-step marking setup.
-  it.fails('s8HeldFlowsDropArgs builds an add-in-chain argv + a drop-out argv + a drop-in argv matching ct mark 0x1', () => {
+  it('s8HeldFlowsDropArgs builds an add-in-chain argv + a drop-out argv + a drop-in argv matching ct mark 0x1', () => {
     const a = (s8 as unknown as { s8HeldFlowsDropArgs: () => {
       addInChain: string[]; dropOut: string[]; dropIn: string[];
     } }).s8HeldFlowsDropArgs();
@@ -596,7 +596,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     expect(a.dropOut.join(' ')).toContain('nft add rule ip s8_held_flows out ct mark 0x1 drop');
     expect(a.dropIn.join(' ')).toContain('nft add rule ip s8_held_flows in ct mark 0x1 drop');
   });
-  it.fails('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + held-flows table + their deletes', async () => {
+  it('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + held-flows table + their deletes', async () => {
     const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s8');
     expect(r.steps.length).toBe(4);
