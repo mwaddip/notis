@@ -451,7 +451,7 @@ describe('NET_INTERFACE → Readers', () => {
   // stream opens. The guard is defensive: the normal caller picks from
   // `getConnectedPeers`, which excludes readers (NET_INTERFACE → Readers →
   // "A peer is asked for a code only if it declares it").
-  it('requestPostBodies refuses a reader', async () => {
+  it('requestPostBodies refuses a reader that does not declare ModifierRequest', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
