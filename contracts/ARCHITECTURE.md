@@ -1567,10 +1567,10 @@ chain or owed one:
 | **the relay's pending view** (2026-11-07) | **no committed byte and no consensus verdict** — the relay judges a transaction against the pending view (MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is judged against the pending view, as a submitted one is"), so a node on this build admits and relays on a child whose parent it pools, where an earlier build refuses it; block application is unchanged. A peer of an earlier build still refuses that child, so each box takes this build for the chains it receives: both boxes deploy, notis.fun first. **Owes no reset** |
 | **the shared address** (2026-11-12) | **no committed byte and no consensus verdict** — a node's gossip router scores no peer for the other peers it has seen from the same IP address (MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"), so a node on this build forwards blocks to a reader however many peers it has seen from the reader's address, where an earlier build forwards none to the twelfth and later peers seen from one address within the hour; a node of either build peers with the other. A reader gains it from each node that takes this build: both boxes deploy, notis.fun first. **Owes no reset** |
 
-**Outstanding against the live node: the shared address.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
 whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, the usernames
-row owes none, the node key row is deployed (2026-11-03), so is the mesh row (2026-11-04), and so is the relay's
-pending view row (2026-11-07).
+row owes none, the node key row is deployed (2026-11-03), so is the mesh row (2026-11-04), so is the relay's
+pending view row (2026-11-07), and so is the shared address row (2026-11-12).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
