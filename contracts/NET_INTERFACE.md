@@ -586,18 +586,18 @@ node's body puller reads it (NODE_INTERFACE → "A serving reader is asked for w
 
 **A serving reader answers from what it holds.** A reader that declares `ModifierRequest` answers it on
 `/dagsocial/sync/1` (`SYNC_PROTOCOL`), on a connection to a node whose handshake it completed as the dialler, and on no
-other. A stream carries one frame under the network's magic — `ModifierRequest` (code 4), `typeId`
-`MODIFIER_POST_BODY` (103), 1–`MAX_INV_IDS` ids — read under the byte bound of the largest such frame. The reader
-answers a `ModifierResponse` (code 5) with the text of each asked id it holds, in the request's order, each
-`encodePostBody`, stopping before the body that would pass `MAX_SERVE_BODY_BYTES` with the first always sent, and
-answers zero bytes when it holds none (→ ModifierResponse). Another code, `typeId` or magic, a frame that does not
-decode, a frame past the bound, or no frame within the deadline closes the stream unanswered. **One stream at a time
-per connection**: a stream that opens while the reader answers another on the same connection is closed unanswered, and
-every stream's read and answer run under a deadline, so a node cannot hold a page's work. What a reader serves is
-checked as a node's answer is — each text against the commitment the asker holds, a mismatch the `Misbehavior` penalty
-(→ ModifierResponse) — and nothing is relayed: an id the reader does not hold is left out. A reader that does not
-declare `ModifierRequest` registers no handler for `SYNC_PROTOCOL`. `postTextsHandler` in the browser entry is the one
-implementation (→ The browser entry).
+other. A stream carries one frame under the network's magic — `ModifierRequest` (code 4), `typeId` `MODIFIER_POST_BODY`
+(103), 1–`MAX_INV_IDS` ids — read under `MAX_MODIFIER_REQUEST_FRAME_BYTES`, the largest such frame. The reader answers a
+`ModifierResponse` (code 5) with the text of each asked id it holds, in the request's order, each `encodePostBody`,
+stopping before the body that would pass `MAX_SERVE_BODY_BYTES` with the first always sent, and answers zero bytes when
+it holds none (→ ModifierResponse). Another code, `typeId` or magic, a frame that does not decode, a frame past the
+bound, or no frame within the deadline closes the stream unanswered. **One stream at a time per connection**: a stream
+that opens while the reader answers another on the same connection is closed unanswered, and every stream's read and
+answer run under a deadline, so a node cannot hold a page's work. What a reader serves is checked as a node's answer is
+— each text against the commitment the asker holds, a mismatch the `Misbehavior` penalty (→ ModifierResponse) — and
+nothing is relayed: an id the reader does not hold is left out. A reader that does not declare `ModifierRequest`
+registers no handler for `SYNC_PROTOCOL`. `postTextsHandler` in the browser entry is the one implementation (→ The
+browser entry).
 
 > ⚠ **AHEAD OF CODE (2026-11-12).** `onReaderActive`, `SERVING_READER_CAPABILITIES` and `postTextsHandler` are not
 built: no reader declares a capability, and the browser entry carries no handler for `SYNC_PROTOCOL`.
