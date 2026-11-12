@@ -393,4 +393,20 @@ describe('app.css — a handle the chain does not back is clay', () => {
     expect(css).toMatch(/:root \{[^}]*--clay: #9A4A2F/);
     expect(css).toMatch(/:root\[data-t="dark"\] \{[^}]*--clay: #CC7658/);
   });
+
+  // WEB_INTERFACE → The settings window → "While it disagrees the row holds
+  // the question" — the row holds the reader's question "in clay"; the
+  // element carries class `question` and takes clay through `.winbody
+  // .question`. `off` is a text marker with no colour of its own.
+  it('.winbody .question is clay and sets colour alone', () => {
+    const block = css.match(/\.winbody \.question\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(decls(block!)).toBe('color: var(--clay);');
+  });
+
+  it('.off carries no rule of its own', () => {
+    // No clay or ink on `.off` — the word reads the field's rest; a rule
+    // would make `off` another colour the stylesheet carries.
+    expect(css).not.toMatch(/\.off\s*\{/);
+  });
 });

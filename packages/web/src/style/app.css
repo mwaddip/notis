@@ -477,6 +477,13 @@ header .spacer { flex: 1 1 auto; }
    describes — the wallet's balance row and the profile's rep row (WEB_INTERFACE
    → The extension → "The verified figures"). */
 .winbody .hint.clay { color: var(--clay); }
+/* The settings window's node row carries the reader's question in clay
+   while the verdict reads refused · your-node (WEB_INTERFACE → The settings
+   window → "While it disagrees the row holds the question"; HOUSE_STYLE →
+   Colour — clay is warning and error). The off label takes no colour of
+   its own: the address is already muted by the input's rest; the word
+   control `turn on` reads the ink of every word. */
+.winbody .question { color: var(--clay); }
 /* The settings window's identity-tint preview — two sample title bars stacked
    above the four words, one focused and one not, each with a fixed --idh. The
    samples inherit the .bar rules, so a change to the tint applies to them

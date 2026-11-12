@@ -11,7 +11,7 @@
 // the full dial multiaddr including the trailing `/p2p/<id>` and (b) a
 // dial whose every address the gater denies throws without a
 // `dial-queue:calculated-addresses` entry for them. The addByHand
-// refusal and anchorReached cases run against `startMeshClient`.
+// refusal and trust cases run against `startMeshClient`.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -60,20 +60,20 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   const idB = bytesToHex(kpB.publicKey);
   const peerA = peerIdFromNotisId(idA).toString();
   const peerB = peerIdFromNotisId(idB).toString();
-  // A configured anchor's address for key A: a 10.0.0.5 private IP.
-  const anchorBareA = '/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA';
-  const anchorAddrA = `${anchorBareA}/p2p/${peerA}`;
+  // A configured first-contact node's address for key A: a 10.0.0.5 private IP.
+  const firstContactBareA = '/ip4/10.0.0.5/udp/4001/webrtc-direct/certhash/uEiA';
+  const firstContactAddrA = `${firstContactBareA}/p2p/${peerA}`;
   const configuredAddrsOf = (id: string): readonly string[] =>
-    id === idA ? [anchorAddrA] : [];
+    id === idA ? [firstContactAddrA] : [];
 
   it('a hand-entered private address passes the gater for its own key', () => {
-    const ma = multiaddr(anchorAddrA);
+    const ma = multiaddr(firstContactAddrA);
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(false);
   });
 
-  it("an anchor's private address passes for its own key; a seed's is refused", () => {
-    const anchorMa = multiaddr(anchorAddrA);
-    expect(clientDenyDialMultiaddr(anchorMa, configuredAddrsOf)).toBe(false);
+  it("a first-contact entry's private address passes for its own key; a seed's is refused", () => {
+    const firstContactMa = multiaddr(firstContactAddrA);
+    expect(clientDenyDialMultiaddr(firstContactMa, configuredAddrsOf)).toBe(false);
     // A seed's private address (another IP under another key, that
     // the configuration does not name) is refused.
     const seedAddr = `/ip4/10.0.0.9/udp/4001/webrtc-direct/certhash/uEiA/p2p/${peerB}`;
@@ -81,16 +81,16 @@ describe('clientDenyDialMultiaddr — the gater (pure)', () => {
   });
 
   it('the same private address under another key is refused', () => {
-    // Same host/port/certhash as the anchor's — but with peerB's
+    // Same host/port/certhash as the first-contact node's — but with peerB's
     // trailing `/p2p/`. The gater reads the key from the trailing
     // `/p2p/<id>`, so configured for idA does not pass this address
     // under idB.
-    const ma = multiaddr(`${anchorBareA}/p2p/${peerB}`);
+    const ma = multiaddr(`${firstContactBareA}/p2p/${peerB}`);
     expect(clientDenyDialMultiaddr(ma, configuredAddrsOf)).toBe(true);
   });
 
   it('a private address from the DHT for a hand-added key is refused', () => {
-    // The hand-added key is idA (configured as anchorAddrA). A
+    // The hand-added key is idA (configured as firstContactAddrA). A
     // different private address under idA — one the DHT, a seed or a
     // peer list offered — is not in configured, so the gater refuses
     // it. Review Focus 3.
@@ -203,7 +203,7 @@ describe('MeshClient.addByHand — refusals', () => {
 
   async function startBare(): Promise<MeshClient> {
     return startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -250,9 +250,9 @@ describe('MeshClient.addByHand — refusals', () => {
   }, 15_000);
 });
 
-// ---------- MeshClient.addByHand — anchorReached ----------
+// ---------- MeshClient.addByHand — trusted and untrusted ----------
 
-describe('MeshClient.addByHand — anchorReached', () => {
+describe('MeshClient.addByHand — trusted and untrusted', () => {
   const nodes: NetNode[] = [];
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
@@ -275,17 +275,19 @@ describe('MeshClient.addByHand — anchorReached', () => {
     return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
-  it('a trusted hand-added node makes anchorReached true when it answers', async () => {
+  it('a trusted hand-added node reads yours when it answers', async () => {
     // A hand-added entry is a candidate like any other; a real mesh
     // node for it means phase 2 reads its /blocks/current and phase 4
-    // settles the chain against its proof. Trusted = anchor; so after
-    // the check `anchorReached` reads true.
+    // settles the chain against its proof. Trusted = yours (the
+    // reader's own node); its entry carries `byHand: true` and
+    // `yours: true` (MESH_INTERFACE → Discovery → "A node added by
+    // hand").
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'ha-t-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
 
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -298,20 +300,19 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.anchor, 'trusted sets anchor').toBe(true);
+    expect(entry!.yours, 'trusted sets yours').toBe(true);
     expect(entry!.byHand, 'byHand is true').toBe(true);
-    expect(s.anchorReached, 'anchorReached reads true').toBe(true);
   }, 60_000);
 
-  it('an untrusted hand-added node does not make anchorReached true', async () => {
-    // Untrusted = seed; the entry answers and becomes `ok`, but
-    // `anchorReached` reads the `anchor` flag, which is false here.
+  it('an untrusted hand-added node leaves yours false', async () => {
+    // Untrusted = an ordinary candidate; the entry answers and
+    // becomes `ok`, but its `yours` flag is false.
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'ha-u-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
 
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -324,15 +325,14 @@ describe('MeshClient.addByHand — anchorReached', () => {
     const s = client.state();
     const entry = s.nodes.find((e) => e.notisId === n.id);
     expect(entry, 'the hand-added entry exists').toBeDefined();
-    expect(entry!.anchor, 'untrusted leaves anchor false').toBe(false);
+    expect(entry!.yours, 'untrusted leaves yours false').toBe(false);
     expect(entry!.byHand, 'byHand is true').toBe(true);
-    expect(s.anchorReached, 'anchorReached reads false').toBe(false);
   }, 60_000);
 });
 
 // ---------- MeshClient.removeByHand ----------
 
-describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor is left alone', () => {
+describe('MeshClient.removeByHand — drops a hand-added entry; a build first-contact entry is left alone', () => {
   const ups: ChainUpstream[] = [];
   const dirs: string[] = [];
   let client: MeshClient | null = null;
@@ -345,7 +345,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
 
   it('a hand-added node is dropped by `removeByHand`', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -360,12 +360,12 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
     expect(client.state().nodes.find((n) => n.notisId === k.notisId)).toBeUndefined();
   }, 15_000);
 
-  it('a build anchor added by hand again is left alone by `removeByHand`', async () => {
+  it('a build first-contact entry added by hand again is left alone by `removeByHand`', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
     client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [addr] }],
+      firstContact: [{ notisId: k.notisId, addrs: [addr] }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -378,7 +378,7 @@ describe('MeshClient.removeByHand — drops a hand-added entry; a build anchor i
 
   it('a non-64-hex id refuses with `MeshConfigError`', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -413,29 +413,29 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
     return await startNetPublicMesh({ upstream: upstream.base, stateDir: dir });
   }
 
-  it('before the first check ends, `base` answers an anchor\'s api when the anchor has one', async () => {
+  it('before the first check ends, `base` answers a first-contact entry\'s api when it has one', async () => {
     const k = nodeKeyFromKeyPair(generateKeyPair());
     const peerIdStr = peerIdFromNotisId(k.notisId).toString();
     const addr = `/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
     client = await startMeshClient({
-      anchors: [{ notisId: k.notisId, addrs: [addr], api: 'https://a.example' }],
+      firstContact: [{ notisId: k.notisId, addrs: [addr], api: 'https://a.example' }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: emptyResolve(),
     });
-    // Before the first check ends, the anchor's api is the pre-check
+    // Before the first check ends, the first-contact node's api is the pre-check
     // fallback (the connection is not open).
     const b = client.base('tip');
     expect(b).toBe('https://a.example');
   }, 15_000);
 
-  it('after a check a reached anchor is picked at its mesh base', async () => {
+  it('after a check a reached first-contact entry is picked at its mesh base', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'base-m-')); dirs.push(dir);
     const n = await startNode(up, dir); nodes.push(n.node);
     client = await startMeshClient({
-      anchors: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr], api: up.base }],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',
@@ -449,7 +449,7 @@ describe('MeshClient.base — the base a routed read of a need would go to now',
 
   it('`base(\'tip\')` answers `null` when no node is allowed and the first check has ended', async () => {
     client = await startMeshClient({
-      anchors: [],
+      firstContact: [],
       network: 'devnet',
       profile: PROFILE,
       agentName: 'notis-mesh-poc',

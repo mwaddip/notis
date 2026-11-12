@@ -1,4 +1,4 @@
-// MESH_INTERFACE → Acceptance / Discovery / No anchor reached — the stage's
+// MESH_INTERFACE → Acceptance and Discovery → "First contact." — the stage's
 // unit checks: the topology's shape, the page config holds no DNS and passes
 // the client's refusals, the hostile upstream's two bodies, and `--dry-run`
 // touches nothing. These run in CI without root, without the stage, and
@@ -77,7 +77,7 @@ describe('stage/topology.json is whole', () => {
     }
   });
 
-  it('every anchor the page config names is a public mesh node', () => {
+  it('every first-contact node the page config names is a public mesh node', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
     const publicIds = new Set(
@@ -85,9 +85,9 @@ describe('stage/topology.json is whole', () => {
         .filter(([, h]) => h.role === 'public' && h.mesh?.role === 'public')
         .map(([name]) => fakeIdentities()[name]),
     );
-    expect(config.anchors.length).toBeGreaterThan(0);
-    for (const a of config.anchors) {
-      expect(publicIds.has(a.notisId), `anchor ${a.notisId} is a public mesh node`).toBe(true);
+    expect(config.firstContact.length).toBeGreaterThan(0);
+    for (const a of config.firstContact) {
+      expect(publicIds.has(a.notisId), `first-contact node ${a.notisId} is a public mesh node`).toBe(true);
     }
   });
 
@@ -110,9 +110,9 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('buildPageConfig output has no /dns4/, /dns6/, /dnsaddr/ components', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
-    expect(config.anchors.length, 'the stage has anchors').toBeGreaterThan(0);
-    for (const a of config.anchors) {
-      expect(a.addrs.length, `anchor ${a.notisId} has addresses`).toBeGreaterThan(0);
+    expect(config.firstContact.length, 'the stage has first-contact nodes').toBeGreaterThan(0);
+    for (const a of config.firstContact) {
+      expect(a.addrs.length, `first-contact node ${a.notisId} has addresses`).toBeGreaterThan(0);
       for (const addr of a.addrs) {
         expect(addr).not.toMatch(/\/dns4\/|\/dns6\/|\/dnsaddr\//);
       }
@@ -127,7 +127,7 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
   it('assertClientConfig accepts the output', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const config = buildPageConfig(topology, fakeIdentities(), undefined, { dryRun: true });
-    expect(config.anchors.length).toBeGreaterThan(0);
+    expect(config.firstContact.length).toBeGreaterThan(0);
     // MESH_INTERFACE → NAT → "A client's STUN list comes from the
     // public nodes it holds" — the built config writes no
     // `stunServers` key; the page refuses the key in words.
@@ -136,14 +136,14 @@ describe('the page config holds no DNS and passes the client\'s checks', () => {
     // the page builder returns is a shape the page accepts.
     profileFor(config.network);
     expect(() => assertClientConfig({
-      anchors: config.anchors,
+      firstContact: config.firstContact,
       seeds: config.seeds,
     })).not.toThrow();
   });
 });
 
 // MESH_INTERFACE → Discovery / Identity — every `/p2p/<peer id>` an
-// anchor's or seed's address names must be the peer id derived from the
+// first-contact node's or seed's address names must be the peer id derived from the
 // entry's own `notisId`. The check is on the FINAL `/p2p/` component so
 // a relay hop's `/p2p/<R>/p2p-circuit/…/p2p/<X>` reads <X> as the entry's
 // id (NAT → "a relay reservation on each public node"). A mismatch
@@ -164,7 +164,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
   const matchingId = 'a'.repeat(64);
   const otherId = 'b'.repeat(64);
 
-  it("throws naming the host when an anchor addr's final /p2p/ is not peerIdStringOf(notisId)", () => {
+  it("throws naming the host when a first-contact node addr's final /p2p/ is not peerIdStringOf(notisId)", () => {
     const wrongPeer = peerIdStringOf(otherId);
     const realMultiaddrs = {
       pub1: [
@@ -176,7 +176,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
     ).toThrow(/pub1/);
   });
 
-  it("accepts an anchor addr whose final /p2p/ matches peerIdStringOf(notisId)", () => {
+  it("accepts a first-contact node addr whose final /p2p/ matches peerIdStringOf(notisId)", () => {
     const rightPeer = peerIdStringOf(matchingId);
     const realMultiaddrs = {
       pub1: [
@@ -184,14 +184,14 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
       ],
     };
     const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
-    expect(config.anchors.length).toBe(1);
-    expect(config.anchors[0]!.addrs.length).toBe(1);
+    expect(config.firstContact.length).toBe(1);
+    expect(config.firstContact[0]!.addrs.length).toBe(1);
   });
 
   // MESH_INTERFACE → NAT — "a private node … takes a relay reservation on
   // each public node". A relayed address names the relay hop's peer id
   // before `/p2p-circuit/`; the entry's own peer id is the final `/p2p/`.
-  // The check reads the final component so a relayed anchor does not
+  // The check reads the final component so a relayed first-contact node does not
   // false-positive on the relay hop's id.
   it("skips the relay hop's /p2p/ before /p2p-circuit when more than one /p2p/ is present", () => {
     const rightPeer = peerIdStringOf(matchingId);
@@ -202,7 +202,7 @@ describe('buildPageConfig refuses an entry whose addresses name another key', ()
       ],
     };
     const config = buildPageConfig(minimalTopology, { pub1: matchingId }, realMultiaddrs, {});
-    expect(config.anchors.length).toBe(1);
+    expect(config.firstContact.length).toBe(1);
   });
 
   // MESH_INTERFACE → Discovery — the real stage's exec-mode shape:
@@ -623,18 +623,22 @@ describe('stage up --dry-run', () => {
 
   // MESH_INTERFACE → Acceptance — the miner reads its node's HTTP; a
   // node's HTTP binds its namespace loopback. The honest miner (boot
-  // + steady) runs inside `notismesh-pub1`; the pair's miner
-  // (lagging boot + lagging steady) runs inside
-  // `notismesh-hostile-lagging`.
+  // + steady) runs inside `notismesh-pub1`; the pair's miner (lagging
+  // boot + lagging steady) runs inside `notismesh-hostile-lagging`;
+  // the single-fork miner (`miner-fork`) runs inside
+  // `notismesh-hostile-fork`.
   it('each miner spawn runs inside its node\'s namespace', () => {
     runDryOnce();
     const minerLines = out.split('\n').filter((l) => l.startsWith('[spawn:miner'));
     expect(minerLines.length, 'at least one miner spawn is present').toBeGreaterThan(0);
     const pub1Ns = 'ip netns exec notismesh-pub1';
     const laggingNs = 'ip netns exec notismesh-hostile-lagging';
+    const forkNs = 'ip netns exec notismesh-hostile-fork';
     for (const minerLine of minerLines) {
       if (minerLine.startsWith('[spawn:miner-lagging-boot]') || minerLine.startsWith('[spawn:miner-lagging]')) {
         expect(minerLine, `miner-lagging* inside hostile-lagging namespace: ${minerLine}`).toContain(laggingNs);
+      } else if (minerLine.startsWith('[spawn:miner-fork]')) {
+        expect(minerLine, `miner-fork inside hostile-fork namespace: ${minerLine}`).toContain(forkNs);
       } else {
         expect(minerLine, `miner inside pub1 namespace: ${minerLine}`).toContain(pub1Ns);
       }

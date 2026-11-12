@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
 import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshAnchor, StartMeshClientOptions } from '../../src/mesh/index.js';
+import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshContact, StartMeshClientOptions } from '../../src/mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import { createMeshSeams, startExtensionMesh, parseHandNodeAddress, type StorageLike } from '../../src/extension/mesh-seams.js';
 import { HAND_NODE_KEY } from '../../src/extension/storage-keys.js';
@@ -22,7 +22,6 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     transport: null,
     path: null,
     lastLeft: null,
-    anchorReached: false,
     tip: null,
     agreement: null,
     checks: 0,
@@ -32,6 +31,8 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     proofs: null,
     anchor: null,
     chain: null,
+    notContinued: false,
+    disagreement: null,
     ...overrides,
   };
 }
@@ -60,8 +61,10 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     stop: hooks.stop ?? ((): Promise<void> => Promise.resolve()),
     addByHand: hooks.addByHand ?? ((): void => {}),
     removeByHand: hooks.removeByHand ?? ((): void => {}),
+    answer: (): void => {},
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
+    toRemember: () => ({ proof: null, nodes: [], dropped: [], answered: [], replace: false }),
     libp2p: {} as unknown as MeshClient['libp2p'],
   };
 }
@@ -74,6 +77,10 @@ function fakeStorage(initial: Record<string, string> = {}): StorageLike & { map:
     setItem: (k, v) => { map.set(k, v); },
     removeItem: (k) => { map.delete(k); },
   };
+}
+
+function fakeLocks(): { request(name: string, fn: () => Promise<void>): Promise<void> } {
+  return { request: (_n, fn) => fn() };
 }
 
 const check: (rows: unknown[]) => PostCheck[] = (rows) => rows.map((): PostCheck => ({ status: 'unbound', reason: 'no-tx', verdict: 'no-tx' }));
@@ -218,13 +225,13 @@ describe('startExtensionMesh — the lifecycle', () => {
     });
     let startOpts: StartMeshClientOptions | null = null;
     const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });
-    const anchors: MeshAnchor[] = [];
+    const firstContact: MeshContact[] = [];
     const storage = fakeStorage();
     const addHandler = vi.fn();
     const window = { addEventListener: addHandler };
     await startExtensionMesh({
-      anchors, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, window, startMeshClient,
+      firstContact, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage, locks: fakeLocks(), window, startMeshClient,
     });
     expect(startMeshClient).toHaveBeenCalledTimes(1);
     expect(startOpts!.network).toBe('devnet');
@@ -244,10 +251,70 @@ describe('startExtensionMesh — the lifecycle', () => {
     const startMeshClient = vi.fn(async (): Promise<MeshClient> => client);
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, window: { addEventListener: () => {} }, startMeshClient,
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
     });
     expect(addCalls).toEqual([PEER_HEX]);
+  });
+
+  it('a stored proof that does not decode is replaced by the next check\'s snapshot', async () => {
+    // startExtensionMesh's `continues` seam must decode each proof alone:
+    // a stored proof that does not decode answers `true` (the next
+    // snapshot's proof replaces it); a next proof that does not decode
+    // answers `false` (the kept one stands). A bare catch around
+    // `decode(kept), decode(next), compare(…)` swallows a bad stored proof
+    // and the store never recovers.
+    const { encodeNipopowProof } = await import('@dagsocial/nipopow');
+    const { proveWithReader } = await import('@dagsocial/nipopow');
+    const { buildMinedChain, makeReader } = await import('../../../nipopow/test/helpers.js');
+    const { DEFAULT_M, DEFAULT_K } = await import('@dagsocial/nipopow-client');
+    const next = proveWithReader(makeReader(buildMinedChain({ count: DEFAULT_M + DEFAULT_K })), { m: DEFAULT_M, k: DEFAULT_K });
+    const nextBytes = encodeNipopowProof(next);
+    const nextB64 = Buffer.from(nextBytes).toString('base64');
+    // The stored record's proof is base64 of random bytes — a valid
+    // base64 string, but `decodeNipopowProof` will throw on it.
+    const badBytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const badB64 = Buffer.from(badBytes).toString('base64');
+    // Devnet's profile pins no genesis, so any 64-hex value stays — the
+    // record is read, and `write` re-stamps the stored one as it goes.
+    const GENESIS = 'ab'.repeat(32);
+    const storage = fakeStorage({
+      'notis.mesh.memory.devnet': JSON.stringify({ genesis: GENESIS, proof: badB64, nodes: [] }),
+    });
+    let capturedOnChecked: ((s: import('../../src/mesh/index.js').MemorySnapshot) => void) | null = null;
+    // Devnet pins no genesis, so startExtensionMesh takes the chain from
+    // the client's state for the write's `genesis`; a `null` chain would
+    // make onChecked return early with no write.
+    const GENESIS_FOR_WRITE = GENESIS;
+    const client = fakeClient({
+      state: () => emptyState({ seated: true, chain: GENESIS_FOR_WRITE }),
+    });
+    const startMeshClient = vi.fn(async (opts: import('../../src/mesh/index.js').StartMeshClientOptions): Promise<MeshClient> => {
+      capturedOnChecked = opts.onChecked ?? null;
+      return client;
+    });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
+    });
+    expect(capturedOnChecked).not.toBeNull();
+    // Trigger the check-end callback with a snapshot carrying a decodable
+    // proof. The store's `continues` must answer `true` for the bad
+    // stored proof, and the new proof replaces it.
+    const snapshot: import('../../src/mesh/index.js').MemorySnapshot = {
+      proof: nextBytes,
+      nodes: [],
+      dropped: [],
+      answered: [],
+      replace: false,
+    };
+    capturedOnChecked!(snapshot);
+    // The store's write is awaited inside a .catch; let it flush.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    const stored = storage.map.get('notis.mesh.memory.devnet');
+    expect(stored).toBeDefined();
+    const record = JSON.parse(stored!);
+    expect(record.proof).toBe(nextB64);
   });
 
   it('two pages are two seams on two fake clients — pagehide on one stops only its client; the other\'s reads go on', async () => {
@@ -271,12 +338,12 @@ describe('startExtensionMesh — the lifecycle', () => {
       .mockImplementationOnce(async (): Promise<MeshClient> => client1)
       .mockImplementationOnce(async (): Promise<MeshClient> => client2);
     const { seams: seams1 } = await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), window: window1, startMeshClient,
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient,
     });
     const { seams: seams2 } = await startExtensionMesh({
-      anchors: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), window: window2, startMeshClient,
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient,
     });
 
     // Both seams read their own client's base.

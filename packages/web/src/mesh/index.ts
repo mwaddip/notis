@@ -35,6 +35,8 @@ export * from './header-json.js';
 export * from './held-chain.js';
 export * from './stun-list.js';
 export * from './mesh-client.js';
+export * from './memory.js';
+export * from './memory-store.js';
 
 export {
   dhtProtocol,
@@ -49,5 +51,7 @@ export {
   FAST_SET_SLACK_MS,
   STUN_SERVERS_MAX,
   BLOCK_READ_BYTES,
+  REMEMBERED_NODES_MAX,
+  ANSWERED_FORKS_MAX,
 } from './protocols.js';
 export type { NetworkName } from './protocols.js';

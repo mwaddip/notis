@@ -40,8 +40,10 @@ function fakeTipResult(nodes: NodeTipResult[], winnerIndex = -1): TipResult {
 function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
   return {
     notisId: over.notisId,
-    anchor: over.anchor ?? false,
+    firstContact: over.firstContact ?? false,
+    known: over.known ?? false,
     byHand: over.byHand ?? false,
+    yours: over.yours ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
     retryAtMs: over.retryAtMs ?? 0,
@@ -55,6 +57,7 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     transport: over.transport ?? null,
     path: over.path ?? null,
     api: over.api ?? null,
+    seenMs: over.seenMs ?? null,
   };
 }
 function emptyState(over: Partial<ClientState> = {}): ClientState {
@@ -63,7 +66,6 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     transport: over.transport ?? null,
     path: over.path ?? null,
     lastLeft: over.lastLeft ?? null,
-    anchorReached: over.anchorReached ?? false,
     tip: over.tip ?? null,
     agreement: over.agreement ?? null,
     checks: over.checks ?? 0,
@@ -73,6 +75,8 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     proofs: over.proofs ?? null,
     anchor: over.anchor ?? null,
     chain: over.chain ?? null,
+    notContinued: over.notContinued ?? false,
+    disagreement: over.disagreement ?? null,
   };
 }
 
@@ -176,7 +180,7 @@ describe('page/render — lastFailure under a retry entry', () => {
       failures: 1,
       lastFailure: { kind: 'transport', message: 'DialDeniedError: gater refused', atMs: 1234 },
     });
-    render(emptyState({ nodes: [retryEntry], anchorReached: true }), root);
+    render(emptyState({ nodes: [retryEntry] }), root);
     const lf = root.querySelector('.last-failure');
     expect(lf, 'last-failure block').not.toBeNull();
     expect(lf!.textContent).toContain('kind=transport');
@@ -189,7 +193,7 @@ describe('page/render — lastFailure under a retry entry', () => {
       status: 'ok',
       lastFailure: { kind: 'transport', message: 'stale', atMs: 1 },
     });
-    render(emptyState({ nodes: [okEntry], anchorReached: true }), root);
+    render(emptyState({ nodes: [okEntry] }), root);
     const lf = root.querySelector('.last-failure');
     expect(lf, 'last-failure hidden on ok').toBeNull();
   });

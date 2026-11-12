@@ -1,7 +1,7 @@
 // MESH_INTERFACE → Acceptance — the one query parameter the page reads:
 // `?probe=<path>`. After the first state with a non-null `nodeId`
-// (which is the client's first check: a `resolveTip` success on an
-// anchor it could verify, `MESH_INTERFACE → The client's node list → "A
+// (which is the client's first check: a `resolveTip` success on a
+// first-contact node it could verify, `MESH_INTERFACE → The client's node list → "A
 // check"`), the page reads `<path>` through its own client's
 // `fetch` — a mesh URL `notis-mesh://<nodeId><path>` — and writes a
 // `<pre id="probe">` with `{ path, nodeId, status, bytes, sha256 }`:

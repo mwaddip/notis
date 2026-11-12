@@ -1,6 +1,6 @@
 export interface PageConfigShape {
   network: string;
-  anchors: Array<{ notisId: string; addrs: string[] }>;
+  firstContact: Array<{ notisId: string; addrs: string[] }>;
   seeds: Array<{ notisId: string; addrs: string[] }>;
 }
 export declare function buildPrivateViaRelayVariant(

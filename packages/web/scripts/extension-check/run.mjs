@@ -229,6 +229,16 @@ const PASSPHRASE = 'proof-pass';
 // headers, `suffixHead` the first of them.
 let TIP_M = null;
 let TIP_K = null;
+// Dynamic bindings for the nipopow comparison 19b logs before it clears the
+// extension page origin's memory: `decodeNipopowProof` and `compareProofs`
+// from `@dagsocial/nipopow`, `verifierProfile` from `@dagsocial/nipopow-
+// client`, `profileFor` from `@dagsocial/types`. Loaded once at start under
+// the same guard TIP_M / TIP_K take, so a run that does not need the
+// verified-tip block pays nothing for these imports.
+let NIPOPOW_DECODE = null;
+let NIPOPOW_COMPARE = null;
+let NIPOPOW_VERIFIER_PROFILE = null;
+let TYPES_PROFILE_FOR = null;
 
 // The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
 // steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
@@ -471,11 +481,19 @@ if (WAITING_ONLY && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT
 if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
-    const { DEFAULT_M, DEFAULT_K } = await import(clientUrl);
+    const { DEFAULT_M, DEFAULT_K, verifierProfile } = await import(clientUrl);
     TIP_M = DEFAULT_M;
     TIP_K = DEFAULT_K;
+    NIPOPOW_VERIFIER_PROFILE = verifierProfile;
+    const nipopowUrl = import.meta.resolve('@dagsocial/nipopow');
+    const { decodeNipopowProof, compareProofs } = await import(nipopowUrl);
+    NIPOPOW_DECODE = decodeNipopowProof;
+    NIPOPOW_COMPARE = compareProofs;
+    const typesUrl = import.meta.resolve('@dagsocial/types');
+    const { profileFor } = await import(typesUrl);
+    TYPES_PROFILE_FOR = profileFor;
   } catch (e) {
-    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client (its DEFAULT_M and DEFAULT_K; pnpm -r build): ${e.message}`);
+    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client, @dagsocial/nipopow and @dagsocial/types (DEFAULT_M, DEFAULT_K, verifierProfile, decodeNipopowProof, compareProofs, profileFor; pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
@@ -1999,6 +2017,27 @@ async function openFreshExtensionPage(bcx) {
   return { cx: fresh, targetId: created.targetId };
 }
 
+// Remove every `notis.mesh.memory.*` key from the extension page origin's
+// `localStorage` through the main() page's CDP session (`cx`). The main()
+// page's own mesh client holds in-memory state of its own, but the kept
+// proof and the known nodes a fresh page seeds from come from
+// `localStorage` at construct (`src/extension/mesh-seams.ts` ·
+// `startExtensionMesh` → `store.read()`); an empty record reads as a
+// first-time client (`MESH_INTERFACE → What the client remembers`). The
+// waiting block seats `notis.posts.chain` through the same `cx.eval` path.
+// Returns the keys removed.
+async function clearExtensionMeshMemory(cx) {
+  return cx.eval(`(() => {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (typeof k === 'string' && k.startsWith('notis.mesh.memory.')) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+    return keys;
+  })()`);
+}
+
 // Set every tip relay to `mode`. A step asserts the verdict by opening a
 // fresh page after this call so the client's first check reads the upstream
 // through the mode the step set (WEB_INTERFACE → The extension → "The
@@ -2093,7 +2132,14 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // the mode set above (`→ "The contexts, and what each may hold"`). The
   // tip in the title is the node's live height — the status corner reads
   // /blocks/current through RLA in honest mode after each check fires its
-  // read — so it is whatever A has reached by now.
+  // read — so it is whatever A has reached by now. The step clears every
+  // `notis.mesh.memory.*` key before its fresh page loads: steps 1–16
+  // wrote memory from honest reads, and a page reading that memory seats
+  // the chain from the kept proof and places every tip without asking a
+  // proof (`MESH_INTERFACE → The client's node list → "A check"`), so the
+  // proof-short mode is never exercised. A client with no memory is what
+  // this step measures.
+  await clearExtensionMeshMemory(cx);
   setTipRelayModes('proof-short');
   {
     const page = await openFreshExtensionPage(bcx);
@@ -2256,6 +2302,13 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // `proof-invalid` on a second fresh page: no chain seats, a proof answered
   // is invalid, row 2 fires → `refused · invalid-proof`, title *no node's
   // proof verified · tip N*.
+  // The step asserts that a node counts without serving a proof of its
+  // own: with memory the chain is seated from the kept proof and A's tip
+  // is placed on it without a proof read at all, so the sentence the
+  // step tests — RLA's lie refused, B's proof seats the chain, A counts
+  // via its tip — is never exercised. Clear memory before the fresh
+  // page.
+  await clearExtensionMeshMemory(cx);
   setTipRelayModes('honest');
   tipRelays.a.mode = 'proof-invalid';
   {
@@ -2279,6 +2332,11 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       await bcx.call('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
     }
   }
+  // 19a's first arm's first check wrote fresh memory (B's honest proof
+  // seated the chain), so this second arm's fresh page would seat from
+  // it and place every tip without reading a proof — the refused verdict
+  // never fires. Clear memory again before the fresh page.
+  await clearExtensionMeshMemory(cx);
   setTipRelayModes('proof-invalid');
   {
     const page = await openFreshExtensionPage(bcx);
@@ -2339,12 +2397,12 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     // `incomparable`; the client keeps the chain it seated first
     // (`NIPOPOW_INTERFACE → compareProofs`, `MESH_INTERFACE → The client's
     // node list → "A check"`). The other node then names a tip off the
-    // seated chain's last `k` headers → `offChain = 1`, row 5 fires → `thin
+    // seated chain's last `k` headers → `offChain = 1`, split fires → `thin
     // · split`, title *a node names a tip off this chain · tip N*
     // (`WEB_INTERFACE → The extension → "The verified tip"`, `MESH_INTERFACE
-    // → No anchor reached → "The agreement counts"`). Which chain seats
-    // depends on which proof the first check read first, so the corner's tip
-    // is B's height or D's — the record names which it was.
+    // → What the client remembers → "The agreement counts"`). Which chain
+    // seats depends on which proof the first check read first, so the
+    // corner's tip is B's height or D's — the record names which it was.
     const dLightTarget = TIP_M + TIP_K + 4;
     console.log(`[vt] 19c: mining D to height ${dLightTarget + 1} (lighter than A)`);
     spawnDaemon('d-miner', MINER_SCRIPT, {
@@ -2371,7 +2429,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19c, D lighter)',
           60000);
-        // The first number on a fresh page can be an anchor's read before the
+        // The first number on a fresh page can be a first-contact node's read before the
         // check ends; a press re-reads the tip through the routed read, which
         // goes to a node the check placed on the chain
         // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
@@ -2427,6 +2485,59 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     if (dHeavyReached === null) {
       record('19b', false, `D never reached height ≥ ${dHeavyTarget} within 10 min (last=${hDafterHeavy}, A at start=${hAatHeavy})`);
     } else {
+      // The step asserts that D's chain, heavier than A's above their
+      // common header, becomes the client's seated chain. With memory
+      // the kept proof is A's; a fresh page reading it seats A's chain
+      // and compares D's proof against the kept one — D continues only
+      // if its proof outscores the kept one above their LCA (work, not
+      // height, `MESH_INTERFACE → What the client remembers`). Clear
+      // memory before the fresh page so the step measures a first-time
+      // client, which seats the heavier chain of the two proofs it
+      // reads (`MESH_INTERFACE → The client's node list → "A check"`).
+      //
+      // Before clearing, log what the client should have done: read the
+      // stored kept proof through the main() page, fetch D's proof from
+      // D_ORIGIN, decode both, and run `compareProofs(kept, D, {m, k},
+      // verifierProfile(devnet, Date.now()))` at the client's own m and
+      // k (`@dagsocial/nipopow`, `@dagsocial/nipopow-client`,
+      // `@dagsocial/types`' `profileFor`). The verdict, both scores and
+      // the LCA height record whether the client's decision was right
+      // for this stack's chains.
+      try {
+        const keptRecord = await cx.eval(`(() => {
+          const raw = localStorage.getItem('notis.mesh.memory.devnet');
+          if (raw === null) return null;
+          try { return JSON.parse(raw); } catch { return { parseError: true }; }
+        })()`).catch(() => null);
+        if (keptRecord !== null
+            && typeof keptRecord.proof === 'string'
+            && NIPOPOW_DECODE !== null && NIPOPOW_COMPARE !== null
+            && NIPOPOW_VERIFIER_PROFILE !== null && TYPES_PROFILE_FOR !== null) {
+          const keptBytes = Buffer.from(keptRecord.proof, 'base64');
+          const dRes = await fetch(`${D_ORIGIN}/nipopow/proof/${TIP_M}/${TIP_K}`);
+          const dJson = await dRes.json().catch(() => null);
+          if (dRes.ok && dJson !== null && typeof dJson.proof === 'string') {
+            const dBytes = Buffer.from(dJson.proof, 'hex');
+            const kept = NIPOPOW_DECODE(new Uint8Array(keptBytes));
+            const dProof = NIPOPOW_DECODE(new Uint8Array(dBytes));
+            const profile = TYPES_PROFILE_FOR('devnet');
+            const verifier = NIPOPOW_VERIFIER_PROFILE(profile, Date.now());
+            const result = NIPOPOW_COMPARE(kept, dProof, { m: TIP_M, k: TIP_K }, verifier);
+            if (result.verdict === 'incomparable') {
+              console.log(`[vt] 19b compareProofs(kept=A, D) m=${TIP_M} k=${TIP_K}: verdict=incomparable reason=${result.reason}`);
+            } else {
+              console.log(`[vt] 19b compareProofs(kept=A, D) m=${TIP_M} k=${TIP_K}: verdict=${result.verdict} scoreKept=${result.scoreA.toString()} scoreD=${result.scoreB.toString()} lca.height=${result.lca?.height ?? 'null'}`);
+            }
+          } else {
+            console.log(`[vt] 19b compareProofs log skipped — D's /nipopow/proof/${TIP_M}/${TIP_K} answered status=${dRes.status} body=${JSON.stringify(dJson)}`);
+          }
+        } else {
+          console.log(`[vt] 19b compareProofs log skipped — memory record held no kept proof (record=${JSON.stringify(keptRecord)})`);
+        }
+      } catch (e) {
+        console.log(`[vt] 19b compareProofs log threw: ${e?.stack ?? String(e)}`);
+      }
+      await clearExtensionMeshMemory(cx);
       tipRelays.a.upstream = D_ORIGIN;
       tipRelays.a.mode = 'upstream-D';
       tipRelays.b.upstream = B_ORIGIN;
@@ -2439,7 +2550,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
             && /^a node names a tip off this chain · tip \d+$/.test(c.title ?? ''),
           'led thin + "a node names a tip off this chain · tip N" (19b, D heavier)',
           60000);
-        // The first number on a fresh page can be an anchor's read before the
+        // The first number on a fresh page can be a first-contact node's read before the
         // check ends; a press re-reads the tip through the routed read, which
         // goes to a node the check placed on the chain
         // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows").
@@ -8922,9 +9033,9 @@ function nodeP2pPeerId() {
   return m ? m[1] : null;
 }
 
-// Wait for a node's log to carry `[net] outbound handshake with <peerId>:
-// ok=true` — the one line `packages/net`'s node writer records when an
-// outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
+// Wait for a node's log to carry `[net] outbound handshake with <peerId> on
+// id=<connection id>: ok=true` — the one line `packages/net`'s node writer
+// records when an outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
 // both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
 // false on timeout. A restart appends to the log, so the caller passes
 // the offset into the file where the restart begins — a previous spawn's
@@ -8933,12 +9044,12 @@ function logOffset(logPath) {
   try { return readFileSync(logPath, 'utf8').length; } catch { return 0; }
 }
 async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 180000) {
-  const needle = `outbound handshake with ${peerId}: ok=true`;
+  const needle = new RegExp(`outbound handshake with ${peerId}( on id=\\S+)?: ok=true`);
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     try {
       const data = readFileSync(logPath, 'utf8');
-      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+      if (data.length > sinceOffset && needle.test(data.slice(sinceOffset))) return true;
     } catch {}
     await sleep(500);
   }

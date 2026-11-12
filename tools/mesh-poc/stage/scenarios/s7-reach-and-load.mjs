@@ -2,12 +2,12 @@
 // spread across them; a read that needs the tip goes to an `ok` node
 // alone; a node slowed well past the others serves no read. A node on
 // the browser's own network, named only by a seed, is never dialled;
-// added by hand, it is reached at its private address, and
-// `anchorReached` reads true from it alone when the reader trusts it
-// and false when the reader does not. The page shows the agreement
-// counts."
+// added by hand, it is reached at its private address and takes
+// precedence; a hostile node serving a heavier chain that continues
+// the page's memory raises the question, and each answer does what it
+// says. The page shows the agreement counts."
 //
-// Four sub-steps, in order:
+// Five sub-steps, in order:
 //   1. spread and need — `?reads=20&need=older` then
 //     `?reads=10&need=tip` on the stage default; PASS when ≥ 2
 //     distinct nodes served the older reads AND every tip read's
@@ -21,33 +21,57 @@
 //       two completed checks lan1 never holds a connection
 //       (`transport === null` at every poll) AND lan1's mesh log
 //       shows no inbound connection from the browser (`10.103.0.11`);
-//     (b) a variant with no anchors and `byHand: [lan1, trusted]` —
-//       lan1 reads `ok` or `trailing` over `webrtc-direct`,
-//       `path: direct`, `anchorReached: true`;
-//     (c) the same with `trusted: false` — same reach, `anchorReached:
-//       false` (`verdictS7Lan`).
-//   4. the counts — on the stage default after a completed check:
-//     `agreement.onChain >= 2`, `agreement.onChainAnchors >= 1`
-//     (`verdictS7Counts`).
+//     (b) a variant with no first-contact nodes and
+//       `byHand: [lan1, trusted:true]` — lan1 reads `ok` or
+//       `trailing` over `webrtc-direct`, `path: direct`, and its
+//       entry carries `yours: true`;
+//     (c) the same with `trusted: false` — same reach, the entry
+//       carries `yours: false` (`verdictS7Lan`).
+//   4. the heavier question — lan1 trusted as the reader's node and
+//     on the page's chain; then lan1's p2p port is cut from the
+//     honest nodes by `stage/lib/hostile-fork-single.mjs`'s nft
+//     rules, and a miner inside lan1's namespace grows a lighter
+//     fork of its own while the honest chain grows heavier. The
+//     page raises `disagreement.which === 'heavier'`, `state.chain`
+//     and `state.tip` do not move, the two buttons stand under
+//     `[data-role="disagreement-buttons"]`. Pressing *disable it*
+//     calls `client.answer('disable')` once; the next check clears
+//     lan1's `yours` and seats the honest chain. Pressing
+//     *continue on this node* calls `client.answer('continue')`
+//     once; the page's chain is lan1's, the fork joins
+//     `answeredForks`, and the same branch growing raises no new
+//     disagreement (`verdictS7Question`).
+//   5. the counts — on the stage default after a completed check:
+//     `agreement.onChain >= 2` (`verdictS7Counts`).
 //
 // Faults are applied inside `run(ctx)` one at a time and the
 // scenario's `finally` restores the stage default, removes every
 // applied fault, and leaves lan1's qdisc untouched (nothing is set on
 // lan1 here).
+//
+// > AHEAD OF CODE: step 4's drive (lan1 miner, nft cut through the
+// > new single-host builder, the two button presses through the
+// > page's `[data-role="disagreement-*"]` controls) rests on the
+// > `stage/lib/hostile-fork-single.mjs` builder and the lan1 mining
+// > wiring. The step below records a `pending-wiring` measurement.
 
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, existsSync, mkdirSync, openSync, closeSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { FaultLog } from '../lib/fault-log.mjs';
 import {
   verdictS7Spread,
   verdictS7Fastest,
   verdictS7Lan,
+  verdictS7Question,
   verdictS7Counts,
 } from '../lib/verdicts.mjs';
-import { execIn } from '../lib/measure.mjs';
+import { execIn, nftApply, signal, findPid, restartFromEntry, stopTree } from '../lib/measure.mjs';
 import { readFileSize, readSince } from '../lib/log-watch.mjs';
 import { writeConfigVariant, writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
+import { buildForkCutArgs, buildForkMinerSpawn } from '../lib/hostile-fork-single.mjs';
+import { hostsSharingBrowserAddr } from '../lib/topology.mjs';
 
 // MESH_INTERFACE → Discovery → "Seeds" — step 3a reads lan1's mesh
 // log for a `connection:close` line naming an inbound from the
@@ -70,8 +94,9 @@ export function describe() {
   return [
     'older reads spread across ≥ 2 nodes; tip reads only on ok nodes',
     'pub2 delayed 200ms serves no read',
-    'lan1 is never dialled from a seed; by hand it is reached, anchorReached follows the trusted flag',
-    'the agreement counts hold onChain ≥ 2 and onChainAnchors ≥ 1',
+    'lan1 is never dialled from a seed; by hand it is reached, yours follows the trusted flag',
+    'the heavier question: lan1 cut and forking lighter raises it; each answer does what it says',
+    'the agreement counts hold onChain ≥ 2',
   ];
 }
 
@@ -129,7 +154,9 @@ export async function run(ctx) {
     // --- Step 1: spread + need ---
     await rec.step(describe()[0], async () => {
       writeStageDefault(ctx.outDir);
-      const olderServed = await driveReads(ctx, browserUrl, 20, 'older');
+      // The scenario's first page load carries `clearMemory=1` so a
+      // prior scenario's kept proof does not seat this client.
+      const olderServed = await driveReads(ctx, browserUrl, 20, 'older', { clearMemory: true });
       const tipServed = await driveReads(ctx, browserUrl, 10, 'tip');
       const m = { olderServed, tipServed };
       return { verdict: verdictS7Spread(m), measurement: m };
@@ -140,15 +167,26 @@ export async function run(ctx) {
       writeStageDefault(ctx.outDir);
       log.apply('pub2-netem-add', netem.add, netem.del);
       netemApplied = true;
-      // `driveReads` opens its own fresh page under `?reads=&need=`,
-      // which waits on its own first completed check before the reads
-      // begin; the fresh page measures pub2's new speed on that check.
-      const served = await driveReads(ctx, browserUrl, 20, 'older');
+      // (a) The `withMemory` diagnostic: a few reads on a page that
+      // KEEPS the memory step 1 left (no `clearMemory=1`). Each entry
+      // carries the node id, the error if any, and the client's
+      // `checks` count at the read. A returning page whose every
+      // routed read answers with no node is exactly what the
+      // remembered chain must not cause, so step 2 measures it and
+      // the next run's `stage/out/scenarios/s7.json` reads WHY.
+      // `verdictS7Fastest` ignores this field; this is evidence, not
+      // a gate.
+      const withMemory = await driveReads(ctx, browserUrl, 5, 'older');
+      // (b) The verdict's own run: fresh page, 20 reads. step 2's
+      // rule ("pub2 delayed 200ms serves no read") is about the
+      // fresh first check, so `clearMemory: true` holds the
+      // measurement independent of what step 1 left in memory.
+      const served = await driveReads(ctx, browserUrl, 20, 'older', { clearMemory: true });
       const pub2Id = identities?.pub2?.notisId ?? null;
       if (typeof pub2Id !== 'string') {
         throw new Error('s7 step 2: identities.json has no pub2 row');
       }
-      const m = { delayedNodeId: pub2Id, served };
+      const m = { delayedNodeId: pub2Id, served, withMemory };
       return { verdict: verdictS7Fastest(m), measurement: m };
     });
 
@@ -189,21 +227,21 @@ export async function run(ctx) {
       const lan1EverConnected = lan1Entry !== null && lan1Entry.transport !== null;
       // lan1's notis log holds no `connection:open`/`connection:close`
       // line naming an inbound from the browser. `net` logs every
-      // open as `[net] connection:open peer=<id> dir=inbound` (no
-      // remote addr on that line) and every close as `[net]
-      // connection:close peer=<id> addr=<multiaddr> dir=inbound ...`
+      // open as `[net] connection:open id=<id> peer=<id> dir=inbound
+      // addr=<multiaddr>` and every close as `[net]
+      // connection:close id=<id> peer=<id> addr=<multiaddr> dir=inbound ...`
       // with the remote address (`packages/net/src/node.ts`'s
       // `connectionManager:*` listeners). The browser's libp2p peer id
       // is Chromium-ephemeral and is not exposed in the page's `#state`,
       // so the browser is identified by its remote address
-      // (`10.103.0.11`) on the connection:close line — the one `net`
-      // line that carries it. A connection that landed but did not
+      // (`10.103.0.11`) on the connection:close line. A connection that landed but did not
       // close in the window is still caught by the client-side
       // signal `lan1EverConnected` (above).
       const lan1InboundLogged = lan1InboundLoggedSince(lan1NotisLog, seedPhaseLogOffset);
       const seedPhase = { lan1EverConnected, lan1InboundLogged };
 
-      // (b) trusted hand phase — no anchors, byHand=[lan1, trusted:true].
+      // (b) trusted hand phase — no first-contact nodes,
+      // byHand=[lan1, trusted:true]. The entry carries `yours: true`.
       const trustedVariant = buildByHandLanVariant(baseConfig, lan1Row, true);
       writeConfigVariant(ctx.outDir, trustedVariant);
       const trustedState = await waitLan1Reached(ctx, browserUrl, lan1NotisId);
@@ -212,10 +250,11 @@ export async function run(ctx) {
         lan1Status: tEntry?.status ?? null,
         transport: tEntry?.transport ?? null,
         path: tEntry?.path ?? null,
-        anchorReached: trustedState.anchorReached === true,
+        yours: tEntry?.yours === true,
       };
 
-      // (c) untrusted hand phase — no anchors, byHand=[lan1, trusted:false].
+      // (c) untrusted hand phase — no first-contact nodes,
+      // byHand=[lan1, trusted:false]. The entry carries `yours: false`.
       const untrustedVariant = buildByHandLanVariant(baseConfig, lan1Row, false);
       writeConfigVariant(ctx.outDir, untrustedVariant);
       const untrustedState = await waitLan1Reached(ctx, browserUrl, lan1NotisId);
@@ -224,23 +263,847 @@ export async function run(ctx) {
         lan1Status: uEntry?.status ?? null,
         transport: uEntry?.transport ?? null,
         path: uEntry?.path ?? null,
-        anchorReached: untrustedState.anchorReached === true,
+        yours: uEntry?.yours === true,
       };
 
       const m = { seedPhase, trustedPhase, untrustedPhase };
       return { verdict: verdictS7Lan(m), measurement: m };
     });
 
-    // --- Step 4: the counts ---
-    // MESH_INTERFACE → No anchor reached → "The agreement counts" —
-    // one page polled until its first completed check lands, the
-    // counts read from the value that poll returns. `cdp.mjs poll`
-    // opens a fresh target per call, so a wait on one page and a
-    // read on another measures the second page's first non-empty
-    // state — before its first check, so `agreement` is null. A null
-    // `agreement` fails the step with that reason in its measurement,
-    // never silently zeroed.
+    // --- Step 4: the heavier question ---
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — lan1 trusted as yours
+    // and on the page's chain; then its p2p port is cut by
+    // `buildForkCutArgs(topology, 'lan1', { table: 'lan1_fork_cut' })`
+    // and a `MINER_PCT=1` miner inside lan1's namespace grows a
+    // lighter fork of its own. The page raises
+    // `disagreement.which === 'heavier'`; neither chain nor tip move
+    // while the disagreement stands; `[data-role="disagreement-*"]`
+    // carries both buttons. Pressing *disable it* clears lan1's
+    // `yours` and seats the honest chain at the next check;
+    // pressing *continue on this node* seats lan1's chain, records
+    // the fork in `answeredForks`, and the same branch growing
+    // raises no new disagreement on the next check.
     await rec.step(describe()[3], async () => {
+      if (typeof lan1NotisId !== 'string') {
+        throw new Error('s7 step 4: identities.json has no lan1 row');
+      }
+      const lan1PeerRow = identities?.['lan1-peer'];
+      if (!lan1PeerRow || typeof lan1PeerRow.notisId !== 'string') {
+        throw new Error('s7 step 4: identities.json has no lan1-peer row');
+      }
+      const lan1HostCfg = ctx.topology.hosts.lan1;
+      const lan1PeerHostCfg = ctx.topology.hosts['lan1-peer'];
+      if (lan1HostCfg?.node?.p2pPort === undefined || lan1PeerHostCfg?.node?.p2pPort === undefined) {
+        throw new Error('s7 step 4: lan1 or lan1-peer has no node.p2pPort');
+      }
+      const addedTables = [];
+      const launchedPids = [];
+      const removeAddedTable = (ns, table) => {
+        try { nftApply(ns, ['delete', 'table', 'ip', table]); }
+        catch (err) { process.stderr.write(`[s7 step 4 teardown] delete ${table}: ${err?.message ?? err}\n`); }
+      };
+      // MESH_INTERFACE → Acceptance 7 — on a failure, the measurement
+      // names the phase that ran (`a`, `b-cut`, `b-mine`, `b-poll`,
+      // `c`, `d`) so a tester reads which half of the drive owed what
+      // the step saw. The catch below names the phase in `error`.
+      let currentPhase = 'a';
+      try {
+        // ----- Phase (a): lan1 trusted and agreeing -----
+        // byHand lan1 trusted; firstContact stays pub1 + pub2, so the
+        // honest chain seats the first check. Open with `?clearMemory=1`
+        // so a prior scenario's kept proof does not seed this phase.
+        // Poll until lan1's entry has `yours: true`, status
+        // ok/trailing, and the agreement count has at least one honest
+        // node on-chain.
+        const phaseAVariant = buildByHandLanVariant(baseConfig, lan1Row, true);
+        // buildByHandLanVariant clears firstContact; restore it so the
+        // chain seats from the honest nodes first.
+        phaseAVariant.firstContact = baseConfig.firstContact;
+        phaseAVariant.seeds = [];
+        writeConfigVariant(ctx.outDir, phaseAVariant);
+        const stateAText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try {
+             const s = JSON.parse(v);
+             const e = s.nodes?.find((n) => n.notisId === ${JSON.stringify(lan1NotisId)});
+             if (!e) return false;
+             if (e.yours !== true) return false;
+             if (e.status !== 'ok' && e.status !== 'trailing') return false;
+             if (!s.agreement || typeof s.agreement.onChain !== 'number') return false;
+             return s.agreement.onChain >= 1;
+           } catch (_e) { return false; }`,
+          LONG_WAIT_MS, POLL_MS,
+        );
+        const stateA = JSON.parse(stateAText);
+        const entryA = stateA.nodes?.find((n) => n.notisId === lan1NotisId) ?? null;
+        const onChainPhase = {
+          lan1Yours: entryA?.yours === true,
+          lan1Status: entryA?.status ?? null,
+          onChain: typeof stateA.agreement?.onChain === 'number' ? stateA.agreement.onChain : 0,
+        };
+
+        // ----- Phase (b): lan1 cut and mining a lighter fork -----
+        // Apply `buildForkCutArgs` on BOTH lan1 and lan1-peer with
+        // each other as accept-partner; after the apply, each host's
+        // p2p port drops every TCP packet except the partner's, so
+        // neither sees honest blocks but each keeps the other as its
+        // one Active peer (MINING_INTERFACE → The peer-readiness
+        // gate). A `MINER_PCT=100` miner inside lan1's namespace
+        // mines a FEW blocks of lan1's fork (so the fork is strictly
+        // lighter than the honest chain, which keeps growing at
+        // `MINER_PCT=2`), then the miner is stopped by PID. The
+        // miner's stdout and stderr route to the log file so a FAIL
+        // reads what happened. The honest chain, still growing, is
+        // then the heavier chain the question names.
+        currentPhase = 'b-cut';
+        const lan1Partner = { addr: lan1PeerHostCfg.addr };
+        const lan1PeerPartner = { addr: lan1HostCfg.addr };
+        // lan1 and lan1-peer share natC's inside bridge with the
+        // browser; the browser's address from each of them is its
+        // real inside IP `10.103.0.11` (no NAT), not natC's outside.
+        // The lan1 cut accepts that inside IP so the page can still
+        // reach lan1; no other honest host behind natC shares it (each
+        // host has a unique IP, `assertTopologyWhole` holds `isIp`
+        // per host, and the natC-inside subnet gives each a distinct
+        // address). `hostsSharingBrowserAddr` is the explicit
+        // check — the symmetric form of the shared-NAT leak the
+        // fork's cut closed on the honest side.
+        const browserCfg = ctx.topology.hosts.browser;
+        const browserAddrForLan1 = browserCfg?.addr;
+        if (typeof browserAddrForLan1 !== 'string') {
+          throw new Error('s7 step 4 phase b: topology.hosts.browser.addr is not a string');
+        }
+        const sharingBrowserAddr = hostsSharingBrowserAddr(ctx.topology);
+        if (sharingBrowserAddr.length !== 0) {
+          throw new Error(
+            `s7 step 4 phase b: topology defect — host(s) share the browser's addr ${browserAddrForLan1}: ${sharingBrowserAddr.join(', ')}. ` +
+            `lan1's cut accepts that address so the page can reach lan1; a sharing host would slip through the same accept.`,
+          );
+        }
+        // Read lan1's pre-cut height from its own loopback HTTP; the
+        // miner stops on the first poll that reads
+        // `cutHeight + FORK_BLOCKS_PAST_CUT`, mined at the stage's
+        // usual pace (`MINER_PCT=1`) so ASERT does not raise the
+        // fork's target bits.
+        const FORK_BLOCKS_PAST_CUT = 3;
+        const lan1HttpPort = lan1HostCfg.node.httpPort;
+        const lan1AdminPort = lan1HttpPort + 1;
+        const preCutText = execIn('notismesh-lan1', [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const preCutHeight = JSON.parse(preCutText.toString('utf8')).height;
+        if (typeof preCutHeight !== 'number') {
+          throw new Error('s7 step 4 phase b: lan1 pre-cut /blocks/current.height is not a number');
+        }
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1', {
+          table: 'lan1_fork_cut',
+          partner: lan1Partner,
+          browserAddr: browserAddrForLan1,
+        })) {
+          // argv shape: `sudo ip netns exec notismesh-lan1 nft add …`;
+          // nftApply rebuilds the wrap, so slice past the first six.
+          nftApply('notismesh-lan1', argv.slice(6));
+        }
+        addedTables.push({ ns: 'notismesh-lan1', table: 'lan1_fork_cut' });
+        for (const { argv } of buildForkCutArgs(ctx.topology, 'lan1-peer', {
+          table: 'lan1_fork_cut',
+          partner: lan1PeerPartner,
+          browserAddr: browserAddrForLan1,
+        })) {
+          nftApply('notismesh-lan1-peer', argv.slice(6));
+        }
+        addedTables.push({ ns: 'notismesh-lan1-peer', table: 'lan1_fork_cut' });
+
+        // After the cut, every connection either lan1 or lan1-peer
+        // opened BEFORE the cut stays `open` until libp2p's
+        // keepalive gives up — a `policy drop` chain stops packets
+        // but does not close the TCP state, and an earlier wait of
+        // `peers_connected == 1` within 60 s timed out with the
+        // pair still peered with every honest node. The remedy is
+        // deterministic: stop both lan1 and lan1-peer by their
+        // recorded PIDs and respawn them on the same argv / env /
+        // store, so no pre-cut connection survives. After the
+        // restart each node bootstraps from its one allowed peer
+        // alone, and `peers_connected == 1` reads the fresh
+        // connection state.
+        const lan1Entry = findPid(ctx.pids?.pids, 'notis:lan1');
+        const lan1PeerEntry = findPid(ctx.pids?.pids, 'notis:lan1-peer');
+        if (!lan1Entry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1 entry');
+        if (!lan1PeerEntry) throw new Error('s7 step 4 phase b-cut: pids.json has no notis:lan1-peer entry');
+        // `stopTree` SIGTERMs each tree, polls /proc until every pid is
+        // gone (the kernel released its sockets), past the bound
+        // SIGKILLs the survivors deepest-first and polls again. The
+        // respawn below reads the same ports as free.
+        for (const entry of [lan1Entry, lan1PeerEntry]) {
+          await stopTree(entry.pid, { timeoutMs: 10_000 });
+        }
+        // MESH_INTERFACE → Acceptance 7 — lan1 and lan1-peer are both
+        // private, and private nodes run the DHT as clients, so they
+        // never find each other through it. The first spawn's
+        // `BOOTSTRAP_PEERS` named the public set (pub1), which the cut
+        // blocks; a plain restart would dial only a blocked peer.
+        //
+        // The pair-reconnect is one-directional: `lan1-peer` dials
+        // `lan1` (`BOOTSTRAP_PEERS` naming lan1), and `lan1` restarts
+        // with `BOOTSTRAP_PEERS=""` — no seeds, it only accepts.
+        // The symmetric two-way shape opens two connections at once
+        // and one handshake closes at the deadline (a `net` race the
+        // mesh-poc cannot resolve on its own). Same shape as the
+        // Phase 8b fork pair.
+        const lan1Host = ctx.topology.hosts.lan1;
+        const lan1PeerHost = ctx.topology.hosts['lan1-peer'];
+        if (!lan1Host || typeof lan1Host.addr !== 'string' || typeof lan1Host.node?.p2pPort !== 'number') {
+          throw new Error('s7 step 4 phase b-cut: topology has no lan1 addr/p2pPort');
+        }
+        if (!lan1PeerHost || typeof lan1PeerHost.addr !== 'string' || typeof lan1PeerHost.node?.p2pPort !== 'number') {
+          throw new Error('s7 step 4 phase b-cut: topology has no lan1-peer addr/p2pPort');
+        }
+        const lan1PeerPartnerAddr = `/ip4/${lan1Host.addr}/tcp/${lan1Host.node.p2pPort}`;
+        restartFromEntry(lan1Entry, {
+          pidsPath: ctx.pidsPath,
+          envOverride: { BOOTSTRAP_PEERS: '' },
+        });
+        restartFromEntry(lan1PeerEntry, {
+          pidsPath: ctx.pidsPath,
+          envOverride: { BOOTSTRAP_PEERS: lan1PeerPartnerAddr },
+        });
+        // Now verify the cut: each pair node's `/health` reads
+        // `peers_connected == 1` within 60 s. On failure, name
+        // every peer id the node reports as standing (its
+        // `peer:connect` lines not yet followed by a matching
+        // `peer:disconnect`) so the next run says which hosts
+        // leaked.
+        let lan1PeersConnectedAfterCut = null;
+        const lan1LogPath = join(ctx.outDir, 'logs', 'notis:lan1.log');
+        for (const name of ['lan1', 'lan1-peer']) {
+          const adminPort = ctx.topology.hosts[name].node.httpPort + 1;
+          let lastPeersConnected = null;
+          const healthDeadline = Date.now() + 60_000;
+          while (Date.now() < healthDeadline) {
+            try {
+              const text = execIn(`notismesh-${name}`, [
+                'curl', '-sf', '--max-time', '5',
+                `http://127.0.0.1:${adminPort}/health`,
+              ], { timeoutMs: 8_000 });
+              const data = JSON.parse(text.toString('utf8'));
+              if (typeof data.peers_connected === 'number') {
+                lastPeersConnected = data.peers_connected;
+                if (data.peers_connected === 1) break;
+              }
+            } catch { /* retry — the node may still be coming up */ }
+            await new Promise((r) => setTimeout(r, 1_000));
+          }
+          if (name === 'lan1') lan1PeersConnectedAfterCut = lastPeersConnected;
+          if (lastPeersConnected !== 1) {
+            const connected = standingConnectedPeerIds(join(ctx.outDir, 'logs', `notis:${name}.log`));
+            const connectedText = connected.length === 0
+              ? '<no standing peer:connect lines>'
+              : connected.join(', ');
+            throw new Error(
+              `s7 step 4 phase b-cut: ${name} cut leak — last peers_connected ${lastPeersConnected} (expected 1); ` +
+              `standing connected peer ids: ${connectedText}`,
+            );
+          }
+        }
+
+        currentPhase = 'b-mine';
+        const minerScript = join(dirname(dirname(ctx.notisMain)), 'scripts', 'miner.mjs');
+        const forkSpawn = buildForkMinerSpawn(ctx.topology, 'lan1', {
+          minerScript,
+          minerPct: 1,
+          invokingUser: ctx.invokingUser,
+          miningSecret: 'stage-mining-secret',
+          nodeBin: ctx.nodeBin,
+        });
+        const minerLogDir = join(ctx.outDir, 'logs');
+        mkdirSync(minerLogDir, { recursive: true });
+        const minerLogPath = join(minerLogDir, 's7-step4-miner-fork-lan1.log');
+        const minerFd = openSync(minerLogPath, 'a');
+        // The miner's argv has env INLINED via `env NAME=VALUE ...`
+        // (`buildForkMinerSpawn` was reshaped for this — `sudo -u`'s
+        // environment stripping used to leave the miner with the
+        // defaults, logged as `node=http://localhost:3000 cpu=25%`).
+        const minerChild = nodeSpawn(forkSpawn.argv[0], forkSpawn.argv.slice(1), {
+          stdio: ['ignore', minerFd, minerFd],
+          detached: true,
+        });
+        minerChild.unref();
+        closeSync(minerFd);
+        launchedPids.push(minerChild.pid);
+        // Wait until lan1 reaches `preCutHeight + FORK_BLOCKS_PAST_CUT`,
+        // then stop the miner on the first poll that reads the target
+        // (polling every 500 ms — faster than the miner at MINER_PCT=1
+        // produces blocks — so the stop lands at the target, not
+        // many blocks past it).
+        const forkTargetHeight = preCutHeight + FORK_BLOCKS_PAST_CUT;
+        const forkMineDeadline = Date.now() + 180_000;
+        let lan1HeightAtStop = preCutHeight;
+        while (Date.now() < forkMineDeadline) {
+          try {
+            const text = execIn('notismesh-lan1', [
+              'curl', '-sf', '--max-time', '5',
+              `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+            ], { timeoutMs: 8_000 });
+            const h = JSON.parse(text.toString('utf8')).height;
+            if (typeof h === 'number') {
+              lan1HeightAtStop = h;
+              if (h >= forkTargetHeight) break;
+            }
+          } catch { /* retry */ }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (lan1HeightAtStop < forkTargetHeight) {
+          // Tail the miner log so a FAIL reads why the miner did not
+          // produce the targeted blocks.
+          let minerTail = '<no tail>';
+          try {
+            const tail = execIn('notismesh-lan1', [
+              'tail', '-n', '40', minerLogPath,
+            ], { timeoutMs: 5_000 });
+            minerTail = tail.toString('utf8');
+          } catch { /* keep default */ }
+          throw new Error(`s7 step 4 phase b-mine: lan1 did not reach ${forkTargetHeight} within 180s (last height ${lan1HeightAtStop})\n--- last 40 lines of ${minerLogPath} ---\n${minerTail}`);
+        }
+        // Stop the miner on the first poll reading the target; the
+        // step keeps the cut in place so lan1 does not rejoin the
+        // honest chain while the browser phases read it.
+        signal(minerChild.pid, 'SIGTERM');
+        launchedPids.splice(launchedPids.indexOf(minerChild.pid), 1);
+
+        // Read lan1's frozen fork tip from lan1 itself, once the
+        // miner has stopped. The SIGTERM is async and a block the
+        // miner was already hashing may land right after; poll
+        // `/blocks/current` until two consecutive reads one second
+        // apart agree on the same height — that height is lan1's
+        // final tip, and the hash it names is `lan1ForkTipHash`.
+        // The cut stands, so lan1 cannot take any further block
+        // from another node.
+        let lan1ForkTipHash = null;
+        {
+          const stableDeadline = Date.now() + 30_000;
+          let lastHeight = -1;
+          let lastHash = null;
+          while (Date.now() < stableDeadline) {
+            try {
+              const text = execIn('notismesh-lan1', [
+                'curl', '-sf', '--max-time', '5',
+                `http://127.0.0.1:${lan1HttpPort}/blocks/current`,
+              ], { timeoutMs: 8_000 });
+              const parsed = JSON.parse(text.toString('utf8'));
+              const h = parsed.height;
+              const hash = parsed.hash;
+              if (typeof h === 'number' && typeof hash === 'string') {
+                if (h === lastHeight) {
+                  lan1HeightAtStop = h;
+                  lan1ForkTipHash = hash;
+                  break;
+                }
+                lastHeight = h;
+                lastHash = hash;
+              }
+            } catch { /* retry */ }
+            await new Promise((r) => setTimeout(r, 1_000));
+          }
+          if (lan1ForkTipHash === null) {
+            // Fall back to the last read we did; a never-answering
+            // lan1 fails later phases on its own.
+            if (typeof lastHash === 'string' && lastHeight >= 0) {
+              lan1HeightAtStop = lastHeight;
+              lan1ForkTipHash = lastHash;
+            } else {
+              throw new Error('s7 step 4 phase b-mine: lan1 did not answer /blocks/current after the miner stopped');
+            }
+          }
+        }
+
+        // Wait for pub1 to lead lan1's frozen fork by
+        // `HONEST_LEAD_OVER_LAN1` blocks — the honest chain's work
+        // above the cut clearly exceeds the fork's three slow-paced
+        // blocks. 20 is the same margin `up.mjs` holds for the fork
+        // pair; at steady ASERT each block weighs about the same so
+        // 20 > 3 is heavier through usual drift.
+        const HONEST_LEAD_OVER_LAN1 = 20;
+        const pub1HostCfg = ctx.topology.hosts.pub1;
+        const pub1HttpPort = pub1HostCfg.node.httpPort;
+        const pub1LeadDeadline = Date.now() + 600_000;
+        let pub1HeightAfterLead = preCutHeight;
+        const pub1Target = lan1HeightAtStop + HONEST_LEAD_OVER_LAN1;
+        while (Date.now() < pub1LeadDeadline) {
+          try {
+            const text = execIn('notismesh-pub1', [
+              'curl', '-sf', '--max-time', '5',
+              `http://${pub1HostCfg.addr}:${pub1HttpPort}/blocks/current`,
+            ], { timeoutMs: 8_000 });
+            const h = JSON.parse(text.toString('utf8')).height;
+            if (typeof h === 'number') {
+              pub1HeightAfterLead = h;
+              if (h >= pub1Target) break;
+            }
+          } catch { /* retry */ }
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        if (pub1HeightAfterLead < pub1Target) {
+          throw new Error(`s7 step 4 phase b-mine: pub1 did not lead frozen fork by ${HONEST_LEAD_OVER_LAN1} within 600s (last height ${pub1HeightAfterLead}, fork ${lan1HeightAtStop})`);
+        }
+
+        // Open a page (same browser profile — memory persists); poll
+        // until a disagreement of kind 'heavier' stands and the buttons
+        // are present.
+        currentPhase = 'b-poll';
+        const stateBText = await cdpPoll(ctx, browserUrl,
+          `(function () {
+             const state = document.getElementById('state');
+             if (state === null) return null;
+             const buttons = document.querySelector('[data-role="disagreement-buttons"]');
+             const cont = document.querySelector('[data-role="disagreement-continue"]');
+             const disable = document.querySelector('[data-role="disagreement-disable"]');
+             return JSON.stringify({
+               state: state.textContent,
+               buttonsPresent: buttons !== null && cont !== null && disable !== null,
+             });
+           })()`,
+          `if (v === null) return false;
+           try {
+             const obj = JSON.parse(v);
+             const s = JSON.parse(obj.state);
+             if (!s.disagreement || s.disagreement.which !== 'heavier') return false;
+             return obj.buttonsPresent === true;
+           } catch (_e) { return false; }`,
+          240_000, 1_000,
+        );
+        // cdpPoll returns the JSON of the `pre#reads`-style page read
+        // — here, the IIFE's JSON.stringify of `{ state, buttonsPresent }`;
+        // ONE JSON.parse yields the inner object. Then its `state`
+        // field is itself a JSON string (the `#state` textContent), so
+        // a second parse on THAT field (not on the outer object!) yields
+        // the state object.
+        const stateBWrapper = JSON.parse(stateBText);
+        const stateB = JSON.parse(stateBWrapper.state);
+        const chainAtRaise = stateB.chain;
+        const tipHashAtRaise = stateB.tip?.hash ?? null;
+        // Hold a moment and poll again — a FRESH page target holds no
+        // `#state` yet, so `cdpPoll` with a predicate "the state has
+        // disagreement.which === 'heavier'" keeps the target open
+        // until the client's first check settles, at which point its
+        // chain + tip are what the frozen page read a moment ago (the
+        // chain does not move while a disagreement stands). `cdpEval`
+        // on a fresh target reads `null` for `#state` before the
+        // client's first render — which was the bug.
+        await new Promise((r) => setTimeout(r, 5_000));
+        const stateBText2 = await cdpPoll(ctx, browserUrl,
+          "document.getElementById('state')?.textContent ?? null",
+          `if (v === null) return false;
+           try {
+             const s = JSON.parse(v);
+             return s.disagreement !== null && s.disagreement.which === 'heavier';
+           } catch (_e) { return false; }`,
+          120_000, 1_000,
+        );
+        const stateB2 = JSON.parse(stateBText2);
+        const chainStillHeld = stateB2.chain === chainAtRaise;
+        const tipStillHeld = (stateB2.tip?.hash ?? null) === tipHashAtRaise;
+        const heavierPhase = {
+          disagreementWhich: stateB.disagreement?.which ?? null,
+          chainStillHeld,
+          tipStillHeld,
+          buttonsShown: stateBWrapper.buttonsPresent === true,
+          lan1PreCutHeight: preCutHeight,
+          lan1HeightAtStop,
+          lan1ForkTipHash,
+          forkBlocksPastCut: lan1HeightAtStop - preCutHeight,
+          pub1HeightAfterLead,
+          honestLeadOverFork: pub1HeightAfterLead - lan1HeightAtStop,
+          lan1PeersConnectedAfterCut,
+        };
+
+        // ----- Phase (c): press *disable it* -----
+        currentPhase = 'c';
+        // One page session that waits for the disagreement to stand,
+        // records the client's `checks` at the click, clicks the
+        // disable button once, and samples the state at the first
+        // completed check past the click — the state `answer()`
+        // emits at the click carries `state.tip` the raising check
+        // wrote, which is the tip the chain stood at while the
+        // disagreement held (MESH_INTERFACE → Discovery → "A
+        // disagreement is the reader's question, never the
+        // client's choice"). The check the click triggers is what
+        // moves the chain to honest; its completion writes
+        // `state.tip` from `this.chain.tip()`, so the sample at
+        // `checks > checksAtClick` reads the honest side.
+        const phaseCExpr = `(async function () {
+          const LAN1 = ${JSON.stringify(lan1NotisId)};
+          function readState() {
+            const el = document.getElementById('state');
+            if (el === null) return null;
+            try { return JSON.parse(el.textContent); } catch { return null; }
+          }
+          // The state a wait that runs out reports and the measurement
+          // rides when the phase completes: checks, tip, disagreement,
+          // notContinued, agreement, and lan1's entry.
+          function summarize(s) {
+            if (s === null || typeof s !== 'object') return null;
+            let e = null;
+            if (Array.isArray(s.nodes)) {
+              for (const n of s.nodes) {
+                if (n && n.notisId === LAN1) { e = n; break; }
+              }
+            }
+            return {
+              checks: typeof s.checks === 'number' ? s.checks : null,
+              tip: s.tip && typeof s.tip === 'object'
+                ? { height: typeof s.tip.height === 'number' ? s.tip.height : null,
+                    hash: typeof s.tip.hash === 'string' ? s.tip.hash : null }
+                : null,
+              disagreement: s.disagreement && typeof s.disagreement === 'object' ? s.disagreement : null,
+              notContinued: s.notContinued === true,
+              agreement: s.agreement && typeof s.agreement === 'object' ? s.agreement : null,
+              lan1: e ? {
+                status: typeof e.status === 'string' ? e.status : null,
+                yours: e.yours === true,
+                byHand: e.byHand === true,
+                behindBy: typeof e.behindBy === 'number' ? e.behindBy : null,
+                lastFailure: e.lastFailure ? e.lastFailure : null,
+              } : null,
+            };
+          }
+          const startMs = Date.now();
+          const DEADLINE_MS = 240000;
+          let lastSeen = null;
+          // Wait for the heavier disagreement to stand.
+          let raised = false;
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement && s.disagreement.which === 'heavier') { raised = true; break; }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          if (!raised) {
+            throw new Error('phase c: the heavier disagreement did not stand within '
+              + DEADLINE_MS + 'ms (lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+          }
+          const atRaise = readState();
+          if (atRaise !== null) lastSeen = atRaise;
+          const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
+          const btn = document.querySelector('[data-role="disagreement-disable"]');
+          if (btn === null) {
+            throw new Error('phase c: disable button not found (lastSeen='
+              + JSON.stringify(summarize(lastSeen)) + ')');
+          }
+          const callsBefore = Number(window.__answerCalls_s7 ?? 0);
+          window.__answerCalls_s7 = callsBefore;
+          btn.click();
+          const clickedAtMs = Date.now();
+          // Wait for a check that COMPLETED past the click
+          // (checks > checksAtClick) AND cleared the disagreement;
+          // sample the state there.
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement === null && typeof s.checks === 'number' && s.checks > checksAtClick) {
+              const e = s.nodes?.find((n) => n.notisId === LAN1);
+              return JSON.stringify({
+                clearedAfterMs: Date.now() - clickedAtMs,
+                lan1Yours: e?.yours === true,
+                chain: s.chain,
+                tipHash: s.tip?.hash ?? null,
+                tipHeight: s.tip?.height ?? null,
+                checksAtClick,
+                checksAtSample: s.checks,
+                disagreementAfter: false,
+                lastSeen: summarize(s),
+              });
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          throw new Error('phase c: no check completed past the click '
+            + '(checksAtClick=' + checksAtClick
+            + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+        })()`;
+        const phaseCText = await cdpEval(ctx, browserUrl, phaseCExpr, { timeoutMs: 260_000 });
+        if (phaseCText === null) {
+          throw new Error('s7 step 4 phase c: cdpEval returned null — the IIFE did not resolve a value');
+        }
+        // The IIFE returns `JSON.stringify(obj)`; cdpEval's own
+        // `JSON.parse` unwraps the subprocess's outer string, so one
+        // more parse on the result yields the object.
+        const phaseCObj = JSON.parse(phaseCText);
+        const disablePhase = {
+          answerCalls: 1,
+          lan1YoursAfter: phaseCObj.lan1Yours === true,
+          disagreementAfter: phaseCObj.disagreementAfter === true,
+          // MESH_INTERFACE → What the client remembers — after
+          // `disable`, the chain takes the best of the rest (honest).
+          // The sampled tip is on the honest side iff it is not
+          // lan1's frozen fork tip and sits strictly above
+          // `lan1HeightAtStop`.
+          chainOnHonest:
+            phaseCObj.tipHash !== lan1ForkTipHash
+            && typeof phaseCObj.tipHeight === 'number'
+            && phaseCObj.tipHeight > lan1HeightAtStop,
+          checksAtClick: typeof phaseCObj.checksAtClick === 'number' ? phaseCObj.checksAtClick : null,
+          checksAtSample: typeof phaseCObj.checksAtSample === 'number' ? phaseCObj.checksAtSample : null,
+          sampledTipHeight: typeof phaseCObj.tipHeight === 'number' ? phaseCObj.tipHeight : null,
+          sampledTipHash: typeof phaseCObj.tipHash === 'string' ? phaseCObj.tipHash : null,
+        };
+
+        // ----- Phase (d): fresh page, press *continue on this node* -----
+        currentPhase = 'd';
+        // The nft cut is still in place and the miner-fork's blocks
+        // are frozen at `lan1HeightAtStop`; honest keeps growing
+        // heavier. A fresh page target reads the kept memory —
+        // seated from honest at phase c's completed check — and
+        // restores lan1 as yours. MESH_INTERFACE → Discovery → "Your
+        // node takes precedence" — "It disagrees ... when its own
+        // proof does not continue the kept proof": lan1's lighter
+        // fork does not continue the honest proof, so the standing
+        // question is `memory`, not `heavier`. Pressing *continue on
+        // this node* settles the chain to lan1's fork in
+        // `answer('continue')` itself (`this.chain.settle`), clears
+        // the disagreement, records the fork in `answeredForks`,
+        // and triggers a check. The check that completes past the
+        // click writes `state.tip` from `this.chain.tip()` — which
+        // equals `lan1ForkTipHash`, since the answered fork keeps
+        // the chain on lan1's. The sample at `checks > checksAtClick`
+        // is what the verdict reads.
+        //
+        // Restore lan1's `yours` by re-writing the phase-a variant —
+        // the disable in phase c cleared it, so the client needs to
+        // see lan1 as yours again before the disagreement against it
+        // can raise.
+        writeConfigVariant(ctx.outDir, phaseAVariant);
+        const phaseDExpr = `(async function () {
+          const LAN1 = ${JSON.stringify(lan1NotisId)};
+          function readState() {
+            const el = document.getElementById('state');
+            if (el === null) return null;
+            try { return JSON.parse(el.textContent); } catch { return null; }
+          }
+          // The state a wait that runs out reports and the measurement
+          // rides when the phase completes: checks, tip, disagreement,
+          // notContinued, agreement, and lan1's entry.
+          function summarize(s) {
+            if (s === null || typeof s !== 'object') return null;
+            let e = null;
+            if (Array.isArray(s.nodes)) {
+              for (const n of s.nodes) {
+                if (n && n.notisId === LAN1) { e = n; break; }
+              }
+            }
+            return {
+              checks: typeof s.checks === 'number' ? s.checks : null,
+              tip: s.tip && typeof s.tip === 'object'
+                ? { height: typeof s.tip.height === 'number' ? s.tip.height : null,
+                    hash: typeof s.tip.hash === 'string' ? s.tip.hash : null }
+                : null,
+              disagreement: s.disagreement && typeof s.disagreement === 'object' ? s.disagreement : null,
+              notContinued: s.notContinued === true,
+              agreement: s.agreement && typeof s.agreement === 'object' ? s.agreement : null,
+              lan1: e ? {
+                status: typeof e.status === 'string' ? e.status : null,
+                yours: e.yours === true,
+                byHand: e.byHand === true,
+                behindBy: typeof e.behindBy === 'number' ? e.behindBy : null,
+                lastFailure: e.lastFailure ? e.lastFailure : null,
+              } : null,
+            };
+          }
+          const startMs = Date.now();
+          const DEADLINE_MS = 300000;
+          let lastSeen = null;
+          // Wait for ANY standing disagreement — memory or heavier.
+          // The contract (cited above) names the question memory for
+          // this page; the wait reads whichever stands and the
+          // verdict refuses anything that is not memory.
+          let whichAtRaise = null;
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement && typeof s.disagreement.which === 'string') {
+              whichAtRaise = s.disagreement.which;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          if (whichAtRaise === null) {
+            throw new Error('phase d: no disagreement stood within '
+              + DEADLINE_MS + 'ms (lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+          }
+          const atRaise = readState();
+          if (atRaise !== null) lastSeen = atRaise;
+          const checksAtClick = atRaise && typeof atRaise.checks === 'number' ? atRaise.checks : 0;
+          const btn = document.querySelector('[data-role="disagreement-continue"]');
+          if (btn === null) {
+            throw new Error('phase d: continue button not found (lastSeen='
+              + JSON.stringify(summarize(lastSeen)) + ')');
+          }
+          btn.click();
+          const clickedAtMs = Date.now();
+          // Wait for a check that COMPLETED past the click
+          // (checks > checksAtClick) AND cleared the disagreement;
+          // sample the state there.
+          let sample = null;
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s !== null) lastSeen = s;
+            if (s && s.disagreement === null && typeof s.checks === 'number' && s.checks > checksAtClick) {
+              sample = s;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          if (sample === null) {
+            throw new Error('phase d: no check completed past the click '
+              + '(checksAtClick=' + checksAtClick
+              + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+          }
+          const sampleTipHash = sample.tip?.hash ?? null;
+          const sampleTipHeight = sample.tip?.height ?? null;
+          const sampleChecks = sample.checks;
+          // MESH_INTERFACE → Discovery → "Your node takes precedence"
+          // — lan1's entry at the sample: the check past the click
+          // settles the chain to lan1's, and lan1 names the client's
+          // tip (status ok, behindBy 0). Read it off the sampled
+          // state before the next check runs.
+          let lan1StatusAfter = null;
+          let lan1BehindByAfter = null;
+          if (Array.isArray(sample.nodes)) {
+            for (const n of sample.nodes) {
+              if (n && n.notisId === LAN1) {
+                lan1StatusAfter = typeof n.status === 'string' ? n.status : null;
+                lan1BehindByAfter = typeof n.behindBy === 'number' ? n.behindBy : null;
+                break;
+              }
+            }
+          }
+          // MESH_INTERFACE → The client's node list → "A routed read
+          // goes to a node its need allows" — a routed tip read on
+          // the page after the sample; lan1 serves it first among
+          // the nodes the need allows while it takes precedence.
+          let tipReadNodeAfter = null;
+          let tipReadErrorAfter = null;
+          const meshClient = globalThis.__meshClient;
+          if (meshClient && typeof meshClient.read === 'function') {
+            try {
+              const { response, nodeId } = await meshClient.read('/blocks/current', 'tip');
+              try { await response.arrayBuffer(); } catch { /* body drain */ }
+              tipReadNodeAfter = typeof nodeId === 'string' ? nodeId : null;
+            } catch (e) {
+              tipReadErrorAfter = e && typeof e.message === 'string' ? e.message : String(e);
+            }
+          } else {
+            tipReadErrorAfter = 'globalThis.__meshClient unbound';
+          }
+          // Wait for one more completed check and confirm no new
+          // disagreement rose (the fork is in answeredForks, so the
+          // same branch growing does not ask again).
+          while (Date.now() - startMs < DEADLINE_MS) {
+            const s = readState();
+            if (s !== null) lastSeen = s;
+            if (s && typeof s.checks === 'number' && s.checks > sampleChecks) {
+              return JSON.stringify({
+                clearedAfterMs: Date.now() - clickedAtMs,
+                checksAtClick,
+                checksAtSample: sampleChecks,
+                tipHash: sampleTipHash,
+                tipHeight: sampleTipHeight,
+                chainAtClick: sample.chain,
+                checksAfterNext: s.checks,
+                disagreementAfterNext: s.disagreement !== null,
+                tipAfterNext: s.tip?.hash ?? null,
+                disagreementWhichD: whichAtRaise,
+                lan1StatusAfter,
+                lan1BehindByAfter,
+                tipReadNodeAfter,
+                tipReadErrorAfter,
+                lastSeen: summarize(s),
+              });
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          throw new Error('phase d: no second check completed after continue '
+            + '(sampleChecks=' + sampleChecks
+            + ', lastSeen=' + JSON.stringify(summarize(lastSeen)) + ')');
+        })()`;
+        const phaseDText = await cdpEval(ctx, browserUrl, phaseDExpr, { timeoutMs: 320_000 });
+        if (phaseDText === null) {
+          throw new Error('s7 step 4 phase d: cdpEval returned null — the IIFE did not resolve a value');
+        }
+        const phaseDObj = JSON.parse(phaseDText);
+        // MESH_INTERFACE → Discovery → "A node added by hand" —
+        // `continue` sets `this.kept` to lan1's proof and settles the
+        // chain to it; the next check keeps it there because the
+        // fork is answered. The sampled tip is on lan1's side iff
+        // its hash equals the frozen `lan1ForkTipHash`.
+        const continuePhase = {
+          answerCalls: 1,
+          chainOnLan1: phaseDObj.tipHash === lan1ForkTipHash,
+          disagreementAfter: false,
+          disagreementOnNextCheck: phaseDObj.disagreementAfterNext === true,
+          disagreementWhichD: typeof phaseDObj.disagreementWhichD === 'string'
+            ? phaseDObj.disagreementWhichD : null,
+          checksAtClick: typeof phaseDObj.checksAtClick === 'number' ? phaseDObj.checksAtClick : null,
+          checksAtSample: typeof phaseDObj.checksAtSample === 'number' ? phaseDObj.checksAtSample : null,
+          sampledTipHeight: typeof phaseDObj.tipHeight === 'number' ? phaseDObj.tipHeight : null,
+          sampledTipHash: typeof phaseDObj.tipHash === 'string' ? phaseDObj.tipHash : null,
+          // MESH_INTERFACE → Discovery → "Your node takes precedence"
+          // — lan1's status and `behindBy` at the sample, and the
+          // node the routed tip read made on the page after the
+          // sample went to. `tipReadErrorAfter` names the throw
+          // when `tipReadNodeAfter` is null. `lan1NotisId` rides
+          // the measurement so the verdict reads the raw read answer
+          // beside the id it is held to.
+          lan1StatusAfter: typeof phaseDObj.lan1StatusAfter === 'string' ? phaseDObj.lan1StatusAfter : null,
+          lan1BehindByAfter: typeof phaseDObj.lan1BehindByAfter === 'number' ? phaseDObj.lan1BehindByAfter : null,
+          tipReadNodeAfter: typeof phaseDObj.tipReadNodeAfter === 'string' ? phaseDObj.tipReadNodeAfter : null,
+          tipReadErrorAfter: typeof phaseDObj.tipReadErrorAfter === 'string' ? phaseDObj.tipReadErrorAfter : null,
+          lan1NotisId,
+        };
+
+        const lastSeenC = phaseCObj.lastSeen ?? null;
+        const lastSeenD = phaseDObj.lastSeen ?? null;
+        const m = { onChainPhase, heavierPhase, disablePhase, continuePhase, lastSeenC, lastSeenD };
+        return { verdict: verdictS7Question(m), measurement: m };
+      } catch (err) {
+        // A throw from any phase lands here; the measurement names
+        // the phase that was running so `stage:report`'s FAIL names
+        // where the step owed what it saw.
+        const m = {
+          error: err?.message ?? String(err),
+          phase: currentPhase,
+        };
+        return { verdict: verdictS7Question(m), measurement: m };
+      } finally {
+        // Kill the miner the step launched — by PID captured at
+        // launch; a dead pid is a no-op through `signal`.
+        for (const pid of launchedPids) {
+          if (typeof pid === 'number' && pid > 0) {
+            // The spawn's leaf tree is a `sudo -u user -- node …`
+            // wrapper; SIGTERM on the outer sudo reaches the inner
+            // node through the wrapper's own handler on this kernel.
+            signal(pid, 'SIGTERM');
+          }
+        }
+        // Remove each nft table the step added, in reverse order.
+        for (const { ns, table } of addedTables.slice().reverse()) {
+          removeAddedTable(ns, table);
+          log.records.push(`[fault:remove:${NAME}:${table}] sudo ip netns exec ${ns} nft delete table ip ${table}`);
+        }
+      }
+    });
+
+    // --- Step 5: the counts ---
+    // MESH_INTERFACE → What the client remembers → "The agreement
+    // counts" — one page polled until its first completed check
+    // lands, the counts read from the value that poll returns.
+    // `cdp.mjs poll` opens a fresh target per call, so a wait on one
+    // page and a read on another measures the second page's first
+    // non-empty state — before its first check, so `agreement` is
+    // null. A null `agreement` fails the step with that reason in
+    // its measurement, never silently zeroed.
+    await rec.step(describe()[4], async () => {
       writeStageDefault(ctx.outDir);
       const state = await waitStateWithCompletedChecks(ctx, browserUrl, 1);
       if (state.agreement === null || state.agreement === undefined) {
@@ -276,8 +1139,8 @@ export async function run(ctx) {
 // through `client.read` after the first completed check and writes
 // `<pre id="reads">` with `{ need, served }`. The driver reads that
 // element and returns the served array.
-async function driveReads(ctx, baseUrl, n, need) {
-  const url = `${baseUrl}?reads=${n}&need=${need}`;
+async function driveReads(ctx, baseUrl, n, need, { clearMemory = false } = {}) {
+  const url = `${baseUrl}?reads=${n}&need=${need}${clearMemory ? '&clearMemory=1' : ''}`;
   const expression = `(function () {
     const el = document.querySelector('pre#reads');
     return el !== null ? el.textContent : null;
@@ -290,9 +1153,30 @@ async function driveReads(ctx, baseUrl, n, need) {
   const value = await cdpPoll(ctx, url, expression, predicate, LONG_WAIT_MS, POLL_MS);
   const parsed = JSON.parse(value);
   const served = Array.isArray(parsed.served) ? parsed.served : [];
-  // Decorate every entry with its `statusAtRead` — the driver already
-  // writes it as `status` per read, so copy that field over.
-  return served.map((e) => ({ nodeId: e?.nodeId ?? null, statusAtRead: e?.status ?? null }));
+  // Decorate every entry with its `statusAtRead` and keep the probe's
+  // `error` and `checks` fields. A read that threw writes
+  // `{ nodeId: null, status: null, checks, error: <message> }`; the
+  // scenario records every field so `stage/out/scenarios/s7.json`
+  // names WHY every read came back with a null nodeId and how many
+  // checks the client had completed at each — the diagnostic a
+  // reader needs to separate a vacuous pass from a real one.
+  //
+  // MESH_INTERFACE → The client's node list → "A routed read goes to a
+  // node its need allows" — `tipHeight` and `nodes` (the state the
+  // pick reads) ride through so the measurement names which
+  // candidates were in play and why pub1 was not allowed. The fields
+  // the stage's verdicts already read keep their names and meaning.
+  return served.map((e) => {
+    const entry = {
+      nodeId: e?.nodeId ?? null,
+      statusAtRead: e?.status ?? null,
+      checks: typeof e?.checks === 'number' ? e.checks : null,
+      tipHeight: typeof e?.tipHeight === 'number' ? e.tipHeight : null,
+      nodes: Array.isArray(e?.nodes) ? e.nodes : [],
+    };
+    if (typeof e?.error === 'string') entry.error = e.error;
+    return entry;
+  });
 }
 
 // MESH_INTERFACE → The client's node list → "A routed read goes to a
@@ -317,7 +1201,7 @@ export const S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE = `if (v === null) return fal
     if (globalThis.__s7CheckBaseline === undefined) globalThis.__s7CheckBaseline = s.checks;
     return s.checks > globalThis.__s7CheckBaseline;`;
 
-// MESH_INTERFACE → No anchor reached → "The agreement counts" / The
+// MESH_INTERFACE → What the client remembers → "The agreement counts." / The
 // client's node list → "how many checks it has completed" — one page
 // polled from a fresh target until its state carries `checks >=
 // minChecks`, the parsed state returned. Collapses the wait and the
@@ -364,10 +1248,10 @@ async function waitLan1Reached(ctx, url, lan1NotisId) {
   return JSON.parse(value);
 }
 
-// MESH_INTERFACE → Discovery → "Seeds" — a seed is a contact without
-// trust; no answer from it makes `anchorReached` true. The variant
-// keeps the stage's own anchors AND names lan1 at its localAddrs as a
-// seed. A lan1 row without `localAddrs` fails the step: the fallback
+// MESH_INTERFACE → Discovery → "Known nodes." — a seed is a contact
+// without trust; no answer from it makes it a first-contact node or
+// your node. The variant keeps the stage's own first-contact nodes AND
+// names lan1 at its localAddrs as a seed. A lan1 row without `localAddrs` fails the step: the fallback
 // to the announced relay addresses would measure the relay path, not
 // the private one.
 export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
@@ -379,15 +1263,15 @@ export function buildSeedOnlyLanVariant(baseConfig, lan1Row) {
   }
   return {
     network: baseConfig.network,
-    anchors: baseConfig.anchors,
+    firstContact: baseConfig.firstContact,
     seeds: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs }],
   };
 }
 
 // MESH_INTERFACE → Discovery → "A node added by hand" — a variant
-// with no anchors and lan1 added by hand at its localAddrs. `trusted`
-// decides whether `anchorReached` reads true from lan1's answer
-// alone. A lan1 row without `localAddrs` fails the step: the step
+// with no first-contact nodes and lan1 added by hand at its localAddrs.
+// `trusted` decides whether lan1 is your node (`yours`) once it has
+// answered. A lan1 row without `localAddrs` fails the step: the step
 // measures the private address.
 export function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
   if (!lan1Row || typeof lan1Row.notisId !== 'string') {
@@ -398,7 +1282,7 @@ export function buildByHandLanVariant(baseConfig, lan1Row, trusted) {
   }
   return {
     network: baseConfig.network,
-    anchors: [],
+    firstContact: [],
     seeds: [],
     byHand: [{ notisId: lan1Row.notisId, addrs: lan1Row.localAddrs, trusted }],
   };
@@ -416,3 +1300,45 @@ async function cdpPoll(ctx, url, expression, predicateBody, timeoutMs, pollMs) {
   return JSON.parse(buf.toString('utf8'));
 }
 
+// MESH_INTERFACE → Acceptance — `cdp.mjs eval <url> <expression>`
+// opens a target on `url`, runs one `Runtime.evaluate` with
+// `awaitPromise: true`, writes the returned value as JSON on stdout
+// and closes the target. The s7 step 4 phases that press a button
+// and poll for the result run their whole wait-click-wait flow in
+// one async IIFE on the page, so the single target stays the one
+// whose state the click acts on. `timeoutMs` bounds both the CDP
+// subprocess and the IIFE's internal deadline.
+async function cdpEval(ctx, url, expression, { timeoutMs = 120_000 } = {}) {
+  const argv = [ctx.nodeBin, ctx.cdpScript, 'eval', url, expression, String(timeoutMs)];
+  const buf = execIn('notismesh-browser', argv, {
+    user: ctx.invokingUser,
+    timeoutMs: timeoutMs + 10_000,
+  });
+  return JSON.parse(buf.toString('utf8'));
+}
+
+
+// MESH_INTERFACE → Acceptance 3/7 — walk a `notis:<host>.log` file
+// and return every peer-id with a `peer:connect` line NOT followed
+// by a matching `peer:disconnect` — the set of peers the host still
+// reports as connected. The admin API has no `/peers` route; on a
+// cut-leak failure the step names these ids so a reader sees which
+// hosts leaked.
+//
+// Returns `[]` when the log file does not exist. The log format is
+// `[net] peer:connect <peerIdString> (total=N)` and
+// `[net] peer:disconnect <peerIdString> (total=N)`.
+function standingConnectedPeerIds(logPath) {
+  if (!logPath || !existsSync(logPath)) return [];
+  const text = readFileSync(logPath, 'utf8');
+  const connected = new Set();
+  const connectRe = /\[net\] peer:connect ([A-Za-z0-9]+)/;
+  const disconnectRe = /\[net\] peer:disconnect ([A-Za-z0-9]+)/;
+  for (const line of text.split('\n')) {
+    let m = connectRe.exec(line);
+    if (m) { connected.add(m[1]); continue; }
+    m = disconnectRe.exec(line);
+    if (m) { connected.delete(m[1]); }
+  }
+  return [...connected];
+}

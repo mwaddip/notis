@@ -18,7 +18,7 @@ function sampleScenarios(): ScenarioResult[] {
       startedAt: 1_700_000_000_000,
       endedAt: 1_700_000_060_000,
       steps: [
-        { name: 'nodeId is an anchor within 60 s', verdict: 'PASS', measurement: { nodeId: 'a'.repeat(64), isAnchor: true, timeMs: 10_000 }, timeMs: 10_000 },
+        { name: 'nodeId is a first-contact node within 60 s', verdict: 'PASS', measurement: { nodeId: 'a'.repeat(64), isFirstContact: true, timeMs: 10_000 }, timeMs: 10_000 },
         { name: 'probe matches node direct', verdict: 'PASS', measurement: { probe: { sha256: 'ab', bytes: 123 }, direct: { sha256: 'ab', bytes: 123 } }, timeMs: 20 },
         { name: 'DNS silent', verdict: 'skipped', measurement: null, timeMs: 0 },
       ],
@@ -28,7 +28,7 @@ function sampleScenarios(): ScenarioResult[] {
       startedAt: 1_700_000_120_000,
       endedAt: 1_700_000_180_000,
       steps: [
-        { name: 'no anchor reached, page shows banner', verdict: 'FAIL', measurement: { anchorReached: true, bannerText: null }, timeMs: 5_000 },
+        { name: 'no node reached, page shows banner', verdict: 'FAIL', measurement: { connected: true, bannerText: null }, timeMs: 5_000 },
       ],
     },
   ];
@@ -43,9 +43,9 @@ describe('report/buildSummary — pure', () => {
 
   it("every step's verdict appears in its row", () => {
     const md = buildSummary(sampleScenarios());
-    expect(md).toMatch(/\|.*nodeId is an anchor.*\|\s*PASS\s*\|/);
+    expect(md).toMatch(/\|.*nodeId is a first-contact node.*\|\s*PASS\s*\|/);
     expect(md).toMatch(/\|.*DNS silent.*\|\s*skipped\s*\|/);
-    expect(md).toMatch(/\|.*no anchor reached.*\|\s*FAIL\s*\|/);
+    expect(md).toMatch(/\|.*no node reached.*\|\s*FAIL\s*\|/);
   });
 
   it('skipped measurements render as "-" (no PASS by mistake)', () => {

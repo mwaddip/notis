@@ -13,14 +13,14 @@
 // id from a notisId — same function `buildPageConfig` already uses.
 
 /**
- * Build a config variant whose single anchor is `<privHost>` reached
+ * Build a config variant whose single first-contact node is `<privHost>` reached
  * through `<viaPublicHost>`. The variant leaves `seeds` empty; the
  * client's STUN list is derived from the public nodes it holds
  * (MESH_INTERFACE → NAT → "A client's STUN list comes from the public
  * nodes it holds"), so no `stunServers` key is written.
  *
  * The relay address is built from the stage's own `config.json`
- * (`baseConfig.anchors.find(a => a.notisId === viaPublicNotisId).addrs[0]`
+ * (`baseConfig.firstContact.find(a => a.notisId === viaPublicNotisId).addrs[0]`
  * — the public node's WebRTC-direct multiaddr, with its certhash) and
  * `/p2p-circuit/p2p/<privPeerIdString>` appended.
  */
@@ -29,28 +29,28 @@ export function buildPrivateViaRelayVariant(baseConfig, {
   privPeerIdString,
   viaPublicNotisId,
 }) {
-  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
-    throw new Error('base config must carry anchors[]');
+  if (!baseConfig || !Array.isArray(baseConfig.firstContact)) {
+    throw new Error('base config must carry firstContact[]');
   }
-  const viaAnchor = baseConfig.anchors.find((a) => a?.notisId === viaPublicNotisId);
-  if (!viaAnchor || !Array.isArray(viaAnchor.addrs) || viaAnchor.addrs.length === 0) {
-    throw new Error(`base config does not name the public anchor ${viaPublicNotisId}`);
+  const viaFirstContact = baseConfig.firstContact.find((a) => a?.notisId === viaPublicNotisId);
+  if (!viaFirstContact || !Array.isArray(viaFirstContact.addrs) || viaFirstContact.addrs.length === 0) {
+    throw new Error(`base config does not name the public first-contact node ${viaPublicNotisId}`);
   }
   // Pick the first webrtc-direct address — a browser dials that first.
-  const viaWebrtcDirect = viaAnchor.addrs.find((s) => s.includes('/webrtc-direct/'));
+  const viaWebrtcDirect = viaFirstContact.addrs.find((s) => s.includes('/webrtc-direct/'));
   if (!viaWebrtcDirect) {
-    throw new Error(`public anchor ${viaPublicNotisId} has no /webrtc-direct/ multiaddr`);
+    throw new Error(`public first-contact node ${viaPublicNotisId} has no /webrtc-direct/ multiaddr`);
   }
   const relayAddr = `${viaWebrtcDirect}/p2p-circuit/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
-    anchors: [{ notisId: privNotisId, addrs: [relayAddr] }],
+    firstContact: [{ notisId: privNotisId, addrs: [relayAddr] }],
     seeds: [],
   };
 }
 
 /**
- * Build a config variant whose single anchor is a private node reached
+ * Build a config variant whose single first-contact node is a private node reached
  * through the relay the private node ACTUALLY reserved on, taken from
  * its own announced circuit multiaddr. A private node picks its relay
  * at run time; the stage cannot name the via-public node in advance.
@@ -66,8 +66,8 @@ export function buildPrivateViaRelayVariant(baseConfig, {
  * relay has no WebRTC-direct address a browser can dial.
  */
 export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, identities }) {
-  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
-    throw new Error('base config must carry anchors[]');
+  if (!baseConfig || !Array.isArray(baseConfig.firstContact)) {
+    throw new Error('base config must carry firstContact[]');
   }
   if (!privRow || typeof privRow.notisId !== 'string') {
     throw new Error('privRow must carry a notisId');
@@ -128,17 +128,17 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
   // relay over WebRTC-direct, signals SDP across the limited
   // relayed stream, and establishes a direct WebRTC connection to
   // the private.
-  const relayAnchor = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
+  const relayedFirstContactAddr = `${relayWebrtc}/p2p-circuit/webrtc/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
-    anchors: [{ notisId: privRow.notisId, addrs: [relayAnchor] }],
+    firstContact: [{ notisId: privRow.notisId, addrs: [relayedFirstContactAddr] }],
     seeds: [],
   };
 }
 
 /**
  * MESH_INTERFACE → NAT → "A relay carries data" — a variant whose
- * single anchor is a private node reached through the relay it
+ * single first-contact node is a private node reached through the relay it
  * reserved on, with BOTH its `/p2p-circuit/webrtc` and plain
  * `/p2p-circuit` addresses. The signalled WebRTC path over the
  * circuit's webrtc form fails when the private is behind a symmetric
@@ -148,8 +148,8 @@ export function buildPrivateViaAnnouncedRelayVariant(baseConfig, { privRow, iden
  * over the relay.
  */
 export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, identities }) {
-  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
-    throw new Error('base config must carry anchors[]');
+  if (!baseConfig || !Array.isArray(baseConfig.firstContact)) {
+    throw new Error('base config must carry firstContact[]');
   }
   if (!privRow || typeof privRow.notisId !== 'string') {
     throw new Error('privRow must carry a notisId');
@@ -198,24 +198,24 @@ export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, 
   const relayedPlain = `${relayWebrtc}/p2p-circuit/p2p/${privPeerIdString}`;
   return {
     network: baseConfig.network,
-    anchors: [{ notisId: privRow.notisId, addrs: [relayedWebrtc, relayedPlain] }],
+    firstContact: [{ notisId: privRow.notisId, addrs: [relayedWebrtc, relayedPlain] }],
     seeds: [],
   };
 }
 
 /**
- * Build a config variant that keeps the stage's own anchors AND adds a
- * list of hostile seed anchors. The seeds are refused by
- * `assertClientConfig` under the same rules anchors are, so each seed's
+ * Build a config variant that keeps the stage's own first-contact nodes AND adds a
+ * list of hostile seeds. The seeds are refused by
+ * `assertClientConfig` under the same rules first-contact nodes are, so each seed's
  * `addrs` has to be IP-only.
  */
 export function buildWithHostileSeedsVariant(baseConfig, seeds) {
-  if (!baseConfig || !Array.isArray(baseConfig.anchors)) {
-    throw new Error('base config must carry anchors[]');
+  if (!baseConfig || !Array.isArray(baseConfig.firstContact)) {
+    throw new Error('base config must carry firstContact[]');
   }
   return {
     network: baseConfig.network,
-    anchors: baseConfig.anchors,
+    firstContact: baseConfig.firstContact,
     seeds: Array.isArray(seeds) ? seeds : [],
   };
 }

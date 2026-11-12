@@ -3,7 +3,7 @@
 // the browser transports alone (`webRTCDirect`, `webRTC`,
 // `circuitRelayTransport`, `webSockets` for secure addresses only), the DHT
 // as a client on `dhtProtocol(network)`, and no `@libp2p/bootstrap`: it
-// dials its anchors itself, per address, with libp2p's own unexpected-peer
+// dials its first-contact nodes itself, per address, with libp2p's own unexpected-peer
 // classification routed to `NodeList.wrongKey` and every other dial
 // failure to `NodeList.failure`.
 //
@@ -27,8 +27,14 @@ import {
 import { peerIdFromString } from '@libp2p/peer-id';
 import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
-import { resolveTip, DEFAULT_M, DEFAULT_K } from '@dagsocial/nipopow-client';
+import { resolveTip, DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { Anchor } from '@dagsocial/nipopow-client';
+import { decodeNipopowProof, encodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
+import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
+import { judgeByMemory, nodesToRemember, forkKey } from './memory.js';
+import { compareProofs } from '@dagsocial/nipopow';
+import type { MemorySnapshot } from './memory-store.js';
+import { REMEMBERED_NODES_MAX, ANSWERED_FORKS_MAX } from './protocols.js';
 import { readCappedJson, HEIGHT_READ_BYTES, isRecord } from '@dagsocial/node-reads';
 import type { HttpFetch, NodeError } from '@dagsocial/node-reads';
 import { isNonNegSafeInt } from '@dagsocial/node-reads';
@@ -64,7 +70,7 @@ import { headerFromJson } from './header-json.js';
 import { MeshConfigError, assertNoDns, assertApiBase } from './config.js';
 import {
   NodeList,
-  type MeshAnchor,
+  type MeshContact,
   type FailureKind,
   type NodeEntry,
 } from './node-list.js';
@@ -138,22 +144,22 @@ class HandshakeNoChainServiceError extends Error {
  * config refusals as a pure, synchronous function. One check, called from
  * `startMeshClient` as its first statement and reused by any caller (such as
  * the page) that wants to refuse a config before starting a libp2p node. A
- * `MeshConfigError` is thrown for a `/dns4/`, `/dns6/`, `/dnsaddr/` anchor
- * or seed address, an ICE server that is not `stun:<IPv4>:<port>` /
+ * `MeshConfigError` is thrown for a `/dns4/`, `/dns6/`, `/dnsaddr/`
+ * first-contact or known-node address, an ICE server that is not `stun:<IPv4>:<port>` /
  * `stun:[<IPv6>]:<port>`, an `api` base that is not `http://` or `https://`
- * or has a trailing `/`, or an anchor that carries neither addrs nor api
+ * or has a trailing `/`, or an entry that carries neither addrs nor api
  * (`→ The client's node list → "An entry may carry an API base"`).
  */
 export function assertClientConfig(o: {
-  anchors: readonly MeshAnchor[];
-  seeds?: readonly MeshAnchor[];
+  firstContact: readonly MeshContact[];
+  seeds?: readonly MeshContact[];
 }): void {
-  for (const a of o.anchors) {
-    assertNoDns('anchor', a.addrs);
-    if (a.api !== undefined) assertApiBase('anchor', a.api);
+  for (const a of o.firstContact) {
+    assertNoDns('firstContact', a.addrs);
+    if (a.api !== undefined) assertApiBase('firstContact', a.api);
     if (a.addrs.length === 0 && (a.api === undefined || a.api === '')) {
       throw new MeshConfigError(
-        `anchor refused: ${a.notisId} carries neither addrs nor api`,
+        `firstContact refused: ${a.notisId} carries neither addrs nor api`,
       );
     }
   }
@@ -189,8 +195,8 @@ export function assertClientConfig(o: {
  *     trailing `/p2p/` the gater reads.
  *
  * `configuredAddrsOf(notisId)` reads the addresses the client's own
- * configuration names for a key — an anchor's given addresses and
- * those entered by hand, never one merged from the DHT or a seed —
+ * configuration names for a key — a first-contact node's given addresses
+ * and those entered by hand, never one merged from the DHT or a seed —
  * through `NodeList.configuredAddrs`. A peer id of a non-Notis key
  * type reads as the empty list and the address is refused.
  */
@@ -299,21 +305,50 @@ export function emptyTraffic(): ClientTraffic {
   };
 }
 
+/**
+ * MESH_INTERFACE → Discovery → "A node added by hand" / "A
+ * disagreement is the reader's question, never the client's choice" —
+ * the shape of a standing disagreement: which disagreement it is,
+ * your node's tip, the other tip (`null` under `memory`, where the
+ * kept chain itself is the other), and the fork — the hash of the
+ * highest header `compareProofs` finds in both proofs. `yours` and
+ * `other` carry the lowercase hex `blockHash`.
+ */
+export interface Disagreement {
+  which: 'memory' | 'heavier';
+  yours: { height: number; hash: string };
+  other: { height: number; hash: string } | null;
+  fork: string;
+}
+
 export interface ClientState {
   nodeId: string | null;
   transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
   path: 'direct' | 'relay' | null;
   lastLeft: { nodeId: string; reason: string } | null;
-  anchorReached: boolean;
   tip: { height: number; hash: string | null } | null;
   /**
-   * MESH_INTERFACE → No anchor reached → "The agreement counts" — after
-   * each check, how many nodes verified a proof on the tip's chain
-   * within its last `k` headers, how many of those are anchors, and
-   * how many verified off those headers. `null` before the first
-   * check; written from each check's `TipResult` thereafter.
+   * MESH_INTERFACE → What the client remembers → "The agreement counts"
+   * — after each check, how many nodes named a tip on the client's
+   * chain within its last `k` headers, and how many named one off
+   * those headers. `null` before the first check; written from each
+   * check's `TipResult` thereafter.
    */
   agreement: AgreementCounts | null;
+  /**
+   * MESH_INTERFACE → Discovery → "Your node takes precedence" / "A
+   * disagreement is the reader's question, never the client's choice"
+   * — while your node and the evidence disagree, this names the two
+   * tips and their fork, and the client's chain does not move until
+   * the reader answers. `null` at start and when no disagreement
+   * stands; written at the end of a check that raises or clears one.
+   * `which: 'memory'` is your node losing to the kept proof; `which:
+   * 'heavier'` is another node's proof beating your node's. `other`
+   * is `null` for the memory case (the kept chain is the other);
+   * `fork` is the hash of the highest header `compareProofs` finds in
+   * both.
+   */
+  disagreement: Disagreement | null;
   /**
    * MESH_INTERFACE → The client's node list → "A routed read goes to
    * a node its need allows" — "how many checks it has completed, so
@@ -353,6 +388,14 @@ export interface ClientState {
    * else does.
    */
   chain: string | null;
+  /**
+   * MESH_INTERFACE → What the client remembers — "When no node continues
+   * it — no node names a tip on the client's chain and one or more name one
+   * off it — the client keeps its own chain and says so". True at the end
+   * of a check where `this.kept !== null`, no node's verdict is `'on'` and
+   * at least one is `'off'`; false otherwise and at start.
+   */
+  notContinued: boolean;
 }
 
 export interface MeshClient {
@@ -369,8 +412,8 @@ export interface MeshClient {
    * node its need allows" — picks a server by the read's `need` and the
    * fast set: a node reached over the mesh, as today; when none, an API
    * base of an entry the need allows, by the same need and speed; before
-   * the first check ends, any anchor over its connection if it holds
-   * one, else at its base. Sets `state.nodeId / transport / path` to the
+   * the first check ends, any first-contact node over its connection if
+   * it holds one, else at its base. Sets `state.nodeId / transport / path` to the
    * serving node. Returns the serving node's id beside the response and
    * the route it took so the caller can log it without a `state()` race.
    * Rejects as `MeshFetchError` of kind `transport` and triggers an
@@ -387,8 +430,8 @@ export interface MeshClient {
    * need" — every node the need allows reached over the mesh, the fast
    * set first, as `notis-mesh://<id>` bases, then the API bases of the
    * entries it allows in the same order; before the first check ends,
-   * every anchor (its mesh base if connected, else its API base).
-   * Duplicates dropped. A write and a resolve walk this order.
+   * every first-contact node (its mesh base if connected, else its API
+   * base). Duplicates dropped. A write and a resolve walk this order.
    */
   order(need: ReadNeed): string[];
   check(): Promise<void>;
@@ -401,34 +444,47 @@ export interface MeshClient {
    * `MeshConfigError` a key that is not 64 lowercase hex, an address
    * with a `/dns4/`, `/dns6/` or `/dnsaddr/` component, or an address
    * without `/webrtc-direct/`. Otherwise adds through `NodeList.addByHand`
-   * (anchor = trusted, byHand = true) and triggers an immediate check.
+   * (firstContact = trusted, byHand = true) and triggers an immediate check.
    */
   addByHand(notisId: string, addrs: string[], trusted: boolean): void;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. An entry that is also a build
-   * anchor is not removed: anchors are the client's own trust, not
+   * entry a reader added by hand. An entry that is also a build node
+   * is not removed: the build's nodes are the client's own list, not
    * something the settings row can take away. An id the list does
    * not hold is a no-op. Refuses with `MeshConfigError` an id that
    * is not 64 lowercase hex.
    */
   removeByHand(notisId: string): void;
   /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the reader's answer to a
+   * standing disagreement. With no disagreement, nothing. *continue*:
+   * settle the chain to your node's proof (the proof read in the
+   * check that raised it), move the kept proof to it, record the
+   * competing proof so the same branch growing does not ask again
+   * (at most `ANSWERED_FORKS_MAX` answered branches kept, the oldest
+   * dropped), the next snapshot `replace: true`, the disagreement
+   * cleared, a check at once. *disable*: `removeByHand` on your node,
+   * the disagreement cleared, a check at once.
+   */
+  answer(decision: 'continue' | 'disable'): void;
+  /**
    * MESH_INTERFACE → The client's node list → "A routed read goes
    * to a node its need allows" — the base a routed read of the
    * given need would use now: the first pick `read` makes, by the
    * same order — mesh first, the fast set at random, else an API
-   * base, else an anchor before the first check ends. `null` when
-   * no node is allowed for the need. Pure — the client's state
+   * base, else a first-contact node before the first check ends. `null`
+   * when no node is allowed for the need. Pure — the client's state
    * stays unchanged; no connection is opened; the random source
    * is read once.
    */
   base(need: ReadNeed): string | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — the
-   * addresses the client's own configuration names for the key: an
-   * anchor's given addresses and those entered by hand, never one
-   * merged from the DHT or a seed. The gater reads this list through
+   * addresses the client's own configuration names for the key: a
+   * first-contact node's given addresses and those entered by hand,
+   * never one merged from the DHT or a seed. The gater reads this list through
    * `NodeList.configuredAddrs` on every dial.
    */
   configuredAddrs(notisId: string): readonly string[];
@@ -443,6 +499,17 @@ export interface MeshClient {
    */
   iceConfiguration(): { iceServers: RTCIceServer[] };
   /**
+   * MESH_INTERFACE → What the client remembers — the snapshot to persist
+   * at the end of a check or on stop: the kept proof's bytes (or null),
+   * the known nodes the client would dial at its next start — latest first,
+   * at most `REMEMBERED_NODES_MAX` — the keys blacklisted this session (to
+   * drop from the stored list), and the answered branches' competing
+   * proofs as their `encodeNipopowProof` bytes, oldest first. `replace:
+   * false` so the store moves the kept proof only when `continues`
+   * answers so.
+   */
+  toRemember(): MemorySnapshot;
+  /**
    * Test seam: the libp2p node under the client. The suite dispatches a
    * `peer:discovery` event here so the "a discovered node is added before
    * any event names it" case can hold its guard without a three-node DHT
@@ -452,14 +519,14 @@ export interface MeshClient {
 }
 
 export interface StartMeshClientOptions {
-  anchors: MeshAnchor[];
+  firstContact: MeshContact[];
   /**
-   * MESH_INTERFACE → Discovery → "Seeds" — contacts the client holds without
-   * trusting them. A seed is a candidate like any node the DHT finds; no answer
-   * from one makes `anchorReached` true. Addresses meet the same refusals as
-   * an anchor's.
+   * MESH_INTERFACE → Discovery → "Known nodes" — contacts the client holds
+   * without trusting them. A seed is a candidate like any node the DHT
+   * finds; a seed carries no trust assertion of its own. Addresses meet
+   * the same refusals as a first-contact node's.
    */
-  seeds?: MeshAnchor[];
+  seeds?: MeshContact[];
   network: NetworkName;
   profile: NetworkProfile;
   /**
@@ -503,6 +570,23 @@ export interface StartMeshClientOptions {
    * `globalThis.fetch.bind(globalThis)`.
    */
   httpFetch?: HttpFetch;
+  /**
+   * MESH_INTERFACE → What the client remembers — the record the client
+   * resumes from: the last kept proof's bytes and the answered branches
+   * as their competing proofs. The proof is decoded and verified at
+   * construct; one that does not decode or verify is dropped and the
+   * client starts with no chain (`→ "The kept proof"`). Each answered
+   * proof is decoded alone; one that does not decode is dropped alone
+   * (`WEB_INTERFACE → The extension → "What the extension remembers"`).
+   */
+  memory?: { proof: Uint8Array; answered: Uint8Array[] };
+  /**
+   * MESH_INTERFACE → What the client remembers — called at the end of
+   * every check with `toRemember()`, after `emitStateChange()`. The call
+   * is direct — no `try` around it — so a throw from the callback is the
+   * caller's and propagates.
+   */
+  onChecked?: (s: MemorySnapshot) => void;
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -567,7 +651,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   iceHolder.current = () => client.iceConfiguration().iceServers;
   // MESH_INTERFACE → Transports → "A client dials a private address
   // only when its own configuration names it" — the gater reads the
-  // live node list, so a hand-add or an anchor update is visible
+  // live node list, so a hand-add or an update of the list is visible
   // to the next dial.
   configuredHolder.current = (notisId) => client.configuredAddrs(notisId);
   client.start();
@@ -640,15 +724,67 @@ class MeshClientImpl implements MeshClient {
   private behindByMap: Map<string, number | null> = new Map();
   /**
    * MESH_INTERFACE → The client's node list → "A tip whose proof
-   * verified and lost keeps its verdict" — per tip hash, the event
-   * `tipEvent` answered and its `behind` from a proof that verified
-   * and lost. A node naming the hash again at the next check takes
-   * that verdict with no proof read; cleared when `chain.settle`
-   * moves to a new winner, and a hash leaves when no node named it
-   * at a check.
+   * verified and lost keeps its verdict" — the set of tip hashes
+   * whose proofs verified and lost. A node naming the hash again
+   * at the next check gates the proof read (the pass over the
+   * final chain writes its event, distance and agreement verdict);
+   * cleared when `chain.settle` moves to a new winner, and a hash
+   * leaves when no node named it at a check.
    */
-  private readonly keptVerdicts: Map<string, { event: TipEvent; behind: number | null }> = new Map();
+  private readonly keptVerdicts: Set<string> = new Set();
   private readonly chain: HeldChain;
+  /**
+   * MESH_INTERFACE → What the client remembers — "The kept proof is the
+   * last proof the client verified of the chain it holds — a check's
+   * winner, a switch, its own tip's proof". Seated from `memory.proof` at
+   * construct when it decodes and verifies, moved forward in a check
+   * whose settle's winning proof `continues` the kept one, cleared on a
+   * `foreign` judgement.
+   */
+  private kept: NipopowProof | null = null;
+  /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the state held with a
+   * standing disagreement: your node's id, the proof read in the
+   * check that raised it, and the verified `VerifyResult` so the
+   * reader's *continue* can settle the chain without a second
+   * verification. `null` whenever no disagreement stands.
+   */
+  private standingDisagreement: {
+    yourId: string;
+    proof: NipopowProof;
+    verifyResult: VerifyResult;
+    /**
+     * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+     * question, never the client's choice" — the competing proof the
+     * raise named: the other node's proof for `heavier`, the kept
+     * proof your node did not continue for `memory`. The reader's
+     * *continue* pushes this into `answeredProofs`.
+     */
+    competing: NipopowProof;
+  } | null = null;
+  /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — "the next snapshot
+   * `replace: true`" after the reader's *continue*. Flipped back
+   * once `toRemember()` reads it.
+   */
+  private replaceNextSnapshot: boolean = false;
+  /**
+   * MESH_INTERFACE → What the client remembers — the competing proofs
+   * the reader answered, held through the session and carried through
+   * `toRemember()` as their `encodeNipopowProof` bytes. Seated from
+   * `memory.answered` at construct: each entry decoded alone; one
+   * that does not decode is dropped alone. A later check that finds
+   * a competing proof whose highest shared header with an entry is
+   * that entry's tip replaces the entry with the competing one — so
+   * the branch the record names follows it as it grows
+   * (`MESH_INTERFACE → Discovery → "An answered branch growing asks
+   * nothing more"`).
+   */
+  private readonly answeredProofs: NipopowProof[];
+  private readonly ownId: string;
+  private readonly onChecked: ((s: MemorySnapshot) => void) | undefined;
   /**
    * MESH_INTERFACE → Block gossip → "A block is checked before it is
    * forwarded, and never applied" — net's Stage 1 run over every
@@ -716,18 +852,54 @@ class MeshClientImpl implements MeshClient {
     this.agentName = o.agentName;
     this.log = o.log;
     this.httpFetchFn = httpFetch;
-    this.nodeList = new NodeList(o.anchors, ownId, clock);
+    this.nodeList = new NodeList(o.firstContact, ownId, clock);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
-    // MESH_INTERFACE → Discovery → "Seeds" — a seed is a candidate like
-    // any node the DHT finds. Added before the first check, so a seed
+    // MESH_INTERFACE → Discovery → "Known nodes" — a seed is a candidate
+    // like any node the DHT finds. Added before the first check, so a seed
     // is in the candidates `resolveTip` reads from the start;
-    // `NodeList.add` records them as non-anchor entries, so a seed's
-    // success leaves `anchorReached` false. The client's own key is
-    // dropped the same way an anchor list's own-key entry is.
+    // `NodeList.add` records them as entries outside the first-contact
+    // list, so a seed carries no `firstContact`. The client's own key is
+    // dropped the same way the first-contact list's own-key entry is.
+    // Each seed's entry carries `known: true` so `orderServers`'
+    // before-first-check branch reaches it after a first-contact node.
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
-        this.nodeList.add(s.notisId, s.addrs);
+        this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
+      }
+    }
+    this.ownId = ownId;
+    this.answeredProofs = [];
+    this.onChecked = o.onChecked;
+    // MESH_INTERFACE → What the client remembers — "The kept proof is the
+    // last proof the client verified of the chain it holds". At construct,
+    // decode and verify `memory.proof`: one that does not decode or verify
+    // is dropped (the client starts with no chain); one that verifies seats
+    // the chain as a check's winner does and is held as `this.kept`. Each
+    // answered proof decodes alone; one that does not decode is dropped
+    // alone (`WEB_INTERFACE → The extension → "What the extension
+    // remembers"`).
+    if (o.memory !== undefined) {
+      let decoded: NipopowProof | null = null;
+      try {
+        decoded = decodeNipopowProof(o.memory.proof);
+      } catch { /* bad bytes — drop */ }
+      if (decoded !== null) {
+        const vr = verifyProof(
+          decoded,
+          { m: DEFAULT_M, k: DEFAULT_K },
+          verifierProfile(o.profile, this.wallClock()),
+        );
+        if (vr.ok) {
+          const suffix: BlockHeader[] = [decoded.suffixHead.header, ...decoded.suffixTail];
+          this.chain.settle(suffix, vr.headers[0]!);
+          this.kept = decoded;
+        }
+      }
+      for (const bytes of o.memory.answered) {
+        try {
+          this.answeredProofs.push(decodeNipopowProof(bytes));
+        } catch { /* bad bytes for this entry — drop it alone */ }
       }
     }
     this.state_ = {
@@ -735,16 +907,17 @@ class MeshClientImpl implements MeshClient {
       transport: null,
       path: null,
       lastLeft: null,
-      anchorReached: false,
       tip: null,
       agreement: null,
       checks: 0,
       traffic: emptyTraffic(),
       nodes: decorateEntries(this.nodeList.entries(), node.getConnections()),
-      seated: false,
+      seated: this.chain.settled(),
       proofs: null,
       anchor: null,
       chain: null,
+      notContinued: false,
+      disagreement: null,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -955,6 +1128,17 @@ class MeshClientImpl implements MeshClient {
       this.emitStateChange();
       return;
     }
+    // MESH_INTERFACE → The client's node list → "The client's chain" —
+    // "a gossiped block whose parent is held below the tip, or not held
+    // at all, runs a check at once — unless a question stands"; →
+    // Discovery → "while a question stands, a gossiped block runs no
+    // check: the chain is held, and the checks on the client's cadence
+    // read the question again". Every gossiped block is dropped and
+    // no check is run while a disagreement stands.
+    if (this.state_.disagreement !== null) {
+      this.emitStateChange();
+      return;
+    }
     const r = this.chain.extend(block.header);
     if (r === 'extended') {
       const h = blockHash(block.header);
@@ -1003,15 +1187,23 @@ class MeshClientImpl implements MeshClient {
   }> {
     // MESH_INTERFACE → The client's node list → "A routed read goes to a
     // node its need allows", → "Over the mesh first", → "Before the first
-    // check ends an anchor serves any need". The mesh pick uses the strict
+    // check ends a node the client started from serves any need". The mesh
+    // pick uses the strict
     // read pick's non-null result over the same connection list the fetch
     // opens its stream on; the API fallback uses the entry's api base.
     const entries = this.nodeList.entries();
+    // MESH_INTERFACE → Discovery → "Your node takes precedence" — the
+    // client marks a candidate `yours` only while the entry is `yours`
+    // and no disagreement stands (→ "A disagreement is the reader's
+    // question, never the client's choice"). While a disagreement
+    // stands, routed reads go on with no preference for your node.
+    const yoursActive = this.state_.disagreement === null;
     const meshCandidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       usable: this.pickReadyConnection(e.notisId) !== null,
+      yours: yoursActive && e.yours,
     }));
     const meshPicked = pickServer(meshCandidates, need, this.random);
 
@@ -1034,6 +1226,7 @@ class MeshClientImpl implements MeshClient {
           status: e.status,
           readMs: this.readMsMap.get(e.notisId) ?? null,
           usable: true,
+          yours: yoursActive && e.yours,
         }));
       const apiPicked = pickServer(apiCandidates, need, this.random);
       if (apiPicked !== null) {
@@ -1050,13 +1243,14 @@ class MeshClientImpl implements MeshClient {
     }
 
     // MESH_INTERFACE → The client's node list → "Before the first check
-    // ends an anchor serves any need". Status alone does not refuse
-    // here — but `blacklisted` always does (the "lie" row stays "never
-    // a candidate" at every stage).
+    // ends a node the client started from serves any need" —
+    // first-contact entries first, then known entries, in list order.
+    // Status alone does not refuse here — but `blacklisted` always does
+    // (the "lie" row stays "never a candidate" at every stage).
     const firstCheckEnded = this.state_.checks > 0;
     if (pickedId === null && !firstCheckEnded) {
       for (const e of entries) {
-        if (!e.anchor) continue;
+        if (!e.firstContact) continue;
         if (e.status === 'blacklisted') continue;
         if (this.pickReadyConnection(e.notisId) !== null) {
           pickedId = e.notisId;
@@ -1068,6 +1262,24 @@ class MeshClientImpl implements MeshClient {
           route = 'api';
           url = e.api + path;
           break;
+        }
+      }
+      if (pickedId === null) {
+        for (const e of entries) {
+          if (e.firstContact) continue;
+          if (!e.known) continue;
+          if (e.status === 'blacklisted') continue;
+          if (this.pickReadyConnection(e.notisId) !== null) {
+            pickedId = e.notisId;
+            route = 'mesh';
+            url = meshBaseUrl(e.notisId) + path;
+            break;
+          } else if (e.api !== null) {
+            pickedId = e.notisId;
+            route = 'api';
+            url = e.api + path;
+            break;
+          }
         }
       }
     }
@@ -1097,12 +1309,15 @@ class MeshClientImpl implements MeshClient {
   order(need: ReadNeed): string[] {
     const entries = this.nodeList.entries();
     const firstCheckEnded = this.state_.checks > 0;
+    const yoursActive = this.state_.disagreement === null;
     const candidates: OrderCandidate[] = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       meshUsable: this.pickReadyConnection(e.notisId) !== null,
-      anchor: e.anchor,
+      firstContact: e.firstContact,
+      known: e.known,
+      yours: yoursActive && e.yours,
       api: e.api,
       meshBase: meshBaseUrl(e.notisId),
     }));
@@ -1138,7 +1353,7 @@ class MeshClientImpl implements MeshClient {
    * MESH_INTERFACE → NAT — "the ICE configuration names no server"
    * when no public node is held. The derivation reads the current
    * (decorated) entries — a node moved to `blacklisted`, a new
-   * speed from the latest check, or a hand-added anchor's address
+   * speed from the latest check, or a hand-added node's address
    * all flow in at the next dial. The internal `assertIceServers`
    * holds the derived list to the IP-literal rule as the contract's
    * refusal (a derived server that is not an IP literal cannot
@@ -1156,13 +1371,69 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
+   * MESH_INTERFACE → What the client remembers — "After each check it
+   * records every node naming a tip on its chain, `ok` or `trailing`,
+   * with the addresses it would dial — no private address, never its own
+   * key — the most recently seen first, at most `REMEMBERED_NODES_MAX`".
+   * `proof`: the kept proof's bytes or `null`; `nodes`: the entries to
+   * remember; `dropped`: the keys blacklisted this session, so the store
+   * drops them from the merged list; `answered`: the competing proofs
+   * the reader answered, each as its `encodeNipopowProof` bytes, oldest
+   * first; `replace: false` so the store moves the stored proof only
+   * when `continues` answers so.
+   */
+  toRemember(): MemorySnapshot {
+    const entries = this.nodeList.entries();
+    const nodes = nodesToRemember(entries, this.ownId, REMEMBERED_NODES_MAX);
+    const dropped: string[] = [];
+    for (const e of entries) {
+      if (e.status === 'blacklisted') dropped.push(e.notisId);
+    }
+    const replace = this.replaceNextSnapshot;
+    this.replaceNextSnapshot = false;
+    return {
+      proof: this.kept !== null ? encodeNipopowProof(this.kept) : null,
+      nodes,
+      dropped,
+      answered: this.answeredProofs.map((p) => encodeNipopowProof(p)),
+      replace,
+    };
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "An answered branch growing asks
+   * nothing more" — the index in `answeredProofs` the given competing
+   * proof names as its branch, or `null`. A competing proof names an
+   * answered branch when the highest header `compareProofs` finds in
+   * it and the answered proof is the answered proof's tip, or when it
+   * is that proof (same tip); `compareProofs`'s `incomparable` arm —
+   * reachable only on a network pinning no `genesisId` — is no match.
+   */
+  private findAnsweredMatch(competing: NipopowProof): number | null {
+    const vp = verifierProfile(this.profile, this.wallClock());
+    const params = { m: DEFAULT_M, k: DEFAULT_K };
+    for (let i = 0; i < this.answeredProofs.length; i++) {
+      const a = this.answeredProofs[i]!;
+      const aTipHdr = a.suffixTail.length > 0
+        ? a.suffixTail[a.suffixTail.length - 1]!
+        : a.suffixHead.header;
+      const aTipHash = blockHash(aTipHdr);
+      if (aTipHash === null) continue;
+      const r = compareProofs(competing, a, params, vp);
+      if (r.verdict === 'incomparable') continue;
+      if (blockHash(r.lca) === aTipHash) return i;
+    }
+    return null;
+  }
+
+  /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — refuses with
    * `MeshConfigError` before touching the list, adds through
    * `NodeList.addByHand`, then triggers an immediate check. The three
    * refusals: a key that is not 64 lowercase hex, an address with a
    * `/dns4/`, `/dns6/` or `/dnsaddr/` component (through `assertNoDns`),
    * and an address without a `/webrtc-direct/` component. A trusted
-   * node is an anchor (`anchor = true`); an untrusted one is a
+   * node is a first-contact node (`firstContact = true`); an untrusted one is a
    * candidate. `NodeList.addByHand` is also what writes the gater's
    * `configuredAddrs` list for the key.
    */
@@ -1182,7 +1453,7 @@ class MeshClientImpl implements MeshClient {
 
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — drops the
-   * entry a reader added by hand. A build anchor is never removed:
+   * entry a reader added by hand. A build node is never removed:
    * the `NodeList.removeByHand` check guards that. Refuses with
    * `MeshConfigError` an id that is not 64 lowercase hex, then
    * delegates; an id the list does not hold is a no-op.
@@ -1195,19 +1466,76 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
+   * MESH_INTERFACE → Discovery → "A disagreement is the reader's
+   * question, never the client's choice" — the reader's answer. With
+   * no disagreement, nothing. *continue*: settle the chain to your
+   * node's proof, move `this.kept` to it, record the competing proof
+   * as an answered branch, the next snapshot `replace: true`, the
+   * disagreement cleared, a check at once; `onChecked` fires once
+   * before the check so the answered branch persists even before the
+   * check lands. *disable*: `removeByHand` on your node, the
+   * disagreement cleared, a check at once.
+   */
+  answer(decision: 'continue' | 'disable'): void {
+    const d = this.state_.disagreement;
+    if (d === null) return;
+    const standing = this.standingDisagreement;
+    this.state_.disagreement = null;
+    this.standingDisagreement = null;
+    if (decision === 'continue') {
+      if (standing !== null) {
+        // Settle the chain to your node's proof (the proof kept with
+        // the disagreement). The suffix is `[suffixHead.header,
+        // ...suffixTail]`; the window's first header is the proof's
+        // verified tip's own block 1. `this.kept` moves to the proof;
+        // the competing proof joins `answeredProofs`, at most
+        // ANSWERED_FORKS_MAX with the oldest dropped; the next
+        // snapshot `replace: true`.
+        const proof = standing.proof;
+        const vr = standing.verifyResult;
+        if (vr.ok === true) {
+          const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
+          this.chain.settle(suffix, vr.headers[0]!);
+          this.keptVerdicts.clear();
+        }
+        this.kept = proof;
+        this.answeredProofs.push(standing.competing);
+        while (this.answeredProofs.length > ANSWERED_FORKS_MAX) {
+          this.answeredProofs.shift();
+        }
+        this.replaceNextSnapshot = true;
+      }
+    } else {
+      // disable: remove your node from the list.
+      this.nodeList.removeByHand(standing !== null ? standing.yourId : '');
+    }
+    this.emitStateChange();
+    // MESH_INTERFACE → What the client remembers — "written when the
+    // reader answers". The snapshot carries the answered branches'
+    // bytes so the extension's seam persists them before the
+    // immediate check lands.
+    if (decision === 'continue' && this.onChecked !== undefined) {
+      this.onChecked(this.toRemember());
+    }
+    this.triggerImmediateCheck();
+  }
+
+  /**
    * MESH_INTERFACE → The client's node list → "A routed read goes
    * to a node its need allows" — the base a routed read of the
    * given need would use now. Mirrors `read`'s pick: mesh first,
-   * the fast set at random, else an API base, else an anchor
-   * before the first check ends. `null` when no node is allowed.
+   * the fast set at random, else an API base, else a first-contact
+   * node before the first check ends. `null` when no node is allowed.
    */
   base(need: ReadNeed): string | null {
     const entries = this.nodeList.entries();
+    const yoursActive = this.state_.disagreement === null;
     const meshCandidates = entries.map((e) => ({
       id: e.notisId,
       status: e.status,
       readMs: this.readMsMap.get(e.notisId) ?? null,
       usable: this.pickReadyConnection(e.notisId) !== null,
+      yours: yoursActive && e.yours,
     }));
     const meshPicked = pickServer(meshCandidates, need, this.random);
     if (meshPicked !== null) return meshBaseUrl(meshPicked);
@@ -1219,6 +1547,7 @@ class MeshClientImpl implements MeshClient {
         status: e.status,
         readMs: this.readMsMap.get(e.notisId) ?? null,
         usable: true,
+        yours: yoursActive && e.yours,
       }));
     const apiPicked = pickServer(apiCandidates, need, this.random);
     if (apiPicked !== null) {
@@ -1229,7 +1558,16 @@ class MeshClientImpl implements MeshClient {
     const firstCheckEnded = this.state_.checks > 0;
     if (!firstCheckEnded) {
       for (const e of entries) {
-        if (!e.anchor) continue;
+        if (!e.firstContact) continue;
+        if (e.status === 'blacklisted') continue;
+        if (this.pickReadyConnection(e.notisId) !== null) {
+          return meshBaseUrl(e.notisId);
+        }
+        if (e.api !== null) return e.api;
+      }
+      for (const e of entries) {
+        if (e.firstContact) continue;
+        if (!e.known) continue;
         if (e.status === 'blacklisted') continue;
         if (this.pickReadyConnection(e.notisId) !== null) {
           return meshBaseUrl(e.notisId);
@@ -1318,11 +1656,33 @@ class MeshClientImpl implements MeshClient {
       if (e.status === 'ok' || e.status === 'trailing') okTrailingBefore.add(e.notisId);
     }
 
+    // MESH_INTERFACE → The client's node list → "A tip the check has
+    // outrun is read again" — the chain's tip at check start, used at
+    // the end of phase 4 to know whether a proof settling the chain
+    // or a fill linking moved the tip.
+    const tipAtStart = this.chain.tip();
+    const tipHashAtStart = tipAtStart !== null ? blockHash(tipAtStart) : null;
+
     // WEB_INTERFACE → The extension → "The verified tip" — the last check's
     // proof reads, accumulated across every `resolveFn` call in phase 4; the
     // field is written at end-of-check only when `asked > 0`, so a check that
     // places every tip and reads no proof leaves the previous value standing.
     const proofsThisCheck = { asked: 0, verified: 0, invalid: 0, tooShort: 0 };
+
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — the disagreement this
+    // check detected (`null` where none), set in phase 4 after
+    // `judgeByMemory` on the first pass that raises one. "A check
+    // that no longer finds the disagreement clears it": the write to
+    // `this.state_.disagreement` at end of check is this value, so
+    // the standing clears when no pass raises one this check.
+    let raisedThisCheck: Disagreement | null = null;
+    let standingRaisedThisCheck: {
+      yourId: string;
+      proof: NipopowProof;
+      verifyResult: VerifyResult;
+      competing: NipopowProof;
+    } | null = null;
 
     // Phase 1: pre-dial every candidate the client has not already
     // connected to, so libp2p's unexpected-peer failure is caught per
@@ -1379,6 +1739,14 @@ class MeshClientImpl implements MeshClient {
     const timedFetch = this.makeTimedFetch(pendingReadMs, idByBase);
     const perNodeVerdict = new Map<string, 'on' | 'off' | 'none'>();
     for (const id of afterIds) perNodeVerdict.set(id, 'none');
+    // Ids whose phase 4 resolve answered a failure or a lie: the pass
+    // keeps their status and event, so a proof read's own failure or
+    // lie lands as it was read (MESH_INTERFACE → The client's node
+    // list → "A node is judged against the chain the check leaves"
+    // — "A lie and a failure land as they were read"). A `retry`
+    // from phase 1's dial alone is not here; the pass places such a
+    // node by its tip read.
+    const phase4Downgraded = new Set<string>();
 
     interface TipRead { id: string; height: number; hash: string | null; }
     const tipReads: TipRead[] = [];
@@ -1450,6 +1818,12 @@ class MeshClientImpl implements MeshClient {
     // (`under` → phase 3c; the rest → phase 4).
     const placements = new Map<string, Placement>();
     const placedAtTip = new Set<string>();
+    // Ids whose `under` placement phase 3c matched against the chain's
+    // own header at that height: on the chain, further down than the
+    // held headers (MESH_INTERFACE → The client's node list → "A
+    // check"). Cleared on a chain switch, since the match was against
+    // the chain the check started on.
+    const underMatched = new Set<string>();
     for (const read of tipReads) {
       if (read.hash === null) {
         this.applyEvent({ id: read.id, ev: 'behind' });
@@ -1495,6 +1869,7 @@ class MeshClientImpl implements MeshClient {
         perNodeVerdict.set(read.id, 'on');
         const chainTipNow = this.chain.tip();
         pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+        underMatched.add(read.id);
       }
     }
 
@@ -1517,14 +1892,12 @@ class MeshClientImpl implements MeshClient {
       // MESH_INTERFACE → The client's node list → "A check" — "A tip
       // whose proof verified and lost keeps its verdict while the
       // client's chain stands: a node naming it again is placed off
-      // the chain with no proof read".
-      const kept = this.keptVerdicts.get(read.hash);
-      if (kept !== undefined) {
-        this.applyEvent({ ...kept.event, id: read.id });
-        pendingBehindBy.set(read.id, kept.behind);
-        perNodeVerdict.set(read.id, 'off');
-        continue;
-      }
+      // the chain with no proof read". The node's own event, distance
+      // and agreement verdict come from the single pass over the
+      // final chain (MESH_INTERFACE → "A node is judged against the
+      // chain the check leaves"); the kept-verdict lookup only gates
+      // the proof read here.
+      if (this.keptVerdicts.has(read.hash)) continue;
       let list = groups.get(read.hash);
       if (list === undefined) { list = []; groups.set(read.hash, list); }
       list.push(read.id);
@@ -1594,34 +1967,219 @@ class MeshClientImpl implements MeshClient {
         // `idOfMeshUrl` for a mesh URL, else a bug upstream.
         const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
         const route = baseById.get(nid)?.route ?? 'mesh';
-        pendingBehindBy.set(nid, n.behind);
-        const event = tipEvent(nid, n, nowMs);
-        this.applyEvent(event, route);
+        // A resolve failure or a lie applies through `tipEvent` so a
+        // proof-read defect reaches the node list; the per-chain
+        // verdict and distance of a verified node are rewritten in
+        // the single pass after the chain is final
+        // (MESH_INTERFACE → The client's node list → "A node is
+        // judged against the chain the check leaves"). The read
+        // against the final chain, never the resolve's winner-relative
+        // `n.behind`, decides event and distance.
+        const tipEv = tipEvent(nid, n, nowMs);
+        if (!n.verified) {
+          this.applyEvent(tipEv, route);
+          if (tipEv.ev === 'failure' || tipEv.ev === 'lie') {
+            phase4Downgraded.add(nid);
+          }
+        }
 
         if (n.verified) {
           const hash = urlToHash.get(n.url);
           if (hash !== undefined) {
             verifiedHashes.add(hash);
-            // Propagate the queried node's event to every other id
-            // that named the same hash. Each other id's route is
-            // its own base's — a propagated verdict must still
-            // downgrade a lie at its own API base.
-            const ids = groups.get(hash) ?? [];
-            const verdict: 'on' | 'off' = n.behind !== null ? 'on' : 'off';
-            perNodeVerdict.set(nid, verdict);
-            for (const otherId of ids) {
-              if (otherId === nid) continue;
-              const otherRoute = baseById.get(otherId)?.route ?? 'mesh';
-              this.applyEvent({ ...event, id: otherId }, otherRoute);
-              pendingBehindBy.set(otherId, n.behind);
-              perNodeVerdict.set(otherId, verdict);
-            }
             // MESH_INTERFACE → The client's node list → "A check" —
             // a verified proof whose hash is not the winner's is a
             // lost tip the client keeps the verdict of, so the next
-            // check needs no proof while the chain stands.
+            // check needs no proof while the chain stands. The lost
+            // tip's event and distance come from the pass over the
+            // final chain (MESH_INTERFACE → "A node is judged
+            // against the chain the check leaves").
             if (n.behind !== 0) {
-              this.keptVerdicts.set(hash, { event, behind: n.behind });
+              this.keptVerdicts.add(hash);
+            }
+          }
+        }
+      }
+
+      // MESH_INTERFACE → What the client remembers — "The kept proof
+      // is a contestant in every check that reads proofs": with
+      // `this.kept !== null`, `judgeByMemory` picks the lost, the best
+      // and `foreign` over `result.nodes` against the kept. A lost
+      // proof's hash is kept as a lost tip so the next check reads no
+      // proof while the chain stands; the settle below uses `best`'s
+      // proof and tip in place of `result.winner` / `result.tip`,
+      // `best === null` settles nothing, and `foreign` drops the kept
+      // and takes the winner. The lost node's own event, distance and
+      // agreement verdict come from the single pass over the final
+      // chain (MESH_INTERFACE → "A node is judged against the chain
+      // the check leaves").
+      let judgedWinner: typeof result.winner = result.winner;
+      let judgedTip: typeof result.tip = result.tip;
+      if (this.kept !== null) {
+        const judgment = judgeByMemory(this.kept, result.nodes, this.profile, this.wallClock());
+        for (const idx of judgment.lost) {
+          const n = result.nodes[idx]!;
+          if (!n.verified || n.proof === null || n.verifyResult === null || !n.verifyResult.ok) continue;
+          const hash = blockHash(n.verifyResult.tip);
+          if (hash !== null) {
+            this.keptVerdicts.add(hash);
+            verifiedHashes.add(hash);
+          }
+        }
+        if (judgment.foreign) {
+          // The kept proof shares no block with any verified proof:
+          // it is dropped, and the settle below takes the resolve's
+          // winner. `judgedWinner` / `judgedTip` already name those.
+          this.kept = null;
+        } else if (judgment.best !== null) {
+          const b = result.nodes[judgment.best]!;
+          judgedWinner = b;
+          judgedTip = b.verifyResult !== null && b.verifyResult.ok ? b.verifyResult.tip : null;
+        } else {
+          judgedWinner = null;
+          judgedTip = null;
+        }
+      }
+
+      // MESH_INTERFACE → Discovery → "Your node takes precedence" / "A
+      // disagreement is the reader's question, never the client's
+      // choice" — detection after the memory judgement.
+      if (raisedThisCheck === null) {
+        // Find your node's verified result in this pass.
+        const yoursIds = new Set<string>();
+        for (const e of this.nodeList.entries()) if (e.yours) yoursIds.add(e.notisId);
+        let yIndex = -1;
+        let yId: string | null = null;
+        for (let i = 0; i < result.nodes.length; i++) {
+          const n = result.nodes[i]!;
+          if (!n.verified || n.proof === null || n.verifyResult === null || !n.verifyResult.ok) continue;
+          const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
+          if (yoursIds.has(nid)) { yIndex = i; yId = nid; break; }
+        }
+        if (yIndex >= 0 && yId !== null) {
+          const y = result.nodes[yIndex]!;
+          const yProof = y.proof!;
+          const yVr = y.verifyResult as VerifyResult & { ok: true };
+          const yTip = yVr.tip;
+          const yTipHash = blockHash(yTip);
+          if (yTipHash !== null) {
+            // which: 'memory' — y is in `judgeByMemory`'s lost.
+            let memoryCase = false;
+            let lostSet = new Set<number>();
+            if (this.kept !== null) {
+              const judgment = judgeByMemory(this.kept, result.nodes, this.profile, this.wallClock());
+              lostSet = new Set(judgment.lost);
+              memoryCase = lostSet.has(yIndex);
+            }
+            if (memoryCase) {
+              // MESH_INTERFACE → Discovery → "A node added by hand" —
+              // "a node behind on the same chain does not" raise a
+              // disagreement. `forkKey(kept, y)` equals `yTipHash` iff
+              // `y` is a prefix of the kept chain (lca is y's tip) —
+              // y is behind on the same chain, no disagreement. A
+              // fork strictly below y's tip does disagree.
+              const fork = forkKey(this.kept!, yProof, this.profile, this.wallClock());
+              if (fork !== null && fork !== yTipHash) {
+                // MESH_INTERFACE → Discovery → "An answered branch
+                // growing asks nothing more" — the competing proof for
+                // `memory` is the kept proof your node did not
+                // continue. Where that proof extends an answered
+                // branch, nothing is raised and the answered proof is
+                // replaced by it.
+                const matchIdx = this.findAnsweredMatch(this.kept!);
+                if (matchIdx !== null) {
+                  this.answeredProofs[matchIdx] = this.kept!;
+                } else {
+                  raisedThisCheck = {
+                    which: 'memory',
+                    yours: { height: yTip.height, hash: yTipHash },
+                    other: null,
+                    fork,
+                  };
+                  standingRaisedThisCheck = {
+                    yourId: yId,
+                    proof: yProof,
+                    verifyResult: yVr,
+                    competing: this.kept!,
+                  };
+                }
+              }
+            } else {
+              // which: 'heavier' — a verified, not-lost o ≠ y whose tip
+              // y's proof does not hold and whose proof beats y's.
+              const ySuffixHeaders = [yProof.suffixHead.header, ...yProof.suffixTail];
+              const ySuffixHashes = new Set<string>();
+              for (const h of ySuffixHeaders) {
+                const hh = blockHash(h);
+                if (hh !== null) ySuffixHashes.add(hh);
+              }
+              const yB1 = blockHash(yVr.headers[0]!);
+              if (yB1 !== null) ySuffixHashes.add(yB1);
+              const vp = verifierProfile(this.profile, this.wallClock());
+              const params = { m: DEFAULT_M, k: DEFAULT_K };
+              const cands: { index: number; tipHdr: BlockHeader; proof: NipopowProof }[] = [];
+              for (let i = 0; i < result.nodes.length; i++) {
+                if (i === yIndex) continue;
+                if (lostSet.has(i)) continue;
+                const o = result.nodes[i]!;
+                if (!o.verified || o.proof === null || o.verifyResult === null || !o.verifyResult.ok) continue;
+                const oTip = (o.verifyResult as VerifyResult & { ok: true }).tip;
+                const oHash = blockHash(oTip);
+                if (oHash === null) continue;
+                if (ySuffixHashes.has(oHash)) continue;
+                const cmp = compareProofs(yProof, o.proof, params, vp);
+                if (cmp.verdict !== 'b') continue;
+                cands.push({ index: i, tipHdr: oTip, proof: o.proof });
+              }
+              if (cands.length > 0) {
+                // Best by the same comparison: the one no other beats.
+                let best = cands[0]!;
+                for (const c of cands.slice(1)) {
+                  const cmp = compareProofs(best.proof, c.proof, params, vp);
+                  if (cmp.verdict === 'b') best = c;
+                }
+                const fork = forkKey(yProof, best.proof, this.profile, this.wallClock());
+                // MESH_INTERFACE → Discovery → "A node added by hand"
+                // — heavier needs the other node's tip off y's chain:
+                // `forkKey(y, o)` strictly below y's tip. Where it is
+                // y's tip (o extends y), nothing is raised and o's
+                // result is no evidence against y — the ordinary
+                // settle advances the chain to o's.
+                if (fork !== null && fork !== yTipHash) {
+                  // MESH_INTERFACE → Discovery → "An answered branch
+                  // growing asks nothing more" — the competing proof
+                  // for `heavier` is the other node's. Where that
+                  // proof extends an answered branch, nothing is
+                  // raised, the chain settles to your node's and
+                  // the answered proof is replaced. o's event,
+                  // distance and agreement verdict come from the
+                  // single pass over the final chain (MESH_INTERFACE
+                  // → "A node is judged against the chain the check
+                  // leaves").
+                  const matchIdx = this.findAnsweredMatch(best.proof);
+                  if (matchIdx !== null) {
+                    this.answeredProofs[matchIdx] = best.proof;
+                    judgedWinner = y;
+                    judgedTip = yTip;
+                  } else {
+                    const bestTipHash = blockHash(best.tipHdr);
+                    if (bestTipHash !== null) {
+                      raisedThisCheck = {
+                        which: 'heavier',
+                        yours: { height: yTip.height, hash: yTipHash },
+                        other: { height: best.tipHdr.height, hash: bestTipHash },
+                        fork,
+                      };
+                      standingRaisedThisCheck = {
+                        yourId: yId,
+                        proof: yProof,
+                        verifyResult: yVr,
+                        competing: best.proof,
+                      };
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -1636,47 +2194,197 @@ class MeshClientImpl implements MeshClient {
       // the chain stands. When the hash is not held, settle to the
       // winner and re-place every tip this check read against the
       // new chain.
-      if (result.winner !== null && result.tip !== null) {
-        const winnerTipHash = blockHash(result.tip);
+      // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+      // question, never the client's choice" — "the check settles
+      // nothing" while a disagreement stands.
+      if (raisedThisCheck !== null || this.state_.disagreement !== null) {
+        judgedWinner = null;
+        judgedTip = null;
+      }
+      if (judgedWinner !== null && judgedTip !== null) {
+        const winnerTipHash = blockHash(judgedTip);
+        const vr = judgedWinner.verifyResult;
+        const proof = judgedWinner.proof;
         if (winnerTipHash !== null
-            && this.chain.standing(winnerTipHash, result.tip.height) !== 'held') {
-          const vr = result.winner.verifyResult;
-          const proof = result.winner.proof;
-          if (vr !== null && vr.ok === true && proof !== null) {
+            && vr !== null && vr.ok === true && proof !== null) {
+          // MESH_INTERFACE → What the client remembers — the kept proof
+          // is "the last proof the client verified of the chain it holds —
+          // a check's winner, a switch, its own tip's proof". It moves
+          // forward to this proof: `judgeByMemory`'s `best` excludes
+          // every proof that loses to the kept one (`judgment.lost`),
+          // and a `foreign` judgement clears the kept proof before
+          // this write — so the proof `judgedWinner` names here either
+          // continues the kept chain (reached only when `kept !== null`
+          // and `best` selected it) or starts a new chain
+          // (`kept === null` here, either never-held or just cleared
+          // by `foreign`).
+          this.kept = proof;
+          if (this.chain.standing(winnerTipHash, judgedTip.height) !== 'held') {
             const suffix: BlockHeader[] = [proof.suffixHead.header, ...proof.suffixTail];
             this.chain.settle(suffix, vr.headers[0]!);
             // MESH_INTERFACE → The client's node list → "A check" —
             // the kept verdicts are dropped when the chain switches.
             this.keptVerdicts.clear();
+            // MESH_INTERFACE → The client's node list → "A node is
+            // judged against the chain the check leaves" — phase
+            // 3c's match was against the chain the check started
+            // on; a settle to a new tip voids the match the same
+            // way the kept verdicts clear. The pass judges every
+            // tip against the chain as it stands here.
+            underMatched.clear();
+            // Rebuild `placedAtTip` against the new chain: phase 4's
+            // next iteration reads it through `firstNodeAtChainTip`
+            // to prepend the own-tip URL.
             placedAtTip.clear();
             for (const read of tipReads) {
               if (read.hash === null) continue;
               const newPlacement = this.chain.place(read.hash, read.height);
-              placements.set(read.id, newPlacement);
-              const chainTipNow = this.chain.tip();
-              if (newPlacement === 'tip') {
-                this.applyEvent({ id: read.id, ev: 'success' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, 0);
-                placedAtTip.add(read.id);
-              } else if (newPlacement === 'one-below') {
-                this.applyEvent({ id: read.id, ev: 'trailing' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, 1);
-              } else if (newPlacement === 'below') {
-                this.applyEvent({ id: read.id, ev: 'behind' });
-                perNodeVerdict.set(read.id, 'on');
-                pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
-              } else if (!verifiedHashes.has(read.hash)) {
-                // 'above', 'under' or 'unplaced' with no proof verdict
-                // of its own: reads `behind`.
-                this.applyEvent({ id: read.id, ev: 'behind' });
-                perNodeVerdict.set(read.id, 'off');
-              }
-              // else: hash has a proof verdict — keep its event/verdict.
+              if (newPlacement === 'tip') placedAtTip.add(read.id);
             }
           }
         }
+      }
+    }
+
+    // MESH_INTERFACE → The client's node list → "A node is judged
+    // against the chain the check leaves" — the check's one
+    // placement after the settle, over every tip the check read: the
+    // node's event, distance and agreement verdict are read against
+    // the client's chain as it stands here. A hash the chain holds
+    // reads its placement's event and distance; an `under` hash
+    // phase 3c matched against the chain's own header at that
+    // height lies on the chain, further down than the held headers,
+    // and reads `behind` with its distance; any other `under`,
+    // `above` or `unplaced` reads `behind` with `behindBy` null and
+    // `off` in the agreement. A lie and a failure land as they were
+    // read: an entry phase 4's proof read moved to `retry` and one
+    // the same path left `blacklisted` keep that status and its
+    // event — the pass writes no event over it — while its count in
+    // the agreement and its distance follow its tip read's placement
+    // as any node's do, since the counts say what the nodes name
+    // (→ What the client remembers → "The agreement counts"). A
+    // tip answered with no hash was placed by phase 3b with the
+    // `behind` event and no agreement verdict. A retry from phase
+    // 1's dial alone is not held here — the api that served the
+    // tip reads is the base the pass writes against. The pass
+    // writes `placements`: the outrun re-read below reads it to
+    // pick whom to re-read against the settled chain.
+    for (const read of tipReads) {
+      if (read.hash === null) continue;
+      const base = baseById.get(read.id);
+      if (base === undefined) continue;
+      const entry = this.nodeList.entry(read.id);
+      const keepStatus = phase4Downgraded.has(read.id)
+        || (entry !== undefined && entry.status === 'blacklisted');
+      const placement = this.chain.place(read.hash, read.height);
+      placements.set(read.id, placement);
+      const chainTipNow = this.chain.tip();
+      if (placement === 'tip') {
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'success' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 0);
+      } else if (placement === 'one-below') {
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'trailing' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, 1);
+      } else if (placement === 'below') {
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+      } else if (placement === 'under' && underMatched.has(read.id)) {
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'on');
+        pendingBehindBy.set(read.id, chainTipNow!.height - read.height);
+      } else {
+        // 'above', 'under' (unmatched) or 'unplaced': the tip lies off the chain.
+        if (!keepStatus) this.applyEvent({ id: read.id, ev: 'behind' }, base.route);
+        perNodeVerdict.set(read.id, 'off');
+        pendingBehindBy.set(read.id, null);
+      }
+    }
+
+    // MESH_INTERFACE → The client's node list → "A tip the check has
+    // outrun is read again" — where a check moves the client's tip
+    // (a proof settling the chain, or a fill linking), each node
+    // whose tip read then places below the client's tip is read
+    // again, once in that check, after its proofs and fills. The
+    // first read's time stays the node's speed, so the re-reads use
+    // a throw-away `readMs` target; a failed re-read is a failure as
+    // any read's is; a re-read that names a tip no placement holds
+    // leaves the node as its first read placed it.
+    const tipAfter = this.chain.tip();
+    const tipHashAfter = tipAfter !== null ? blockHash(tipAfter) : null;
+    if (tipHashAfter !== null && tipHashAfter !== tipHashAtStart) {
+      const toReRead: string[] = [];
+      for (const read of tipReads) {
+        if (read.hash === null) continue;
+        const p = placements.get(read.id);
+        if (p === 'one-below' || p === 'below' || p === 'under') {
+          toReRead.push(read.id);
+        }
+      }
+      const discardReadMs = new Map<string, number>();
+      const rereadFetch = this.makeTimedFetch(discardReadMs, idByBase);
+      for (const id of toReRead) {
+        if (this.stopped) break;
+        const base = baseById.get(id)!;
+        let response: Response;
+        try {
+          response = await rereadFetch(base.url + '/blocks/current', undefined);
+        } catch (e) {
+          if (e instanceof HandshakeNoChainServiceError) continue;
+          const message = e instanceof Error ? e.message : String(e);
+          this.applyEvent({ id, ev: 'failure', kind: 'transport', message }, base.route);
+          pendingBehindBy.set(id, null);
+          continue;
+        }
+        const cls = await this.classifyTipRead(response, id, base.route);
+        if (cls.kind !== 'tip') continue; // failure or lie applied inside
+        if (cls.hash === null) continue; // no placeable tip — keep first read's
+        const newPlacement = this.chain.place(cls.hash, cls.height);
+        if (newPlacement === 'tip') {
+          this.applyEvent({ id, ev: 'success' });
+          perNodeVerdict.set(id, 'on');
+          pendingBehindBy.set(id, 0);
+        } else if (newPlacement === 'one-below') {
+          this.applyEvent({ id, ev: 'trailing' });
+          perNodeVerdict.set(id, 'on');
+          pendingBehindBy.set(id, 1);
+        } else if (newPlacement === 'below') {
+          this.applyEvent({ id, ev: 'behind' });
+          perNodeVerdict.set(id, 'on');
+          const tipNow = this.chain.tip();
+          if (tipNow !== null) pendingBehindBy.set(id, tipNow.height - cls.height);
+        } else if (newPlacement === 'above') {
+          // Try one fill from this node, bottom-up. A fill that links
+          // extends the chain, placing this re-read at the new tip;
+          // a fill that fails leaves the node as its first read placed
+          // it, under "a tip no placement holds".
+          const tipNow = this.chain.tip();
+          if (tipNow === null) continue;
+          const gap = cls.height - tipNow.height;
+          if (gap > DEFAULT_K) continue;
+          const headers: BlockHeader[] = [];
+          let fillAborted = false;
+          for (let h = cls.height; h > tipNow.height; h -= 1) {
+            const result = await this.readHeaderAt(base.url, h, rereadFetch);
+            if (result.kind !== 'header') {
+              this.applyHeaderReadFailure(id, result, base.route);
+              fillAborted = true;
+              break;
+            }
+            headers.push(result.header);
+          }
+          if (fillAborted) continue;
+          if (headers.length === 0 || blockHash(headers[0]!) !== cls.hash) continue;
+          const linkResult = this.chain.link(headers);
+          if (linkResult === 'linked') {
+            this.applyEvent({ id, ev: 'success' });
+            perNodeVerdict.set(id, 'on');
+            pendingBehindBy.set(id, 0);
+          }
+        }
+        // 'under' or 'unplaced' — keep first read's placement.
       }
     }
 
@@ -1699,8 +2407,8 @@ class MeshClientImpl implements MeshClient {
     // so a reader can tell one check's state from the next". The
     // counter increments once per `runCheck`; it moves BEFORE the
     // routed tip read below so the read sees the first-check-ended
-    // branch of `order` and `read` (the before-first-check anchor
-    // fallback never fires from inside the check itself).
+    // branch of `order` and `read` (the before-first-check
+    // first-contact fallback never fires from inside the check itself).
     this.state_.checks += 1;
 
     // The routed tip read runs the classification so a failure or a lie
@@ -1744,26 +2452,42 @@ class MeshClientImpl implements MeshClient {
       this.state_.tip = null;
     }
 
-    // Agreement counts off the per-tip verdicts; anchors from the
-    // current entries so a hand-added trusted node counts.
-    const anchorIds = new Set<string>();
-    for (const e of this.nodeList.entries()) {
-      if (e.anchor) anchorIds.add(e.notisId);
-    }
+    // Agreement counts off the per-tip verdicts.
     const entries: AgreementEntry[] = [];
-    for (const [id, verdict] of perNodeVerdict) {
-      entries.push({ verdict, anchor: anchorIds.has(id) });
+    for (const [, verdict] of perNodeVerdict) {
+      entries.push({ verdict });
     }
     this.state_.agreement = agreementCounts(entries);
 
-    this.state_.anchorReached = this.nodeList.anchorReached();
     // WEB_INTERFACE → The extension → "The verified tip" — the field keeps
     // the last check's that read one, so a check that placed every tip and
     // read no proof leaves `proofs` standing.
     if (proofsThisCheck.asked > 0) {
       this.state_.proofs = proofsThisCheck;
     }
+    // MESH_INTERFACE → What the client remembers — "When no node continues
+    // it — no node names a tip on the client's chain and one or more name
+    // one off it — the client keeps its own chain and says so".
+    let anyOn = false;
+    let anyOff = false;
+    for (const v of perNodeVerdict.values()) {
+      if (v === 'on') anyOn = true;
+      if (v === 'off') anyOff = true;
+    }
+    this.state_.notContinued = this.kept !== null && !anyOn && anyOff;
+    // MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice" — "A check that no longer
+    // finds the disagreement clears it": the write is the pass's
+    // detection (`null` where nothing was found).
+    this.state_.disagreement = raisedThisCheck;
+    this.standingDisagreement = standingRaisedThisCheck;
     this.emitStateChange();
+    // MESH_INTERFACE → What the client remembers — called after
+    // `emitStateChange()`, directly: a throw from the callback is the
+    // caller's and propagates.
+    if (this.onChecked !== undefined) {
+      this.onChecked(this.toRemember());
+    }
   }
 
   /**
@@ -1831,11 +2555,16 @@ class MeshClientImpl implements MeshClient {
   /**
    * The first node (by candidate rank) whose tip read THIS check placed
    * `tip` against the final chain (MESH_INTERFACE → The client's node
-   * list → "A check"). A node still at the previous check's `ok` would
-   * be stale: the `under` reader and the own-tip prepend both want a
-   * node the chain has just placed at the tip.
+   * list → "A check"). A `yours` entry in that set comes first — the
+   * held tip's proof comes from your node when it is placed at the
+   * client's tip (`→ Discovery → "Your node takes precedence"`); the
+   * `under` reader and the own-tip prepend both want a node the chain
+   * has just placed at the tip.
    */
   private firstNodeAtChainTip(placedAtTip: ReadonlySet<string>): string | null {
+    for (const e of this.nodeList.entries()) {
+      if (e.yours && placedAtTip.has(e.notisId)) return e.notisId;
+    }
     for (const id of this.nodeList.candidates()) {
       if (placedAtTip.has(id)) return id;
     }
@@ -2043,7 +2772,7 @@ class MeshClientImpl implements MeshClient {
       if (attributed !== null) {
         for (const row of attributed) {
           if (row.wrongKey !== null) {
-            // The anchor's own list carries the addrs without the
+            // The first-contact list carries the addrs without the
             // `/p2p/<peer-id>` tail `withPeerId` adds for the dial;
             // reconcile by matching on the host-port prefix the two
             // forms share. `wrongKey` drops by exact string, so we
@@ -2480,7 +3209,7 @@ export function createDialProgressRecorder(): {
 
 /**
  * The dial list the client hands libp2p has a `/p2p/<peer-id>` tail on
- * every address (`withPeerId`). The anchor's own list carries the bare
+ * every address (`withPeerId`). The first-contact list carries the bare
  * address; `NodeList.wrongKey`/`recordAddrFailure` take the bare form.
  * This helper recovers the bare address matching one dialable address.
  */

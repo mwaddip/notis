@@ -6,5 +6,6 @@
 
 export type TipVerdict =
   | { kind: 'verified'; nodes: number; height: number }
-  | { kind: 'thin'; reason: 'no-proof' | 'too-short' | 'one-node' | 'split' | 'no-anchor'; height: number | null }
-  | { kind: 'refused'; reason: 'invalid-proof'; height: number | null };
+  | { kind: 'thin'; reason: 'no-proof' | 'too-short' | 'one-node' | 'split' | 'not-continued'; height: number | null }
+  | { kind: 'refused'; reason: 'invalid-proof'; height: number | null }
+  | { kind: 'refused'; reason: 'your-node'; which: 'memory' | 'heavier'; height: number | null };

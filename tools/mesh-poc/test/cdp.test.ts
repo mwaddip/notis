@@ -8,7 +8,7 @@
 // most once, so a repeated signal does not double-close.
 
 import { describe, expect, it } from 'vitest';
-import { createTerminationRegistry } from '../stage/cdp.mjs';
+import { createTerminationRegistry, parseTimeoutArg } from '../stage/cdp.mjs';
 
 describe('cdp.mjs — createTerminationRegistry', () => {
   it('runs every registered cleanup when the handler fires, then exits', async () => {
@@ -85,5 +85,20 @@ describe('cdp.mjs — createTerminationRegistry', () => {
     expect(process.listenerCount('SIGTERM')).toBe(beforeTerm);
     expect(process.listenerCount('SIGINT')).toBe(beforeInt);
     r.unbind();
+  });
+});
+
+describe('cdp.mjs — parseTimeoutArg', () => {
+  it('answers the fallback for an absent argument and the default when none is given', () => {
+    expect(parseTimeoutArg(undefined, 1234)).toBe(1234);
+    expect(parseTimeoutArg(undefined)).toBe(30_000);
+  });
+
+  it('answers a positive integer as a number', () => {
+    expect(parseTimeoutArg('320000')).toBe(320_000);
+  });
+
+  it.each(['0', '-5', '1.5', 'abc', '', '12s'])('refuses %j', (text) => {
+    expect(() => parseTimeoutArg(text)).toThrow(/positive integer/);
   });
 });

@@ -1,6 +1,6 @@
 // MESH_INTERFACE → Discovery / NAT — pure config.json variants a scenario
 // writes beside the stage's own file: a private node reached through a
-// public relay, and the stage's anchors plus hostile seeds.
+// public relay, and the stage's first-contact nodes plus hostile seeds.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -11,7 +11,7 @@ import {
 
 const BASE_CONFIG = {
   network: 'devnet',
-  anchors: [
+  firstContact: [
     { notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'] },
     { notisId: 'bb'.repeat(32), addrs: ['/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER'] },
   ],
@@ -26,9 +26,9 @@ describe('buildPrivateViaRelayVariant', () => {
       viaPublicNotisId: 'aa'.repeat(32),
     });
     expect(r.network).toBe('devnet');
-    expect(r.anchors.length).toBe(1);
-    expect(r.anchors[0]!.notisId).toBe('ff'.repeat(32));
-    expect(r.anchors[0]!.addrs[0]).toBe('/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER/p2p-circuit/p2p/PRIV1PEER');
+    expect(r.firstContact.length).toBe(1);
+    expect(r.firstContact[0]!.notisId).toBe('ff'.repeat(32));
+    expect(r.firstContact[0]!.addrs[0]).toBe('/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER/p2p-circuit/p2p/PRIV1PEER');
     expect(r.seeds).toEqual([]);
     // MESH_INTERFACE → NAT → "A client's STUN list comes from the
     // public nodes it holds" — the variant writes no `stunServers`
@@ -36,16 +36,16 @@ describe('buildPrivateViaRelayVariant', () => {
     expect('stunServers' in r).toBe(false);
   });
 
-  it('refuses a base config that does not name the via public anchor', () => {
+  it('refuses a base config that does not name the via public first-contact node', () => {
     expect(() => buildPrivateViaRelayVariant(BASE_CONFIG, {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
       viaPublicNotisId: 'cc'.repeat(32),
-    })).toThrow(/does not name the public anchor/);
+    })).toThrow(/does not name the public first-contact node/);
   });
 
-  it('refuses a public anchor whose addresses have no webrtc-direct', () => {
-    const noWebrtc = { ...BASE_CONFIG, anchors: [{ notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/tcp/443/tls/ws/p2p/PUB1PEER'] }] };
+  it('refuses a public first-contact node whose addresses have no webrtc-direct', () => {
+    const noWebrtc = { ...BASE_CONFIG, firstContact: [{ notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/tcp/443/tls/ws/p2p/PUB1PEER'] }] };
     expect(() => buildPrivateViaRelayVariant(noWebrtc, {
       privNotisId: 'ff'.repeat(32),
       privPeerIdString: 'PRIV1PEER',
@@ -55,10 +55,10 @@ describe('buildPrivateViaRelayVariant', () => {
 });
 
 describe('buildWithHostileSeedsVariant', () => {
-  it('keeps anchors and appends the given seeds', () => {
+  it('keeps first-contact nodes and appends the given seeds', () => {
     const seeds = [{ notisId: 'cc'.repeat(32), addrs: ['/ip4/10.100.0.31/tcp/4002/p2p/HM'] }];
     const r = buildWithHostileSeedsVariant(BASE_CONFIG, seeds);
-    expect(r.anchors.length).toBe(2);
+    expect(r.firstContact.length).toBe(2);
     expect(r.seeds).toEqual(seeds);
   });
 

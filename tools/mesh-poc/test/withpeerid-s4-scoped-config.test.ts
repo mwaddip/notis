@@ -135,7 +135,7 @@ describe('every scenario writes config.json before opening the page', () => {
     try {
       const defaultPath = join(tmp, 'browser', 'config.default.json');
       const activePath = join(tmp, 'browser', 'config.json');
-      const body = JSON.stringify({ network: 'devnet', anchors: [{ notisId: 'aa'.repeat(32), addrs: [] }], stunServers: [], seeds: [] }, null, 2);
+      const body = JSON.stringify({ network: 'devnet', firstContact: [{ notisId: 'aa'.repeat(32), addrs: [] }], stunServers: [], seeds: [] }, null, 2);
       require('node:fs').mkdirSync(join(tmp, 'browser'), { recursive: true });
       writeFileSync(defaultPath, body);
       // Pollute the active file first — scenario inheritance would
@@ -162,7 +162,7 @@ describe('every scenario writes config.json before opening the page', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'mesh-scenario-config-'));
     try {
       require('node:fs').mkdirSync(join(tmp, 'browser'), { recursive: true });
-      const variant = { network: 'devnet', anchors: [{ notisId: 'cc'.repeat(32), addrs: ['x'] }], stunServers: [], seeds: [] };
+      const variant = { network: 'devnet', firstContact: [{ notisId: 'cc'.repeat(32), addrs: ['x'] }], stunServers: [], seeds: [] };
       writeConfigVariant(tmp, variant);
       const after = JSON.parse(readFileSync(join(tmp, 'browser', 'config.json'), 'utf8'));
       expect(after).toEqual(variant);

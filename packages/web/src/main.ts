@@ -1,4 +1,4 @@
-import { applyPrefs, BUILD_ANCHORS, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE } from './prefs';
+import { applyPrefs, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
@@ -72,11 +72,11 @@ if (isExtension && BUILD_NETWORK !== null) {
 
   // WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path" — the extension build starts the mesh client with the build's
-  // anchors, and the seams module wraps its `fetch` and `base`/`order` as
+  // nodes, and the seams module wraps its `fetch` and `base`/`order` as
   // the App's read client, write client, tip verifier, figures and names
   // verifiers, post resolver and hand-added-node seam. `pagehide` stops
-  // the client once. A stored hand-added address re-enters as a by-hand
-  // anchor after start, so `removeByHand` can later drop it. The mesh
+  // the client once. A stored hand-added address re-enters as a trusted
+  // by-hand node after start, so `removeByHand` can later drop it. The mesh
   // module is reached by a dynamic import so Rollup drops every byte of
   // it from the web bundle (`build-release.sh`'s mesh grep).
   const [{ startExtensionMesh }, { startMeshClient }] = await Promise.all([
@@ -84,12 +84,17 @@ if (isExtension && BUILD_NETWORK !== null) {
     import('./mesh'),
   ]);
   const { seams } = await startExtensionMesh({
-    anchors: [...BUILD_ANCHORS],
+    firstContact: [...BUILD_NODES],
     network: BUILD_NETWORK,
     agentName: 'notis-extension',
     httpFetch: fetch.bind(globalThis),
     check: postsVerifier.check.bind(postsVerifier),
     storage: window.localStorage,
+    locks: {
+      async request(name: string, fn: () => Promise<void>): Promise<void> {
+        await navigator.locks.request(name, async () => { await fn(); });
+      },
+    },
     window,
     startMeshClient,
   });

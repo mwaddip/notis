@@ -22,12 +22,14 @@ function makeEntry(partial: {
   status: NodeStatus;
   addrs: string[];
   readMs?: number | null;
-  anchor?: boolean;
+  firstContact?: boolean;
 }): NodeEntry {
   return {
     notisId: partial.notisId,
-    anchor: partial.anchor ?? false,
+    firstContact: partial.firstContact ?? false,
+    known: false,
     byHand: false,
+    yours: false,
     status: partial.status,
     failures: 0,
     retryAtMs: 0,
@@ -41,6 +43,7 @@ function makeEntry(partial: {
     transport: null,
     path: null,
     api: null,
+    seenMs: null,
   };
 }
 
@@ -136,12 +139,12 @@ describe('iceConfiguration — client-level', () => {
         addrs: ['/ip4/11.100.0.5/udp/0/webrtc-direct'] }),
     ], 3)).toEqual([]);
 
-    // The client: anchors with no public address. The ICE configuration
+    // The client: first-contact nodes with no public address. The ICE configuration
     // is `{ iceServers: [] }`, never undefined — libp2p's DNS-named
     // defaults are what the empty array stops.
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{ notisId: anchorKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
+      firstContact: [{ notisId: firstContactKey.notisId, addrs: ['/ip4/10.0.0.1/udp/0/webrtc-direct'] }],
       network: 'devnet', profile: PROFILE,
       agentName: 'notis-mesh-poc',
       resolve: async () => ({ winner: null, winnerIndex: -1, nodes: [], tip: null, suffixHead: null, splits: [] }),
@@ -150,11 +153,11 @@ describe('iceConfiguration — client-level', () => {
     expect(client.iceConfiguration().iceServers).toEqual([]);
   }, 30_000);
 
-  it('a client started from anchors alone builds its ICE servers from them', async () => {
-    const anchorKey = nodeKeyFromKeyPair(generateKeyPair());
+  it('a client started from first-contact nodes alone builds its ICE servers from them', async () => {
+    const firstContactKey = nodeKeyFromKeyPair(generateKeyPair());
     const client = await startMeshClient({
-      anchors: [{
-        notisId: anchorKey.notisId,
+      firstContact: [{
+        notisId: firstContactKey.notisId,
         addrs: ['/ip4/11.100.0.11/udp/9999/webrtc-direct'],
       }],
       network: 'devnet', profile: PROFILE,

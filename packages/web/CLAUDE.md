@@ -73,7 +73,7 @@ and the proxy reads a `sign` that ends without an answer as `refused`; every rea
 Web Lock `notis.prompt` (`navigator.locks`, which `install` takes; the tests pass `fakeLockManager()`), one prompt at a
 time and a record whose window is gone declined; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_ANCHORS`) and
+the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_NODES`) and
 `notis-public` link origin; one manifest template → two zips; **the chain it reads checked by the mesh client's own
 check, the verdict folded into the status corner**
 (`WEB_INTERFACE → The extension → "The verified tip"`), **and the wallet's balance and the profile's rep judged against
@@ -457,8 +457,8 @@ verifier, and a name no network profile answers to refuses the build. ⚠ **A bu
 **The verified tip** (`WEB_INTERFACE → The extension → "The verified tip"`, `→ The status corner`): the extension
 checks the chain it reads through the mesh client's own check — `src/extension/mesh-tip-verifier.ts`
 (`createMeshTipVerifier`) awaits one `client.check()` and answers `tipRunOf(client.state())` from
-`src/model/mesh-verdict.ts` (`meshVerdict`, pure): the first row of the seven-row table that holds, with `no-anchor`
-as row 4 for a seated chain no anchor stands on, and totality on the counts folded in before the rows. The App runs
+`src/model/mesh-verdict.ts` (`meshVerdict`, pure): the first row of the table that holds — *your-node* right after
+"no check has ended", a chain seated or not — and totality on the counts folded in before the rows. The App runs
 it at start, on a press of the corner, every ten minutes while visible, on a visibility rise ten minutes past the
 last run, and when a name check asks for one; one run at a time. The corner is green only while blocks progress
 **and** the verdict is `verified`; `src/view/corner.ts` writes the new titles, none naming a node or carrying a URL

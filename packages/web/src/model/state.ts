@@ -5,6 +5,7 @@ import type { Flight, CardRow } from '../view/card';
 import type { SendAnswer, SendRecipient } from '../view/wallet';
 import type { SignResult } from '../wallet/submit';
 import type { TipVerdict } from './tip-verdict';
+import type { HandNodeSeam } from '../view/settings';
 import type { Anchor, FiguresResult, Listing, NameClaim, NameResult, PostCheck } from '@dagsocial/nipopow-client';
 import type { BoundPost, ResolveEnd } from './post-resolve';
 import type { ReportCount } from './feed-reconcile';
@@ -363,6 +364,14 @@ export interface Handlers {
   // row renders only when both are present.
   links?: () => 'site' | 'here';
   setLinks?: (v: 'site' | 'here') => Promise<void>;
+  // The extension's hand-added node (WEB_INTERFACE → The settings window →
+  // "In the extension the row adds a node by hand"). The App spreads the
+  // seam in when present.
+  handNode?: HandNodeSeam;
+  // The latest tip verdict — the settings window's `node` row reads it to
+  // decide whether the question stands (WEB_INTERFACE → The settings window
+  // → "While it disagrees the row holds the question").
+  verdict?: () => TipVerdict | null | undefined;
 }
 
 /** What the App calls on the identity module — the single reference it holds

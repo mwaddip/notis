@@ -349,6 +349,9 @@ importers:
       '@dagsocial/net':
         specifier: workspace:*
         version: link:../net
+      '@dagsocial/nipopow':
+        specifier: workspace:*
+        version: link:../nipopow
       '@dagsocial/nipopow-client':
         specifier: workspace:*
         version: link:../../tools/nipopow-client

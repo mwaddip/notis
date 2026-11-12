@@ -168,6 +168,28 @@ export class PeerDb {
   }
 
   /**
+   * Record this node's own listen addresses so `record` filters them out, and
+   * drop every entry whose address normalises to one of them. The caller hands
+   * these in once libp2p lists them — `libp2p.getMultiaddrs()` answers only on
+   * a started libp2p (NET_INTERFACE → Node Lifecycle →
+   * "Every connection libp2p opens reaches net's hooks"), so a PeerDb built
+   * before `libp2p.start()` opens with an empty self set and this method lands
+   * the filter the storage pass would have run. Addresses compare without
+   * their `/p2p/` component (NET_INTERFACE → Outbound Manager →
+   * "Addresses compare without their `/p2p/` component"), so a peer's entry
+   * naming our host under its own peer id normalises to the same key as our
+   * listen address.
+   */
+  setSelfAddresses(addresses: readonly string[]): void {
+    this.selfAddrs = new Set(addresses.map(addressWithoutPeerId));
+    const drop: string[] = [];
+    for (const [addr] of this.entries) {
+      if (this.selfAddrs.has(addressWithoutPeerId(addr))) drop.push(addr);
+    }
+    for (const addr of drop) this.forget(addr);
+  }
+
+  /**
    * Ban a peer address — keys the ban on the address without its `/p2p/`
    * component (NET_INTERFACE → PeerDb) and removes every entry that
    * normalises to the same key, under that entry's own spelling: a declared

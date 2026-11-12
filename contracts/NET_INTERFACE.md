@@ -321,7 +321,9 @@ and otherwise leaves the connection to its deadline.
 
 **Every connection this node dialled carries its handshake, whoever within the node dialled it.** libp2p opens
 outbound connections on the node's behalf outside the dial funnel — a private node's relay reservation, a DHT query,
-AutoNAT's dial-back (→ The mesh). Each is an outbound connection like the funnel's: the node opens its handshake on it
+AutoNAT's dial-back (→ The mesh), and at libp2p's own start its redial of every stored peer it keeps alive, the mesh's
+DHT keeping its closest peers so (→ Node Lifecycle → "Every connection libp2p opens reaches net's hooks"). Each is an
+outbound connection like the funnel's: the node opens its handshake on it
 as it opens, once — the funnel's own and this one are the same handshake, never two — and it lives or ends by the rules
 above and below. A connection none handshakes is closed at its deadline, and a relay reservation riding it is lost with
 it. Whichever reaches a connection first — the funnel, or the connection's open — runs its handshake, and the other
@@ -1658,7 +1660,7 @@ first hop.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
+| `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, register both stream protocols, connect to bootstrap peers, subscribe to topics. **Every connection libp2p opens reaches net's hooks**: libp2p is created stopped, and net's connection and peer listeners, both stream protocols and everything they reach are in place before it starts — libp2p dials on its own as it starts (→ Handshake → "Every connection this node dialled carries its handshake, whoever within the node dialled it"), and such a connection opens its handshake, and its peer is tracked from that first connection, as for any other. **A start that throws stops what it started** — the libp2p node and the scheduler — before the error leaves it, so a caller that continues without networking runs none of it |
 | `stop()` | `() => Promise<void>` | Graceful shutdown. **A stopped node starts again whole**: the next `start()` registers both protocols on the libp2p node it creates |
 | `peerId()` | `() => string` | This node's libp2p peer ID — the node key's (→ The node key) |
 | `loadNodeKey(path)` | `(string) => Promise<KeyPair>` | Read the node key file at `path`, or write a fresh key there; `NodeKeyError` on a file it refuses (→ The node key) |

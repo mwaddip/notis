@@ -1,19 +1,19 @@
 // MESH_INTERFACE → Acceptance 1 — "No name, no hosted page". The client
-// reads a node's API by key from anchors alone; the mesh's answers equal
+// reads a node's API by key from its first-contact nodes alone; the mesh's answers equal
 // the node's direct HTTP answers byte for byte; and the browser host's
 // DNS log holds no query (every background query of the browser's own
 // goes through Chromium's `--host-resolver-rules` resolver, which
 // answers `~NOTFOUND` for every name but `localhost`).
 //
 // No faults; `applyFaults` is a no-op. The scenario reads the stage's
-// own `config.json` as `up` wrote it: anchors = pub1 + pub2.
+// own `config.json` as `up` wrote it: first contact = pub1 + pub2.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
 import { verdictS1Node, verdictS1Probe, verdictS1DnsSilent, verdictIceServers } from '../lib/verdicts.mjs';
 import {
-  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, leafPids, descendantPids,
+  execIn, readDirect, readLineCount, readNftCounterSum, findPid, signal, signalPid, leafPids, descendantPids,
 } from '../lib/measure.mjs';
 import { writeStageDefault } from '../lib/scenario-config.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
@@ -22,7 +22,7 @@ export const NAME = 's1';
 
 export function describe() {
   return [
-    'nodeId is an anchor within 60 s, reached over WebRTC-direct',
+    'nodeId is a first-contact node within 60 s, reached over WebRTC-direct',
     'probe /blocks/current matches the node direct',
     'probe /nipopow/proof/24/20 matches the node direct',
     'the DNS log holds no line and the nft 53/853 counter did not move',
@@ -59,12 +59,12 @@ export function hostOfNodeId(identities, nodeId) {
 }
 
 /**
- * Pure: the set of `notisId`s that `config.json` lists as anchors.
+ * Pure: the set of `notisId`s that `config.json` lists in `firstContact[]`.
  */
-export function anchorIdSet(config) {
+export function firstContactIdSet(config) {
   const out = new Set();
-  if (!config || !Array.isArray(config.anchors)) return out;
-  for (const a of config.anchors) {
+  if (!config || !Array.isArray(config.firstContact)) return out;
+  for (const a of config.firstContact) {
     if (typeof a?.notisId === 'string') out.add(a.notisId);
   }
   return out;
@@ -100,13 +100,13 @@ export async function run(ctx) {
   const config = JSON.parse(readFileSync(join(ctx.outDir, 'browser', 'config.json'), 'utf8'));
   const identitiesPath = join(ctx.outDir, 'identities.json');
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
-  const anchors = anchorIdSet(config);
+  const firstContactIds = firstContactIdSet(config);
 
   // Each step is wrapped in `rec.step(name, fn)` so a throw records
   // FAIL for THAT step and the next step still runs (MESH_INTERFACE →
   // Acceptance). The scenario's one `finally` runs `log.removeAll()`
   // whatever each step did AND releases the paused miner.
-  let anchorNodeId = null;
+  let firstContactNodeId = null;
   // MESH_INTERFACE → Acceptance 1 — "the mesh's answers equal the node's
   // direct HTTP answers byte for byte". The chain's tip moves at mining
   // speed; the probe and the direct reads both come off a tip that may
@@ -127,20 +127,24 @@ export async function run(ctx) {
   try {
     const step1 = await rec.step(describe()[0], async () => {
       const step1Start = Date.now();
-      const stateJson = await cdpPoll(ctx, browserUrl,
+      // The scenario's first page load carries `?clearMemory=1` so a
+      // prior scenario's kept proof does not seat this scenario's
+      // client; step 1 reads the client's reach from a fresh state
+      // (`MESH_INTERFACE → What the client remembers`).
+      const stateJson = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         "if (v === null) return false; try { return JSON.parse(v).nodeId !== null; } catch (_e) { return false; }",
         60_000, 500,
       );
       // MESH_INTERFACE → Acceptance 1 — "The client reads a node's API
-      // by key from anchors alone, over WebRTC-direct". `transport` and
+      // by key from its first-contact nodes alone, over WebRTC-direct". `transport` and
       // `path` are read from the same `#state` payload so the
       // measurement names the link reached inside the 60 s window.
       const state = JSON.parse(stateJson);
-      anchorNodeId = state.nodeId;
+      firstContactNodeId = state.nodeId;
       const m = {
         nodeId: state.nodeId,
-        isAnchor: anchors.has(state.nodeId),
+        isFirstContact: firstContactIds.has(state.nodeId),
         timeMs: Date.now() - step1Start,
         transport: state.transport,
         path: state.path,
@@ -151,7 +155,7 @@ export async function run(ctx) {
 
     // Probe steps 2 and 3 need an identity row. If step 1 failed or
     // the id is not in identities.json, those steps read `skipped`.
-    const hostName = anchorNodeId !== null ? hostOfNodeId(identities, anchorNodeId) : null;
+    const hostName = firstContactNodeId !== null ? hostOfNodeId(identities, firstContactNodeId) : null;
     const hostRow = hostName !== null ? identities[hostName] : null;
     if (hostName !== null && hostRow !== null && minerEntry !== null) {
       pausedPids = leafPids(minerEntry.pid);
@@ -198,12 +202,12 @@ export async function run(ctx) {
       // MESH_INTERFACE → Acceptance 1 — the browser host's DNS log
       // holds no query; this is PASS only on positive evidence that the
       // page connected. A page that never reached a node has no DNS
-      // traffic vacuously. `anchorNodeId` is the nodeId Step 1 found
+      // traffic vacuously. `firstContactNodeId` is the nodeId Step 1 found
       // (null if step 1 FAILed).
       const m = {
         dnsLines: dnsLinesEnd - dnsLinesStart,
         nftCounterPackets: nftCounterEnd - nftCounterStart,
-        connected: anchorNodeId !== null,
+        connected: firstContactNodeId !== null,
       };
       return { verdict: verdictS1DnsSilent(m), measurement: m };
     });
@@ -232,13 +236,19 @@ export async function run(ctx) {
     // SIGCONT on the leaf alone leaves the wrapper `T` and the
     // stage's `down` cannot pass SIGTERM through it. The resume
     // sends SIGCONT to the whole tree: the recorded pid and every
-    // descendant, wrappers included. A pid that died mid-run reads
-    // ESRCH and is a no-op.
+    // descendant, wrappers included. The stage's spawns run through
+    // `sudo ip netns exec ... sudo -u <user>`, so every outer wrapper
+    // on `log.pids` is root-owned; `signalPid` falls back to
+    // `sudo kill -CONT` on EPERM so the root-owned wrappers are
+    // reached too. A pid that died mid-run reads ESRCH and is a
+    // no-op.
     if (pausedPids.length > 0 && minerEntry !== null) {
       const treePids = [minerEntry.pid, ...descendantPids(minerEntry.pid)];
       for (const pid of treePids) {
-        try { signal(pid, 'SIGCONT'); }
-        catch (err) { process.stderr.write(`[s1 teardown] SIGCONT ${pid}: ${err?.message ?? err}\n`); }
+        const r = signalPid(pid, 'SIGCONT');
+        if (!r.sent && r.reason !== 'ESRCH') {
+          process.stderr.write(`[s1 teardown] SIGCONT ${pid}: ${r.reason}\n`);
+        }
       }
       log.records.push(`[fault:remove:${NAME}:miner-steady-pause] kill -CONT ${treePids.join(' ')} (tree of ${minerEntry.pid})`);
     }

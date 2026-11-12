@@ -17,7 +17,7 @@
 //      moving `proofReads`. The baseline is the first state with the
 //      chain settled (`checks >= 1`, `proofReads >= 1`) where every
 //      honest node the list HOLDS reads `ok`, `trailing` or `behind`
-//      and both anchors are held; the final, five completed checks
+//      and both first-contact nodes are held; the final, five completed checks
 //      later, the same rule. `verdictS8NoProofs`: PASS when
 //      `proofReads` did not move and every held honest node read
 //      `ok`, `trailing` or `behind`.
@@ -374,14 +374,14 @@ export function honestMeshHosts(topology) {
 // completed checks past a settled baseline. The pure observer below
 // captures the baseline — first state with the chain settled
 // (`checks >= 1`, `proofReads >= 1`) where every honest node the list
-// HOLDS reads `ok`, `trailing` or `behind` AND both anchors are held;
+// HOLDS reads `ok`, `trailing` or `behind` AND both first-contact nodes are held;
 // final records at `base.checks + 5` whatever the statuses are, and
 // every honest id's status at that moment — 'absent' when the list
 // does not hold it — goes into the measurement so `verdictS8NoProofs`
 // names the one that is not on the chain.
 // `buildS8NoProofsExpression` inlines the observer with `.toString()`
 // so the live tracker and the Node tests run the same transition.
-export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
+export function s8NoProofsObserve(prev, s, honestIds, firstContactIds) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
   if (s.traffic === null || typeof s.traffic !== 'object') return prev;
@@ -405,21 +405,21 @@ export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
       allHonestStatuses.push({ notisId: hid, status: 'absent' });
     }
   }
-  var anchorsHeld = 0;
-  for (var k = 0; k < anchorIds.length; k += 1) {
-    var aid = anchorIds[k];
+  var firstContactHeld = 0;
+  for (var k = 0; k < firstContactIds.length; k += 1) {
+    var aid = firstContactIds[k];
     for (var m = 0; m < nodes.length; m += 1) {
-      if (nodes[m] && nodes[m].notisId === aid) { anchorsHeld += 1; break; }
+      if (nodes[m] && nodes[m].notisId === aid) { firstContactHeld += 1; break; }
     }
   }
-  var allAnchorsHeld = anchorsHeld === anchorIds.length;
+  var allFirstContactHeld = firstContactHeld === firstContactIds.length;
   var allHeldInRange = heldHonest.every(function (e) {
     return e.status === 'ok' || e.status === 'trailing' || e.status === 'behind';
   });
   if (next.base === null
       && s.checks >= 1
       && s.traffic.proofReads >= 1
-      && allAnchorsHeld
+      && allFirstContactHeld
       && allHeldInRange) {
     next.base = { checks: s.checks, proofReads: s.traffic.proofReads };
     return next;
@@ -436,23 +436,23 @@ export function s8NoProofsObserve(prev, s, honestIds, anchorIds) {
   return next;
 }
 
-export function buildS8NoProofsExpression(honestIds, anchorIds) {
+export function buildS8NoProofsExpression(honestIds, firstContactIds) {
   const honestJson = JSON.stringify(honestIds);
-  const anchorJson = JSON.stringify(anchorIds);
+  const firstContactJson = JSON.stringify(firstContactIds);
   const observerSrc = s8NoProofsObserve.toString();
   return `(function(){
   if (!window.__s8NPInit) {
     window.__s8NPInit = true;
     window.__s8NP = { base: null, final: null };
     window.__s8NPHonest = ${honestJson};
-    window.__s8NPAnchors = ${anchorJson};
+    window.__s8NPFirstContact = ${firstContactJson};
     window.__s8NPObserve = ${observerSrc};
     setInterval(function () {
       try {
         var el = document.getElementById('state');
         if (el === null) return;
         var s = JSON.parse(el.textContent);
-        window.__s8NP = window.__s8NPObserve(window.__s8NP, s, window.__s8NPHonest, window.__s8NPAnchors);
+        window.__s8NP = window.__s8NPObserve(window.__s8NP, s, window.__s8NPHonest, window.__s8NPFirstContact);
       } catch (_e) { /* ignore */ }
     }, 200);
   }
@@ -624,13 +624,13 @@ export async function run(ctx) {
   // The honest set for steps 1 and 4 — the honest mesh hosts the
   // stage-default config can reach, excluding `lan1` (browser's own
   // network) and every hostile host. See `honestMeshHosts` above for
-  // the rule. The anchor set is the subset the client's config.json
+  // the rule. The first-contact set is the subset the client's config.json
   // names (every public mesh node) — step 1's baseline requires both
-  // anchors to be in the state's node list.
+  // first-contact nodes to be in the state's node list.
   const honestHosts = honestMeshHosts(ctx.topology);
   const honestIds = honestHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
-  const anchorHosts = publicMeshHosts(ctx.topology).map(({ name }) => name);
-  const anchorIds = anchorHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
+  const firstContactHosts = publicMeshHosts(ctx.topology).map(({ name }) => name);
+  const firstContactIds = firstContactHosts.map((h) => identities[h]?.notisId).filter((id) => typeof id === 'string');
 
   let gapFirewallApplied = false;
   const gapArgs = s8GapFirewallArgs(ctx.topology);
@@ -643,8 +643,8 @@ export async function run(ctx) {
         const m = { reason: 's8 step 1: no honest hosts in topology with mesh and identity' };
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
-      if (anchorIds.length === 0) {
-        const m = { reason: 's8 step 1: no public anchors in topology with identity' };
+      if (firstContactIds.length === 0) {
+        const m = { reason: 's8 step 1: no public first-contact nodes in topology with identity' };
         return { verdict: verdictS8NoProofs(m), measurement: m };
       }
       // MESH_INTERFACE → Acceptance 8 — "every node names a tip on the
@@ -662,11 +662,13 @@ export async function run(ctx) {
         log.apply(`browser-step1-hostile-drop-${name}`, argv, null);
       }
       try {
-        const expression = buildS8NoProofsExpression(honestIds, anchorIds);
+        const expression = buildS8NoProofsExpression(honestIds, firstContactIds);
         // 600 s cap: a check with black-holed hostile candidates
         // runs one dial deadline per candidate until retry backs
         // them off (`BLACK_HOLE_WAIT_MS` at the top of this file).
-        const value = await cdpPoll(ctx, browserUrl, expression, S8_NOPROOFS_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
+        // The scenario's first page load carries `?clearMemory=1` so
+        // a prior scenario's kept proof does not seat this client.
+        const value = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`, expression, S8_NOPROOFS_PREDICATE, BLACK_HOLE_WAIT_MS, POLL_MS);
         const r = JSON.parse(value);
         if (r.base === null || r.final === null) {
           const m = { reason: 's8 step 1: tracker returned without base or final', state: r };

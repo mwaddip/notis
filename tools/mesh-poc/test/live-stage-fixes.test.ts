@@ -25,13 +25,13 @@ const UP_SCRIPT = join(PACKAGE_ROOT, 'stage', 'up.mjs');
 const RUN_SCRIPT = join(PACKAGE_ROOT, 'stage', 'run.mjs');
 
 describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct address', () => {
-  it('exec-mode: a public anchor whose realMultiaddrs lack /certhash/ fails fast', () => {
+  it('exec-mode: a public first-contact node whose realMultiaddrs lack /certhash/ fails fast', () => {
     const topology = readTopology(TOPOLOGY_PATH);
     const notisIds: Record<string, string> = {
       pub1: 'a'.repeat(64),
       pub2: 'b'.repeat(64),
     };
-    // Exec-mode: if a public anchor's mesh node did not print a /certhash/
+    // Exec-mode: if a public first-contact node's mesh node did not print a /certhash/
     // WebRTC-direct multiaddr, the browser gater refuses to dial. The
     // builder has to raise rather than silently emit a non-certhash
     // address.
@@ -49,8 +49,8 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
     };
     // Dry-run opt-in: the placeholder is only valid under `{ dryRun: true }`.
     const config = buildPageConfig(topology, notisIds, undefined, { dryRun: true });
-    for (const anchor of config.anchors) {
-      for (const addr of anchor.addrs) {
+    for (const node of config.firstContact) {
+      for (const addr of node.addrs) {
         if (addr.includes('/webrtc-direct/')) {
           expect(addr, `/webrtc-direct/ addr has /certhash/: ${addr}`).toContain('/certhash/');
         }
@@ -89,8 +89,8 @@ describe('fix 1 — config.json carries a /certhash/ on every WebRTC-direct addr
       ],
     };
     const config = buildPageConfig(topology, notisIds, printed);
-    for (const anchor of config.anchors) {
-      for (const addr of anchor.addrs) {
+    for (const node of config.firstContact) {
+      for (const addr of node.addrs) {
         if (!addr.includes('/webrtc-direct/')) continue;
         const emittedByNode = Object.values(printed).some((list) => list.includes(addr));
         expect(emittedByNode, `addr ${addr} must equal one a node printed`).toBe(true);
@@ -480,6 +480,111 @@ describe('fix 6 — restart writes new pid to pids.json; down waits for signalle
       expect(written.pids[0].description).toBe('test:thing');
       // Reap
       await new Promise((r) => setTimeout(r, 1200));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      void tmpdir;
+    }
+  });
+  it("restartFromEntry rewrites inline `env KEY=VALUE` tokens in argv — the one path through `sudo -u` the child env takes", async () => {
+    const { mkdtempSync, readFileSync: rfs, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { restartFromEntry } = await import('../stage/lib/measure.mjs');
+    const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'mesh-fix6-argv-'));
+    try {
+      const logPath = join(dir, 'child.log');
+      const envDumpPath = join(dir, 'env-dump');
+      // Simulates the stage's `sudo -u <user> -- env KEY=VALUE …
+      // <binary>` wrap. `env` itself reads the KEY=VALUE tokens off
+      // its argv (sudo would have stripped the process env), so the
+      // override only reaches the child when restart rewrites those
+      // tokens. ORIG_KEEP tests that argv keys the override does
+      // NOT touch stay as the first spawn wrote them; NEW_KEY tests
+      // that a key the override names but argv does not already
+      // carry is appended inside the env-token run.
+      const entry = {
+        pid: 0, description: 'test:env-argv', logPath,
+        argv: [
+          'env', 'BOOTSTRAP_PEERS=/old/addr', 'ORIG_KEEP=kept',
+          'sh', '-c', `echo "boot=$BOOTSTRAP_PEERS keep=$ORIG_KEEP new=$NEW_KEY" > ${envDumpPath}`,
+        ],
+      };
+      restartFromEntry(entry, {
+        envOverride: { BOOTSTRAP_PEERS: '/new/partner', NEW_KEY: 'added' },
+      });
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (existsSync(envDumpPath)) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const out = rfs(envDumpPath, 'utf8').trim();
+      expect(out).toBe('boot=/new/partner keep=kept new=added');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      void tmpdir;
+    }
+  });
+  it("restartFromEntry rewrites BOOTSTRAP_PEERS to the empty string — the child's node reads it as no seeds", async () => {
+    // `parseBootstrapPeers` in `packages/node/src/config.ts` reads an
+    // explicit empty `BOOTSTRAP_PEERS=` as "no seeds" (NODE_INTERFACE
+    // → Configuration). The one-directional pair-reconnect scheme
+    // relies on this: the accepting side restarts with the empty
+    // string so its own libp2p never dials the partner, and the two
+    // never race on who handshakes first.
+    const { mkdtempSync, readFileSync: rfs, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { restartFromEntry } = await import('../stage/lib/measure.mjs');
+    const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'mesh-fix6-empty-'));
+    try {
+      const logPath = join(dir, 'child.log');
+      const envDumpPath = join(dir, 'env-dump');
+      const entry = {
+        pid: 0, description: 'test:empty', logPath,
+        argv: [
+          'env', 'BOOTSTRAP_PEERS=/old/addr',
+          'sh', '-c', `echo "boot=[$BOOTSTRAP_PEERS]" > ${envDumpPath}`,
+        ],
+      };
+      restartFromEntry(entry, { envOverride: { BOOTSTRAP_PEERS: '' } });
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (existsSync(envDumpPath)) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const out = rfs(envDumpPath, 'utf8').trim();
+      expect(out).toBe('boot=[]');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      void tmpdir;
+    }
+  });
+  it('restartFromEntry layers envOverride over the entry\'s recorded env — the child sees the override', async () => {
+    const { mkdtempSync, readFileSync: rfs, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { restartFromEntry } = await import('../stage/lib/measure.mjs');
+    const dir = mkdtempSync(join((await import('node:os')).tmpdir(), 'mesh-fix6-env-'));
+    try {
+      const logPath = join(dir, 'child.log');
+      const envDumpPath = join(dir, 'env-dump');
+      // The child writes two env values into a file, then exits. The
+      // recorded env sets BOOTSTRAP_PEERS to the OLD value; the
+      // override replaces it. ORIG_KEEP tests that env keys the
+      // override does not touch stay from the recorded env.
+      const entry = {
+        pid: 0, description: 'test:env', logPath,
+        argv: ['sh', '-c', `echo "boot=$BOOTSTRAP_PEERS keep=$ORIG_KEEP" > ${envDumpPath}`],
+        env: { BOOTSTRAP_PEERS: '/old/addr', ORIG_KEEP: 'kept' },
+      };
+      restartFromEntry(entry, {
+        envOverride: { BOOTSTRAP_PEERS: '/new/partner' },
+      });
+      // Wait for the child to write the dump.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (existsSync(envDumpPath)) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const out = rfs(envDumpPath, 'utf8').trim();
+      expect(out).toBe('boot=/new/partner keep=kept');
     } finally {
       rmSync(dir, { recursive: true, force: true });
       void tmpdir;

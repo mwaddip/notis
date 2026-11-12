@@ -423,6 +423,18 @@ export async function openPageWithIceRecord(url, {
   };
 }
 
+/**
+ * Parses a command's `<timeoutMs>` argument. Absent: `fallback`. Present: a
+ * positive integer, else the call throws.
+ */
+export function parseTimeoutArg(text, fallback = DEFAULT_TIMEOUT_MS) {
+  if (text === undefined) return fallback;
+  if (!/^[1-9][0-9]*$/.test(text)) {
+    throw new Error(`<timeoutMs> must be a positive integer, got ${JSON.stringify(text)}`);
+  }
+  return Number(text);
+}
+
 async function main(argv) {
   // SIGTERM arrives from `execFileSync`'s timeout and from
   // `tracker.kill()`; SIGINT from a hand-run ^C. Each runs every open
@@ -434,12 +446,13 @@ async function main(argv) {
   process.on('SIGINT', () => { void terminationRegistry.run('SIGINT'); });
   const [cmd, ...rest] = argv;
   if (cmd === 'eval') {
-    const [url, expression] = rest;
+    const [url, expression, timeoutStr] = rest;
     if (typeof url !== 'string' || typeof expression !== 'string') {
-      process.stderr.write('usage: cdp.mjs eval <url> <expression>\n');
+      process.stderr.write('usage: cdp.mjs eval <url> <expression> [<timeoutMs>]\n');
       process.exit(2);
     }
-    const value = await evaluate(url, expression);
+    const timeoutMs = parseTimeoutArg(timeoutStr);
+    const value = await evaluate(url, expression, { timeoutMs });
     process.stdout.write(JSON.stringify(value) + '\n');
     return;
   }
@@ -499,7 +512,7 @@ async function main(argv) {
     return;
   }
   process.stderr.write(`cdp.mjs: unknown command ${JSON.stringify(cmd)}\n`);
-  process.stderr.write('usage: cdp.mjs eval <url> <expression>\n');
+  process.stderr.write('usage: cdp.mjs eval <url> <expression> [<timeoutMs>]\n');
   process.stderr.write('       cdp.mjs poll <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
   process.stderr.write('       cdp.mjs poll-ice <url> <expression> <predicate-body> [<timeoutMs>] [<pollMs>]\n');
   process.exit(2);

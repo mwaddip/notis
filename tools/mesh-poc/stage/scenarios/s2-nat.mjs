@@ -6,7 +6,7 @@
 // `retry` for want of a direct path, never `blacklisted`."
 //
 // Two sub-steps, each writing its own `config.json` variant:
-//   priv1 (endpoint-independent NAT) — the single anchor is priv1 by
+//   priv1 (endpoint-independent NAT) — the single first-contact node is priv1 by
 //     its `/p2p-circuit/webrtc/p2p/<priv1>` address through a public
 //     node's WebRTC-direct address. The config carries no
 //     `stunServers` — the client derives its ICE list from the public
@@ -17,8 +17,8 @@
 //     answer; `trailing` and `behind` are ranking, not reach) with a
 //     non-null entry transport, and records
 //     `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
-//        anchorAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
-//   priv2 (symmetric NAT) — the single anchor is priv2 by BOTH its
+//        firstContactAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
+//   priv2 (symmetric NAT) — the single first-contact node is priv2 by BOTH its
 //     `/p2p-circuit/webrtc` and plain `/p2p-circuit` relayed
 //     addresses. The step waits for a routed read to land on priv2
 //     and records `{ expectedNodeId, priv2Status, priv2Path,
@@ -87,7 +87,7 @@ export async function run(ctx) {
           identities,
         });
         writeConfigVariant(ctx.outDir, variant);
-        const anchorAddrRelayed = variant.anchors[0]?.addrs?.[0] ?? null;
+        const firstContactAddrRelayed = variant.firstContact[0]?.addrs?.[0] ?? null;
         const started1 = Date.now();
         // MESH_INTERFACE → Acceptance 2 — the step measures reach, not
         // ranking. Poll `#state` until priv1's own entry carries a
@@ -97,7 +97,9 @@ export async function run(ctx) {
         // id). The ICE record is captured alongside through
         // `cdp.mjs poll-ice`.
         const expectedNotisId = priv1Row.notisId;
-        const { value, iceRecord } = await cdpPollIce(ctx, browserUrl,
+        // The scenario's first page load carries `?clearMemory=1` so
+        // a prior scenario's kept proof does not seat this client.
+        const { value, iceRecord } = await cdpPollIce(ctx, `${browserUrl}?clearMemory=1`,
           "document.getElementById('state')?.textContent ?? null",
           `if (v === null) return false;
            try {
@@ -121,7 +123,7 @@ export async function run(ctx) {
           priv1Failures: typeof entry?.failures === 'number' ? entry.failures : 0,
           transport: entry?.transport ?? null,
           path: entry?.path ?? null,
-          anchorAddrRelayed,
+          firstContactAddrRelayed,
           connectMs,
           iceServers: iceRecord,
           nodeIdInUse: state.nodeId ?? null,

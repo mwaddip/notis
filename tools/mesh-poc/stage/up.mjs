@@ -27,16 +27,22 @@ import { fileURLToPath } from 'node:url';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { loadNodeKey } from '@dagsocial/net';
 import { CommandLog, isProcessAlive } from './lib/commands.mjs';
-import { readTopology, natRouters, publicMeshHosts } from './lib/topology.mjs';
+import { readTopology, natRouters, publicMeshHosts, hostsBehindBrowserNat } from './lib/topology.mjs';
 import { buildPageConfig, buildIdentitiesOut, peerIdStringOf } from './lib/config.mjs';
 import { generateStageCerts } from './lib/pebble-certs.mjs';
 import { buildPebbleConfig } from './lib/pebble-config.mjs';
-import { descendantPids } from './lib/measure.mjs';
+import { descendantPids, restartFromEntry, stopTree } from './lib/measure.mjs';
 import {
   partnerOf,
   pairBootstrapAddr,
   buildPairCutArgs,
 } from './lib/hostile-fork-pair.mjs';
+import {
+  buildForkCutArgs,
+  buildForkMinerSpawn,
+  buildHonestSideIsolationArgs,
+  forkHostBootstrapPeers,
+} from './lib/hostile-fork-single.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -184,6 +190,33 @@ function tailLog(logPath, maxLines = 20) {
  * Wait with `pollUntil` and tail the related process's log on failure, so
  * a timeout points at the cause rather than at the timeout itself.
  */
+/**
+ * Walk a `notis:<host>.log` file and keep track of every peer-id that
+ * has a `peer:connect` line NOT followed by a matching
+ * `peer:disconnect` — the set of peers the host still reports
+ * connected. A shape the admin API does not expose directly (no
+ * `/peers` route), so on a cut-leak failure the Phase 8b check names
+ * these ids so a reader of the error sees which hosts leaked.
+ *
+ * Returns `[]` when the log file does not exist. The log format is
+ * `[net] peer:connect <peerIdString> (total=N)` and
+ * `[net] peer:disconnect <peerIdString> (total=N)`.
+ */
+function standingConnectedPeerIds(logPath) {
+  if (!logPath || !existsSync(logPath)) return [];
+  const text = readFileSync(logPath, 'utf8');
+  const connected = new Set();
+  const connectRe = /\[net\] peer:connect ([A-Za-z0-9]+)/;
+  const disconnectRe = /\[net\] peer:disconnect ([A-Za-z0-9]+)/;
+  for (const line of text.split('\n')) {
+    let m = connectRe.exec(line);
+    if (m) { connected.add(m[1]); continue; }
+    m = disconnectRe.exec(line);
+    if (m) { connected.delete(m[1]); }
+  }
+  return [...connected];
+}
+
 async function waitWithTail(description, check, logPath, options) {
   try {
     await pollUntil(description, check, options);
@@ -816,11 +849,18 @@ function spawnNotisForHost(name, host) {
   // OTHER public mesh node with its `/p2p/<peerId>` trailer; a pair
   // host (`hostile-lagging`, `hostile-malformed`) names the partner's
   // bare-TCP addr alone, so the pair starts from genesis with no path
-  // to the honest chain.
+  // to the honest chain. `hostile-fork` names pub1 alone — it syncs
+  // the honest chain from pub1 before Phase 8b cuts its p2p port and
+  // starts its own miner (`stage/lib/hostile-fork-single.mjs`).
   const partner = partnerOf(name);
   let bootstrapPeers;
   if (partner !== null) {
     bootstrapPeers = pairBootstrapAddr(topology, name);
+  } else if (name === 'hostile-fork' || name === 'hostile-fork-peer') {
+    const pub1Host = topology.hosts['pub1'];
+    const pub1PeerId = peerIdStringOf(notisIds['pub1']);
+    const pub1Addr = `/ip4/${pub1Host.addr}/tcp/${pub1Host.node.p2pPort}/p2p/${pub1PeerId}`;
+    bootstrapPeers = forkHostBootstrapPeers(pub1Addr);
   } else {
     const seeds = [];
     for (const { name: pubName, host: pubHost } of publicMeshHosts(topology)) {
@@ -1069,6 +1109,15 @@ const minerLaggingBootChild = laggingHostCfg !== undefined
 //     genesis.
 const honestHeightTargetHost = ['pub1', 'pub2', 'priv1', 'priv2', 'lan1'];
 if (topology.hosts['hostile-invalid']?.node !== undefined) honestHeightTargetHost.push('hostile-invalid');
+// MESH_INTERFACE → Acceptance 6 — `hostile-fork` + `hostile-fork-peer`
+// seed from pub1 alone and sync the honest chain; Phase 8b cuts both
+// with each other as accept-partner after the height wait, so each
+// must reach the honest height first. `lan1-peer` also syncs from
+// pub1 like lan1; s7 step 4 pairs them with each other across its
+// own cut.
+if (topology.hosts['hostile-fork']?.node !== undefined) honestHeightTargetHost.push('hostile-fork');
+if (topology.hosts['hostile-fork-peer']?.node !== undefined) honestHeightTargetHost.push('hostile-fork-peer');
+if (topology.hosts['lan1-peer']?.node !== undefined) honestHeightTargetHost.push('lan1-peer');
 const pairHeightTargetHost = laggingHostCfg !== undefined ? ['hostile-lagging'] : [];
 if (laggingHostCfg !== undefined && malformedHostCfg !== undefined) pairHeightTargetHost.push('hostile-malformed');
 recordWait(`every honest node reads /blocks/current.height >= 50: ${honestHeightTargetHost.join(', ')}`);
@@ -1150,6 +1199,289 @@ if (laggingHostCfg !== undefined) {
     MINING_SECRET: 'stage-mining-secret',
     MINER_PCT: '1',
   }).concat([minerScript]), { description: 'miner-lagging', logPath: logPathFor('miner-lagging') });
+}
+
+// -----------------------------------------------------------------------
+// Phase 8b: hostile-fork pair — cut from the honest chain, mine lighter
+// -----------------------------------------------------------------------
+
+// MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
+// whose reachable nodes all serve the hostile chain keeps its own and
+// says no node continues it." `hostile-fork` + `hostile-fork-peer`
+// seeded from pub1 alone (`forkHostBootstrapPeers`) and synced to
+// pub1's height at Phase 8's wait. Now both namespaces install a
+// `fork_cut` table with accept rules for the partner's TCP p2p
+// traffic AHEAD of the drop-everything rule on the p2p port
+// (`buildForkCutArgs(..., { partner })`). After the cut, no block
+// flows between the honest nodes and the fork pair, each pair host
+// keeps the other as its one Active peer
+// (MINING_INTERFACE → The peer-readiness gate), and `miner-fork`
+// inside `hostile-fork`'s namespace at `MINER_PCT=100` mines a FEW
+// blocks of the fork — `FORK_BLOCKS_PAST_CUT = 3`, enough to show a
+// real fork off the honest chain — then the miner is stopped by PID
+// so the fork stays strictly lighter than the honest chain, which
+// keeps growing at `MINER_PCT=2`. Phase 8b then waits for pub1 to
+// reach `forkHeightAtStop + HONEST_LEAD_OVER_FORK` before finishing,
+// so the honest chain is reliably heavier than the frozen fork tip
+// by the time any scenario reads either. The record
+// `stage/out/fork-pair-cut.json` carries the heights the scenarios
+// use. The mesh listener (WebRTC-direct UDP) stays open, so s6
+// step 1 reaches `hostile-fork` as a known node at its WebRTC-
+// direct address.
+const hostileForkHostCfg = topology.hosts['hostile-fork'];
+const hostileForkPeerHostCfg = topology.hosts['hostile-fork-peer'];
+// MESH_INTERFACE → Acceptance 6 / MINING_INTERFACE → The peer-readiness
+// gate — the fork pair stops at `cut + FORK_BLOCKS_PAST_CUT` (3), the
+// stage's usual pace (`MINER_PCT=1`) so ASERT does not raise the
+// fork's target bits (fast mining would make 3 fork blocks outweigh
+// the honest segment above the cut, as main's second run showed:
+// `forkBlocksPastCut 32` at `MINER_PCT=100`, 47 honest blocks lost
+// the compare). `HONEST_LEAD_OVER_FORK` (20) is wide enough that the
+// honest chain's work above the cut clearly exceeds the fork's three
+// slow-paced blocks — at the same ASERT-steady difficulty each block
+// weighs about the same, and 20 > 3 by a margin that holds through
+// usual drift.
+const FORK_BLOCKS_PAST_CUT = 3;
+const HONEST_LEAD_OVER_FORK = 20;
+const natCCfg = topology.hosts.natC;
+const browserAddrForPublicFork = natCCfg?.outsideAddr;
+if (hostileForkHostCfg !== undefined && hostileForkPeerHostCfg !== undefined) {
+  if (typeof browserAddrForPublicFork !== 'string') {
+    throw new Error('Phase 8b: topology.hosts.natC.outsideAddr must be a string (the browser\'s NAT address as seen from a public fork host)');
+  }
+  const forkPartner = { addr: hostileForkPeerHostCfg.addr };
+  const peerPartner = { addr: hostileForkHostCfg.addr };
+  // Read pub1's pre-cut height; this is the common ancestor the fork
+  // and the honest chain share once the cut lands.
+  let cutHeight = null;
+  if (!dryRun) {
+    const text = execIn(nsOf('pub1'), [
+      'curl', '-sf', '--max-time', '5',
+      `http://${pub1Host.addr}:${pub1Host.node.httpPort}/blocks/current`,
+    ], { timeoutMs: 8_000 });
+    cutHeight = JSON.parse(text).height;
+    if (typeof cutHeight !== 'number') {
+      throw new Error(`Phase 8b: pub1 /blocks/current.height is not a number before fork cut`);
+    }
+  }
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork', {
+    partner: forkPartner,
+    browserAddr: browserAddrForPublicFork,
+  })) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+  for (const { argv } of buildForkCutArgs(topology, 'hostile-fork-peer', {
+    partner: peerPartner,
+    browserAddr: browserAddrForPublicFork,
+  })) {
+    log.shell(argv[0], argv.slice(1), { privileged: true });
+  }
+  // After the cut, every connection either fork host opened BEFORE
+  // the cut stays `open` until libp2p's keepalive gives up — a
+  // `policy drop` chain stops packets but does not close the TCP
+  // state, and an earlier `waitWithTail` of
+  // `peers_connected == 1` within 60 s timed out with 4 peers
+  // still named. The remedy is deterministic: stop both pair nodes
+  // by their recorded PIDs and respawn them from the same argv /
+  // env / store, so no connection made before the cut survives.
+  // After the restart each pair node bootstraps from its one
+  // allowed peer alone, and the `peers_connected == 1` check
+  // reads the fresh connection state.
+  // MESH_INTERFACE → Acceptance 6 — the fork pair's cut accepts the
+  // browser's natC outside address (`11.100.0.103`) so the page can
+  // still reach the fork over mesh. Every host that shares natC with
+  // the browser — `lan1`, `lan1-peer` by the topology — emits its
+  // packets through the same NAT, which SNATs them to the same
+  // outside address; from the fork's view those packets arrive from
+  // `11.100.0.103` too and the cut cannot tell them apart from the
+  // browser's. Earlier run measured exactly that: the fork reconnected
+  // to `lan1` and `lan1-peer` after the restart. The remedy writes
+  // the cut on the HONEST SIDE in each such host's namespace
+  // (`buildHonestSideIsolationArgs`), BEFORE the fork restart so the
+  // honest side cannot dial in during the restart window either.
+  const honestBehindBrowserNat = hostsBehindBrowserNat(topology);
+  const forkPairAddrs = [hostileForkHostCfg.addr, hostileForkPeerHostCfg.addr];
+  for (const hostName of honestBehindBrowserNat) {
+    for (const { argv } of buildHonestSideIsolationArgs(hostName, { forkAddrs: forkPairAddrs })) {
+      log.shell(argv[0], argv.slice(1), { privileged: true });
+    }
+  }
+
+  recordWait(`notis:hostile-fork and notis:hostile-fork-peer restarted on the same store after the cut; /health peers_connected reads 1 (the partner alone) within 60 s`);
+  if (!dryRun) {
+    const forkEntry = log.pids.find((e) => e.description === 'notis:hostile-fork');
+    const peerEntry = log.pids.find((e) => e.description === 'notis:hostile-fork-peer');
+    if (!forkEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork');
+    if (!peerEntry) throw new Error('Phase 8b: pids record has no notis:hostile-fork-peer');
+    // Stop both pair nodes: `stopTree` SIGTERMs each tree, polls /proc
+    // until every pid is gone (the kernel released its sockets), past
+    // the bound SIGKILLs the survivors deepest-first and polls again.
+    // The respawn below reads the same ports as free.
+    for (const entry of [forkEntry, peerEntry]) {
+      await stopTree(entry.pid, { timeoutMs: 10_000 });
+    }
+    // MESH_INTERFACE → Acceptance 6 — each fork pair host's first
+    // spawn carries `BOOTSTRAP_PEERS` naming `pub1` (the honest
+    // bootstrap the whole stage starts from). After the cut `pub1`
+    // is blocked, so a plain restart would dial only a blocked peer
+    // and `peers_connected` would stay 0. A two-way reconnect
+    // (both nodes dialing their partner at once) opens two
+    // connections simultaneously; libp2p's handshake has a deadline,
+    // and the previous run showed one handshaking fine while the
+    // other's connection closed at the deadline — a `net` race the
+    // mesh-poc cannot resolve on its own.
+    //
+    // The remedy is one-directional: `hostile-fork-peer` dials
+    // `hostile-fork` (`BOOTSTRAP_PEERS` naming the fork), and
+    // `hostile-fork` restarts with `BOOTSTRAP_PEERS=""` — no seeds,
+    // it only accepts. `parseBootstrapPeers` in
+    // `packages/node/src/config.ts` reads an explicit empty string
+    // as "no seeds" (NODE_INTERFACE → Configuration).
+    //
+    // Notis spawns go through `sudo -u <user>` which strips the
+    // process env, so `envOverride` has to reach the child through
+    // the inline `env KEY=VALUE` tokens in argv — which is how the
+    // first spawn passes env in the first place (`userWrap`).
+    // `restartFromEntry` now rewrites those tokens.
+    const peerPartnerAddr = `/ip4/${hostileForkHostCfg.addr}/tcp/${hostileForkHostCfg.node.p2pPort}`;
+    restartFromEntry(forkEntry, {
+      pidsPath: PIDS_PATH,
+      envOverride: { BOOTSTRAP_PEERS: '' },
+    });
+    restartFromEntry(peerEntry, {
+      pidsPath: PIDS_PATH,
+      envOverride: { BOOTSTRAP_PEERS: peerPartnerAddr },
+    });
+    // Now verify the cut: each pair node's `/health` reads
+    // `peers_connected == 1` within 60 s. On failure, name every
+    // peer id the failing node reports AND what the partner read
+    // at the moment, so the next run says which of the two saw what.
+    const peersConnectedByName = { 'hostile-fork': null, 'hostile-fork-peer': null };
+    const readPeersConnected = (name) => {
+      const host = topology.hosts[name];
+      const adminPort = host.node.httpPort + 1;
+      try {
+        const text = execIn(nsOf(name), [
+          'curl', '-sf', '--max-time', '5',
+          `http://127.0.0.1:${adminPort}/health`,
+        ], { timeoutMs: 8_000 });
+        const data = JSON.parse(text);
+        return typeof data.peers_connected === 'number' ? data.peers_connected : null;
+      } catch {
+        return null;
+      }
+    };
+    for (const name of ['hostile-fork', 'hostile-fork-peer']) {
+      const partner = name === 'hostile-fork' ? 'hostile-fork-peer' : 'hostile-fork';
+      const logPath = logPathFor(`notis:${name}`);
+      await pollUntil(
+        `${name} /health peers_connected == 1 after cut + restart`,
+        async () => {
+          const v = readPeersConnected(name);
+          if (v === null) return false;
+          peersConnectedByName[name] = v;
+          return v === 1;
+        },
+        { timeoutMs: 60_000, pollMs: 1_000 },
+      ).catch((err) => {
+        // Read the partner's /health too, so the message names what
+        // BOTH sides saw at the moment this one failed — a symmetric
+        // view is what distinguishes a leak (one side sees extra
+        // peers) from a non-peering (both sides read 0).
+        peersConnectedByName[partner] = readPeersConnected(partner);
+        const connected = standingConnectedPeerIds(logPath);
+        const connectedText = connected.length === 0
+          ? '<no standing peer:connect lines>'
+          : connected.join(', ');
+        const tail = tailLog(logPath, 20);
+        throw new Error(
+          `Phase 8b: ${name} cut leak — last peers_connected ${peersConnectedByName[name]} (expected 1); ` +
+          `partner ${partner} read peers_connected ${peersConnectedByName[partner]} at the same moment; ` +
+          `${name}'s standing connected peer ids: ${connectedText}\n` +
+          `--- last 20 lines of ${logPath} ---\n${tail === '' ? '<no output>' : tail}\n` +
+          `${err.message}`,
+        );
+      });
+    }
+  }
+  const forkSpawn = buildForkMinerSpawn(topology, 'hostile-fork', {
+    minerScript,
+    minerPct: 1,
+    invokingUser: INVOKING_USER,
+    miningSecret: 'stage-mining-secret',
+    nodeBin: NODE_ABS,
+  });
+  const minerForkChild = log.spawn(
+    forkSpawn.argv,
+    { description: 'miner-fork', logPath: logPathFor('miner-fork') },
+  );
+
+  // Wait for the fork to reach `cutHeight + FORK_BLOCKS_PAST_CUT`,
+  // stopping the miner on the FIRST poll that reads the target so
+  // no further blocks land past it. Previous MINER_PCT=100 shape
+  // produced blocks faster than the 1 s poll could catch: the stop
+  // came 32 blocks late and the fork outweighed the honest segment
+  // above the cut.
+  recordWait(`hostile-fork reads /blocks/current.height >= cutHeight + ${FORK_BLOCKS_PAST_CUT}; miner-fork stops on the first poll that reads the target`);
+  recordWait(`pub1 reads /blocks/current.height >= forkHeightAtStop + ${HONEST_LEAD_OVER_FORK} (the honest chain's lead over the frozen fork)`);
+  let forkHeightAtStop = cutHeight;
+  let forkTipHashAtStop = null;
+  let pub1HeightAfterLead = cutHeight;
+  if (!dryRun && cutHeight !== null && minerForkChild !== null) {
+    const forkTarget = cutHeight + FORK_BLOCKS_PAST_CUT;
+    await waitWithTail(
+      `hostile-fork fork-pair cut height`,
+      async () => {
+        const text = execIn(nsOf('hostile-fork'), [
+          'curl', '-sf', '--max-time', '5',
+          `http://${hostileForkHostCfg.addr}:${hostileForkHostCfg.node.httpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const data = JSON.parse(text);
+        const h = data.height;
+        if (typeof h !== 'number') return false;
+        forkHeightAtStop = h;
+        // The fork's tip hash at stop — positive evidence s6 step 1
+        // asserts against (the fork node answered this chain's tip).
+        // Captured here so the step reads it from `fork-pair-cut.json`
+        // and never relies on a per-node `tip` field the client's
+        // state does not carry.
+        if (typeof data.hash === 'string') forkTipHashAtStop = data.hash;
+        return h >= forkTarget;
+      },
+      logPathFor('miner-fork'),
+      { timeoutMs: 300_000, pollMs: 500 },
+    );
+    try { process.kill(minerForkChild.pid, 'SIGTERM'); } catch { /* already gone */ }
+    const idx = log.pids.findIndex((e) => e.description === 'miner-fork');
+    if (idx >= 0) log.pids.splice(idx, 1);
+    const pub1Target = forkHeightAtStop + HONEST_LEAD_OVER_FORK;
+    await waitWithTail(
+      `pub1 leads the frozen fork by ${HONEST_LEAD_OVER_FORK} blocks`,
+      async () => {
+        const text = execIn(nsOf('pub1'), [
+          'curl', '-sf', '--max-time', '5',
+          `http://${pub1Host.addr}:${pub1Host.node.httpPort}/blocks/current`,
+        ], { timeoutMs: 8_000 });
+        const h = JSON.parse(text).height;
+        if (typeof h !== 'number') return false;
+        pub1HeightAfterLead = h;
+        return h >= pub1Target;
+      },
+      logPathFor('notis:pub1'),
+      { timeoutMs: 600_000, pollMs: 1_000 },
+    );
+    writeFileSync(
+      join(OUT_DIR, 'fork-pair-cut.json'),
+      JSON.stringify({
+        cutHeight,
+        forkHeightAtStop,
+        forkTipHashAtStop,
+        forkBlocksPastCut: forkHeightAtStop - cutHeight,
+        pub1HeightAfterLead,
+        honestLeadOverFork: pub1HeightAfterLead - forkHeightAtStop,
+      }, null, 2),
+    );
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -1321,7 +1653,7 @@ const CHROMIUM_QUIET_FLAGS = [
 // resolves, and so does every public IP literal in the stage's internet
 // segment (`EXCLUDE 11.100.0.*`, derived from `topology.internet.subnet`).
 // Chromium's `MAP * ~NOTFOUND` matches an IP-literal host too, so without
-// the subnet EXCLUDE the browser refuses every anchor address with
+// the subnet EXCLUDE the browser refuses every first-contact address with
 // `net::ERR_NAME_NOT_RESOLVED`.
 const internetSubnetPrefix = topology.internet.subnet.replace(/\.0\/\d+$/, '.*');
 const CHROMIUM_HOST_RESOLVER_RULES = `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE ${internetSubnetPrefix}`;

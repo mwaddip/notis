@@ -38,7 +38,7 @@ describe('s1 (no name)', () => {
   it('describe() lists five steps: node + two probes + DNS silent + ICE record', () => {
     const names = s1.describe();
     expect(names.length, 'five steps').toBe(5);
-    expect(names[0]).toMatch(/anchor within/);
+    expect(names[0]).toMatch(/first-contact node within/);
     expect(names[1]).toMatch(/\/blocks\/current/);
     expect(names[2]).toMatch(/\/nipopow\/proof\/24\/20/);
     expect(names[3]).toMatch(/DNS log/);
@@ -69,9 +69,9 @@ describe('s1 (no name)', () => {
     expect(s1.hostOfNodeId(identities, 'cc'.repeat(32))).toBe(null);
     expect(s1.hostOfNodeId(null, 'aa'.repeat(32))).toBe(null);
   });
-  it('anchorIdSet reads config.anchors[].notisId into a Set', () => {
-    const config = { anchors: [{ notisId: 'a'.repeat(64) }, { notisId: 'b'.repeat(64) }] };
-    const s = s1.anchorIdSet(config);
+  it('firstContactIdSet reads config.firstContact[].notisId into a Set', () => {
+    const config = { firstContact: [{ notisId: 'a'.repeat(64) }, { notisId: 'b'.repeat(64) }] };
+    const s = s1.firstContactIdSet(config);
     expect(s.size).toBe(2);
     expect(s.has('a'.repeat(64))).toBe(true);
     expect(s.has('c'.repeat(64))).toBe(false);
@@ -79,26 +79,40 @@ describe('s1 (no name)', () => {
 });
 
 describe('s3 (node goes away)', () => {
-  it('describe() lists four steps: stop, restart, firewall, unfirewall', () => {
+  it('describe() lists five steps: stop, restart, firewall, unfirewall, known-nodes reach', () => {
     const names = s3.describe();
-    expect(names.length).toBe(4);
+    expect(names.length).toBe(5);
     expect(names[0]).toMatch(/stopped/);
     expect(names[1]).toMatch(/restarted/);
     expect(names[2]).toMatch(/firewalled/);
     expect(names[3]).toMatch(/unfirewalled/);
+    expect(names[4]).toMatch(/first contact out of reach|remembered|known-nodes reach/);
   });
   it('run({dryRun:true}) emits the firewall apply + remove and skipped steps', async () => {
     const r = await s3.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s3');
-    expect(r.steps.length).toBe(4);
+    expect(r.steps.length).toBe(5);
     for (const step of r.steps) {
       expect(step.verdict).toBe('skipped');
     }
-    // Fault records: five adds + one delete.
+    // Fault records: five adds + one delete (step 3's firewall).
     const adds = r.faults.filter((f) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f) => /\[fault:remove/.test(f));
-    expect(adds.length, 'five adds (table, chain, three drops)').toBe(5);
-    expect(dels.length, 'one delete (the table)').toBe(1);
+    expect(adds.length, 'five adds (table, chain, three drops) from step 3').toBe(5);
+    expect(dels.length, 'one delete (the firewall table)').toBe(1);
+  });
+  it('firstContactBlockArgs produces nft argvs inside notismesh-browser, one drop per first-contact address', () => {
+    const a = s3.firstContactBlockArgs(TOPOLOGY, ['11.100.0.11', '11.100.0.12']);
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.drops.length).toBe(2);
+    for (const argv of a.drops) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.slice(-1)[0]).toBe('drop');
+    }
+    expect(a.drops[0]!.join(' ')).toContain('ip daddr 11.100.0.11 drop');
+    expect(a.drops[1]!.join(' ')).toContain('ip daddr 11.100.0.12 drop');
   });
   it('pub1FirewallArgs produces nft argvs inside notismesh-pub1 with ports read from the topology', () => {
     const a = s3.pub1FirewallArgs(TOPOLOGY);
@@ -127,7 +141,7 @@ describe('s3 (node goes away)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateAt(3))).toBe(false);
     expect(fn(stateAt(3))).toBe(false);
@@ -136,7 +150,7 @@ describe('s3 (node goes away)', () => {
   it('S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE never ends when `checks` is missing (old `agreement` stamp)', () => {
     const fn = buildPredicate(s3.S3_POLL_NEXT_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
@@ -216,13 +230,16 @@ describe('s4 (transport cut)', () => {
 });
 
 describe('s5 (impersonation)', () => {
-  it('describe() lists one step', () => {
-    expect(s5.describe()).toEqual(['impostor on pub1 address: refused at the link, address dropped, anchor not blacklisted']);
+  it('describe() lists two steps', () => {
+    expect(s5.describe()).toEqual([
+      'impostor on pub1 address: refused at the link, address dropped, pub1 not blacklisted',
+      'impostor stopped and pub1 restarted, mesh networking up',
+    ]);
   });
   it('run({dryRun:true}) prints the stop + impostor notis spawn with pub1 bind addr', async () => {
     const r = await s5.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s5');
-    expect(r.steps.length).toBe(1);
+    expect(r.steps.length).toBe(2);
     const stopLine = r.faults.find((f) => f.includes('stop-pub1-notis'));
     expect(stopLine, 'stop line names the notis target').toBeDefined();
     const spawnLine = r.faults.find((f) => f.includes('impostor-notis'));
@@ -255,15 +272,15 @@ describe('s5 (impersonation)', () => {
 });
 
 describe('s6 (hostile)', () => {
-  it('describe() lists three steps: anchors unreachable, hostile seeds judged, publisher blacklisted', () => {
+  it('describe() lists three steps: honest nodes unreachable + kept chain stands, hostile seeds judged, publisher blacklisted', () => {
     const names = s6.describe();
     expect(names.length).toBe(3);
-    expect(names[0]).toMatch(/anchors unreachable/);
+    expect(names[0]).toMatch(/honest nodes unreachable/);
     expect(names[1]).toMatch(/hostile seeds/);
     expect(names[2]).toMatch(/publisher/);
   });
-  it('anchorBlockArgs builds an add-table + add-chain + per-anchor drop rule', () => {
-    const a = s6.anchorBlockArgs(TOPOLOGY);
+  it('honestBlockArgs builds an add-table + add-chain + per-node drop rule', () => {
+    const a = s6.honestBlockArgs(TOPOLOGY);
     expect(a.addTable[4]).toBe('notismesh-browser');
     expect(a.addChain[4]).toBe('notismesh-browser');
     expect(a.drops.length).toBeGreaterThan(0);
@@ -344,13 +361,14 @@ describe('s6 (hostile)', () => {
 });
 
 describe('s7 (reach and load)', () => {
-  it('describe() lists four steps: spread + need, slowed node, local node, counts', () => {
+  it('describe() lists five steps: spread + need, slowed node, local node, the heavier question, counts', () => {
     const names = s7.describe();
-    expect(names.length).toBe(4);
+    expect(names.length).toBe(5);
     expect(names[0]).toMatch(/spread/);
     expect(names[1]).toMatch(/delayed|slowed/);
     expect(names[2]).toMatch(/lan1/);
-    expect(names[3]).toMatch(/agreement|counts/);
+    expect(names[3]).toMatch(/heavier question/);
+    expect(names[4]).toMatch(/agreement|counts/);
   });
   // MESH_INTERFACE → The client's node list → "A routed read goes to a
   // node its need allows" — "how many checks it has completed, so a
@@ -371,7 +389,7 @@ describe('s7 (reach and load)', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateAt = (checks: number): string => JSON.stringify({
       checks,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     // First poll: baseline captured, predicate false.
     expect(fn(stateAt(5))).toBe(false);
@@ -383,12 +401,12 @@ describe('s7 (reach and load)', () => {
   it('S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE never ends on `agreement` alone when `checks` is missing', () => {
     const fn = buildPredicate(s7.S7_WAIT_ONE_COMPLETED_CHECK_PREDICATE);
     const stateNoChecks = JSON.stringify({
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     });
     expect(fn(stateNoChecks)).toBe(false);
     expect(fn(stateNoChecks)).toBe(false);
   });
-  // MESH_INTERFACE → No anchor reached → "The agreement counts" —
+  // MESH_INTERFACE → What the client remembers → "The agreement counts" —
   // step 4 polls one page until its state carries `checks >= 1` and
   // reads the counts from the returned value. The predicate is false
   // on a fresh page's first-rendered state (`{ checks: 0, agreement:
@@ -400,7 +418,7 @@ describe('s7 (reach and load)', () => {
     expect(fn(JSON.stringify({ checks: 0, agreement: null }))).toBe(false);
     expect(fn(JSON.stringify({
       checks: 1,
-      agreement: { onChain: 2, onChainAnchors: 2, offChain: 1 },
+      agreement: { onChain: 2, offChain: 1 },
     }))).toBe(true);
   });
   // MESH_INTERFACE → Discovery → "A node added by hand" / "Seeds" —
@@ -410,12 +428,12 @@ describe('s7 (reach and load)', () => {
   // private one; the variant fails with that reason instead of
   // falling back.
   it('buildSeedOnlyLanVariant refuses a lan1 row without localAddrs', () => {
-    const baseConfig = { network: 'devnet', anchors: [] };
+    const baseConfig = { network: 'devnet', firstContact: [] };
     const lan1Row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [] };
     expect(() => s7.buildSeedOnlyLanVariant(baseConfig, lan1Row)).toThrow(/localAddrs/);
   });
   it('buildSeedOnlyLanVariant uses the row\'s localAddrs exactly, never multiaddrs', () => {
-    const baseConfig = { network: 'devnet', anchors: ['A'] };
+    const baseConfig = { network: 'devnet', firstContact: ['A'] };
     const local = '/ip4/10.103.0.21/udp/4001/webrtc-direct/certhash/uEiA/p2p/PLan';
     const row = { notisId: 'b'.repeat(64), multiaddrs: ['/relay/addr'], localAddrs: [local] };
     const out = s7.buildSeedOnlyLanVariant(baseConfig, row);
@@ -444,10 +462,10 @@ describe('s7 (reach and load)', () => {
     // Interface is the veth peer pub2 holds inside its namespace.
     expect(n.iface).toBe('vp-p2');
   });
-  it('run({dryRun:true}) emits the netem add + its removal and four skipped steps', async () => {
+  it('run({dryRun:true}) emits the netem add + its removal and five skipped steps', async () => {
     const r = await s7.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s7');
-    expect(r.steps.length).toBe(4);
+    expect(r.steps.length).toBe(5);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f: string) => / tc qdisc add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / tc qdisc del /.test(f));
@@ -455,7 +473,7 @@ describe('s7 (reach and load)', () => {
     expect(dels.length, 'one netem del').toBe(1);
   });
 
-  // MESH_INTERFACE → Discovery → "Seeds" — step 3a's `seedPhase.lan1InboundLogged`
+  // MESH_INTERFACE → Discovery → "Known nodes" — step 3a's `seedPhase.lan1InboundLogged`
   // reads only bytes added to lan1's notis log during the seed phase: the step
   // records the log's size at the phase start and tests the pattern against
   // bytes past that offset. An old inbound line from a previous run of s7
@@ -557,7 +575,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step1_hostile');
     // Honest hosts are not dropped — a drop to pub1 would break the
-    // step's baseline (no anchor reached).
+    // step's baseline (no first-contact node reached).
     for (const { argv } of a.drops) {
       expect(argv.join(' ')).not.toContain('11.100.0.11');
       expect(argv.join(' ')).not.toContain('11.100.0.12');
@@ -611,7 +629,7 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_step4_hostile');
     // Honest hosts are not dropped — a drop to pub1 would break the
-    // step's baseline, as a drop to a mesh anchor would in step 1.
+    // step's baseline, as a drop to a mesh first-contact node would in step 1.
     for (const { argv } of a.drops) {
       expect(argv.join(' ')).not.toContain('11.100.0.11');
       expect(argv.join(' ')).not.toContain('11.100.0.12');
@@ -708,174 +726,174 @@ describe('s8 (prove once, follow by gossip)', () => {
   // tracker state. The observer captures a baseline on the first
   // state with the chain settled (`checks >= 1`, `proofReads >= 1`)
   // where every honest node the list HOLDS reads `ok`, `trailing` or
-  // `behind` AND both anchors are held; the final, five completed
+  // `behind` AND both first-contact nodes are held; the final, five completed
   // checks later, the same rule.
-  const ANCHOR_A = 'a'.repeat(64);
-  const ANCHOR_B = 'b'.repeat(64);
+  const FIRST_CONTACT_A = 'a'.repeat(64);
+  const FIRST_CONTACT_B = 'b'.repeat(64);
   const PRIV_1 = 'c'.repeat(64);
   const PRIV_2 = 'd'.repeat(64);
   function nodeEntry(id: string, status: string) {
     return { notisId: id, status };
   }
-  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both anchors held, held honest in range', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+  it('s8NoProofsObserve: baseline captured when checks>=1, proofReads>=1, both first-contact nodes held, held honest in range', () => {
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B, PRIV_1, PRIV_2];
     const s = {
       checks: 1,
       traffic: { proofReads: 1 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toEqual({ checks: 1, proofReads: 1 });
     expect(st.final).toBeNull();
   });
   it('s8NoProofsObserve: baseline NOT captured if proofReads is 0 (chain not settled)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
     const s = {
       checks: 1,
       traffic: { proofReads: 0 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
-  it('s8NoProofsObserve: baseline NOT captured if one anchor is missing from the list', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B];
+  it('s8NoProofsObserve: baseline NOT captured if one first-contact node is missing from the list', () => {
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
   it('s8NoProofsObserve: baseline NOT captured if a held honest reads retry', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B, PRIV_1];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toBeNull();
   });
-  it('s8NoProofsObserve: baseline captured when a non-anchor honest is NOT in the list (held subset)', () => {
+  it('s8NoProofsObserve: baseline captured when an honest node that is not a first-contact node is NOT in the list (held subset)', () => {
     // priv1 and priv2 only come in by DHT; the stage reaches a baseline
-    // once both anchors are held and the honest nodes it DOES hold are
+    // once both first-contact nodes are held and the honest nodes it DOES hold are
     // in range — a honest node absent from the list is not asserted.
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1, PRIV_2];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B, PRIV_1, PRIV_2];
     const s = {
       checks: 1,
       traffic: { proofReads: 2 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'trailing')],
     };
-    const st = s8.s8NoProofsObserve(null, s, honestIds, anchorIds);
+    const st = s8.s8NoProofsObserve(null, s, honestIds, firstContactIds);
     expect(st.base).toEqual({ checks: 1, proofReads: 2 });
   });
   it('s8NoProofsObserve: final captured at base.checks + 5 when the rule still holds', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
     const base = {
       checks: 1,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
     const final = {
       checks: 6,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'trailing')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'trailing')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, final, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, final, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
     expect(fin!.proofReads).toBe(3);
     expect(fin!.honestNodeStatuses).toEqual([
-      { notisId: ANCHOR_A, status: 'ok' },
-      { notisId: ANCHOR_B, status: 'trailing' },
+      { notisId: FIRST_CONTACT_A, status: 'ok' },
+      { notisId: FIRST_CONTACT_B, status: 'trailing' },
     ]);
   });
-  it('s8NoProofsObserve: final captured at base.checks + 5 even if an anchor was dropped (status \'absent\' goes into the measurement)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B];
+  it('s8NoProofsObserve: final captured at base.checks + 5 even if a first-contact node was dropped (status \'absent\' goes into the measurement)', () => {
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
     const base = {
       checks: 1,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
     const atFinalCount = {
       checks: 6,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
     expect(fin!.honestNodeStatuses).toEqual([
-      { notisId: ANCHOR_A, status: 'ok' },
-      { notisId: ANCHOR_B, status: 'absent' },
+      { notisId: FIRST_CONTACT_A, status: 'ok' },
+      { notisId: FIRST_CONTACT_B, status: 'absent' },
     ]);
   });
   it('s8NoProofsObserve: final captured at base.checks + 5 even if a held honest reads retry (status \'retry\' goes into the measurement)', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B, PRIV_1];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B, PRIV_1];
     const base = {
       checks: 1,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok'), nodeEntry(PRIV_1, 'ok')],
     };
     const atFinalCount = {
       checks: 6,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok'), nodeEntry(PRIV_1, 'retry')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFinalCount, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
     expect(fin!.honestNodeStatuses).toEqual([
-      { notisId: ANCHOR_A, status: 'ok' },
-      { notisId: ANCHOR_B, status: 'ok' },
+      { notisId: FIRST_CONTACT_A, status: 'ok' },
+      { notisId: FIRST_CONTACT_B, status: 'ok' },
       { notisId: PRIV_1, status: 'retry' },
     ]);
   });
   it('s8NoProofsObserve: final captured at exactly base.checks + 5 whatever the statuses are afterward', () => {
-    const anchorIds = [ANCHOR_A, ANCHOR_B];
-    const honestIds = [ANCHOR_A, ANCHOR_B];
+    const firstContactIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
+    const honestIds = [FIRST_CONTACT_A, FIRST_CONTACT_B];
     const base = {
       checks: 1,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
     const atFive = {
       checks: 6,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'retry')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'retry')],
     };
     const atSeven = {
       checks: 8,
       traffic: { proofReads: 3 },
-      nodes: [nodeEntry(ANCHOR_A, 'ok'), nodeEntry(ANCHOR_B, 'ok')],
+      nodes: [nodeEntry(FIRST_CONTACT_A, 'ok'), nodeEntry(FIRST_CONTACT_B, 'ok')],
     };
-    let st = s8.s8NoProofsObserve(null, base, honestIds, anchorIds);
-    st = s8.s8NoProofsObserve(st, atFive, honestIds, anchorIds);
+    let st = s8.s8NoProofsObserve(null, base, honestIds, firstContactIds);
+    st = s8.s8NoProofsObserve(st, atFive, honestIds, firstContactIds);
     const fin = st.final;
     expect(fin).not.toBeNull();
     expect(fin!.checks).toBe(6);
     expect(fin!.honestNodeStatuses).toEqual([
-      { notisId: ANCHOR_A, status: 'ok' },
-      { notisId: ANCHOR_B, status: 'retry' },
+      { notisId: FIRST_CONTACT_A, status: 'ok' },
+      { notisId: FIRST_CONTACT_B, status: 'retry' },
     ]);
     // The later state does not re-record a final.
-    st = s8.s8NoProofsObserve(st, atSeven, honestIds, anchorIds);
+    st = s8.s8NoProofsObserve(st, atSeven, honestIds, firstContactIds);
     expect(st.final).toBe(fin);
   });
   // MESH_INTERFACE → Acceptance 8 — step 4's expression carries a pure
@@ -1007,17 +1025,17 @@ describe('s8 (prove once, follow by gossip)', () => {
     });
   });
   // MESH_INTERFACE → Acceptance 8 — the expression-builders substitute
-  // the honest-id set, the anchor set and the lagging node's id into
+  // the honest-id set, the first-contact set and the lagging node's id into
   // the live page's tracker; the substitutions use `JSON.stringify` so
   // a notisId with special characters cannot break the expression. A
   // hex notisId round-trips through `JSON.stringify` as a quoted
   // string.
-  it('buildS8NoProofsExpression embeds the honestIds and anchorIds as JSON arrays', () => {
+  it('buildS8NoProofsExpression embeds the honestIds and firstContactIds as JSON arrays', () => {
     const honestIds = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
-    const anchorIds = ['a'.repeat(64), 'b'.repeat(64)];
-    const expr = s8.buildS8NoProofsExpression(honestIds, anchorIds);
+    const firstContactIds = ['a'.repeat(64), 'b'.repeat(64)];
+    const expr = s8.buildS8NoProofsExpression(honestIds, firstContactIds);
     expect(expr).toContain(JSON.stringify(honestIds));
-    expect(expr).toContain(JSON.stringify(anchorIds));
+    expect(expr).toContain(JSON.stringify(firstContactIds));
     expect(expr).toContain('__s8NP');
   });
   it('buildS8ForkExpression embeds the laggingId as a JSON string', () => {

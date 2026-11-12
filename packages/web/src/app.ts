@@ -726,6 +726,11 @@ export class App {
       // a node by hand" — the hand-added-node seam is wired as a settings
       // handler only in the extension build (the web build is handed none).
       ...(this.handNodeSeam ? { handNode: this.handNodeSeam } : {}),
+      // WEB_INTERFACE → The settings window → "While it disagrees the row
+      // holds the question" — the row reads the latest verdict to decide
+      // whether the question stands. Wired in every build; the web build has
+      // no handNode seam, so the row's web branch ignores it.
+      verdict: () => this.tipVerdict,
     };
   }
 
@@ -2570,6 +2575,18 @@ export class App {
     this.moveView('@settings');
   }
 
+  /** The corner's press under *your-node* opens the settings window with the
+   *  `node` row in view, by the placement rule every window open follows, and
+   *  runs no verification (WEB_INTERFACE → The status corner). */
+  private openSettingsAtNode(): void {
+    this.openSettings();
+    const held = this.bodies.get('@settings');
+    if (held === undefined) return;
+    const nodeRow = [...held.body.el.querySelectorAll<HTMLElement>('.row')]
+      .find((r) => r.querySelector('label')?.textContent === 'node');
+    nodeRow?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   private openWallet(): void {
     const res = openWindow(this.state.workspace, '@wallet', { from: 'feed' });
     this.saveLayout();
@@ -3260,8 +3277,34 @@ export class App {
             return null;
           }
         },
+        // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+        // answer" — "None goes out while the verdict reads *your-node*".
+        // Every waitable flow signs its write and keeps it waiting with no
+        // send while the last verdict is refused · *your-node*.
+        held: () => this.isYourNodeHeld(),
       },
     };
+  }
+
+  /** True while the last tip verdict reads `refused` · *your-node*: a
+   *  waitable flow keeps its write waiting, and `flushWaitingWrites` returns
+   *  at once (WEB_INTERFACE → The wallet → "Waiting writes go out at the
+   *  first answer"). */
+  private isYourNodeHeld(): boolean {
+    const v = this.tipVerdict;
+    return v !== undefined && v !== null && v.kind === 'refused' && v.reason === 'your-node';
+  }
+
+  /** Update the settings window's body in place — the body's own `update`
+   *  runs each row's draw against the state as it stands, so the `node` row
+   *  places and takes out the question itself and nothing else in the page
+   *  moves (WEB_INTERFACE → The settings window → "While it disagrees the
+   *  row holds the question", HOUSE_STYLE → Motion). A no-op where the
+   *  window is not open. */
+  private updateSettingsBodyInPlace(): void {
+    const held = this.bodies.get('@settings');
+    if (held === undefined) return;
+    held.body.update();
   }
 
   /** Build the waiting store for the loaded identity, or `null` when no seam
@@ -4733,10 +4776,10 @@ export class App {
    *  away. The answer is the proven result's (recipientVerdict), never the
    *  node's word — a send goes only to a name proven `k` deep, so `young` is
    *  the refusal `send to a key instead` (NIPOPOW_INTERFACE → The trust model,
-   *  rule 4); a press left with no anchor to check against is *can't be
-   *  checked — the chain is not verified.*, and one whose check throws *can't
-   *  be checked.* A press that ends while the check runs takes the line with
-   *  it (endSendPress). */
+   *  rule 4); a press without a verified tip run — `TipRun.anchor` is `null`
+   *  on every verdict but `verified` — is *can't be checked — the chain is
+   *  not verified.*, and one whose check throws *can't be checked.* A press
+   *  that ends while the check runs takes the line with it (endSendPress). */
   private async proveRecipient(verifier: NamesVerifier, name: string): Promise<ResolvedRecipient | { refusal: string }> {
     const press = this.sendPress;
     const handle = '@' + name;
@@ -4745,32 +4788,33 @@ export class App {
     const result = await this.checkRecipient(verifier, name);
     // Past its press's end the row's check, if any, is a later press's.
     if (press === this.sendPress) this.sendCheck = null;
-    if (result === 'no-anchor') return { refusal: `${handle} can't be checked — the chain is not verified.` };
+    if (result === 'not-verified') return { refusal: `${handle} can't be checked — the chain is not verified.` };
     if (result === 'threw') return { refusal: `${handle} can't be checked.` };
     return recipientVerdict(result, handle);
   }
 
-  /** The press's check: the typed handle against the anchor standing — with
-   *  none, the anchor a tip run writes — and a check that ends `unchecked` or
-   *  `young` once more against the anchor of one tip run (WEB_INTERFACE → The
-   *  extension → "The verified names"), the anchor standing being minutes old.
-   *  Answers the last check's result. */
-  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'no-anchor' | 'threw'> {
+  /** The press's check: the typed handle against the tip run's anchor
+   *  standing — with none, the anchor a tip run writes — and a check that
+   *  ends `unchecked` or `young` once more against the anchor of one tip
+   *  run (WEB_INTERFACE → The extension → "The verified names"), the anchor
+   *  standing being minutes old. Answers the last check's result. */
+  private async checkRecipient(verifier: NamesVerifier, name: string): Promise<NameResult | 'not-verified' | 'threw'> {
     const anchor = this.tipAnchor ?? (await this.tipRunForPress())?.anchor ?? null;
     const first = await this.checkHandle(verifier, name, anchor);
     if (typeof first !== 'object' || (first.status !== 'unchecked' && first.status !== 'young')) return first;
     return this.checkHandle(verifier, name, (await this.tipRunForPress())?.anchor ?? null);
   }
 
-  /** One check of a typed handle at the reading node: its result, `no-anchor`
-   *  with no anchor to check it against, or `threw` — a check is total, so a
-   *  rejection is the seam's own failure, logged. */
+  /** One check of a typed handle at the reading node: its result,
+   *  `not-verified` when `TipRun.anchor` is `null` (every verdict but
+   *  `verified`), or `threw` — a check is total, so a rejection is the
+   *  seam's own failure, logged. */
   private async checkHandle(
     verifier: NamesVerifier,
     name: string,
     anchor: Anchor | null,
-  ): Promise<NameResult | 'no-anchor' | 'threw'> {
-    if (anchor === null) return 'no-anchor';
+  ): Promise<NameResult | 'not-verified' | 'threw'> {
+    if (anchor === null) return 'not-verified';
     try {
       return await verifier.run(prefs.node, { name }, anchor);
     } catch (e) {
@@ -4912,8 +4956,14 @@ export class App {
     // A press re-reads at once — the corner is a control (WEB_INTERFACE → The
     // status corner, HOUSE_STYLE → Interaction). Where the build carries a
     // verifier, the press runs a verification too (WEB_INTERFACE → The
-    // extension → "The verified tip").
+    // extension → "The verified tip"). While the verdict reads *your-node*
+    // the press opens the settings window at its `node` row instead
+    // (WEB_INTERFACE → The status corner).
     btn.addEventListener('click', () => {
+      if (this.isYourNodeHeld()) {
+        this.openSettingsAtNode();
+        return;
+      }
       void this.cornerTick();
       this.startVerification();
     });
@@ -5050,6 +5100,12 @@ export class App {
         // under another chain triggers again so the pass re-reads tipChain.
         if (run.chain !== null && run.chain !== chainBefore) this.flushWaitingWrites();
         this.renderCornerNow();
+        // The settings window's `node` row reads the verdict to decide
+        // whether the question stands; the row's own update owns the
+        // question's placement and nothing else in the page moves
+        // (WEB_INTERFACE → The settings window → "While it disagrees the row
+        // holds the question", HOUSE_STYLE → Motion).
+        this.updateSettingsBodyInPlace();
         // WEB_INTERFACE → The extension → "The verified figures" — a run proves
         // a listing read after its anchor, so a `verified` run reads the
         // reader's listings first: /karma always, /credits while the wallet
@@ -5088,6 +5144,9 @@ export class App {
         this.figures = null;
         this.renderCreditsRowInPlace();
         this.renderProfileKarma();
+        // The settings window's `node` row reads the verdict — the row's
+        // own update takes the question out where a run ends without a verdict.
+        this.updateSettingsBodyInPlace();
         this.settleTipRunWaiters(null);
       },
     );
@@ -5485,6 +5544,10 @@ export class App {
     const store = this.waitingStore;
     if (store === null) return;
     if (this.tipChain === null) return;
+    // WEB_INTERFACE → The wallet → "Waiting writes go out at the first
+    // answer" — "None goes out while the verdict reads *your-node*". The
+    // pass runs at the first answered read after the verdict leaves.
+    if (this.isYourNodeHeld()) return;
     const cur = this.idm.current();
     if (cur === null) return;
     const keyAtPress = cur.pubKeyHex;

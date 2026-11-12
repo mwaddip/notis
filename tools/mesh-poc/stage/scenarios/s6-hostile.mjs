@@ -1,18 +1,29 @@
-// MESH_INTERFACE → Acceptance 6 — "Hostile nodes. With every anchor out
-// of reach, `anchorReached` is false and the page says so. A node
-// naming a tip of its own that answers malformed proofs, and one that
-// answers failing proofs, are blacklisted with their evidence; a node
-// naming the chain's tip is placed there and its proof is never read;
-// a node on a lighter chain is `behind`. A mesh node publishing a
-// block that fails its checks is blacklisted with its evidence, and
-// the client does not forward it."
+// MESH_INTERFACE → Acceptance 6 — "A page with an honest kept chain
+// whose reachable nodes all serve the hostile chain keeps its own and
+// says no node continues it. A node naming a tip of its own that
+// answers malformed proofs, and one that answers failing proofs, are
+// blacklisted with their evidence; a node naming the chain's tip is
+// placed there and its proof is never read; a node on a lighter
+// chain is `behind`. A mesh node publishing a block that fails its
+// checks is blacklisted with its evidence, and the client does not
+// forward it."
 //
 // Three sub-steps:
-//   (a) Config variant: pub1 + pub2 as anchors + hostile seeds.
-//       Browser firewalled from both anchor IPs. Expected:
-//       `anchorReached === false` and the page's banner reads the
-//       contract's words exactly.
-//   (b) Anchors reachable, hostile seeds kept. Expected:
+//   (a) Two sessions on the same browser profile.
+//       Session 1: first-contact = pub1 + pub2. The page seats its
+//       kept proof in `localStorage` (one record per network, keyed
+//       by the profile's genesis pin or the network's name where it
+//       pins none — `MESH_INTERFACE → What the client remembers`).
+//       Session 2: the browser's nft table drops every honest address,
+//       and the page config names the `hostile-fork` host as a known
+//       node (the hostile-fork host syncs the honest chain from pub1
+//       and is then cut by `stage/lib/hostile-fork-single.mjs`'s nft
+//       rules, a miner at `MINER_PCT=1` running inside its namespace).
+//       Expected: `notContinued === true`, the banner reads
+//       `No node reached continues the chain you verified.`, the
+//       chain name is the kept one, and the hostile-fork entry is
+//       `behind` with a real tip hash (positive evidence it answered).
+//   (b) Honest nodes reachable, hostile seeds kept. Expected:
 //       - hostile-malformed → `blacklisted` with evidence `malformed`
 //       - hostile-invalid → `blacklisted` with evidence `proof-invalid`
 //       - hostile-lagging → `behind`, never blacklisted
@@ -26,7 +37,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { FaultLog } from '../lib/fault-log.mjs';
-import { verdictS6NoAnchor, verdictS6Hostile, verdictS6Publisher } from '../lib/verdicts.mjs';
+import { verdictS6NotContinued, verdictS6Hostile, verdictS6Publisher } from '../lib/verdicts.mjs';
 import { execIn, nftApply, pollUntil } from '../lib/measure.mjs';
 import { publicMeshHosts } from '../lib/topology.mjs';
 import { buildWithHostileSeedsVariant, buildHostileSeeds } from '../lib/config-variants.mjs';
@@ -36,7 +47,7 @@ import { StepRecorder } from '../lib/step-recorder.mjs';
 
 export const NAME = 's6';
 const BLOCK_TABLE = 's6_block';
-const NO_ANCHOR_WORDS = 'No anchor reached. Nothing shown here is verified.';
+const NOT_CONTINUED_WORDS = 'No node reached continues the chain you verified.';
 // MESH_INTERFACE → Block gossip → "A refused block is evidence as `net`
 // weighs it" — the node's journal writes one JSON line per penalty,
 // shape { event: peer_penalised, peer_id, kind, detail }
@@ -54,8 +65,8 @@ const ORDERING_BLOCK_DETAIL_RE = /ordering block/;
 
 export function describe() {
   return [
-    'anchors unreachable: anchorReached is false, page shows the contract words',
-    'anchors reachable, hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted',
+    'honest nodes unreachable: kept chain stands, page says no node continues it',
+    'hostile seeds kept: malformed and invalid blacklisted; lagging behind, not blacklisted',
     'the publisher is blacklisted for gossip-block; the client forwarded nothing',
   ];
 }
@@ -98,23 +109,42 @@ export function otherRejectSourcesIn(outDir, honestHosts, publisherPeerIdString)
   return out;
 }
 
-export function anchorBlockArgs(topology) {
+/**
+ * MESH_INTERFACE → Acceptance 6 — s6 step 1's second session must
+ * reach no honest node. Session 1 remembered every honest node it
+ * saw (`MESH_INTERFACE → What the client remembers`: `ok` and
+ * `trailing` entries join `nodes`, up to `REMEMBERED_NODES_MAX`), so
+ * blocking only the first-contact hosts (pub1, pub2) leaves every
+ * other honest address reachable through memory's known-nodes list.
+ * The drop list carries every honest host — every `role: 'public'`
+ * or `role: 'private'` host with a `mesh` entry — AND leaves the
+ * `role: 'hostile'` hosts alone, so the fork pair stays reachable
+ * for session 2's measurement.
+ */
+export function honestBlockArgs(topology) {
   const ns = 'notismesh-browser';
   const addTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', BLOCK_TABLE];
   const addChain = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', BLOCK_TABLE, 'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}'];
-  const drops = publicMeshHosts(topology).map(({ host }) => [
-    'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', BLOCK_TABLE, 'out', 'ip', 'daddr', host.addr, 'drop',
+  const honest = [];
+  for (const [name, host] of Object.entries(topology.hosts)) {
+    if (host.role !== 'public' && host.role !== 'private') continue;
+    if (host.mesh === undefined) continue;
+    if (name === 'browser') continue;
+    honest.push({ name, addr: host.addr });
+  }
+  const drops = honest.map(({ addr }) => [
+    'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', BLOCK_TABLE, 'out', 'ip', 'daddr', addr, 'drop',
   ]);
   const deleteTable = ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', BLOCK_TABLE];
-  return { addTable, addChain, drops, deleteTable };
+  return { addTable, addChain, drops, deleteTable, honestNames: honest.map((h) => h.name) };
 }
 
 export function applyFaults(log, topology) {
-  const a = anchorBlockArgs(topology);
-  log.apply('browser-anchor-block-add-table', a.addTable, a.deleteTable);
-  log.apply('browser-anchor-block-add-chain', a.addChain, null);
+  const a = honestBlockArgs(topology);
+  log.apply('browser-honest-block-add-table', a.addTable, a.deleteTable);
+  log.apply('browser-honest-block-add-chain', a.addChain, null);
   for (let i = 0; i < a.drops.length; i += 1) {
-    log.apply(`browser-anchor-drop-${i}`, a.drops[i], null);
+    log.apply(`browser-honest-drop-${i}`, a.drops[i], null);
   }
 }
 
@@ -169,77 +199,171 @@ export async function run(ctx) {
 
   try {
     await rec.step(describe()[0], async () => {
-      const a = anchorBlockArgs(ctx.topology);
-      runFault(log, 'browser-anchor-block-add-table', a.addTable);
-      applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
-      runFault(log, 'browser-anchor-block-add-chain', a.addChain);
-      for (let i = 0; i < a.drops.length; i += 1) {
-        runFault(log, `browser-anchor-drop-${i}`, a.drops[i]);
+      // MESH_INTERFACE → What the client remembers — "A page with an
+      // honest kept chain whose reachable nodes all serve the hostile
+      // chain keeps its own and says no node continues it."
+      //
+      // (i) First session: write the stage default (firstContact =
+      //     pub1 + pub2, no seeds, no byHand) and open a page; poll
+      //     until `state.chain` is non-null (the first check settled
+      //     the chain from the kept proof). Record the chain hash.
+      // (ii) Second session: apply the s6_block nft table dropping
+      //      every honest address, write a config variant whose
+      //      firstContact stays pub1 + pub2 (both now blocked) but
+      //      whose `seeds` names the `hostile-fork` host at its own
+      //      WebRTC-direct multiaddr. Open a second target on the
+      //      same browser profile (shared localStorage → the second
+      //      session reads the first's memory). Poll until
+      //      `notContinued` is true and the banner reads the exact
+      //      words; read `state.chain` and the fork entry's status +
+      //      tip hash. The fork host's chain shares block 1 with the
+      //      honest one, so `state.chain` does not move; the fork
+      //      has mined a lighter branch, so its tip reads `behind`
+      //      and is not the kept tip hash.
+
+      // ----- (i) first session on the honest nodes -----
+      // Session 1 runs with `?clearMemory=1` so any memory a previous
+      // scenario or run left in the browser profile's `localStorage`
+      // is removed BEFORE the client reads memory; the first check
+      // then seats a chain from the kept proof it writes itself. The
+      // page polls for a tip height that already LEADS the frozen
+      // fork's tip (recorded by `stage/up.mjs` in `fork-pair-cut.json`
+      // at the end of Phase 8b) so the kept proof session 1 writes
+      // is strictly heavier than the fork's — the lighter-fork rule
+      // the contract rests on.
+      writeStageDefault(ctx.outDir);
+      const forkCutPath = join(ctx.outDir, 'fork-pair-cut.json');
+      if (!existsSync(forkCutPath)) {
+        throw new Error(`s6 step 1: ${forkCutPath} missing — up.mjs must write it at Phase 8b`);
       }
-      // MESH_INTERFACE → Acceptance 6 — with every anchor out of reach,
-      // `anchorReached` is false and the page says so. Positive
-      // evidence: at least one seed left `new` for `ok`, `behind` or
-      // `blacklisted` inside the window. The predicate below holds for
-      // the banner + anchorReached=false AND at least one seed
-      // classified past `new`.
-      const hostileIds = Object.values(seedsByHost).filter((v) => typeof v === 'string');
-      const hostileIdsJson = JSON.stringify(hostileIds);
-      const bannerText = await cdpPoll(ctx, browserUrl,
+      const forkCut = JSON.parse(readFileSync(forkCutPath, 'utf8'));
+      const forkHeightAtStop = Number(forkCut.forkHeightAtStop);
+      if (!Number.isFinite(forkHeightAtStop)) {
+        throw new Error(`s6 step 1: fork-pair-cut.json has no numeric forkHeightAtStop`);
+      }
+      // MESH_INTERFACE → Acceptance 6 — "positive evidence the hostile
+      // node answered this session": the fork's tip hash read by the
+      // stage at Phase 8b (directly from the fork host's
+      // `/blocks/current`), stable because the fork pair stops mining
+      // once `forkHeightAtStop` lands. The client's state nodes list
+      // carries no per-node `tip` field, so the step reads this hash
+      // from `fork-pair-cut.json` and `verdictS6NotContinued`'s
+      // `typeof fork.tipHash !== 'string'` guard holds.
+      const forkTipHashAtStop = forkCut.forkTipHashAtStop;
+      if (typeof forkTipHashAtStop !== 'string' || !/^[0-9a-f]{64}$/.test(forkTipHashAtStop)) {
+        throw new Error(`s6 step 1: fork-pair-cut.json has no 64-hex forkTipHashAtStop`);
+      }
+      const firstSessionText = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
+        "document.getElementById('state')?.textContent ?? null",
+        `if (v === null) return false;
+         try {
+           const s = JSON.parse(v);
+           if (typeof s.chain !== 'string' || s.chain.length !== 64) return false;
+           const h = s.tip?.height;
+           return typeof h === 'number' && h > ${forkHeightAtStop};
+         } catch (_e) { return false; }`,
+        240_000, 1_000,
+      );
+      const firstState = JSON.parse(firstSessionText);
+      const keptChainHash = firstState.chain;
+      const keptTipHeight = firstState.tip?.height ?? null;
+
+      // ----- (ii) second session with honest nodes blocked -----
+      const a = honestBlockArgs(ctx.topology);
+      runFault(log, 'browser-honest-block-add-table', a.addTable);
+      applied.push({ ns: 'notismesh-browser', table: BLOCK_TABLE });
+      runFault(log, 'browser-honest-block-add-chain', a.addChain);
+      for (let i = 0; i < a.drops.length; i += 1) {
+        runFault(log, `browser-honest-drop-${i}`, a.drops[i]);
+      }
+      // Build a fork-only variant: firstContact stays pub1 + pub2 (now
+      // blocked) and seeds carries the hostile-fork host alone — a
+      // known node the client dials at its WebRTC-direct multiaddr.
+      const forkRow = identities?.['hostile-fork'];
+      const forkNotisId = forkRow?.notisId;
+      if (typeof forkNotisId !== 'string') {
+        throw new Error('s6 step 1: identities.json has no hostile-fork row — up.mjs must spawn it');
+      }
+      const forkAddrs = Array.isArray(forkRow.multiaddrs) ? forkRow.multiaddrs : [];
+      if (forkAddrs.length === 0) {
+        throw new Error('s6 step 1: identities.json has no multiaddrs for hostile-fork');
+      }
+      const forkVariant = {
+        network: baseConfig.network,
+        firstContact: baseConfig.firstContact,
+        seeds: [{ notisId: forkNotisId, addrs: forkAddrs }],
+      };
+      writeConfigVariant(ctx.outDir, forkVariant);
+
+      const secondSessionText = await cdpPoll(ctx, browserUrl,
         `(function(){
            const banner = document.querySelector('[data-role="banner"]');
            const state = document.getElementById('state');
-           if (banner === null || state === null) return null;
-           return JSON.stringify({ banner: banner.textContent, state: state.textContent });
+           if (state === null) return null;
+           return JSON.stringify({
+             banner: banner === null ? null : banner.textContent,
+             state: state.textContent,
+           });
          })()`,
         `if (v === null) return false;
          try {
            const obj = JSON.parse(v);
            const s = JSON.parse(obj.state);
-           if (s.anchorReached !== false || obj.banner !== ${JSON.stringify(NO_ANCHOR_WORDS)}) return false;
-           const hostileIds = ${hostileIdsJson};
-           const terminal = ['ok', 'behind', 'blacklisted'];
-           return hostileIds.some((id) => {
-             const e = s.nodes?.find((n) => n.notisId === id);
-             return e !== undefined && terminal.includes(e.status);
-           });
+           if (s.notContinued !== true) return false;
+           if (obj.banner !== ${JSON.stringify(NOT_CONTINUED_WORDS)}) return false;
+           const fork = s.nodes?.find((n) => n.notisId === ${JSON.stringify(forkNotisId)});
+           return fork !== undefined && fork.status === 'behind';
          } catch (_e) { return false; }`,
-        120_000, 1000,
+        240_000, 1_000,
       );
-      const bannerObj = JSON.parse(bannerText);
-      const stateA = JSON.parse(bannerObj.state);
-      // Find the first seed that answered — positive evidence the page
-      // reached nodes, so the "no anchor" verdict is not vacuous.
-      const terminal = new Set(['ok', 'behind', 'blacklisted']);
-      let answeredSeed = null;
-      for (const id of hostileIds) {
-        const e = stateA.nodes?.find((n) => n.notisId === id);
-        if (e !== undefined && terminal.has(e.status)) {
-          answeredSeed = { id, status: e.status };
-          break;
-        }
-      }
+      const bannerObj = JSON.parse(secondSessionText);
+      const secondState = JSON.parse(bannerObj.state);
+      const forkEntry = secondState.nodes?.find((n) => n.notisId === forkNotisId) ?? null;
+      // The fork's tip hash is the stage's own read at Phase 8b
+      // (`fork-pair-cut.json.forkTipHashAtStop`), not a client's
+      // per-entry `tip` field — the client's node entries carry none.
+      // The fork pair is cut and no longer mining once the stage
+      // records it, so the hash is stable through the scenario.
+      const secondTipHeight = secondState.tip?.height ?? null;
       const m = {
-        anchorReached: stateA.anchorReached,
-        bannerText: bannerObj.banner,
-        seedAnswered: answeredSeed !== null,
-        seedId: answeredSeed?.id ?? null,
-        seedStatus: answeredSeed?.status ?? null,
+        firstSession: { keptChainHash, keptTipHeight },
+        secondSession: {
+          notContinued: secondState.notContinued === true,
+          bannerText: bannerObj.banner,
+          chainName: typeof secondState.chain === 'string' ? secondState.chain : null,
+          forkEntry: forkEntry === null
+            ? null
+            : { status: forkEntry.status, tipHash: forkTipHashAtStop },
+          // The two heights the lighter-fork rule rests on, named so
+          // a reader sees them in `stage/out/scenarios/s6.json`.
+          cutHeight: Number(forkCut.cutHeight),
+          forkHeightAtStop,
+          forkBlocksPastCut: Number(forkCut.forkBlocksPastCut),
+          pub1HeightAtSession2: secondTipHeight,
+        },
       };
-      return { verdict: verdictS6NoAnchor(m), measurement: m };
+      return { verdict: verdictS6NotContinued(m), measurement: m };
     });
 
     await rec.step(describe()[1], async () => {
-      // Remove the s6_block table so anchors reach again.
+      // MESH_INTERFACE → Acceptance 6 — the step's own preconditions:
+      // (1) remove the s6_block nft table so honest nodes reach
+      // again; (2) write the hostile-seeds variant so the page's
+      // config carries the pair + publisher + invalid as seeds along
+      // with the honest first-contact nodes; (3) open the page with
+      // `?clearMemory=1` so step 1's kept fork proof does not seat
+      // the client's chain here — this step measures what the pair's
+      // chain reads against a FRESH client that checks both chains
+      // and places the pair off.
       removeTable('notismesh-browser', BLOCK_TABLE);
-      // Drop the matching entry from `applied` so teardown does not
-      // try again.
       const idx = applied.findIndex((e) => e.table === BLOCK_TABLE);
       if (idx >= 0) applied.splice(idx, 1);
-      log.records.push(`[fault:remove:${NAME}:browser-anchor-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
+      log.records.push(`[fault:remove:${NAME}:browser-honest-block-add-table] sudo ip netns exec notismesh-browser nft delete table ip ${BLOCK_TABLE}`);
+      writeConfigVariant(ctx.outDir, variant);
       const malformedId = seedsByHost['hostile-malformed'];
       const invalidId = seedsByHost['hostile-invalid'];
       const laggingId = seedsByHost['hostile-lagging'];
-      const stateB = await cdpPoll(ctx, browserUrl,
+      const stateB = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {
@@ -269,20 +393,19 @@ export async function run(ctx) {
     await rec.step(describe()[2], async () => {
       // MESH_INTERFACE → Acceptance 6 → "A mesh node publishing a
       // block that fails its checks is blacklisted with its evidence,
-      // and the client does not forward it." Wait for the publisher's
-      // entry to reach `blacklisted` with evidence `gossip-block`
-      // (the client's topic validator rejects a bad block from the
-      // publisher), then read the honest mesh logs: every reject
-      // source they named is the publisher's peer id — the browser
-      // forwarded nothing it refused, so no honest mesh ever heard
-      // the bad block from the browser.
+      // and the client does not forward it." The step's own
+      // preconditions: write the hostile-seeds variant so the
+      // publisher is in `seeds`, and open the page with
+      // `?clearMemory=1` so step 1's kept fork proof does not seed
+      // this measurement.
+      writeConfigVariant(ctx.outDir, variant);
       const publisherId = seedsByHost['hostile-publisher'];
       if (typeof publisherId !== 'string') {
         const measurement = { reason: 'no hostile-publisher identity in identities.json' };
         return { verdict: verdictS6Publisher(measurement), measurement };
       }
       const publisherPeerIdString = peerIdStringOf(publisherId);
-      const stateC = await cdpPoll(ctx, browserUrl,
+      const stateC = await cdpPoll(ctx, `${browserUrl}?clearMemory=1`,
         "document.getElementById('state')?.textContent ?? null",
         `if (v === null) return false;
          try {

@@ -147,6 +147,16 @@ if grep -Fnq "notis.posts." dist/assets/*.js; then
   grep -Fn "notis.posts." dist/assets/*.js | head -5
   exit 1
 fi
+# The web bundle holds no mesh memory — WEB_INTERFACE → The extension →
+# "What the extension remembers". `notis.mesh.memory` is the Web Lock name
+# and the `localStorage` key prefix the extension's memory store keys on,
+# so a stray chunk that pulled the store module into the page script
+# surfaces as a hit here.
+if grep -Fnq "notis.mesh.memory" dist/assets/*.js; then
+  echo "FAIL: notis.mesh.memory reference found in the web bundle (the mesh memory store leaked into the zip)"
+  grep -Fn "notis.mesh.memory" dist/assets/*.js | head -5
+  exit 1
+fi
 # The web bundle holds no resolver — WEB_INTERFACE → The extension → "The
 # resolve". `posts/batch` is the request path the resolver sends to each of
 # the seed list's nodes, so a stray chunk that pulled the resolver into the

@@ -83,11 +83,17 @@ export function cornerTitle(state: CornerState, tip: number | null, verdict?: Ti
       if (verdict.reason === 'too-short') return `the chain is too short to check yet · tip ${t}`;
       if (verdict.reason === 'no-proof') return `no node served a proof · tip ${t}`;
       if (verdict.reason === 'split') return `a node names a tip off this chain · tip ${t}`;
-      if (verdict.reason === 'no-anchor') return `only nodes this build does not name could be checked · tip ${t}`;
+      if (verdict.reason === 'not-continued') return `no node reached continues the chain you verified · tip ${t}`;
     }
     return `the chain could not be checked · tip ${t}`;
   }
   // state === 'refused'
+  if (verdict && verdict.kind === 'refused' && verdict.reason === 'your-node') {
+    if (verdict.which === 'memory') {
+      return `your node's chain does not continue the one you verified · choose in settings · tip ${t}`;
+    }
+    return `another node serves a heavier chain than your node · choose in settings · tip ${t}`;
+  }
   return `no node's proof verified · tip ${t}`;
 }
 
