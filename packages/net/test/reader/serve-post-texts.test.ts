@@ -75,7 +75,7 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
   const id3 = H('33');
   const idX = H('ee');
 
-  it.fails('answers the held texts, zero bytes for none', async () => {
+  it('answers the held texts, zero bytes for none', async () => {
     const provider = heldProvider([[id1, 'first text'], [id3, 'third text']]);
     const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [id1, id2, id3] });
     const resp = await answerPostTextsRequest(req, MAGIC, provider).catch(() => null);
@@ -95,7 +95,7 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
     });
   });
 
-  it.fails('answers only the asked ids, in request order', async () => {
+  it('answers only the asked ids, in request order', async () => {
     // The provider's map carries an id the request did not name, and the
     // asked ids in a different order from the request's.
     const provider: PostTextProvider = async () => new Map([
@@ -112,7 +112,7 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
     ]);
   });
 
-  it.fails('stops at MAX_SERVE_BODY_BYTES, the first body always sent', async () => {
+  it('stops at MAX_SERVE_BODY_BYTES, the first body always sent', async () => {
     // Three held texts whose `encodePostBody` is 1.5 MiB each — two fit under
     // `MAX_SERVE_BODY_BYTES` (4 MiB), the third would push the total past it.
     // No legal post is this long; the provider is the case's own. The size
@@ -153,7 +153,7 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
     });
   });
 
-  it.fails('refuses another code, typeId, magic or an undecodable frame', async () => {
+  it('refuses another code, typeId, magic or an undecodable frame', async () => {
     const provider = heldProvider([[id1, 'one']]);
 
     // (1) A SyncInfo frame — a code the serving reader does not answer.
@@ -175,7 +175,7 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
     expect([r1, r2, r3, r4]).toEqual(['refuse', 'refuse', 'refuse', 'refuse']);
   });
 
-  it.fails('a provider that rejects answers zero bytes', async () => {
+  it('a provider that rejects answers zero bytes', async () => {
     const provider: PostTextProvider = async () => { throw new Error('store is down'); };
     const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [id1] });
     const resp = await answerPostTextsRequest(req, MAGIC, provider).catch(() => 'threw' as const);
@@ -206,7 +206,7 @@ function makeConnection(id: string): HandlerConnection {
 describe('NET_INTERFACE → Readers — the serving reader handler', () => {
   const id1 = H('11');
 
-  it.fails('the handler answers a stream on an accepted connection', async () => {
+  it('the handler answers a stream on an accepted connection', async () => {
     const provider = heldProvider([[id1, 'the one']]);
     const handler: Handler = postTextsHandler({
       magic: MAGIC,
@@ -231,7 +231,7 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
     });
   });
 
-  it.fails('the handler ends a stream on a connection it does not accept, unanswered', async () => {
+  it('the handler ends a stream on a connection it does not accept, unanswered', async () => {
     const provider = heldProvider([[id1, 'the one']]);
     const handler: Handler = postTextsHandler({
       magic: MAGIC,
@@ -248,7 +248,7 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
     expect({ closed: stream.closed, bytesWritten }).toEqual({ closed: true, bytesWritten: 0 });
   });
 
-  it.fails('one request at a time per connection', async () => {
+  it('one request at a time per connection', async () => {
     const id1 = H('11');
     const id2 = H('22');
     // The first stream's provider holds its answer until the case releases
@@ -306,7 +306,7 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
     });
   });
 
-  it.fails('the handler ends a stream that sends nothing within timeoutMs, unanswered', async () => {
+  it('the handler ends a stream that sends nothing within timeoutMs, unanswered', async () => {
     const provider = heldProvider([[id1, 'one']]);
     const handler: Handler = postTextsHandler({
       magic: MAGIC,
@@ -335,7 +335,7 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
     expect({ closed: stream.closed, bytesWritten }).toEqual({ closed: true, bytesWritten: 0 });
   });
 
-  it.fails('the handler ends a stream past MAX_MODIFIER_REQUEST_FRAME_BYTES, unanswered', async () => {
+  it('the handler ends a stream past MAX_MODIFIER_REQUEST_FRAME_BYTES, unanswered', async () => {
     const provider = heldProvider([[id1, 'one']]);
     const handler: Handler = postTextsHandler({
       magic: MAGIC,

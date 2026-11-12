@@ -157,7 +157,7 @@ describe('NET_INTERFACE → The browser entry — reader handshake', () => {
   // The NetNode host's inbound handshake handler records the dialler's
   // declared capabilities on the peer's metadata — `peerCapabilities` reads
   // them back.
-  it.fails('the reader\'s handshake declares the capabilities it is handed', async () => {
+  it('the reader\'s handshake declares the capabilities it is handed', async () => {
     async function readerCapsAgainst(
       capabilities: readonly number[] | undefined,
     ): Promise<readonly number[]> {

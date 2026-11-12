@@ -43,7 +43,7 @@ describe("@dagsocial/net/browser builds without reaching a Node built-in", () =>
   // `postTextsHandler` and `SERVING_READER_CAPABILITIES` reach the
   // browser through `@dagsocial/net/browser`, beside
   // `MAX_MODIFIER_REQUEST_FRAME_BYTES`.
-  it.fails('exports the serving reader names', () => {
+  it('exports the serving reader names', () => {
     const ns = browserEntry as unknown as Record<string, unknown>;
     expect({
       SYNC_PROTOCOL: ns.SYNC_PROTOCOL,
