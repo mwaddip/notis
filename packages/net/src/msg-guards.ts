@@ -38,7 +38,7 @@ export const MAX_HANDSHAKE_FRAME_BYTES = 984;
  * longer: magic, version, a one-byte code, a two-byte length and the
  * checksum.
  */
-export const MAX_MODIFIER_REQUEST_FRAME_BYTES = 0;
+export const MAX_MODIFIER_REQUEST_FRAME_BYTES = 12_815;
 
 /**
  * Handshake streams of one connection a listener accepts at once

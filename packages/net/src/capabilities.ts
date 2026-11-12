@@ -35,7 +35,7 @@ export const READER_CAPABILITIES: readonly number[] = [];
  * a serving reader declares `ModifierRequest` (4) alone — the one code
  * it answers.
  */
-export const SERVING_READER_CAPABILITIES: readonly number[] = [];
+export const SERVING_READER_CAPABILITIES: readonly number[] = [MSG_MODIFIER_REQUEST];
 
 /**
  * NET_INTERFACE → Readers → "A peer's capabilities say what it serves".

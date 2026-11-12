@@ -90,7 +90,7 @@ export async function readerHandshake(
       protocolVersion: o.protocolVersion,
       nodeName: '',
       chainHeight: o.chainHeight,
-      capabilities: [...READER_CAPABILITIES],
+      capabilities: [...(o.capabilities ?? READER_CAPABILITIES)],
     },
     browserHashFn(),
   );
