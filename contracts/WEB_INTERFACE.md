@@ -406,9 +406,6 @@ names the new one. notis.fun's second address is its secure WebSocket, on port 4
 (`MESH_INTERFACE → The IP certificate`): the client dials it after the WebRTC-direct address (`MESH_INTERFACE → The
 client's node list → "The secure WebSocket is the fallback"`), and its certificate renews with no change to the address.
 
-> ⚠ **AHEAD OF CODE (2026-11-12).** notis.fun's secure WebSocket address in the list above: the `VITE_NODES` default in
-`packages/web/scripts/build-extension.sh` names notis.fun's WebRTC-direct address alone.
-
 **The mesh is the extension's first path.** The page reaches nodes by key over libp2p through the mesh client
 (`MESH_INTERFACE → The client's node list`), the client's own `src/mesh/`, which the extension build alone hands the
 App: one reader per page — a key made for the page, `net`'s reader options and handshake (`NET_INTERFACE → The
