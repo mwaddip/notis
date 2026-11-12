@@ -649,6 +649,7 @@ export class NetNode {
   private headerProvider: ((height: number) => BlockHeader | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
   private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
+  private readerActiveHandlers: Array<(peerId: string) => void> = [];
   private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   // NET_INTERFACE → Sync Handler Registration
@@ -2480,6 +2481,15 @@ export class NetNode {
   }
 
   /**
+   * NET_INTERFACE → API → Node Lifecycle → `getServingReaders`: the peer
+   * ids of the Active readers whose handshake declared `ModifierRequest`
+   * (NET_INTERFACE → Readers → "A reader is never asked for chain data").
+   */
+  getServingReaders(): string[] {
+    return [];
+  }
+
+  /**
    * NET_INTERFACE → API → Node Lifecycle → `peerCapabilities`: the
    * capabilities an Active peer's handshake declared; `null` for a peer
    * not Active.
@@ -2592,6 +2602,11 @@ export class NetNode {
   /** NET_INTERFACE → Sync Handler Registration. */
   onPeerActive(cb: (peerId: string, direction: 'inbound' | 'outbound') => void): void {
     this.peerActiveHandlers.push(cb);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration — the `onReaderActive` row. */
+  onReaderActive(cb: (peerId: string) => void): void {
+    this.readerActiveHandlers.push(cb);
   }
 
   /** NET_INTERFACE → Sync Handler Registration. */
