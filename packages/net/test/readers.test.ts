@@ -56,6 +56,14 @@ const validators: NetValidators = {
 
 const TIMEOUT = 25_000;
 
+// libp2p 3.5.1's connection manager refuses an inbound connection from a host
+// that has opened `inboundConnectionThreshold` connections (default 5) in the
+// last second — the refused socket is closed and the dialler reads ECONNRESET.
+// The twelfth-reader case dials nodeA at 127.0.0.1 twelve times in all (eleven
+// come-and-go readers, then the twelfth), so it paces them at least this many
+// milliseconds apart — four a second at most in any window.
+const READER_DIAL_GAP_MS = 250;
+
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return makeBaseConfig(overrides);
 }
@@ -505,14 +513,23 @@ describe('NET_INTERFACE → Readers', () => {
   //
   // nodeB joins before the readers come, so its subscription to the
   // ordering-block topic reaches nodeA — and nodeA's reaches nodeB — while
-  // both sides' scores are 0; the publish's reach into nodeA rests on that
-  // subscription, not on the mesh (which the score may have churned).
+  // both sides' scores are 0. nodeA is nodeB's only peer at 127.0.0.1, so
+  // nodeA's score at nodeB is 0 whatever nodeA's own score of nodeB is;
+  // `broadcastOrderingBlock` publishes under gossipsub's default
+  // `floodPublish: true` and sends the block to every topic peer above the
+  // publish threshold (−50), nodeA among them.
   //
   // nodeB also dials nodeA at 127.0.0.1, so it is counted at nodeA's score
-  // too; with eleven retained readers, the twelfth reader active and nodeB
-  // active, the count at 127.0.0.1 is 13 and nodeB's score at nodeA is above
-  // the graylist threshold (−80), so `acceptFrom` admits nodeB's RPCs and
-  // nodeA runs the ordering-block topic validator on the published block.
+  // too. At gossipsub's default `IPColocationFactorWeight` of −5, with eleven
+  // retained readers, the twelfth reader active and nodeB active, the count
+  // at 127.0.0.1 is 13 and the surplus over the threshold of 10 is 3:
+  // nodeB's score at nodeA is −5 × 3² = −45, above the graylist threshold
+  // (−80), so `acceptFrom` admits nodeB's RPCs and nodeA runs the
+  // ordering-block topic validator on the published block. The twelfth
+  // reader's score at nodeA is −45 too — outside nodeA's mesh (nodeA refuses
+  // a graft at negative score) and below the gossip threshold (−10, so no
+  // IHAVE reaches it), and the case fails at its last assertion and nowhere
+  // before.
   it(
     'a node forwards a block to the twelfth reader seen from one address',
     async () => {
@@ -567,12 +584,15 @@ describe('NET_INTERFACE → Readers', () => {
 
       // Eleven readers dial nodeA at 127.0.0.1, are seen by its gossipsub
       // router, and leave. A fresh libp2p key each time; each departure
-      // keeps the IP counted (retainScore), the way page reloads do. A
-      // short settle after each departure lets libp2p's own cleanup land
-      // before the next reader dials.
+      // keeps the IP counted (retainScore), the way page reloads do.
+      // The dials are paced at least `READER_DIAL_GAP_MS` apart so no
+      // window holds more than four, under libp2p's `inboundConnectionThreshold`.
+      let lastDialAt = 0;
       for (let i = 0; i < 11; i++) {
+        await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
         const reader = await makeReaderLibp2p(MAGIC_TESTNET);
         const readerId = reader.peerId.toString();
+        lastDialAt = Date.now();
         await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
         await vi.waitFor(
           () => {
@@ -581,12 +601,22 @@ describe('NET_INTERFACE → Readers', () => {
           { timeout: 10_000, interval: 50 },
         );
         await reader.stop();
-        await sleep(200);
+        // Wait on the departure the next iteration's dial races —
+        // `removePeer` has run, so `peerIPs[127.0.0.1]` holds the pstats
+        // as a retained slot rather than a live peer.
+        await vi.waitFor(
+          () => {
+            expect(nodeAPubsub.getPeers().map((p) => p.toString())).not.toContain(readerId);
+          },
+          { timeout: 10_000, interval: 50 },
+        );
       }
 
       // The twelfth reader stays through the publish; it subscribes to the
       // ordering-block topic and records every message its router delivers
-      // on that topic.
+      // on that topic. Paced under `inboundConnectionThreshold` like the
+      // eleven before it.
+      await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
       const twelfth = await makeReaderLibp2p(MAGIC_TESTNET);
       hosts.push(twelfth);
       await runReaderHandshake(twelfth, addrA, MAGIC_TESTNET);
