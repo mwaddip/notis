@@ -537,17 +537,76 @@ describe('s8 (prove once, follow by gossip)', () => {
     }
     expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_gap');
   });
-  it('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + their deletes', async () => {
+
+  // MESH_INTERFACE → Acceptance 8 — "the browser cut off from every
+  // mesh node for three blocks and let back on new connections alone
+  // — every flow it held at the cut stays dropped both ways, as for
+  // a reader whose network changed, which the nodes never hear
+  // close". The held-flows table is installed before the tracker
+  // page spawns: its output chain marks each flow the browser opens
+  // to a mesh node, so every flow held at the cut carries the mark
+  // on its conntrack entry. At the cut the marking rules are flushed
+  // and the gap drops go in; at the lift the drops are swapped for
+  // rules dropping marked flows both ways. A flow created during the
+  // cut is unmarked and its packets pass after the lift.
+  it.fails('s8HeldFlowsMarkArgs builds a table + out chain + per-mesh-host "ct mark set 0x1" rule + delete-table inside the browser namespace', () => {
+    const a = (s8 as unknown as { s8HeldFlowsMarkArgs: (t: unknown) => {
+      addTable: string[]; addOutChain: string[];
+      marks: Array<{ name: string; argv: string[] }>;
+      deleteTable: string[];
+    } }).s8HeldFlowsMarkArgs(TOPOLOGY);
+    for (const argv of [a.addTable, a.addOutChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.addTable.join(' ')).toContain('nft add table ip s8_held_flows');
+    expect(a.addOutChain.join(' ')).toMatch(/nft add chain ip s8_held_flows out .* type filter hook output .*/);
+    expect(a.marks.length, 'one mark rule per mesh host with an addr').toBe(2);
+    for (const { name, argv } of a.marks) {
+      expect(typeof name).toBe('string');
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+      expect(argv.join(' ')).toMatch(/nft add rule ip s8_held_flows out ip daddr \d+\.\d+\.\d+\.\d+ ct mark set 0x1/);
+    }
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s8_held_flows');
+  });
+
+  // The stop-marking action, run at the cut: `nft flush chain`
+  // empties the out chain of its marking rules, so a flow dialled
+  // during the cut leaves its conntrack entry unmarked. The chain
+  // and the table itself stay, for the drop-marked rules the lift
+  // adds in their place.
+  it.fails('s8HeldFlowsStopMarkingArgs builds an nft flush chain argv for the s8_held_flows out chain', () => {
+    const argv = (s8 as unknown as { s8HeldFlowsStopMarkingArgs: () => string[] }).s8HeldFlowsStopMarkingArgs();
+    expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    expect(argv.join(' ')).toContain('nft flush chain ip s8_held_flows out');
+  });
+
+  // The drop-marked rules the lift adds in place of the gap drops:
+  // an output rule and an input chain + input rule, both matching
+  // `ct mark 0x1`, so a flow held at the cut stays dropped both
+  // ways. The table and the out chain already exist, from the
+  // pre-step marking setup.
+  it.fails('s8HeldFlowsDropArgs builds an add-in-chain argv + a drop-out argv + a drop-in argv matching ct mark 0x1', () => {
+    const a = (s8 as unknown as { s8HeldFlowsDropArgs: () => {
+      addInChain: string[]; dropOut: string[]; dropIn: string[];
+    } }).s8HeldFlowsDropArgs();
+    for (const argv of [a.addInChain, a.dropOut, a.dropIn]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    expect(a.addInChain.join(' ')).toMatch(/nft add chain ip s8_held_flows in .* type filter hook input .*/);
+    expect(a.dropOut.join(' ')).toContain('nft add rule ip s8_held_flows out ct mark 0x1 drop');
+    expect(a.dropIn.join(' ')).toContain('nft add rule ip s8_held_flows in ct mark 0x1 drop');
+  });
+  it.fails('run({dryRun:true}) emits step 1 hostile firewall + step 4 hostile firewall + gap firewall + held-flows table + their deletes', async () => {
     const r = await s8.run({ dryRun: true, topology: TOPOLOGY });
     expect(r.scenario).toBe('s8');
     expect(r.steps.length).toBe(4);
     for (const step of r.steps) expect(step.verdict).toBe('skipped');
     const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
     const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
-    expect(adds.length, 'three tables + three chains + per-host drops for each').toBeGreaterThanOrEqual(8);
-    // Three table deletes — one for s8_step1_hostile, one for
-    // s8_step4_hostile, one for s8_gap.
-    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(3);
+    expect(adds.length, 'four tables + four chains + per-host drops/marks for each').toBeGreaterThanOrEqual(10);
+    // Four table deletes — one each for s8_step1_hostile,
+    // s8_step4_hostile, s8_gap and s8_held_flows.
+    expect(dels.length, 'one table delete per firewall (removes every drop)').toBe(4);
   });
   // MESH_INTERFACE → Acceptance 8 — step 1 firewalls the browser from
   // every hostile host so the first check reads no hostile proof.
