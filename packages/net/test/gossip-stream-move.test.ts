@@ -386,12 +386,27 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
     TIMEOUT,
   );
 
-  // Case 2 — as case 1, but the proxy aborts N's side of conn1 after
-  // R's new inbound has arrived on conn2. N's old inbound stream pipe
-  // errors on the hard close, and before the patch `handlePeerReadStreamError`
-  // removes R — even though the new connection stands.
+  // Case 2 — R opens two gossipsub streams in a row to N. N's
+  // `createInboundStream` replaces its inbound map entry with each; the
+  // second manual stream becomes N's current inbound, and the first is
+  // the replaced one. R then resets the first manual stream from its
+  // side (`stream.abort`): yamux writes a RST frame, N reads it and the
+  // stream's source iterator throws in N's `pipePeerReadStream`,
+  // feeding `handlePeerReadStreamError` the stream that is no longer
+  // current. Before the patch, that call removes the peer unconditionally
+  // and the forwarded block does not reach R.
+  //
+  // The loopback-proxy arrangement from case 1 would exercise this path
+  // too under WebRTC (a stream close over a silent connection waits
+  // DEFAULT_FIN_ACK_TIMEOUT and throws AggregateError), but over TCP +
+  // yamux the muxer's `onTransportClosed` does not propagate as an
+  // error — the replaced stream exits its read pipe gracefully and the
+  // error path never fires. A stream-level reset is what reaches it
+  // here; the failure mode the rule holds against is the same —
+  // `handlePeerReadStreamError` carrying a stream the router has
+  // already replaced.
   it.fails(
-    'a reader stays the router\'s peer when the link its replaced inbound stream ran on ends with an error',
+    'a reader stays the router\'s peer when a replaced inbound stream resets',
     async () => {
       const topics = gossipTopics(MAGIC_TESTNET);
 
@@ -399,7 +414,6 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       nodes.push(nodeN);
       await nodeN.start();
       const addrN = nodeTcpAddress(nodeN);
-      const nPort = tcpPortOf(addrN);
 
       const nodeM = new NetNode(
         makeConfig({ minPeers: 0, bootstrapPeers: [addrN] }),
@@ -418,9 +432,6 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
-      const proxy = await startTcpProxy(nPort);
-      proxies.push(proxy);
-
       const reader = await makeReaderLibp2p(MAGIC_TESTNET);
       hosts.push(reader);
       const readerId = reader.peerId.toString();
@@ -433,8 +444,7 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
       });
       readerPubsub(reader).subscribe(topics.orderingBlock);
 
-      const proxyAddr = `/ip4/127.0.0.1/tcp/${proxy.port}/p2p/${nodeN.peerId()}`;
-      const conn1 = await reader.dial(multiaddr(proxyAddr));
+      const conn1 = await reader.dial(multiaddr(addrN));
       await runReaderHandshakeOnConn(conn1, MAGIC_TESTNET);
       await vi.waitFor(
         () => {
@@ -446,7 +456,8 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
-      // control: a first block flows through the proxy connection.
+      // control: a first block flows over the automatic gossipsub
+      // streams before any manual stream is opened.
       const block1 = makeBlockAt(1, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block1);
       await vi.waitFor(
@@ -454,52 +465,55 @@ describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newe
         { timeout: 20_000, interval: 200 },
       );
 
-      // Capture N's inbound stream reference from conn1 so we can wait
-      // for it to be replaced by the one on conn2.
       const inboundMap = (pubsubOf(nodeN) as unknown as {
         streamsInbound: Map<string, unknown>;
       }).streamsInbound;
-      const oldInbound = inboundMap.get(readerId);
-      expect(oldInbound).toBeDefined();
 
-      // The proxy goes silent, R aborts its side, R redials directly.
-      proxy.silent();
-      try { conn1.abort(new Error('proxy silent')); } catch { /* ignore */ }
-      await vi.waitFor(
-        () => {
-          const rp = peerIdFromString(nodeN.peerId());
-          expect(reader.getConnections(rp).length).toBe(0);
-        },
-        { timeout: 10_000, interval: 100 },
+      // R opens a manual gossipsub stream on conn1. N's
+      // `createInboundStream` closes R's automatic inbound and sets
+      // streamA as N's current inbound. The map's entry changes to
+      // streamA's `InboundStream`, which is what we wait on.
+      const inboundBeforeA = inboundMap.get(readerId);
+      const streamA = await conn1.newStream(
+        ['/meshsub/1.2.0', '/meshsub/1.1.0', '/meshsub/1.0.0'],
+        { signal: AbortSignal.timeout(10_000) },
       );
-      const conn2 = await reader.dial(multiaddr(addrN));
-      await runReaderHandshakeOnConn(conn2, MAGIC_TESTNET);
-
-      // control: N holds two connections to R (the silent conn1 and
-      // the new conn2); N's inbound stream for R has been replaced.
       await vi.waitFor(
         () => {
-          const rp = peerIdFromString(readerId);
-          expect(nodeN.libp2pNode!.getConnections(rp).length).toBe(2);
           const cur = inboundMap.get(readerId);
           expect(cur).toBeDefined();
-          expect(cur).not.toBe(oldInbound);
+          expect(cur).not.toBe(inboundBeforeA);
         },
-        { timeout: 20_000, interval: 200 },
+        { timeout: 10_000, interval: 50 },
       );
 
-      // Now the proxy destroys N's upstream socket. N reads TCP RST on
-      // the paired connection; yamux aborts every remaining stream on
-      // conn1 with an error. The old inbound stream's read pipe throws
-      // in N's `pipePeerReadStream`, feeding `handlePeerReadStreamError`
-      // the stream that was already replaced on conn2.
-      proxy.abortNodeSide();
+      // R opens a second manual gossipsub stream on conn1. streamA
+      // becomes the replaced one; streamB is now N's current inbound.
+      const inboundBeforeB = inboundMap.get(readerId);
+      const streamB = await conn1.newStream(
+        ['/meshsub/1.2.0', '/meshsub/1.1.0', '/meshsub/1.0.0'],
+        { signal: AbortSignal.timeout(10_000) },
+      );
+      await vi.waitFor(
+        () => {
+          const cur = inboundMap.get(readerId);
+          expect(cur).toBeDefined();
+          expect(cur).not.toBe(inboundBeforeB);
+        },
+        { timeout: 10_000, interval: 50 },
+      );
 
-      // last: a block entering at M after the hard close reaches R.
-      // Before the patch, `handlePeerReadStreamError` calls
-      // `onPeerDisconnected` on the error from the replaced stream,
-      // and the router removes R while conn2 still stands —
-      // `deliveries.length` stays at 1.
+      // R resets streamA from its side. yamux writes a RST frame, N
+      // reads it, and N's pipe on streamA throws its StreamResetError
+      // into `handlePeerReadStreamError` — with a stream that has
+      // already been replaced on the inbound map.
+      streamA.abort(new Error('reset the replaced stream'));
+
+      // last: a block entering at M after the reset reaches R.
+      // Before the patch, the error on the replaced stream removes R
+      // from the router, so `deliveries.length` stays at 1. Named
+      // through so the host's teardown closes it rather than leaking.
+      void streamB;
       const block2 = makeBlockAt(2, PROTOCOL_VERSION);
       await nodeM.broadcastOrderingBlock(block2);
       await vi.waitFor(
