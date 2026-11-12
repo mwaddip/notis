@@ -1311,4 +1311,185 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
     delete m['pub1HeightFinal'];
     expect(verdictS8Gap(m)).toBe('FAIL');
   });
+
+  // MESH_INTERFACE → Acceptance 8 — "and gossip extends it after: a
+  // block whose parent is the client's tip reaches it by gossip with no
+  // check between". The verdict reads records after the firewall's
+  // removal (`liftAtMs`): PASS only when, after the lift, the tip
+  // caught up to within two of pub1 AND a later tipHist record rises
+  // with `checks` equal to the record before it (a gossip extension,
+  // since the client's tip moves only by a gossiped block whose parent
+  // is its tip or by a check (packages/web/src/mesh/mesh-client.ts —
+  // `handleGossipMessage` sets the tip without incrementing `checks`;
+  // `runCheck` increments `checks` and then sets the tip from the
+  // chain). A record whose `atMs` is before `liftAtMs` never satisfies
+  // the gossip clause. `proofReads` must not move across the step.
+
+  // The new-shape PASS hybrid: new fields fire the clause, no `jump`
+  // field (so the pre-fix verdict reads this measurement as FAIL on
+  // `typeof m.jump !== 'number'`, and the last assertion is the one
+  // the pre-fix verdict fails):
+  //   AssertionError: expected 'FAIL' to be 'PASS'
+  it.fails('a gossip extension rises at an unchanged `checks` after the lift → PASS (new rule)', () => {
+    const m = {
+      liftAtMs: 20_000,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
+        { height: 105, atMs: 25_000, checks: 2, proofReads: 5, gossipBytes: 50 },
+        { height: 106, atMs: 26_000, checks: 2, proofReads: 5, gossipBytes: 150 },
+      ],
+      proofReadsBaseline: 5,
+      proofReadsFinal: 5,
+      tipHeightFinal: 106,
+      pub1HeightFinal: 107,
+    };
+    // Control: at least two records sit after the lift, so the gossip
+    // clause has a record-before-it to read.
+    const after = m.tipHist.filter((r) => r.atMs >= m.liftAtMs);
+    expect(after.length).toBeGreaterThanOrEqual(2);
+    // Last: the verdict is PASS.
+    expect(verdictS8Gap(m)).toBe('PASS');
+  });
+
+  // The run2.json step-4 sequence (recorded on the stage, step read
+  // PASS under the old rule): tipHist 790 · 791 · 793 · 796 at
+  // `checks` 1 before the cut, 806 at `checks` 2 after it. The
+  // liftAtMs is picked inside the cut window; the step 4 cut lands
+  // after 796 is observed (atMs 1_794_482_150_235) and lifts before
+  // 806 is observed (atMs 1_794_482_180_883), so any value in
+  // (1_794_482_150_235, 1_794_482_180_883) is inside the window. The
+  // value decides nothing: the one post-lift record (806 at
+  // `checks` 2) has its prev at `checks` 1 whichever moment the lift
+  // sits on, so the gossip clause reads no match in either case.
+  // The pre-fix verdict reads the old fields (proofReadsBefore,
+  // proofReadsAfter, jump, tipHeightFinal, pub1HeightFinal, all set)
+  // and returns PASS; the last assertion asks for FAIL:
+  //   AssertionError: expected 'PASS' to be 'FAIL'
+  it.fails('run2 recorded sequence: cut, lift, one catch-up check with no gossip between → FAIL (new rule)', () => {
+    const m = {
+      liftAtMs: 1_794_482_160_000,
+      tipHist: [
+        { height: 790, atMs: 1_794_482_137_035, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 791, atMs: 1_794_482_138_035, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 793, atMs: 1_794_482_141_035, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 796, atMs: 1_794_482_150_235, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 806, atMs: 1_794_482_180_883, checks: 2, proofReads: 0, gossipBytes: 0 },
+      ],
+      proofReadsBaseline: 0,
+      proofReadsFinal: 0,
+      tipHeightFinal: 806,
+      pub1HeightFinal: 806,
+      // Old-shape fields that make the pre-fix verdict read PASS.
+      proofReadsBefore: 0, proofReadsAfter: 0, tipHeightBefore: 789, jump: 3,
+    };
+    // Control: no record whose atMs >= liftAtMs rises with its
+    // `checks` equal to the record before it.
+    let gossipClause = false;
+    for (let i = 1; i < m.tipHist.length; i++) {
+      const c = m.tipHist[i]!;
+      if (c.atMs < m.liftAtMs) continue;
+      const p = m.tipHist[i - 1]!;
+      if (c.height > p.height && c.checks === p.checks) { gossipClause = true; break; }
+    }
+    expect(gossipClause).toBe(false);
+    // Last: FAIL.
+    expect(verdictS8Gap(m)).toBe('FAIL');
+  });
+
+  // The s8.json step-4 sequence (recorded on the stage, step read
+  // PASS under the old rule): tipHist 1117 … 1123 at `checks` 1, 1131
+  // at `checks` 2, 1142 at `checks` 3. The cut lands after 1123 is
+  // observed (atMs 1_794_446_969_670) and lifts a few seconds in;
+  // 1_794_446_980_000 sits inside the window and decides nothing —
+  // the two post-lift records (1131 at `checks` 2 and 1142 at
+  // `checks` 3) each rise with `checks` incremented from the record
+  // before it, so no gossip clause fires for any lift inside the
+  // window. The last assertion asks for FAIL:
+  //   AssertionError: expected 'PASS' to be 'FAIL'
+  it.fails('s8.json recorded sequence: cut, lift, two catch-up checks with no gossip between → FAIL (new rule)', () => {
+    const m = {
+      liftAtMs: 1_794_446_980_000,
+      tipHist: [
+        { height: 1117, atMs: 1_794_446_953_070, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1118, atMs: 1_794_446_956_270, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1119, atMs: 1_794_446_958_270, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1120, atMs: 1_794_446_962_270, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1122, atMs: 1_794_446_963_470, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1123, atMs: 1_794_446_969_670, checks: 1, proofReads: 0, gossipBytes: 0 },
+        { height: 1131, atMs: 1_794_446_998_470, checks: 2, proofReads: 0, gossipBytes: 0 },
+        { height: 1142, atMs: 1_794_447_046_470, checks: 3, proofReads: 0, gossipBytes: 0 },
+      ],
+      proofReadsBaseline: 0,
+      proofReadsFinal: 0,
+      tipHeightFinal: 1142,
+      pub1HeightFinal: 1142,
+      proofReadsBefore: 0, proofReadsAfter: 0, tipHeightBefore: 1116, jump: 8,
+    };
+    expect(verdictS8Gap(m)).toBe('FAIL');
+  });
+
+  // A gossip extension sits in the tipHist but happens before
+  // `liftAtMs`: the client's tip rose at `checks` 1 before the cut
+  // landed (two gossip arrivals mid-first-check), and the only
+  // post-lift record is the catch-up check. The last assertion:
+  //   AssertionError: expected 'PASS' to be 'FAIL'
+  it.fails('a gossip extension lives in tipHist but before the lift → FAIL (new rule)', () => {
+    const m = {
+      liftAtMs: 10_000,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
+        { height: 101, atMs: 2_000, checks: 1, proofReads: 5, gossipBytes: 100 },
+        { height: 105, atMs: 15_000, checks: 2, proofReads: 5, gossipBytes: 100 },
+      ],
+      proofReadsBaseline: 5,
+      proofReadsFinal: 5,
+      tipHeightFinal: 105,
+      pub1HeightFinal: 105,
+      proofReadsBefore: 5, proofReadsAfter: 5, tipHeightBefore: 100, jump: 5,
+    };
+    expect(verdictS8Gap(m)).toBe('FAIL');
+  });
+
+  // Every rise in tipHist after `liftAtMs` moves `checks` from the
+  // record before it — each rise sits on a check boundary, none at
+  // an unchanged `checks`. The last assertion:
+  //   AssertionError: expected 'PASS' to be 'FAIL'
+  it.fails('every rise after the lift moved `checks` → FAIL (new rule)', () => {
+    const m = {
+      liftAtMs: 10_000,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
+        { height: 105, atMs: 15_000, checks: 2, proofReads: 5, gossipBytes: 50 },
+        { height: 110, atMs: 45_000, checks: 3, proofReads: 5, gossipBytes: 50 },
+      ],
+      proofReadsBaseline: 5,
+      proofReadsFinal: 5,
+      tipHeightFinal: 110,
+      pub1HeightFinal: 110,
+      proofReadsBefore: 5, proofReadsAfter: 5, tipHeightBefore: 100, jump: 5,
+    };
+    expect(verdictS8Gap(m)).toBe('FAIL');
+  });
+
+  // `proofReads` moved from the step's start to its end — a proof was
+  // read across the window, which Acceptance 8 forbids. The new fields
+  // carry the change; the old fields are set equal so the pre-fix
+  // verdict reads the measurement as PASS. The last assertion:
+  //   AssertionError: expected 'PASS' to be 'FAIL'
+  it.fails('`proofReads` moved across the step → FAIL (new rule)', () => {
+    const m = {
+      liftAtMs: 10_000,
+      tipHist: [
+        { height: 100, atMs: 1_000, checks: 1, proofReads: 5, gossipBytes: 50 },
+        { height: 105, atMs: 15_000, checks: 2, proofReads: 6, gossipBytes: 150 },
+        { height: 106, atMs: 16_000, checks: 2, proofReads: 6, gossipBytes: 250 },
+      ],
+      proofReadsBaseline: 5,
+      proofReadsFinal: 6,
+      tipHeightFinal: 106,
+      pub1HeightFinal: 107,
+      proofReadsBefore: 5, proofReadsAfter: 5, tipHeightBefore: 100, jump: 5,
+    };
+    expect(verdictS8Gap(m)).toBe('FAIL');
+  });
 });
