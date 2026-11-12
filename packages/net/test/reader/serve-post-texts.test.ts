@@ -6,7 +6,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MSG_SYNC_INFO,
   MODIFIER_POST_BODY,
@@ -15,7 +14,7 @@ import {
   decodeFrame,
   decodeModifierResponse,
   encodeModifierRequest,
-  encodeSyncInfo,
+  modifierRequestCodec,
 } from '../../src/index.js';
 import { encodeFrame } from '../../src/frame.js';
 import {
@@ -23,9 +22,9 @@ import {
   postTextsHandler,
 } from '../../src/mesh/serve-post-texts.js';
 import type { PostTextProvider } from '../../src/mesh/serve-post-texts.js';
-import { decodePostBody } from '@dagsocial/types';
+import { decodePostBody, encodeStruct } from '@dagsocial/types';
 import { makeFakeStream } from '../fake-stream.js';
-import { MAX_SERVE_BODY_BYTES } from '../../src/msg-guards.js';
+import { MAX_MODIFIER_REQUEST_FRAME_BYTES, MAX_SERVE_BODY_BYTES } from '../../src/msg-guards.js';
 
 // The devnet magic is this suite's — a serving reader's frames carry the
 // network's own magic (NET_INTERFACE → Magic Bytes).
@@ -156,9 +155,15 @@ describe("NET_INTERFACE → Readers — a serving reader answers from what it ho
   it('refuses another code, typeId, magic or an undecodable frame', async () => {
     const provider = heldProvider([[id1, 'one']]);
 
-    // (1) A SyncInfo frame — a code the serving reader does not answer.
-    const syncFrame = encodeSyncInfo(MAGIC, { tipHeight: 0, tipHash: H('00') });
-    const r1 = await answerPostTextsRequest(syncFrame, MAGIC, provider).catch(() => 'threw' as const);
+    // (1) A well-formed `modifierRequestCodec` body for a held id, framed
+    // under `MSG_SYNC_INFO` — the body would answer, but the code is not
+    // `MSG_MODIFIER_REQUEST`.
+    const wellFormedRequestBody = encodeStruct(modifierRequestCodec, {
+      typeId: MODIFIER_POST_BODY,
+      ids: [id1],
+    });
+    const wrongCode = encodeFrame(MAGIC, MSG_SYNC_INFO, wellFormedRequestBody);
+    const r1 = await answerPostTextsRequest(wrongCode, MAGIC, provider).catch(() => 'threw' as const);
 
     // (2) A ModifierRequest with a typeId that is not MODIFIER_POST_BODY.
     const badTypeId = encodeModifierRequest(MAGIC, { typeId: 101, ids: [id1] });
@@ -344,12 +349,14 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
       accept: () => true,
     }) as unknown as Handler;
 
-    // A frame whose body is a single malformed byte, padded with trailing
-    // bytes until the whole frame is past the request-frame bound. The
-    // handler's read is bounded by `MAX_MODIFIER_REQUEST_FRAME_BYTES`, so
-    // the stream ends unanswered rather than buffering more.
-    const over = new Uint8Array(200_000);
-    const stream = makeFakeStream([over]);
+    // A well-formed request for a held id, followed by zero-byte padding
+    // until the whole input is past `MAX_MODIFIER_REQUEST_FRAME_BYTES`. The
+    // wire's `decodeFrame` ignores bytes after the body, so the request
+    // would answer `encodePostBody('one')` — only the handler's byte cap
+    // stands between the input and that answer.
+    const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [id1] });
+    const padding = new Uint8Array(MAX_MODIFIER_REQUEST_FRAME_BYTES - req.length + 1);
+    const stream = makeFakeStream([req, padding]);
     await handler(stream, makeConnection('c-oversize')).catch(() => { /* never rejects */ });
 
     const bytesWritten = stream.written.reduce((s, b) => s + b.length, 0);
@@ -357,10 +364,3 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
   });
 });
 
-// The encodeFrame import is kept so a later case can craft a wrong-code frame
-// through the parameterised codec rather than hand-rolling bytes. Reference
-// it here so the import is not elided by the TS checker.
-void encodeFrame;
-void encodeSyncInfo;
-void MSG_MODIFIER_REQUEST;
-void MSG_SYNC_INFO;
