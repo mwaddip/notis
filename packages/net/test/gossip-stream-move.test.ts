@@ -239,7 +239,7 @@ function tcpPortOf(addr: string): number {
   return Number(m[1]);
 }
 
-describe('MESH_INTERFACE → Block gossip → "A peer\'s gossip follows its newest connection"', () => {
+describe(`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`, () => {
   const nodes: NetNode[] = [];
   const hosts: Libp2p[] = [];
   const proxies: Proxy[] = [];
