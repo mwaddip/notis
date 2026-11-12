@@ -712,21 +712,44 @@ export function verdictS8Fork(m) {
 
 // MESH_INTERFACE → Acceptance 8 — "the browser's gossip cut for three
 // blocks and restored, its tip catches up by headers with no proof
-// read". PASS when `proofReads` did not move across the window, the
-// tracker's `jump` was three or more blocks at once (a fill: gossip
-// moves the tip one block at a time, so a jump of three names a
-// headers-driven catch-up), and the tip the fill landed on is within
-// two of pub1's read.
+// read, and gossip extends it after: a block whose parent is the
+// client's tip reaches it by gossip with no check between". The
+// verdict reads what acceptance 8 says, from records after `liftAtMs`:
+// PASS when `proofReads` did not move across the step, the final tip
+// is within two of pub1's read, AND a record in tipHist whose atMs is
+// at or after `liftAtMs` rises with `checks` equal to the record
+// before it — a tip that moved with no check between, which is a
+// gossip extension (MESH_INTERFACE → Block gossip). A record before
+// the lift never satisfies the gossip clause. A missing field FAILs
+// the step with its name.
 // Measurement:
-//   `{ proofReadsBefore, proofReadsAfter, tipHeightBefore,
-//      tipHeightFinal, jump, pub1HeightFinal }`.
+//   `{ liftAtMs, tipHist: [{height, atMs, checks, proofReads,
+//      gossipBytes}, …], proofReadsBaseline, proofReadsFinal,
+//      tipHeightFinal, pub1HeightFinal }`.
 export function verdictS8Gap(m) {
   if (missing(m)) return 'skipped';
-  if (typeof m.proofReadsBefore !== 'number' || typeof m.proofReadsAfter !== 'number') return 'FAIL';
-  if (m.proofReadsAfter !== m.proofReadsBefore) return 'FAIL';
-  if (typeof m.jump !== 'number' || m.jump < 3) return 'FAIL';
+  if (typeof m.liftAtMs !== 'number') return 'FAIL';
+  if (!Array.isArray(m.tipHist)) return 'FAIL';
+  if (typeof m.proofReadsBaseline !== 'number') return 'FAIL';
+  if (typeof m.proofReadsFinal !== 'number') return 'FAIL';
   if (typeof m.tipHeightFinal !== 'number') return 'FAIL';
   if (typeof m.pub1HeightFinal !== 'number') return 'FAIL';
+  if (m.proofReadsFinal !== m.proofReadsBaseline) return 'FAIL';
   if (Math.abs(m.pub1HeightFinal - m.tipHeightFinal) > 2) return 'FAIL';
+  let gossipFound = false;
+  for (let i = 1; i < m.tipHist.length; i += 1) {
+    const curr = m.tipHist[i];
+    if (curr === null || typeof curr !== 'object') return 'FAIL';
+    if (typeof curr.atMs !== 'number' || typeof curr.checks !== 'number' || typeof curr.height !== 'number') return 'FAIL';
+    if (curr.atMs < m.liftAtMs) continue;
+    const prev = m.tipHist[i - 1];
+    if (prev === null || typeof prev !== 'object') return 'FAIL';
+    if (typeof prev.checks !== 'number' || typeof prev.height !== 'number') return 'FAIL';
+    if (curr.checks === prev.checks && curr.height > prev.height) {
+      gossipFound = true;
+      break;
+    }
+  }
+  if (!gossipFound) return 'FAIL';
   return 'PASS';
 }

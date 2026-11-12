@@ -1290,20 +1290,20 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // last assertion of each PASS retarget asks for PASS, which the
   // pre-fix verdict fails:
   //   AssertionError: expected 'FAIL' to be 'PASS'
-  it.fails('every pass condition holds → PASS', () => {
+  it('every pass condition holds → PASS', () => {
     expect(verdictS8Gap(PASS)).toBe('PASS');
   });
-  it.fails('tip is level with pub1 (within zero) → PASS', () => {
+  it('tip is level with pub1 (within zero) → PASS', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 107, pub1HeightFinal: 107 })).toBe('PASS');
   });
-  it.fails('tip is two blocks past pub1 (pub1 trailing the client within two) → PASS', () => {
+  it('tip is two blocks past pub1 (pub1 trailing the client within two) → PASS', () => {
     expect(verdictS8Gap({ ...PASS, tipHeightFinal: 107, pub1HeightFinal: 105 })).toBe('PASS');
   });
   // The former "jump is exactly three" PASS covered the smallest fill
   // under the old rule; the catch-up moving the tip by exactly three
   // blocks is the same edge in the new tipHist (the record at `checks`
   // 2 rises three blocks above the baseline record at `checks` 1).
-  it.fails('the catch-up record rises the tip by exactly three → PASS', () => {
+  it('the catch-up record rises the tip by exactly three → PASS', () => {
     expect(verdictS8Gap({
       ...PASS,
       tipHist: [
@@ -1371,7 +1371,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // `typeof m.jump !== 'number'`, and the last assertion is the one
   // the pre-fix verdict fails):
   //   AssertionError: expected 'FAIL' to be 'PASS'
-  it.fails('a gossip extension rises at an unchanged `checks` after the lift → PASS (new rule)', () => {
+  it('a gossip extension rises at an unchanged `checks` after the lift → PASS (new rule)', () => {
     const m = {
       liftAtMs: 20_000,
       tipHist: [
@@ -1406,7 +1406,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // proofReadsAfter, jump, tipHeightFinal, pub1HeightFinal, all set)
   // and returns PASS; the last assertion asks for FAIL:
   //   AssertionError: expected 'PASS' to be 'FAIL'
-  it.fails('run2 recorded sequence: cut, lift, one catch-up check with no gossip between → FAIL (new rule)', () => {
+  it('run2 recorded sequence: cut, lift, one catch-up check with no gossip between → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 1_794_482_160_000,
       tipHist: [
@@ -1447,7 +1447,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // before it, so no gossip clause fires for any lift inside the
   // window. The last assertion asks for FAIL:
   //   AssertionError: expected 'PASS' to be 'FAIL'
-  it.fails('s8.json recorded sequence: cut, lift, two catch-up checks with no gossip between → FAIL (new rule)', () => {
+  it('s8.json recorded sequence: cut, lift, two catch-up checks with no gossip between → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 1_794_446_980_000,
       tipHist: [
@@ -1474,7 +1474,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // landed (two gossip arrivals mid-first-check), and the only
   // post-lift record is the catch-up check. The last assertion:
   //   AssertionError: expected 'PASS' to be 'FAIL'
-  it.fails('a gossip extension lives in tipHist but before the lift → FAIL (new rule)', () => {
+  it('a gossip extension lives in tipHist but before the lift → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
       tipHist: [
@@ -1495,7 +1495,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // record before it — each rise sits on a check boundary, none at
   // an unchanged `checks`. The last assertion:
   //   AssertionError: expected 'PASS' to be 'FAIL'
-  it.fails('every rise after the lift moved `checks` → FAIL (new rule)', () => {
+  it('every rise after the lift moved `checks` → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
       tipHist: [
@@ -1517,7 +1517,7 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
   // carry the change; the old fields are set equal so the pre-fix
   // verdict reads the measurement as PASS. The last assertion:
   //   AssertionError: expected 'PASS' to be 'FAIL'
-  it.fails('`proofReads` moved across the step → FAIL (new rule)', () => {
+  it('`proofReads` moved across the step → FAIL (new rule)', () => {
     const m = {
       liftAtMs: 10_000,
       tipHist: [

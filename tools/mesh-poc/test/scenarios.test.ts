@@ -958,7 +958,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // The pre-fix observer still ends on fill + one more, so the last
   // assertion fails until the fix:
   //   AssertionError: expected { tipHeight: 106, ... } to be null
-  it.fails('s8GapObserve: a jump of three plus one more tip change, both at checks<=2 from a base at checks=1, leaves final null', () => {
+  it('s8GapObserve: a jump of three plus one more tip change, both at checks<=2 from a base at checks=1, leaves final null', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
       { checks: 1, tip: { height: 101 }, traffic: { proofReads: 5, gossipBytes: 150 } },
@@ -978,7 +978,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // still null (checks hasn't yet reached base + 3 = 4). The pre-fix
   // observer ends on fill + one more at the second tip change:
   //   AssertionError: expected { tipHeight: 105, ... } to be null
-  it.fails('s8GapObserve: a catch-up, gossip extension and the next check (checks=3 from base=1) leave final null', () => {
+  it('s8GapObserve: a catch-up, gossip extension and the next check (checks=3 from base=1) leave final null', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } },
       { checks: 2, tip: { height: 103 }, traffic: { proofReads: 5, gossipBytes: 150 } },
@@ -995,7 +995,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // A jump of exactly three from a base at checks=1, with checks=2
   // and checks=3 observed, still does not end the tracker — the
   // terminator reads `checks >= base + 3`.
-  it.fails('s8GapObserve: a baseline at checks=1 and a snapshot at checks=4 records final with the snapshot\'s figures', () => {
+  it('s8GapObserve: a baseline at checks=1 and a snapshot at checks=4 records final with the snapshot\'s figures', () => {
     const sequence = [
       { checks: 1, tip: { height: 100 }, traffic: { proofReads: 7, gossipBytes: 20 } },
       { checks: 2, tip: { height: 103 }, traffic: { proofReads: 7, gossipBytes: 20 } },
@@ -1036,7 +1036,7 @@ describe('s8 (prove once, follow by gossip)', () => {
   // Retarget: tipHist now carries gossipBytes beside height, atMs,
   // checks and proofReads. The end condition is on `checks` passing
   // base + 3, not on a fill-plus-one-more.
-  it.fails('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks, proofReads and gossipBytes', () => {
+  it('s8GapObserve: tipHist records every tip change after the baseline, carrying height, atMs, checks, proofReads and gossipBytes', () => {
     const sequence = [
       { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } }, nowMs: 1_000 },
       { snap: { checks: 1, tip: { height: 100 }, traffic: { proofReads: 5, gossipBytes: 50 } }, nowMs: 1_100 },

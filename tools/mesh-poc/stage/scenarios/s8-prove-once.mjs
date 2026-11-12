@@ -58,31 +58,33 @@
 //      paired with the client's. `verdictS8Fork`: PASS when lagging
 //      reads `behind`, the client's tip hash equals pub1's node's
 //      block hash at that height, and the delta is exactly two.
-//   4. A gap filled by headers — stage default plus a step-scoped
-//      hostile firewall from the browser to every hostile host
-//      (same rule as step 1, a `FaultLog` fault, removed in `finally`).
-//      The hostile firewall keeps the gap-fill measurement honest:
-//      without it the client's DHT walk reaches each hostile mesh
-//      node and its proof is read at a check — one proof read per
-//      hostile host, which would mask the fill. Beside the hostile
-//      firewall, the gap cut: firewall the browser from every mesh
-//      node until pub1's node is three blocks past the client's tip
-//      at the moment the cut landed; remove the cut; wait for the
-//      tracker to signal a fill followed by one more gossip-paced
-//      tip change. The cut is short — gossip moves the tip one
-//      block at a time, so the cut ends before any check sees it.
-//      The tracker ends at the first one-block tip change AFTER its
-//      first jump of three or more (the fill, then gossip extending
-//      the tip it reached — the client is at the head), recording
-//      `proofReads` and the tip at that one-block-after point; the
+//   4. A gap filled by headers and gossip extending it after — stage
+//      default plus a step-scoped hostile firewall from the browser
+//      to every hostile host (same rule as step 1, a `FaultLog`
+//      fault, removed in `finally`). The hostile firewall keeps the
+//      gap-fill measurement honest: without it the client's DHT walk
+//      reaches each hostile mesh node and its proof is read at a
+//      check — one proof read per hostile host, which would mask the
+//      gossip clause. Beside the hostile firewall, the gap cut:
+//      firewall the browser from every mesh node until pub1's node
+//      is three blocks past its tip at the cut; remove the cut and
+//      record `liftAtMs` = Date.now() right after the removal; wait
+//      for the tracker to reach at least one full check interval
+//      after the cut could have lifted — the tracker ends when its
+//      sampled `checks` has advanced three past the baseline. The
 //      scenario then reads pub1. `verdictS8Gap`: PASS when
-//      `proofReads` did not move, the fill `jump` was three or more,
-//      and the tip is within two of pub1's read. The step keeps one
-//      page open through a non-blocking spawn of `cdp.mjs poll`; a
-//      fresh page's first check reads a proof, which would mask the
-//      "no proof" conclusion. The pure `s8GapObserve` carries the
-//      state transition; `buildS8GapExpression` inlines it so the
-//      live tracker and the Node tests run the same logic.
+//      `proofReads` did not move across the step, the final tip is
+//      within two of pub1's read, AND a record in tipHist whose atMs
+//      is at or after `liftAtMs` rises with `checks` equal to the
+//      record before it — a tip that moved with no check between,
+//      which is a gossip extension (MESH_INTERFACE → Block gossip; a
+//      record before the lift never satisfies the clause). The step
+//      keeps one page open through a non-blocking spawn of
+//      `cdp.mjs poll`; a fresh page's first check reads a proof,
+//      which would mask the "no proof" conclusion. The pure
+//      `s8GapObserve` carries the state transition;
+//      `buildS8GapExpression` inlines it so the live tracker and the
+//      Node tests run the same logic.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -510,66 +512,74 @@ export function buildS8ForkExpression(laggingId) {
 export const S8_FORK_PREDICATE = `if (v === null) return false;
   try { return JSON.parse(v).final !== null; } catch (_e) { return false; }`;
 
-// MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a baseline
-// on the first completed check, then waits for a fill (a tip change
-// of three or more blocks at once, since gossip moves the tip one
-// block at a time) followed by one more tip change (the client is at
-// the head: gossip extends past the fill as pub1 keeps mining).
-// `final` is captured at that one-block-after-fill point, so the
-// measurement reads `proofReads` and `tipHeight` at the head — not at
-// the moment the fill landed, when pub1 is still ahead by the chain's
-// own pace. `jump` keeps the fill's size (`verdictS8Gap` reads
-// `jump >= 3`); `fillJump` is the intermediate the state carries
-// between the fill and the next tip change.
+// MESH_INTERFACE → Acceptance 8 — step 4's tracker captures a
+// baseline on the first completed check, records every tip change
+// after it in `tipHist`, and ends once the sampled `checks` has
+// advanced three past the baseline — one check interval past the
+// worst-case lift, so a gossip extension at the catch-up `checks` has
+// a chance to land before the final state. Each tipHist entry carries
+// height, atMs, checks, `traffic.proofReads` and `traffic.gossipBytes`
+// so the Node-side verdict reads the gossip clause from records after
+// `liftAtMs`: "a block whose parent is the client's tip reaches it by
+// gossip with no check between" (MESH_INTERFACE → Block gossip; the
+// client moves its tip either by extending it with a gossiped block
+// — `packages/web/src/mesh/mesh-client.ts`'s `handleGossipMessage`
+// sets the tip without incrementing `checks` — or by `runCheck`,
+// which increments `checks` and then sets the tip from the chain).
 //
 // `s8GapObserve` is pure (no DOM, no `window` access; the wall clock
 // is `nowMs`, read once per call by the caller) so the Node suite
 // drives it with a sequence of simulated `#state` snapshots and
-// reads the resulting state's `tipHist` and `final` fields.
+// reads the resulting state's `tipHist`, `base` and `final` fields.
 // `tipHist` records every tip change past the baseline — height,
-// atMs, checks, proofReads — so a run shows the whole sequence,
-// including a tip that goes back.
+// atMs, checks, proofReads, gossipBytes — so a run shows the whole
+// sequence, including a tip that goes back.
 export function s8GapObserve(prev, s, nowMs) {
   if (s === null || typeof s !== 'object') return prev;
   if (typeof s.checks !== 'number') return prev;
   if (s.traffic === null || typeof s.traffic !== 'object') return prev;
   if (typeof s.traffic.proofReads !== 'number') return prev;
+  if (typeof s.traffic.gossipBytes !== 'number') return prev;
   if (s.tip === null || typeof s.tip !== 'object' || typeof s.tip.height !== 'number') return prev;
   if (typeof nowMs !== 'number') return prev;
   var next = prev === null || typeof prev !== 'object'
-    ? { base: null, lastTipHeight: null, fillJump: null, tipHist: [], final: null }
+    ? { base: null, lastTipHeight: null, tipHist: [], final: null }
     : {
         base: prev.base,
         lastTipHeight: prev.lastTipHeight,
-        fillJump: prev.fillJump,
         tipHist: Array.isArray(prev.tipHist) ? prev.tipHist.slice() : [],
         final: prev.final,
       };
   if (next.base === null && s.checks >= 1) {
-    next.base = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads };
+    next.base = {
+      tipHeight: s.tip.height,
+      proofReads: s.traffic.proofReads,
+      checks: s.checks,
+      gossipBytes: s.traffic.gossipBytes,
+    };
     next.lastTipHeight = s.tip.height;
     return next;
   }
   if (next.base === null) return next;
   if (next.final !== null) return next;
-  if (s.tip.height === next.lastTipHeight) return next;
-  var jump = s.tip.height - next.lastTipHeight;
-  next.lastTipHeight = s.tip.height;
-  next.tipHist.push({
-    height: s.tip.height,
-    atMs: nowMs,
-    checks: s.checks,
-    proofReads: s.traffic.proofReads,
-  });
-  if (next.fillJump === null) {
-    // Phase A: waiting for the fill — a tip change of three or more
-    // at once names the headers-driven catch-up.
-    if (jump >= 3) next.fillJump = jump;
-    return next;
+  if (s.tip.height !== next.lastTipHeight) {
+    next.lastTipHeight = s.tip.height;
+    next.tipHist.push({
+      height: s.tip.height,
+      atMs: nowMs,
+      checks: s.checks,
+      proofReads: s.traffic.proofReads,
+      gossipBytes: s.traffic.gossipBytes,
+    });
   }
-  // Phase B: fill reached, waiting for one more tip change — gossip
-  // extending the tip past the fill. The client is at the head.
-  next.final = { tipHeight: s.tip.height, proofReads: s.traffic.proofReads, jump: next.fillJump };
+  if (s.checks >= next.base.checks + 3) {
+    next.final = {
+      tipHeight: s.tip.height,
+      proofReads: s.traffic.proofReads,
+      checks: s.checks,
+      gossipBytes: s.traffic.gossipBytes,
+    };
+  }
   return next;
 }
 
@@ -838,11 +848,16 @@ export async function run(ctx) {
           throw new Error(`s8 step 4: pub1 did not advance 3 blocks within 120 s (${pubAtFirewall} → ${pubAtRemoval})`);
         }
         // Remove the firewall; the client's retry cadence reconnects
-        // to the mesh and fills by headers.
+        // to the mesh and fills by headers. The scenario's wall clock
+        // and the page's are this machine's — the lift's `Date.now()`
+        // is read on the same clock as each tipHist entry's `atMs`,
+        // so the verdict's `atMs >= liftAtMs` comparison stands.
         log.remove('browser-gap-add-table');
         gapFirewallApplied = false;
-        // Wait for the tracker to signal a fill (a tip change of ≥ 3
-        // at once past its baseline), capped at 3 minutes.
+        const liftAtMs = Date.now();
+        // Wait for the tracker to pass one check interval after the
+        // cut lifted — the observer ends once `checks` has advanced
+        // three past the baseline (MESH_INTERFACE → Acceptance 8).
         const value = await tracker.promise;
         const r = parseTrackerValue(value);
         if (r === null) {
@@ -855,15 +870,14 @@ export async function run(ctx) {
         }
         const pub1HeightFinal = readPub1Height(ctx, pub1Port);
         const m = {
-          proofReadsBefore: r.base.proofReads,
-          proofReadsAfter: r.final.proofReads,
-          tipHeightBefore: r.base.tipHeight,
+          liftAtMs,
+          tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
+          proofReadsBaseline: r.base.proofReads,
+          proofReadsFinal: r.final.proofReads,
           tipHeightFinal: r.final.tipHeight,
-          jump: r.final.jump,
           pub1HeightFinal,
           pubAtFirewall,
           pubAtRemoval,
-          tipHist: Array.isArray(r.tipHist) ? r.tipHist : [],
         };
         return { verdict: verdictS8Gap(m), measurement: m };
       } finally {
