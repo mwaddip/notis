@@ -1533,4 +1533,34 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
     };
     expect(verdictS8Gap(m)).toBe('FAIL');
   });
+
+  // A slow chain during the warmup can land the first tip change past
+  // the baseline AFTER the firewall is removed: `tipHist[0]` is itself
+  // the post-lift gossip extension, at the same `checks` as the base.
+  // The gossip clause reads the first post-lift record against the
+  // baseline it rose from — the base's height and `checks` are the
+  // record before `tipHist[0]`. The pre-fix loop starts at `i = 1`,
+  // leaves `tipHist[0]` uncompared, and FAILs the step; the last
+  // assertion asks for PASS:
+  //   AssertionError: expected 'FAIL' to be 'PASS'
+  it.fails('tipHist[0] is the post-lift gossip extension at the base\'s `checks` → PASS (new rule)', () => {
+    const m = {
+      liftAtMs: 10_000,
+      baseline: { height: 100, checks: 1 },
+      tipHist: [
+        { height: 101, atMs: 15_000, checks: 1, proofReads: 5, gossipBytes: 150 },
+        { height: 102, atMs: 60_000, checks: 4, proofReads: 5, gossipBytes: 250 },
+      ],
+      proofReadsBaseline: 5,
+      proofReadsFinal: 5,
+      tipHeightFinal: 102,
+      pub1HeightFinal: 103,
+    };
+    // Control: the first record past the baseline sits after the lift
+    // and carries the base's `checks`.
+    expect(m.tipHist[0]!.atMs).toBeGreaterThanOrEqual(m.liftAtMs);
+    expect(m.tipHist[0]!.checks).toBe(m.baseline.checks);
+    // Last: the verdict is PASS — the gossip clause fires against the base.
+    expect(verdictS8Gap(m)).toBe('PASS');
+  });
 });
