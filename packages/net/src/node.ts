@@ -1653,9 +1653,10 @@ export class NetNode {
         });
       }
       const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
-      // NET_INTERFACE → Readers → "A reader is never asked for chain data":
-      // the scheduler and the peerActive handlers fire for a chain-serving
-      // peer alone. A non-chain outbound was closed above.
+      // NET_INTERFACE → Readers → "A peer dialled for chain service that
+      // declares none is closed": a reader has no path to here, so the
+      // scheduler and the peerActive handlers fire for a chain-serving
+      // peer alone.
       this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
       for (const cb of this.peerActiveHandlers) {
         try { cb(peerId, dir); } catch (err) {
@@ -2017,14 +2018,24 @@ export class NetNode {
 
           this.peerMgr.setPeerState(peerId, PeerState.Active);
           const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
-          // NET_INTERFACE → Readers → "A reader is never asked for chain
-          // data": the scheduler and the peerActive handlers fire for a
-          // chain-serving peer alone.
+          // NET_INTERFACE → Readers → "The peer hooks see chain-serving
+          // peers alone": the scheduler and the peerActive handlers fire
+          // for a chain-serving peer alone. NET_INTERFACE → Readers →
+          // "A reader's arrival has a hook of its own": the else branch
+          // fires onReaderActive for a reader, never for a reader closed
+          // for maxReaders — the budget check above returns before this
+          // one does.
           if (peerServesChain) {
             this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
             for (const cb of this.peerActiveHandlers) {
               try { cb(peerId, dir); } catch (err) {
                 console.warn(`[net] peerActive handler error: ${String(err)}`);
+              }
+            }
+          } else {
+            for (const cb of this.readerActiveHandlers) {
+              try { cb(peerId); } catch (err) {
+                console.warn(`[net] readerActive handler error: ${String(err)}`);
               }
             }
           }
@@ -2486,7 +2497,16 @@ export class NetNode {
    * (NET_INTERFACE → Readers → "A reader is never asked for chain data").
    */
   getServingReaders(): string[] {
-    return [];
+    const out: string[] = [];
+    for (const peer of this.peerMgr.getPeers()) {
+      if (!this.peerMgr.isPeerActive(peer.id)) continue;
+      const caps = peer.capabilities;
+      if (!caps) continue;
+      if (servesChain(caps)) continue;
+      if (!declares(caps, MSG_MODIFIER_REQUEST)) continue;
+      out.push(peer.id);
+    }
+    return out;
   }
 
   /**
