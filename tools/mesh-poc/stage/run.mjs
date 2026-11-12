@@ -34,22 +34,13 @@ const SCENARIOS_OUT_DIR = join(OUT_DIR, 'scenarios');
 const TOPOLOGY_PATH = join(HERE, 'topology.json');
 const PIDS_PATH = join(OUT_DIR, 'pids.json');
 
-// MESH_INTERFACE → Block gossip → "A router scores its peers by
-// gossipsub's defaults" — the IP colocation penalty is kept an hour,
-// so every browser peer this run opens from the one NAT address
-// counts against every other for the rest of the run. s6 is where
-// the publisher's view of the browser's peer id matters: the client
-// has to be the only peer at the browser's address when it joins the
-// mesh, or the publisher's score for it is already past the ignore
-// threshold and the client never sees a block. Running s6 first keeps
-// its mesh unseeded by every other scenario's pages.
 const SCENARIOS = {
-  s6,
   s1,
   s2,
   s3,
   s4,
   s5,
+  s6,
   s7,
   s8,
 };

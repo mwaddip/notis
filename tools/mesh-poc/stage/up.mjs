@@ -1657,13 +1657,11 @@ const CHROMIUM_QUIET_FLAGS = [
 // `net::ERR_NAME_NOT_RESOLVED`.
 const internetSubnetPrefix = topology.internet.subnet.replace(/\.0\/\d+$/, '.*');
 const CHROMIUM_HOST_RESOLVER_RULES = `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost , EXCLUDE ${internetSubnetPrefix}`;
-// MESH_INTERFACE → Block gossip → "A router scores its peers by
-// gossipsub's defaults" — the IP colocation penalty counts every peer
-// behind one NAT address for an hour, so a Chromium start page that
-// loads the stage page keeps a mesh peer alive for the whole run and
-// bends every subsequent scenario's scores. The start page is
-// `about:blank`; scenarios open their own targets at the stage URL
-// through `cdp.mjs`, each closed when the scenario is done with it.
+// A start page that loaded the stage page would run a client of its
+// own for the whole run, beside every scenario's page; a scenario's own
+// page is the run's one client. The start page is `about:blank`;
+// scenarios open their own targets at the stage URL through `cdp.mjs`,
+// each closed when the scenario is done with it.
 log.spawn(userWrap(nsOf('browser'), { HOME: browserProfileHome, DISPLAY: process.env.DISPLAY ?? ':0' }, chromiumBin).concat([
   '--headless=new',
   `--user-data-dir=${browserProfileDir}`,

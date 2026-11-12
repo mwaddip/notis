@@ -949,13 +949,9 @@ describe('stage up --dry-run', () => {
     }
   }, 30_000);
 
-  // MESH_INTERFACE → Block gossip → "A router scores its peers by
-  // gossipsub's defaults" — Chromium's own start page is where every
-  // scenario's cdp.mjs opens its targets from; if it loads the stage
-  // page itself, that start-page client stays in the gossip mesh for
-  // the whole run. Starting Chromium on `about:blank` keeps the start
-  // page out of the mesh — scenarios open their own targets at the
-  // stage URL as before.
+  // A start page that loaded the stage page would run a client of its
+  // own for the whole run, beside every scenario's page; the scenario's
+  // own page is the run's one client.
   it('Chromium starts on about:blank, not the stage page', () => {
     runDryOnce();
     const line = out.split('\n').find((l) => l.startsWith('[spawn:chromium]'));

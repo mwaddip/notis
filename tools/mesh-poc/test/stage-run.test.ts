@@ -28,14 +28,8 @@ describe('stage:run --dry-run', () => {
     }
   }
 
-  // MESH_INTERFACE → Block gossip → "A router scores its peers by
-  // gossipsub's defaults" — the IP colocation penalty's hour-long
-  // window pins every peer behind one NAT address to one score. s6
-  // builds and tears down a fresh browser-side mesh each step, so
-  // running it first keeps the earlier scenarios' pages out of its
-  // measurement window.
-  const EXPECTED_ORDER = ['s6', 's1', 's2', 's3', 's4', 's5', 's7', 's8'];
-  it('exits 0 and prints the eight scenarios in order, s6 first', () => {
+  const EXPECTED_ORDER = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+  it('exits 0 and prints the eight scenarios in order, s1 to s8', () => {
     runDryOnce();
     expect(status).toBe(0);
     for (const name of EXPECTED_ORDER) {
