@@ -4,7 +4,7 @@
 // `postTextsHandler` answers a stream on `SYNC_PROTOCOL` under its
 // deadlines. Browser-safe path: reached through `@dagsocial/net/browser`.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   MSG_MODIFIER_RESPONSE,
   MSG_SYNC_INFO,
@@ -256,14 +256,14 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
   it('one request at a time per connection', async () => {
     const id1 = H('11');
     const id2 = H('22');
-    // The first stream's provider holds its answer until the case releases
-    // it; the second stream opens on the same connection while the first
-    // is still being answered.
+    // The first stream's provider parks on `firstGate` the case releases;
+    // the second stream opens on the same connection while the first is
+    // still being answered.
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    let firstCalled = 0;
+    let firstEntered = false;
     const firstProvider: PostTextProvider = async () => {
-      firstCalled++;
+      firstEntered = true;
       await firstGate;
       return new Map([[id1, 'first']]);
     };
@@ -282,13 +282,13 @@ describe('NET_INTERFACE → Readers — the serving reader handler', () => {
     const s2 = makeFakeStream([req2]);
 
     const p1 = handler(s1, conn).catch(() => { /* never rejects */ });
-    // Yield so the handler reaches the provider call.
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait on the first handler entering the provider — the connection's
+    // id is already in the in-flight set at this point.
+    await vi.waitFor(() => expect(firstEntered).toBe(true));
     const p2 = handler(s2, conn).catch(() => { /* never rejects */ });
-    // Yield so the second handler has a chance to refuse.
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait on the second stream being closed — its unanswered end-of-life
+    // is what "one request at a time" means.
+    await vi.waitFor(() => expect(s2.closed).toBe(true));
 
     const s2WrittenBeforeRelease = s2.written.reduce((s, b) => s + b.length, 0);
     const s2ClosedBeforeRelease = s2.closed;
