@@ -323,6 +323,8 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
     logger(`consolidation submit answer has status=${String(postRead.data['status'])}`);
     return idle;
   }
+  // MINING_INTERFACE → Consolidation → "A consolidation the node answers `pending` logs one line naming its id and its input count."
+  logger(`consolidation sent: ${txId} (${spendable.length} inputs)`);
   return { sent: true, inputCount: spendable.length, full: fullAtByteBound };
 }
 
