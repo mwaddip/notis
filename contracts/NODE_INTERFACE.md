@@ -1795,6 +1795,16 @@ it chooses, exactly as it chooses which transactions to include at all; a verifi
 and the charge and nothing else. **Two honest producers building different blocks from one state is
 not a divergence.**
 
+✅ **This node's producer collects at its template, from the boxes no pooled transaction spends.** It
+chooses its rent transactions when it builds a template and leaves out every eligible box an entry of
+its pool spends (MEMPOOL_INTERFACE → Block Creator Integration): an owner's spend the pool holds then
+moves the box first, and no body carries one box twice. A spend admitted after the template that
+collects its box was built loses to that block — a template is rebuilt only when the tip moves
+(→ Triggers → "The template is voided at the commit that moves the tip, and nowhere else") — and
+leaves the pool at the block's application (MEMPOOL_INTERFACE → followAppliedBlock). **Policy, not
+consensus**, as the admission refusal below is: a block that collects a box a pooled spend names is
+valid whoever built it.
+
 ⛔ **A rent transaction is REFUSED AT MEMPOOL ADMISSION, and that is what makes collection the
 producer's.** `admitTx` rejects one outright — the same seam the fee floor occupies and for the same
 reason: **policy, not consensus.** A block carrying a rent transaction is valid whoever built it, and
