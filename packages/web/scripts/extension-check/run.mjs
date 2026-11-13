@@ -9136,6 +9136,34 @@ async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
   return false;
 }
 
+// Wait for a node's log to carry a new `[net] inbound handshake from <peerId>
+// on id=<connId>: ok=true height=<h>` line past `sinceOffset` — the one line
+// `packages/net`'s node writer records when an inbound handshake completes.
+// D peers with no node in M5 (`BOOTSTRAP_PEERS=""`), so every inbound
+// handshake is a reader's; the matched line names which reader connected and
+// the offset after it lets the caller start the next wait from this point.
+// Returns `{ peerId, matched, offsetAfter }` on match, `null` on timeout.
+async function waitForNewInboundHandshakeInLog(logPath, sinceOffset, ms = 90000) {
+  const needle = /\[net\] inbound handshake from (\S+) on id=\S+: ok=true/;
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset) {
+        const slice = data.slice(sinceOffset);
+        const m = needle.exec(slice);
+        if (m !== null) {
+          const lineEndRel = slice.indexOf('\n', m.index);
+          const offsetAfter = sinceOffset + (lineEndRel === -1 ? slice.length : lineEndRel + 1);
+          return { peerId: m[1], matched: m[0], offsetAfter };
+        }
+      }
+    } catch { /* log not written yet or vanished — poll again */ }
+    await sleep(500);
+  }
+  return null;
+}
+
 // `GET /blocks/current` of a node as `{height, hash}` or null; a height-0
 // chain reads `{height: 0, hash: null}` (`NODE_INTERFACE → Blocks` —
 // `/blocks/current`).
@@ -9716,8 +9744,9 @@ async function runMeshStepM4(bcx) {
 // every table D needs; an UPDATE nulls P's text on the copy alone. D spawns MESH_ROLE=public,
 // NODE_ROLE=miner with its own MINING_SECRET, BOOTSTRAP_PEERS empty — so
 // it peers with no node, no node gives it P's text, and its puller asks
-// the serving reader alone — and its own miner lands a block every few
-// seconds. The extension reaches D as the reader's own node by writing
+// the serving reader alone — and its own miner runs at MINER_PCT=10 so a
+// block lands every few seconds rather than as fast as the CPU allows.
+// The extension reaches D as the reader's own node by writing
 // `notis.node.hand` in the extension page's localStorage to D's
 // webrtc-direct multiaddr from its identity line (certhash and /p2p/
 // included), with `notis.node.hand.off` removed, before a fresh page
@@ -9729,17 +9758,26 @@ async function runMeshStepM4(bcx) {
 // disagreement is the reader's question, never the client's choice"`).
 //
 // M5a — serving off (the default; `notis.serve` holds `'1'` while on):
-// across five of D's blocks after the fresh page's first verdict, D's
-// `GET /posts/<P>` answers P with `content: null`, and D's log holds no
-// `post_received` line naming P.
+// after page5a opens, D's log carries a new `[net] inbound handshake from
+// <peerId> on id=<connId>: ok=true` line within 90 s — D peers with no
+// node, so every inbound handshake is a reader's and the extension having
+// reached D is a precondition of the "no text arrived" check. Across five
+// of D's blocks after that, D's `GET /posts/<P>` answers P with
+// `content: null`, and D's log holds no `post_received` line naming P.
 // M5b — serving on, pressed through Input.dispatchMouseEvent on the serve
 // row's `on` word (`WEB_INTERFACE → The settings window → "The serve row"`,
 // which redials every node at once); the hint stands beneath the row
 // (`nodes this page reads from may ask it for posts, and learn which ones
-// you hold and your address.`). Within ten of D's blocks or 120 s,
-// whichever is later, D's `GET /posts/<P>` answers P's text, and D's log
-// holds a `post_received` line naming P with `via` `pull` and a `source`
-// that is not D's own peer id.
+// you hold and your address.`). The press redials, so D's log carries a
+// second new `ok=true` inbound handshake line past the offset captured
+// before the press within 90 s; `post_received`'s `source` for P equals
+// that redial's peer id. Within ten of D's blocks or 120 s, whichever is
+// later, and bounded at 300 s from the press whatever D's height so a D
+// that stops mining does not keep the wait running, D's `GET /posts/<P>`
+// answers P's text, and D's log holds a `post_received` line naming P with
+// `via` `pull`. D's heights at each read, and the seconds between the M5a
+// and M5b reads, land in the detail — the record shows the pace the run
+// had.
 async function runSqliteCmd(args) {
   await new Promise((resolve, reject) => {
     const child = spawn('sqlite3', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -9794,17 +9832,20 @@ async function runMeshStepM5(cx, bcx) {
     console.log(`[vm] M5: D up: notisId=${dSpawn.identity.notisId.slice(0, 16)}…, peerId=${dSpawn.identity.peerId}, mesh addr=${dAddr}`);
     const dPeerId = dSpawn.identity.peerId;
 
+    // D's miner runs at `MINER_PCT=10` — a paced miner, not a tight CPU
+    // loop, so every block D mines is gossiped to the page which checks each
+    // one at the pace D sets, not at the pace the CPU allows.
     spawnDaemon('d-m5-miner', MINER_SCRIPT, {
       NODE_URL: DM5_ORIGIN,
       MINING_SECRET: dSecret,
-      MINER_PCT: '100',
+      MINER_PCT: '10',
     });
     const dLogPath = join(SCRATCH, 'd-m5.log');
 
     const h5aBase = await currentHeight(DM5_ORIGIN);
     if (h5aBase === null) throw new Error(`could not read D height at M5a start`);
-    if ((await waitForHeight(DM5_ORIGIN, h5aBase + 1, 120000)) === null) {
-      throw new Error(`D did not mine its first block within 120 s after mining start (base=${h5aBase})`);
+    if ((await waitForHeight(DM5_ORIGIN, h5aBase + 1, 180000)) === null) {
+      throw new Error(`D did not mine its first block within 180 s after mining start (base=${h5aBase})`);
     }
 
     await cx.eval(`(() => {
@@ -9814,6 +9855,14 @@ async function runMeshStepM5(cx, bcx) {
       return { hand: localStorage.getItem('notis.node.hand'), off: localStorage.getItem('notis.node.hand.off'), serve: localStorage.getItem('notis.serve') };
     })()`);
 
+    // M5a — serve off (the default). D's inbound handshake log carries one
+    // line per reader that connected; D peers with no node so every such
+    // line names a reader (`packages/net`'s node writer logs `[net] inbound
+    // handshake from <peerId> on id=<connId>: ok=true height=<h>`). Capture
+    // the offset before page5a opens; the first new `ok=true` line past the
+    // offset names the extension's redial — without it, no reader reached D
+    // and "content is null" would hold for a page that never connected.
+    const inHsOffsetBeforePage5a = logOffset(dLogPath);
     page5a = await openFreshExtensionPage(bcx);
     await page5a.cx.waitFor(`!!document.querySelector('.corner')`, 'corner m5a', 30000);
     await waitForCornerState(
@@ -9822,6 +9871,12 @@ async function runMeshStepM5(cx, bcx) {
       'first corner reading on M5a (D as hand-added)',
       90000,
     );
+    const page5aHandshake = await waitForNewInboundHandshakeInLog(dLogPath, inHsOffsetBeforePage5a, 90000);
+    if (page5aHandshake === null) {
+      throw new Error(`M5a: D's log carried no new \`[net] inbound handshake from <peerId> on id=<connId>: ok=true\` line past offset ${inHsOffsetBeforePage5a} within 90 s — the extension never reached D as the hand-added node (${dAddr})`);
+    }
+    const page5aPeerId = page5aHandshake.peerId;
+    console.log(`[vm] M5a: D saw inbound handshake from reader peerId=${page5aPeerId}`);
     const h5aAfterOpen = await currentHeight(DM5_ORIGIN);
     if (h5aAfterOpen === null) throw new Error(`could not read D height after the fresh page opened on M5a`);
     const h5aTarget = h5aAfterOpen + 5;
@@ -9829,12 +9884,13 @@ async function runMeshStepM5(cx, bcx) {
     if (h5aReached === null) {
       throw new Error(`D did not reach ${h5aTarget} within 300 s on M5a (last=${await currentHeight(DM5_ORIGIN)})`);
     }
+    const m5aReadAt = Date.now();
+    const h5aAtRead = await currentHeight(DM5_ORIGIN);
     const p5aAnswer = await fetch(`${DM5_ORIGIN}/posts/${P_ID}`).then((r) => r.json()).catch(() => null);
     const p5aContentNull = p5aAnswer !== null && p5aAnswer.content === null;
     const log5aText = (() => { try { return readFileSync(dLogPath, 'utf8'); } catch { return ''; } })();
     const postReceivedRe = new RegExp(`"event":"post_received"[^\\n]*"post_id":"${P_ID}"`);
     const received5a = postReceivedRe.test(log5aText);
-    const h5aEnd = await currentHeight(DM5_ORIGIN);
 
     try { page5a.cx.s.close(); } catch {}
     await bcx.call('Target.closeTarget', { targetId: page5a.targetId }).catch(() => {});
@@ -9864,6 +9920,13 @@ async function runMeshStepM5(cx, bcx) {
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
     if (servePressBox === null) throw new Error(`M5b: serve row's "on" word has no measured box`);
+    // The press writes `notis.serve=1` and the seam calls `client.setServing`,
+    // which closes every connection the client holds and dials again — so a
+    // new `ok=true` inbound handshake arrives on D past the offset captured
+    // right before the press. That redial is the one that declared
+    // `ModifierRequest`, and its `peerId` is what D's `post_received`
+    // `source` reads for the pulled text.
+    const inHsOffsetBeforePress = logOffset(dLogPath);
     await page5b.cx.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: servePressBox.x, y: servePressBox.y, button: 'left', buttons: 1, clickCount: 1 });
     await page5b.cx.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: servePressBox.x, y: servePressBox.y, button: 'left', buttons: 0, clickCount: 1 });
     const pressAt = Date.now();
@@ -9883,6 +9946,12 @@ async function runMeshStepM5(cx, bcx) {
       return hint !== null && hint !== undefined ? hint.textContent : null;
     })()`);
     const hintExpected = 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.';
+    const redialHandshake = await waitForNewInboundHandshakeInLog(dLogPath, inHsOffsetBeforePress, 90000);
+    if (redialHandshake === null) {
+      throw new Error(`M5b: D's log carried no new \`[net] inbound handshake from <peerId> on id=<connId>: ok=true\` line past offset ${inHsOffsetBeforePress} within 90 s — the serve press did not redial D (notis.serve=${serveApplied ? '1' : 'unapplied'}, hint=${JSON.stringify(hintUnderRow)})`);
+    }
+    const page5bPeerId = redialHandshake.peerId;
+    console.log(`[vm] M5b: D saw redial handshake from reader peerId=${page5bPeerId}`);
 
     const h5bStart = await currentHeight(DM5_ORIGIN);
     if (h5bStart === null) throw new Error(`could not read D height at M5b press`);
@@ -9903,19 +9972,50 @@ async function runMeshStepM5(cx, bcx) {
         } catch { nextTick = Date.now() + 1000; }
       }
     })();
-    const landed = await (async () => {
+    // The landing wait ends on one of three outcomes: the text arrived (the
+    // step passes on M5b's primary check), or D's height crossed the
+    // 10-block target AND 120 s have passed since the press ("ten of D's
+    // blocks or 120 s, whichever is later" — both must hold), or 300 s have
+    // passed from the press whatever D's height (the ceiling, so a D that
+    // stops mining does not keep the wait running). Each path sets
+    // `landedResult` to one of three constants; the detail names which.
+    const LANDING_WALL_MS = 300000;
+    const LANDING_HEIGHT_FLOOR_MS = 120000;
+    let m5bReadAt = null;
+    let h5bAtRead = null;
+    let landedResult = 'unset';
+    let lastPollAnswer = null;
+    {
       const t0 = Date.now();
       while (true) {
         const p = await fetch(`${DM5_ORIGIN}/posts/${P_ID}`).then((r) => r.json()).catch(() => null);
-        if (p !== null && p.content === P_CONTENT) return true;
+        lastPollAnswer = p;
+        if (p !== null && p.content === P_CONTENT) {
+          m5bReadAt = Date.now();
+          h5bAtRead = await currentHeight(DM5_ORIGIN);
+          landedResult = 'landed';
+          break;
+        }
         const hNow = await currentHeight(DM5_ORIGIN) ?? h5bStart;
         const elapsed = Date.now() - t0;
-        if (hNow >= h5bBlocksTarget && elapsed >= 120000) return false;
+        if (elapsed >= LANDING_WALL_MS) {
+          landedResult = 'wall';
+          m5bReadAt = Date.now();
+          h5bAtRead = hNow;
+          break;
+        }
+        if (hNow >= h5bBlocksTarget && elapsed >= LANDING_HEIGHT_FLOOR_MS) {
+          landedResult = 'both-floors';
+          m5bReadAt = Date.now();
+          h5bAtRead = hNow;
+          break;
+        }
         await sleep(500);
       }
-    })();
+    }
     pollDone.stop = true;
     await pollerTask;
+    const landed = landedResult === 'landed';
     const h5bEnd = await currentHeight(DM5_ORIGIN);
     const log5bText = (() => { try { return readFileSync(dLogPath, 'utf8'); } catch { return ''; } })();
     const recvLineRe = new RegExp(`\\{[^\\n]*"event":"post_received"[^\\n]*"post_id":"${P_ID}"[^\\n]*\\}`);
@@ -9924,6 +10024,7 @@ async function runMeshStepM5(cx, bcx) {
     let recvVia = null;
     let recvSource = null;
     let recvViaPull = false;
+    let recvSourceIsRedial = false;
     let recvSourceNotD = false;
     if (recvLine !== null) {
       try {
@@ -9931,20 +10032,26 @@ async function runMeshStepM5(cx, bcx) {
         recvVia = obj.via ?? null;
         recvSource = obj.source ?? null;
         recvViaPull = recvVia === 'pull';
+        recvSourceIsRedial = typeof recvSource === 'string' && recvSource === page5bPeerId;
         recvSourceNotD = typeof recvSource === 'string' && recvSource !== dPeerId;
       } catch { /* malformed line — keep nulls */ }
     }
 
     const ok = p5aContentNull && !received5a
       && serveApplied && hintUnderRow === hintExpected
-      && landed && recvLine !== null && recvViaPull && recvSourceNotD;
+      && landed && recvLine !== null && recvViaPull && recvSourceIsRedial;
     const cornerShort = cornerReadings.length <= 30
       ? cornerReadings
       : [...cornerReadings.slice(0, 15), { note: `… +${cornerReadings.length - 30} more` }, ...cornerReadings.slice(-15)];
+    const paceS = m5bReadAt !== null && m5aReadAt !== null ? ((m5bReadAt - m5aReadAt) / 1000).toFixed(1) : '?';
+    const paceHeight = typeof h5bAtRead === 'number' && typeof h5aAtRead === 'number' ? (h5bAtRead - h5aAtRead) : '?';
     record('M5', ok,
-      `D peerId=${dPeerId}, mesh addr=${dAddr}; `
-      + `M5a (serve off, default): D heights ${h5aAfterOpen} → ${h5aEnd} (target ${h5aTarget}), GET /posts/${P_ID.slice(0, 16)}… content=null=${p5aContentNull} (answer=${JSON.stringify(p5aAnswer === null ? null : { id: p5aAnswer.id, content: p5aAnswer.content })}), post_received for P in log=${received5a} (expect false); `
-      + `M5b (serve on, pressed): serve 'on' applied=${serveApplied}, hint=${JSON.stringify(hintUnderRow)} (expected the words beneath the row); D heights ${h5bStart} → ${h5bEnd} (10-block target ${h5bBlocksTarget}, 120 s), text landed=${landed}, post_received line=${JSON.stringify(recvLine)}, via=${JSON.stringify(recvVia)} (expect "pull"), source=${JSON.stringify(recvSource)} vs D peerId=${dPeerId.slice(0, 16)}… (expect source !== D's peer id); corner readings from press=${JSON.stringify(cornerShort)}`);
+      `D peerId=${dPeerId}, mesh addr=${dAddr}, miner MINER_PCT=10; `
+      + `M5a (serve off, default): D height ${h5aAtRead} at the /posts/${P_ID.slice(0, 16)}… read (target ${h5aTarget} past page5a open), content=null=${p5aContentNull} (answer=${JSON.stringify(p5aAnswer === null ? null : { id: p5aAnswer.id, content: p5aAnswer.content })}), post_received for P in log=${received5a} (expect false), inbound handshake from reader peerId=${page5aPeerId}; `
+      + `M5b (serve on, pressed): serve 'on' applied=${serveApplied}, hint=${JSON.stringify(hintUnderRow)} (expected the words beneath the row); redial handshake from reader peerId=${page5bPeerId}; D heights ${h5bStart} → ${h5bEnd} (10-block target ${h5bBlocksTarget}, 120 s floor, 300 s wall), landing result=${landedResult} (text landed=${landed}), D height at the M5b read=${h5bAtRead}, last /posts answer=${JSON.stringify(lastPollAnswer === null ? null : { id: lastPollAnswer.id, content: lastPollAnswer.content === P_CONTENT ? '<P_CONTENT>' : lastPollAnswer.content })}; `
+      + `pace: ${paceHeight} D blocks in ${paceS} s between the M5a and M5b reads; `
+      + `post_received line=${JSON.stringify(recvLine)}, via=${JSON.stringify(recvVia)} (expect "pull"), source=${JSON.stringify(recvSource)} (expect == redial peerId ${page5bPeerId}, redial match=${recvSourceIsRedial}; weaker check source !== D peerId ${dPeerId.slice(0, 16)}… = ${recvSourceNotD}); `
+      + `corner readings from press=${JSON.stringify(cornerShort)}`);
   } catch (e) {
     record('M5', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
