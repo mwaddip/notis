@@ -457,6 +457,19 @@ const DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
 // step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
+// A refusal thrown from a setup that runs after the browser has launched —
+// `setupMeshStack` checks the built shell's `notis-nodes` against each node's
+// identity line, and the mismatch is a config error (the exit code 2 the
+// pre-launch argument checks use) rather than a run failure. The outer
+// try/catch below reads this as a signal to set `exitCode = 2` and run the
+// teardown + `proc.kill()` + `webServer.close()` sequence that follows the
+// normal end, so the headless Chromium the launch spawned does not keep
+// running past the refusal. Pre-launch argument checks keep their inline
+// `process.exit(2)` — no child exists to leak.
+class ConfigError extends Error {
+  constructor(message) { super(message); this.name = 'ConfigError'; }
+}
+
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 // --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
 // (which need no identity — WEB_INTERFACE → The extension → "The verified
@@ -9271,11 +9284,18 @@ async function setupMeshStack() {
   const ok = Array.isArray(parsed) && parsed.length === 2
     && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
   if (!ok || apAddr === null || bpAddr === null) {
-    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities`);
-    console.error(`      rebuild with VITE_NODES set exactly to:`);
-    console.error(`      ${JSON.stringify(expected)}`);
-    console.error(`      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`);
-    process.exit(2);
+    // A `ConfigError` the outer try/catch reads as exit code 2 — setupMeshStack
+    // runs after the browser has launched, and a bare `process.exit(2)` here
+    // would leave the headless Chromium (and A' and B', though those go with
+    // the parent) running past the refusal. The outer catch sets
+    // `exitCode = 2`, runs `teardownMeshStack` / tip / light, `proc.kill()`
+    // and `webServer.close()` the normal end runs, then exits.
+    throw new ConfigError(
+      `shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities\n`
+      + `      rebuild with VITE_NODES set exactly to:\n`
+      + `      ${JSON.stringify(expected)}\n`
+      + `      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`,
+    );
   }
   console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
 }
@@ -11944,8 +11964,18 @@ try {
   await setupMeshStack();
   await main();
 } catch (e) {
-  console.error('proof failed:', e);
-  exitCode = 1;
+  // `ConfigError` is the setup's refusal of a build whose values do not match
+  // what the harness owns — the pre-launch argument checks' exit code 2, from
+  // a check that runs after the browser launched. The teardown below still
+  // runs, then `proc.kill()` and `webServer.close()` close the child
+  // Chromium and the harness's own web server.
+  if (e instanceof ConfigError) {
+    console.error(`FAIL: ${e.message}`);
+    exitCode = 2;
+  } else {
+    console.error('proof failed:', e);
+    exitCode = 1;
+  }
 }
 await teardownTipRelays();
 await teardownLightRelays();
@@ -11961,7 +11991,10 @@ const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
 console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
 console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
-if (fail > 0) exitCode = 1;
+// A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
+// is a run that recorded step failures, which is exit code 1 only when the
+// outer catch did not already set a higher one.
+if (fail > 0 && exitCode === 0) exitCode = 1;
 
 proc.kill();
 if (webServer) await new Promise((r) => webServer.close(() => r()));
