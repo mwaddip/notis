@@ -457,4 +457,29 @@ describe('backfill driver', () => {
     const anyPost1 = laterCalls.some((c) => c.wanted.some((w) => w.id === 'post-1'));
     expect(anyPost1).toBe(false);
   });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": the
+  // reader arm asks only for the eligible entries the node arm has not
+  // already filled in the same pass.
+  it.fails('a pass asks readers only for what its node peers left unanswered', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    registerPlaceholder('post-2', 'hash-2', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    // The first due pass advances the schedule for both; no reader-eligible
+    // entry yet, so only the node peer is asked.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a']);
+
+    // The node gains post-1 between the passes.
+    storedBodies.set('post-1', 'the body');
+
+    await onBlockApplied(11);
+    // The node peer answers post-1 in the second pass; the reader is asked
+    // only for post-2.
+    const readerCall = requestLog.find((c) => c.peerId === 'reader-a');
+    expect(readerCall).toBeDefined();
+    expect(readerCall!.wanted.map((w) => w.id)).toEqual(['post-2']);
+  });
 });
