@@ -1570,11 +1570,11 @@ chain or owed one:
 | **the serving reader** (2026-11-12) | **no committed byte and no consensus verdict** — a reader may declare `ModifierRequest` and answer posts' text from what it holds (NET_INTERFACE → Readers → "A serving reader answers from what it holds"), and a node's body puller asks such readers for the entries that have been due (NODE_INTERFACE → "A serving reader is asked for what has been due"), so a node on this build fills a missing text from a serving extension where an earlier build asks node peers alone; a node of either build peers with the other and with every reader, and an earlier build asks a serving reader nothing. A node fills from readers once it takes this build, and a reader serves with the release that carries it: both boxes deploy, notis.fun first. **Owes no reset** |
 | **the rent offer** (2026-11-13) | **no committed byte and no consensus verdict** — this node's producer leaves out of its rent transactions every box a pooled entry spends (NODE_INTERFACE → "This node's producer collects at its template, from the boxes no pooled transaction spends"), so a node on this build mines a pooled spend of a box that falls due at its template's height, where an earlier build builds a body that spends the box twice and evicts every pooled row the body carried; a block either build produces applies on the other. A node gains it where it builds templates (`NODE_ROLE=miner`), and on testnet a box falls due 2 102 400 blocks after it is made: both boxes deploy, notis.fun first. **Owes no reset** |
 
-**Outstanding against the live node: the rent offer.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-10-28 reset, the 0.4.0 release,
 whose block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, the usernames
 row owes none, the node key row is deployed (2026-11-03), so is the mesh row (2026-11-04), so is the relay's
 pending view row (2026-11-07), so is the shared address row (2026-11-12), so is the newest connection row
-(2026-11-12), and so is the serving reader row (2026-11-13).
+(2026-11-12), so is the serving reader row (2026-11-13), and so is the rent offer row (2026-11-13).
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
