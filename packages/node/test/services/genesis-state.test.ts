@@ -541,7 +541,7 @@ describe('assertGenesisRoot', () => {
     }
   });
 
-  it.fails('the seed\'s own refusal leaves the catch, over a store whose height-0 version row is absent', async () => {
+  it('the seed\'s own refusal leaves the catch, over a store whose height-0 version row is absent', async () => {
     // NODE_INTERFACE → "A refused seed puts the prover back by reference". The
     // seed holds the prover's root and tree height before its transaction and
     // puts them back on any throw; nothing in the catch reads a row, so a store
@@ -582,7 +582,7 @@ describe('assertGenesisRoot', () => {
     }
   });
 
-  it.fails('the prover holds the empty tree after a refused seed over a store whose height-0 version row is absent', async () => {
+  it('the prover holds the empty tree after a refused seed over a store whose height-0 version row is absent', async () => {
     // NODE_INTERFACE → "A refused seed puts the prover back by reference". The
     // saved root and tree height put the prover back by reference, so the
     // in-memory tree after a refused seed is the one the seed opened on —

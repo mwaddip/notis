@@ -189,19 +189,22 @@ export function seedGenesisState(): void {
     );
   }
 
-  // The prover is not covered by the transaction below, so its pre-seed digest
-  // is captured here and restored if anything in the seeding throws.
+  // The prover is not covered by the transaction below: `bootstrapAvlProver`
+  // runs a `performOneOperation` per leaf against the module-global prover's
+  // **in-memory** tree, and SQLite's rollback reaches `utxo_boxes`,
+  // `identity_records`, `avl_tree_versions` and `avl_tree_nodes` — every row —
+  // and reaches none of that memory.
   //
-  // `bootstrapAvlProver` runs a `performOneOperation` per leaf against the
-  // module-global prover's **in-memory** tree. SQLite's rollback reaches
-  // `utxo_boxes`, `identity_records`, `avl_tree_versions` and `avl_tree_nodes`
-  // — every row — and reaches none of that memory. Without this, a refused
-  // genesis leaves a prover holding the genesis tree over a store that holds no
-  // genesis, which is the one combination no later run can detect: the flag is
-  // unset so seeding re-runs, and it re-runs against a tree that is no longer
-  // empty. `reorg` and the apply funnel both carry this snapshot; this path is
-  // the third that mutates the prover outside a block.
-  const preDigest = handle.prover.digest();
+  // The pre-seed root and tree height are held here by reference and put back
+  // on any throw with `restoreRoot`, which reads no row — the library never
+  // mutates a node, so the held root is the whole tree the seed opened on
+  // (NODE_INTERFACE → "A refused seed puts the prover back by reference";
+  // → AVL+ State Root). `reorg` and the apply funnel carry the same snapshot;
+  // this path is the third that mutates the prover outside a block.
+  const saved = {
+    root: handle.prover.prover.root,
+    height: handle.prover.prover.height,
+  };
 
   try {
     getDb().transaction(() => {
@@ -361,12 +364,12 @@ export function seedGenesisState(): void {
       markGenesisCommitted();
     }).immediate();
   } catch (err) {
-    // The rows are already back; put the tree back with them, so the store and
-    // the prover fail together rather than the prover surviving the store.
-    if (preDigest) handle.prover.rollback(preDigest);
-    // The ring tracks committed state, and the committed state no longer
-    // includes genesis (NODE_INTERFACE → "A proof at an older height restores
-    // a kept root"): a failed seed leaves no height kept.
+    // The rows are already back; put the tree back with them by reference, so
+    // the store and the prover fail together and the catch reads no row
+    // (NODE_INTERFACE → "A refused seed puts the prover back by reference").
+    handle.prover.prover.restoreRoot(saved.root, saved.height);
+    // The ring tracks committed state, and a refused seed commits none
+    // (NODE_INTERFACE → "A proof at an older height restores a kept root").
     handle.recentRoots.clear();
     throw err;
   }
