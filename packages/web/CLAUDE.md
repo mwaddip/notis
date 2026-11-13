@@ -823,30 +823,47 @@ reload; **L13** both relays in front of an isolated node **D** on another chain 
 list polled until the delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database
 creates it), a replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no
 `light`, no `tx`, no batch, no database.
-**With `--mesh` (it needs `--r-key`, `--node-dist`, `--scratch`, `--node-p2p`; it takes no verified flag and not
-`--light`) the mesh block**, M1–M4, proves the mesh path in the built extension and runs after `13-uncancelled`. The
-harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with `MESH_ROLE=public`,
-`MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one loopback cannot
-share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep reaches them. The
-extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct multiaddr>], api:<A′'s
-HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's start line gives it —
-and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium takes
-`--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product setting,
-without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step runs on a fresh extension page:
-**M1** *verified across 2 nodes*, then a refresh of the feed and a press of the corner after the verdict — the report
-text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
+**With `--mesh` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; it takes no verified flag
+and not `--light`) the mesh block**, M1–M5, proves the mesh path in the built extension and runs after
+`13-uncancelled`. The harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with
+`MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
+loopback cannot share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep
+reaches them. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
+multiaddr>], api:<A′'s HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's
+start line gives it — and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium
+takes `--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product
+setting, without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step runs on a fresh extension
+page: **M1** *verified across 2 nodes*, then a refresh of the feed and a press of the corner after the verdict — the
+report text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
 connections are up, go to the API bases and are counted, not asserted); **M2** both nodes restarted without
 `MESH_ROLE` — the dials fail, the entries are read at their API bases, the verdict is `verified` and the page made HTTP
 requests to the nodes; **M3** both back with the mesh role, each node's admin `GET /health` holding
 `peers_connected ≥ 1` under a 60 s bound before the press (`waitForPeers` on `AP_ADMIN_PORT` and `BP_ADMIN_PORT` — the
 ordering-block topic has formed its gossip mesh after the handshake, and a node with zero peers admits a write locally
-but relays it nowhere) — a post from the composer lands on both nodes with no
-`POST /posts` over HTTP in the page's Network domain; **M4** both nodes at their API bases alone, A′ restarted on an
-alternate HTTP port behind a tip relay in `hold-posts` mode at its base port, A′ and B′ at A's tip before the press —
-the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected, the same bytes go
-to the next node, and the post stands once on each node. The two-pass recipe for `VITE_NODES` of any block: start the
-nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the extension with them, then
-run the harness.
+but relays it nowhere) — a post from the composer lands on both nodes with no `POST /posts` over HTTP in the page's
+Network domain, and its id and content ride to **M5** in `m3Post`; **M4** both nodes at their API bases alone, A′
+restarted on an alternate HTTP port behind a tip relay in `hold-posts` mode at its base port, A′ and B′ at A's tip
+before the press — the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected,
+the same bytes go to the next node, and the post stands once on each node; **M5** an isolated node **D** on a
+consistent copy of A′'s store taken while A′ runs (`sqlite3 <db> ".backup <copy>"`) with M3's post id's `content`
+nulled on the copy — a placeholder `getMissingBodies` returns at D's start (`NODE_INTERFACE → Posts DAG → "A serving
+reader is asked for what has been due"`'s `content IS NULL AND withdrawn_at_height IS NULL`) — spawned
+`MESH_ROLE=public`, `NODE_ROLE=miner` with its own `MINING_SECRET`, `BOOTSTRAP_PEERS` empty, on ports 19860–63 clear
+of every other harness child, its own miner at `MINER_PCT=100` landing a block every few seconds; the extension
+reaches D as the reader's own node by writing `notis.node.hand` in the extension page's `localStorage` to D's
+webrtc-direct multiaddr from its identity line and removing `notis.node.hand.off`, before a fresh page opens
+(`WEB_INTERFACE → The settings window → "In the extension the row adds a node by hand"`; `MESH_INTERFACE → Discovery
+→ "A node added by hand"`); a hand-added node that disagrees raises the reader's question which does not stop D's
+connection or its handshake, and M5 does not answer it. **M5a** serving off (the default), across five of D's blocks
+after the fresh page's first corner reading D's `GET /posts/<P>` answers `content: null` and D's log holds no
+`post_received` line naming P; **M5b** serving on — the *on* word in the serve row pressed through
+`Input.dispatchMouseEvent` (`WEB_INTERFACE → The settings window → "The serve row"`, which redials every node at
+once), the hint standing beneath the row with the contract's words — within ten of D's blocks or 120 s, whichever is
+later, D's `GET /posts/<P>` answers P's text and D's log holds a `post_received` line naming P with `via` `pull` and
+a `source` that is not D's own peer id (`JOURNAL_EVENTS → post_received`). The step logs the corner's dot class and
+title once a second from the press until the text lands, in the step's detail. The two-pass recipe for `VITE_NODES`
+of any block: start the nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the
+extension with them, then run the harness.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
 starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A list read goes to either relay**: the
