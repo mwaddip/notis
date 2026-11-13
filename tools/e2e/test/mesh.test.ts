@@ -5,6 +5,7 @@ import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -17,20 +18,10 @@ import {
   NodeError,
   isPost,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY } from '@dagsocial/types';
 
 const FILE_INDEX = 0;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('mesh', () => {
   let mesh: Mesh;
@@ -76,7 +67,7 @@ describe('mesh', () => {
     const faucetKarma = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
     const inviteAlice = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma),
+      karmaBoxRefs(faucetKarma),
       alice,
       bondAmount,
       faucetKarma.height,
@@ -113,7 +104,7 @@ describe('mesh', () => {
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'hello mesh',
       aliceK.height,
       version,
@@ -177,7 +168,7 @@ describe('mesh', () => {
 
     const like = buildLikeTx(
       bob,
-      karmaBoxes(bobK),
+      karmaBoxRefs(bobK),
       threadRes.postId,
       authorHex,
       bobK.height,
@@ -212,7 +203,7 @@ describe('mesh', () => {
     const bobK2 = (await getKarma(miner, bob.publicKeyHex))!;
     const like2 = buildLikeTx(
       bob,
-      karmaBoxes(bobK2),
+      karmaBoxRefs(bobK2),
       threadRes.postId,
       authorHex,
       bobK2.height,

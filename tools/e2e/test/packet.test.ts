@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -15,19 +16,9 @@ import {
   NodeError,
   isPost,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 7;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('packet', () => {
   let mesh: Mesh;
@@ -48,7 +39,7 @@ describe('packet', () => {
     const version = (await getStatus(miner)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(miner, inv.json);
 
     await confirm(
@@ -59,7 +50,7 @@ describe('packet', () => {
 
     // ---- alice posts a thread on the miner (no mining — stays pending) ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'packet post', aliceK.height, version);
+    const thread = buildThreadTx(alice, karmaBoxRefs(aliceK), 'packet post', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
     expect(threadRes.status).toBe('pending');
 
@@ -105,7 +96,7 @@ describe('packet', () => {
 
     // ---- mismatched body → 400 ----
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const bad = buildThreadTx(alice, karmaBoxes(aliceK2), 'correct body', aliceK2.height, version);
+    const bad = buildThreadTx(alice, karmaBoxRefs(aliceK2), 'correct body', aliceK2.height, version);
     try {
       await postPost(miner, bad.json, 'wrong body');
       expect.fail('mismatched body should have been rejected');

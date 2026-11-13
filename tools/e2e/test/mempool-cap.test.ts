@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -15,19 +16,9 @@ import {
   getBlockCurrent,
   NodeError,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 8;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('mempool-cap', () => {
   let mesh: Mesh;
@@ -59,7 +50,7 @@ describe('mempool-cap', () => {
     const faucetKarma = (await getKarma(node, DEVNET_FAUCET.publicKeyHex))!;
     const inviteAlice = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma),
+      karmaBoxRefs(faucetKarma),
       alice,
       50n,
       faucetKarma.height,
@@ -77,7 +68,7 @@ describe('mempool-cap', () => {
     const faucetKarma2 = (await getKarma(node, DEVNET_FAUCET.publicKeyHex))!;
     const inviteBob = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma2),
+      karmaBoxRefs(faucetKarma2),
       bob,
       50n,
       faucetKarma2.height,
@@ -94,7 +85,7 @@ describe('mempool-cap', () => {
     const aliceK = (await getKarma(node, alice.publicKeyHex))!;
     const aliceThread = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'first pending post',
       aliceK.height,
       version,
@@ -108,7 +99,7 @@ describe('mempool-cap', () => {
     const bobK = (await getKarma(node, bob.publicKeyHex))!;
     const bobThread = buildThreadTx(
       bob,
-      karmaBoxes(bobK),
+      karmaBoxRefs(bobK),
       'second pending post',
       bobK.height,
       version,

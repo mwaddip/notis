@@ -10,7 +10,8 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
-import { signAndRender, type BoxRef } from '../src/tx/render.js';
+import { signAndRender } from '../src/tx/render.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -26,15 +27,6 @@ import {
 
 const FILE_INDEX = 22;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 // NODE_INTERFACE → UTXO queries — a karma box carries `income: true` when it
 // is the owner's income box and no such key when it is their own.
@@ -83,7 +75,7 @@ describe('karma income box', () => {
       const faucetK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
       const inv1 = buildInviteTx(
         DEVNET_FAUCET,
-        karmaBoxes(faucetK),
+        karmaBoxRefs(faucetK),
         alice,
         aliceBond,
         faucetK.height,
@@ -114,7 +106,7 @@ describe('karma income box', () => {
       expect(BigInt(aliceK0.total)).toBe(aliceBond);
       const aliceThread = buildThreadTx(
         alice,
-        karmaBoxes(aliceK0),
+        karmaBoxRefs(aliceK0),
         'alice thread for likes',
         aliceK0.height,
         version,
@@ -133,7 +125,7 @@ describe('karma income box', () => {
       const bobK0 = await getKarma(miner, bob.publicKeyHex);
       const bobThread = buildThreadTx(
         bob,
-        karmaBoxes(bobK0),
+        karmaBoxRefs(bobK0),
         'bob thread for a reply case A',
         bobK0.height,
         version,
@@ -172,7 +164,7 @@ describe('karma income box', () => {
           const bobK = await getKarma(miner, bob.publicKeyHex);
           const reply = buildReplyTx(
             bob,
-            karmaBoxes(bobK),
+            karmaBoxRefs(bobK),
             `round ${round} reply ${i}`,
             aliceThreadRes.postId,
             alice.publicKeyHex,
@@ -310,7 +302,7 @@ describe('karma income box', () => {
       const incomeBeforeA = incomeBox(aliceKA);
       const replyA = buildReplyTx(
         alice,
-        karmaBoxes(aliceKA),
+        karmaBoxRefs(aliceKA),
         'alice reply own covers',
         bobThreadRes.postId,
         bob.publicKeyHex,
@@ -355,7 +347,7 @@ describe('karma income box', () => {
       expect(ownBeforeB.value + incomeBeforeB.value).toBeGreaterThanOrEqual(POST_PRICE_THREAD);
       const threadB = buildThreadTx(
         alice,
-        karmaBoxes(aliceKB),
+        karmaBoxRefs(aliceKB),
         'alice thread own does not cover',
         aliceKB.height,
         version,

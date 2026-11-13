@@ -7,6 +7,7 @@ import { buildVouchTx, buildUnvouchTx } from '../src/tx/vouch.js';
 import { buildThreadTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
 import { buildClaimTx } from '../src/tx/claim.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -27,20 +28,10 @@ import {
   isPost,
   NodeError,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 import { POST_PRICE_THREAD } from '@dagsocial/types';
 
 const FILE_INDEX = 16;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('membership', () => {
   let mesh: Mesh;
@@ -101,7 +92,7 @@ describe('membership', () => {
     const A = fresh();
     let fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const bondAmount = 50n;
-    const invA = buildInviteTx(DEVNET_FAUCET, karmaBoxes(fK), A, bondAmount, fK.height, version);
+    const invA = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(fK), A, bondAmount, fK.height, version);
     await postInvite(miner, invA.json);
 
     await confirm(
@@ -135,7 +126,7 @@ describe('membership', () => {
     // "Which vouches count — a vouch counts toward NEWER members"). Kept
     // live for the rest of the chapter.
     let aK = await getKarma(miner, A.publicKeyHex);
-    const aVouchFaucet = buildVouchTx(A, karmaBoxes(aK), DEVNET_FAUCET, aK.height, version);
+    const aVouchFaucet = buildVouchTx(A, karmaBoxRefs(aK), DEVNET_FAUCET, aK.height, version);
     const aVouchFaucetRes = await postVouch(miner, aVouchFaucet.json);
     expect(aVouchFaucetRes.status).toBe('pending');
 
@@ -155,7 +146,7 @@ describe('membership', () => {
     // ARCHITECTURE → Earned, standing, and well-founded by age → "Conferred":
     // a vouch toward a conferred member builds its budget and nothing else.
     fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const faucetVouchA = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), A, fK.height, version);
+    const faucetVouchA = buildVouchTx(DEVNET_FAUCET, karmaBoxRefs(fK), A, fK.height, version);
     await postVouch(miner, faucetVouchA.json);
 
     await confirm(
@@ -174,7 +165,7 @@ describe('membership', () => {
 
     // ---- A claims MemberA: the vouch and bond pages carry it as typed ----
     aK = await getKarma(miner, A.publicKeyHex);
-    const aClaim = buildClaimTx(A, karmaBoxes(aK), 'MemberA', aK.height, version);
+    const aClaim = buildClaimTx(A, karmaBoxRefs(aK), 'MemberA', aK.height, version);
     await postClaim(miner, aClaim.json);
     await confirm(
       async () => (await getUsername(miner, 'membera')) !== null,
@@ -191,7 +182,7 @@ describe('membership', () => {
     const B = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
     const bBondAmount = 35n;
-    const invB = buildInviteTx(A, karmaBoxes(aK), B, bBondAmount, aK.height, version);
+    const invB = buildInviteTx(A, karmaBoxRefs(aK), B, bBondAmount, aK.height, version);
     await postInvite(miner, invB.json);
 
     await confirm(
@@ -230,7 +221,7 @@ describe('membership', () => {
     // NODE_INTERFACE → Invites: a member's invite draws against its budget
     const spuriousInvitee = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
-    const invSpurious = buildInviteTx(A, karmaBoxes(aK), spuriousInvitee, 5n, aK.height, version);
+    const invSpurious = buildInviteTx(A, karmaBoxRefs(aK), spuriousInvitee, 5n, aK.height, version);
     try {
       await postInvite(miner, invSpurious.json);
       expect.fail('second invite should have been refused');
@@ -243,7 +234,7 @@ describe('membership', () => {
     // NODE_INTERFACE → Vouches: castVouch refuses a voucher who is not a
     // member (ARCHITECTURE → Membership).
     const bKForVouch = await getKarma(miner, B.publicKeyHex);
-    const badVouch = buildVouchTx(B, karmaBoxes(bKForVouch), A, bKForVouch.height, version);
+    const badVouch = buildVouchTx(B, karmaBoxRefs(bKForVouch), A, bKForVouch.height, version);
     try {
       await postVouch(miner, badVouch.json);
       expect.fail('resident vouch should have been refused');
@@ -254,7 +245,7 @@ describe('membership', () => {
 
     // ---- 6. A vouches B, B posts two threads, A likes each: B is set ----
     aK = await getKarma(miner, A.publicKeyHex);
-    const aVouchB = buildVouchTx(A, karmaBoxes(aK), B, aK.height, version);
+    const aVouchB = buildVouchTx(A, karmaBoxRefs(aK), B, aK.height, version);
     await postVouch(miner, aVouchB.json);
 
     await confirm(
@@ -264,7 +255,7 @@ describe('membership', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     let bK = await getKarma(miner, B.publicKeyHex);
-    const bt1 = buildThreadTx(B, karmaBoxes(bK), 'b thread 1', bK.height, version);
+    const bt1 = buildThreadTx(B, karmaBoxRefs(bK), 'b thread 1', bK.height, version);
     const bt1Res = await postPost(miner, bt1.json, bt1.content);
     const bt2 = buildThreadTx(B, [bt1.outputs[0]!], 'b thread 2', bK.height, version);
     const bt2Res = await postPost(miner, bt2.json, bt2.content);
@@ -279,7 +270,7 @@ describe('membership', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     aK = await getKarma(miner, A.publicKeyHex);
-    const aLikeBt1 = buildLikeTx(A, karmaBoxes(aK), bt1Res.postId, B.publicKeyHex, aK.height, version);
+    const aLikeBt1 = buildLikeTx(A, karmaBoxRefs(aK), bt1Res.postId, B.publicKeyHex, aK.height, version);
     await postLike(miner, aLikeBt1.json);
     const aLikeBt2 = buildLikeTx(A, [aLikeBt1.outputs[0]!], bt2Res.postId, B.publicKeyHex, aK.height, version);
     await postLike(miner, aLikeBt2.json);
@@ -317,7 +308,7 @@ describe('membership', () => {
     const C = fresh();
     bK = await getKarma(miner, B.publicKeyHex);
     const cBondAmount = 12n;
-    const invC = buildInviteTx(B, karmaBoxes(bK), C, cBondAmount, bK.height, version);
+    const invC = buildInviteTx(B, karmaBoxRefs(bK), C, cBondAmount, bK.height, version);
     await postInvite(miner, invC.json);
 
     await confirm(
@@ -327,7 +318,7 @@ describe('membership', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     bK = await getKarma(miner, B.publicKeyHex);
-    const bVouchC = buildVouchTx(B, karmaBoxes(bK), C, bK.height, version);
+    const bVouchC = buildVouchTx(B, karmaBoxRefs(bK), C, bK.height, version);
     await postVouch(miner, bVouchC.json);
 
     await confirm(
@@ -337,7 +328,7 @@ describe('membership', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     let cK = await getKarma(miner, C.publicKeyHex);
-    const ct1 = buildThreadTx(C, karmaBoxes(cK), 'c thread 1', cK.height, version);
+    const ct1 = buildThreadTx(C, karmaBoxRefs(cK), 'c thread 1', cK.height, version);
     const ct1Res = await postPost(miner, ct1.json, ct1.content);
     const ct2 = buildThreadTx(C, [ct1.outputs[0]!], 'c thread 2', cK.height, version);
     const ct2Res = await postPost(miner, ct2.json, ct2.content);
@@ -353,10 +344,10 @@ describe('membership', () => {
 
     // two member likes from two different members
     aK = await getKarma(miner, A.publicKeyHex);
-    const aLikeCt1 = buildLikeTx(A, karmaBoxes(aK), ct1Res.postId, C.publicKeyHex, aK.height, version);
+    const aLikeCt1 = buildLikeTx(A, karmaBoxRefs(aK), ct1Res.postId, C.publicKeyHex, aK.height, version);
     await postLike(miner, aLikeCt1.json);
     bK = await getKarma(miner, B.publicKeyHex);
-    const bLikeCt2 = buildLikeTx(B, karmaBoxes(bK), ct2Res.postId, C.publicKeyHex, bK.height, version);
+    const bLikeCt2 = buildLikeTx(B, karmaBoxRefs(bK), ct2Res.postId, C.publicKeyHex, bK.height, version);
     await postLike(miner, bLikeCt2.json);
 
     await confirm(
@@ -469,7 +460,7 @@ describe('membership', () => {
     // B as a resident cannot recast
     // NODE_INTERFACE → Vouches
     bK = await getKarma(miner, B.publicKeyHex);
-    const bRecastAttempt = buildVouchTx(B, karmaBoxes(bK), C, bK.height, version);
+    const bRecastAttempt = buildVouchTx(B, karmaBoxRefs(bK), C, bK.height, version);
     try {
       await postVouch(miner, bRecastAttempt.json);
       expect.fail('resident recast should have been refused');
