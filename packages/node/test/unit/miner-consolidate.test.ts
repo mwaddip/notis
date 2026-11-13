@@ -64,7 +64,7 @@ function tmp(name: string): { dir: string; file: string; done: () => void } {
 // -------------------------------------------------------------------------
 
 describe('readMinerKey', () => {
-  it.fails('a gen-miner-key.mjs file gives the key and signs verifiably', () => {
+  it('a gen-miner-key.mjs file gives the key and signs verifiably', () => {
     const k = makeKey();
     const t = tmp('miner.json');
     try {
@@ -79,7 +79,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('a clear identity file gives the key and signs verifiably', () => {
+  it('a clear identity file gives the key and signs verifiably', () => {
     const k = makeKey();
     const t = tmp('web.json');
     try {
@@ -92,7 +92,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('an encrypted envelope refuses, with the file in the message', () => {
+  it('an encrypted envelope refuses, with the file in the message', () => {
     const t = tmp('encrypted.json');
     try {
       const envelope = {
@@ -107,7 +107,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('a file that parses as neither form refuses, with the file in the message', () => {
+  it('a file that parses as neither form refuses, with the file in the message', () => {
     const t = tmp('garbage.json');
     try {
       writeFileSync(t.file, '{"not":"a key"}');
@@ -115,7 +115,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('a secret that derives another key refuses, with the file in the message', () => {
+  it('a secret that derives another key refuses, with the file in the message', () => {
     const k = makeKey();
     const other = makeKey();
     const t = tmp('mismatch.json');
@@ -125,7 +125,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('a MINER_PUBKEY naming another key refuses, with the file in the message', () => {
+  it('a MINER_PUBKEY naming another key refuses, with the file in the message', () => {
     const k = makeKey();
     const other = makeKey();
     const t = tmp('miner.json');
@@ -135,7 +135,7 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
-  it.fails('a MINER_PUBKEY matching the file passes', () => {
+  it('a MINER_PUBKEY matching the file passes', () => {
     const k = makeKey();
     const t = tmp('miner.json');
     try {
@@ -283,7 +283,7 @@ function setupKey(): { key: CaseKey; file: string; done: () => void } {
 }
 
 describe('runConsolidateCheck', () => {
-  it.fails('with fewer than the minimum spendable boxes the check posts nothing', async () => {
+  it('with fewer than the minimum spendable boxes the check posts nothing', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN - 1, 1_000_000n));
@@ -304,7 +304,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('at the minimum spendable the check posts one transaction', async () => {
+  it('at the minimum spendable the check posts one transaction', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
@@ -323,7 +323,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('a lock above tip + 1 is not spendable, at and below it is', async () => {
+  it('a lock above tip + 1 is not spendable, at and below it is', async () => {
     const { file, done } = setupKey();
     try {
       const tip = 1000;
@@ -349,7 +349,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('a lock at tip + 1 is spendable, a lock absent is spendable', async () => {
+  it('a lock at tip + 1 is spendable, a lock absent is spendable', async () => {
     const { file, done } = setupKey();
     try {
       const tip = 1000;
@@ -374,7 +374,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('the posted transaction carries the listing order, the sum output, the tip and the era, verifiably signed', async () => {
+  it('the posted transaction carries the listing order, the sum output, the tip and the era, verifiably signed', async () => {
     const { key, file, done } = setupKey();
     try {
       const tip = 1000;
@@ -410,7 +410,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('every listing read carries pending=1, and the read stops once a full transaction is held', async () => {
+  it('every listing read carries pending=1, and the read stops once a full transaction is held', async () => {
     const { file, done } = setupKey();
     try {
       // Far more spendable boxes than one transaction carries — the check
@@ -436,7 +436,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('the transaction packs to the byte bound and the check answers full', async () => {
+  it('the transaction packs to the byte bound and the check answers full', async () => {
     const { file, done } = setupKey();
     try {
       // A page of equal-value boxes, more than any one transaction can carry,
@@ -467,7 +467,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('with fewer spendable boxes than fit the check answers not full', async () => {
+  it('with fewer spendable boxes than fit the check answers not full', async () => {
     const { file, done } = setupKey();
     try {
       // MIN spendable boxes — enough to post, well under the byte bound.
@@ -485,7 +485,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('a refused submit is logged once and does not throw', async () => {
+  it('a refused submit is logged once and does not throw', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
@@ -503,7 +503,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('a refused status read is logged once and does not throw', async () => {
+  it('a refused status read is logged once and does not throw', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
@@ -520,7 +520,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('a malformed listing is logged once and does not throw', async () => {
+  it('a malformed listing is logged once and does not throw', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
@@ -543,7 +543,7 @@ describe('runConsolidateCheck', () => {
 // -------------------------------------------------------------------------
 
 describe('createCadence', () => {
-  it.fails('the first tick checks; a tick fewer than the minimum heights later does not; at the minimum does', async () => {
+  it('the first tick checks; a tick fewer than the minimum heights later does not; at the minimum does', async () => {
     const { file, done } = setupKey();
     try {
       // Below-MIN stock — every check returns `sent: false, full: false`, so
@@ -576,7 +576,7 @@ describe('createCadence', () => {
     } finally { done(); }
   });
 
-  it.fails('after a full check the next tick height checks', async () => {
+  it('after a full check the next tick height checks', async () => {
     const { file, done } = setupKey();
     try {
       // Stock big enough that the first check is full; the cadence's next
@@ -602,7 +602,7 @@ describe('createCadence', () => {
     } finally { done(); }
   });
 
-  it.fails('a tick whose check fails still moves the height forward so the next due height checks', async () => {
+  it('a tick whose check fails still moves the height forward so the next due height checks', async () => {
     const { file, done } = setupKey();
     try {
       const boxes = makeCaseBoxes(MIN, 1_000_000n);
