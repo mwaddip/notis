@@ -18,6 +18,7 @@ import {
   initBackfill,
   registerPlaceholder,
   onBlockApplied,
+  readerArrived,
   clearPending,
   getPendingCount,
 } from '../../src/services/backfill.js';
@@ -300,5 +301,160 @@ describe('backfill driver', () => {
     // reader-1's call rejects; reader-2 is asked and answers.
     expect(requestLog.map((c) => c.peerId)).toEqual(['reader-1', 'reader-2']);
     expect(setPostBodyCalls).toEqual([{ id: 'post-1', content: 'the body' }]);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": the
+  // arrival asks the reader once for every scheduled entry that has been due.
+  it.fails('readerArrived asks the reader for every pending entry due once, and moves no schedule', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    registerPlaceholder('post-2', 'hash-2', 10, 'peer-a');
+    registerPlaceholder('post-3', 'hash-3', 100, 'peer-a');
+
+    await onBlockApplied(10);
+    const callsAfterFirstPass = requestLog.length;
+
+    await readerArrived('reader-a');
+    const arrivalCalls = requestLog.slice(callsAfterFirstPass);
+    expect(arrivalCalls.map((c) => c.peerId)).toEqual(['reader-a']);
+    expect([...arrivalCalls[0]!.wanted.map((w) => w.id)].sort()).toEqual(['post-1', 'post-2']);
+
+    // Which heights trigger node calls after the arrival.
+    const heightsA: number[] = [];
+    for (let h = 11; h <= 25; h++) {
+      const before = requestLog.length;
+      await onBlockApplied(h);
+      const added = requestLog.slice(before).filter((c) => c.peerId === 'peer-a');
+      if (added.length > 0) heightsA.push(h);
+    }
+
+    // The control: the same arrangement with no arrival.
+    clearPending();
+    requestLog.length = 0;
+    servingReaders = [];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    registerPlaceholder('post-2', 'hash-2', 10, 'peer-a');
+    registerPlaceholder('post-3', 'hash-3', 100, 'peer-a');
+    await onBlockApplied(10);
+    const heightsB: number[] = [];
+    for (let h = 11; h <= 25; h++) {
+      const before = requestLog.length;
+      await onBlockApplied(h);
+      const added = requestLog.slice(before).filter((c) => c.peerId === 'peer-a');
+      if (added.length > 0) heightsB.push(h);
+    }
+
+    // The two schedules match: the arrival moves none of them.
+    expect(heightsA).toEqual(heightsB);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": a
+  // peer id `getServingReaders()` does not name is asked nothing.
+  it.fails('readerArrived asks a reader that does not serve nothing', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    await onBlockApplied(10);
+    const before = requestLog.length;
+
+    await readerArrived('peer-outside');
+    expect(requestLog.slice(before).filter((c) => c.peerId === 'peer-outside')).toHaveLength(0);
+
+    await readerArrived('reader-a');
+    expect(requestLog.filter((c) => c.peerId === 'reader-a')).toHaveLength(1);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due":
+  // after the entries no longer placeholders leave unasked.
+  it.fails('readerArrived skips an entry that is no longer a placeholder', async () => {
+    connectedPeers = [];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    registerPlaceholder('post-2', 'hash-2', 10, 'peer-a');
+    await onBlockApplied(10);
+    expect(requestLog).toHaveLength(0);
+
+    // Rewire so `getStillPlaceholderIds` drops post-1.
+    initBackfill({
+      requestPostBodies: async (wanted, peerId) => {
+        requestLog.push({ wanted, peerId });
+        return [];
+      },
+      getConnectedPeers: () => [],
+      getServingReaders: () => ['reader-a'],
+      setPostBody: () => true,
+      getMissingBodies: () => [],
+      getStillPlaceholderIds: (ids) => ids.filter((id) => id !== 'post-1'),
+    });
+
+    await readerArrived('reader-a');
+    expect(requestLog).toHaveLength(1);
+    expect(requestLog[0]!.peerId).toBe('reader-a');
+    expect(requestLog[0]!.wanted.map((w) => w.id)).toEqual(['post-2']);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": the
+  // arrival runs in the puller's one-at-a-time order, never beside a pass.
+  it.fails('readerArrived during a pass runs after it', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    expect(requestLog).toHaveLength(1);
+
+    // Hold the second pass's node call open.
+    gate = new Promise((resolve) => { gateRelease = resolve; });
+    const pass2 = onBlockApplied(11);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(requestLog).toHaveLength(2);
+    expect(openCount).toBe(1);
+
+    // readerArrived while a pass is open must wait.
+    const arrival = readerArrived('reader-a');
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(requestLog.filter((c) => c.peerId === 'reader-a')).toHaveLength(0);
+
+    gateRelease();
+    await pass2;
+    await arrival;
+
+    expect(maxOpen).toBe(1);
+    expect(requestLog.filter((c) => c.peerId === 'reader-a')).toHaveLength(2);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due":
+  // the entry stored through the arrival leaves pending, so the next due
+  // pass asks no one for it.
+  it.fails('a text a reader sends leaves the schedule', async () => {
+    initBackfill({
+      requestPostBodies: async (wanted, peerId) => {
+        requestLog.push({ wanted, peerId });
+        if (peerId !== 'reader-a') return [];
+        const out: Array<{ id: string; content: string }> = [];
+        for (const w of wanted) out.push({ id: w.id, content: 'the body' });
+        return out;
+      },
+      getConnectedPeers: () => ['peer-a'],
+      getServingReaders: () => ['reader-a'],
+      setPostBody: (id, content) => { setPostBodyCalls.push({ id, content }); return true; },
+      getMissingBodies: () => [],
+      getStillPlaceholderIds: (ids) => [...ids],
+    });
+
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    await onBlockApplied(10);
+    // The node held no body; the entry remains pending.
+    expect(getPendingCount()).toBe(1);
+
+    await readerArrived('reader-a');
+    expect(getPendingCount()).toBe(0);
+
+    const before = requestLog.length;
+    await onBlockApplied(11);
+    const laterCalls = requestLog.slice(before);
+    const anyPost1 = laterCalls.some((c) => c.wanted.some((w) => w.id === 'post-1'));
+    expect(anyPost1).toBe(false);
   });
 });

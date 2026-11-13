@@ -170,3 +170,11 @@ export function getPendingCount(): number {
 export function clearPending(): void {
   pending.clear();
 }
+
+// NODE_INTERFACE → "A serving reader is asked for what has been due":
+// a serving reader's arrival asks it once for every scheduled entry that
+// has been due — a trigger on its own path, running in the puller's
+// one-at-a-time order and writing no entry's schedule.
+export async function readerArrived(_peerId: string): Promise<void> {
+  // The rule follows this stub.
+}
