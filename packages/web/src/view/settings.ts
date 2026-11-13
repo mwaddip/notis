@@ -297,8 +297,7 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
   // The extension's serve-posts row — the row renders only with the seam
   // (WEB_INTERFACE → The settings window → "The serve row"). A press moves
   // the pressed word and the hint in place; the hint stands while on and
-  // only then — nodes this page reads from may ask it for posts, and
-  // learn which ones you hold and the reader's address.
+  // only then.
   if (handlers.serve) {
     const serve = handlers.serve;
     const { row: r, field } = row('serve posts');
