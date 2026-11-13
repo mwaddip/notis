@@ -457,15 +457,13 @@ const DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
 // step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
-// A refusal thrown from a setup that runs after the browser has launched —
+// The refusal of a setup that runs after the browser has launched:
 // `setupMeshStack` checks the built shell's `notis-nodes` against each node's
-// identity line, and the mismatch is a config error (the exit code 2 the
-// pre-launch argument checks use) rather than a run failure. The outer
-// try/catch below reads this as a signal to set `exitCode = 2` and run the
-// teardown + `proc.kill()` + `webServer.close()` sequence that follows the
-// normal end, so the headless Chromium the launch spawned does not keep
-// running past the refusal. Pre-launch argument checks keep their inline
-// `process.exit(2)` — no child exists to leak.
+// identity line, and a mismatch is a configuration error, exit code 2 as the
+// pre-launch argument checks exit. The outer try/catch sets `exitCode = 2`, and
+// the teardown, `proc.kill()` and `webServer.close()` the normal end runs close
+// every process the run launched. The pre-launch argument checks exit inline:
+// no process stands to close.
 class ConfigError extends Error {
   constructor(message) { super(message); this.name = 'ConfigError'; }
 }
@@ -9284,12 +9282,8 @@ async function setupMeshStack() {
   const ok = Array.isArray(parsed) && parsed.length === 2
     && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
   if (!ok || apAddr === null || bpAddr === null) {
-    // A `ConfigError` the outer try/catch reads as exit code 2 — setupMeshStack
-    // runs after the browser has launched, and a bare `process.exit(2)` here
-    // would leave the headless Chromium (and A' and B', though those go with
-    // the parent) running past the refusal. The outer catch sets
-    // `exitCode = 2`, runs `teardownMeshStack` / tip / light, `proc.kill()`
-    // and `webServer.close()` the normal end runs, then exits.
+    // The refusal is a `ConfigError`: the outer try/catch reads it as exit code
+    // 2 and closes the browser, A' and B' through the normal teardown.
     throw new ConfigError(
       `shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities\n`
       + `      rebuild with VITE_NODES set exactly to:\n`
@@ -9949,16 +9943,11 @@ async function runMeshStepM5(cx, bcx) {
       return rows.some((r) => r.querySelector('label')?.textContent === 'serve posts');
     })()`, 'settings serve row', 15000);
     // The press runs through `btn.click()` inside `cx.eval(..., true)`, as
-    // `setLinksPrefViaUi` presses its word (the extension's settings-row
-    // pattern): the seam reads `notis.serve`'s storage write and calls
-    // `client.setServing`, which closes every connection the client holds
-    // and dials again. `Input.dispatchMouseEvent` at measured coordinates
-    // misses whenever the settings window stands outside the viewport, and
-    // the row has no user-activation gate — click-through-eval is the way
-    // this harness presses rows with words. The redial's new `ok=true`
-    // inbound handshake arrives on D past the offset captured right before
-    // the press; its `peerId` is what D's `post_received` `source` reads
-    // for the pulled text.
+    // `setLinksPrefViaUi` presses its word: the seam writes `notis.serve` and
+    // calls `client.setServing`, which closes every connection the client
+    // holds and dials again. The redial's new `ok=true` inbound handshake
+    // arrives on D past the offset captured right before the press; its
+    // `peerId` is what D's `post_received` `source` reads for the pulled text.
     const inHsOffsetBeforePress = logOffset(dLogPath);
     await page5b.cx.eval(`(() => {
       const rows = [...document.querySelectorAll('.row')];
