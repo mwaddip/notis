@@ -555,6 +555,27 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
+  it('a 200 submit answer whose status is not pending is logged once and read as not sent', async () => {
+    const { file, done } = setupKey();
+    try {
+      const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
+      // A 200 the reader admits, but with a status the check refuses.
+      state.postAnswer.status = 200;
+      state.postAnswer.body = { status: 'refused' };
+      const lines: string[] = [];
+      const outcome = await runConsolidateCheck({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: buildStub(state),
+        logger: (l) => lines.push(l),
+      });
+      // The transaction was posted — the stub recorded it — but the answer's
+      // status is not `pending`, so the outcome reads as not sent.
+      expect(state.posts).toHaveLength(1);
+      expect(outcome.sent).toBe(false);
+      expect(lines).toHaveLength(1);
+    } finally { done(); }
+  });
 });
 
 // -------------------------------------------------------------------------
