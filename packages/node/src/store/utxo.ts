@@ -664,12 +664,12 @@ export function getCreditBoxesPage(
  *
  * Selection is discretionary — a producer includes what it chooses
  * (NODE_INTERFACE → "Storage rent is a transition requiring no signature").
- * The exclusion of boxes a pooled entry spends is this node's producer, at
- * the template (NODE_INTERFACE → "This node's producer collects at its
- * template, from the boxes no pooled transaction spends"): the exclusion
- * lives in the SQL so `LIMIT` counts boxes the offer can take, never boxes
- * it would skip, and the pattern is the one `mempool.ts`'s pending views
- * already read — a correlated `NOT EXISTS` on `mempool_inputs`' primary key.
+ * The query leaves out every box a pooled entry spends (NODE_INTERFACE →
+ * "This node's producer collects at its template, from the boxes no pooled
+ * transaction spends"). The exclusion lives in the SQL so `LIMIT` counts
+ * boxes the offer can take, never boxes it would skip, and the pattern is
+ * the one `mempool.ts`'s pending views already read — a correlated
+ * `NOT EXISTS` on `mempool_inputs`' primary key.
  */
 export function getRentEligibleCreditBoxes(
   currentHeight: number,
