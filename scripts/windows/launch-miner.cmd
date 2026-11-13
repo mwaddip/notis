@@ -6,13 +6,13 @@ set "PORT=3000"
 if not exist "%APPDATA%\Notis" mkdir "%APPDATA%\Notis"
 set "DB_PATH=%APPDATA%\Notis\notis.db"
 
-rem Persistent coinbase key (MINER_PUBKEY) — gen-miner-key.mjs prints the pubkey.
-rem Read via a temp file rather than for/f to avoid quoting the nested command.
-"%~dp0node\node.exe" "%~dp0app\packages\node\scripts\gen-miner-key.mjs" "%APPDATA%\Notis\miner-key.json" > "%TEMP%\notis_pub.txt"
-set /p MINER_PUBKEY=<"%TEMP%\notis_pub.txt"
+rem MINING_INTERFACE → Consolidation — the key file is the one source the
+rem miner reads; gen-miner-key.mjs writes it where MINER_KEY_PATH names.
+"%~dp0node\node.exe" "%~dp0app\packages\node\scripts\gen-miner-key.mjs" "%APPDATA%\Notis\miner-key.json" > nul
+set "MINER_KEY_PATH=%APPDATA%\Notis\miner-key.json"
 "%~dp0node\node.exe" -e "console.log(require('crypto').randomUUID())" > "%TEMP%\notis_sec.txt"
 set /p MINING_SECRET=<"%TEMP%\notis_sec.txt"
-del "%TEMP%\notis_pub.txt" "%TEMP%\notis_sec.txt" 2>nul
+del "%TEMP%\notis_sec.txt" 2>nul
 
 set "NODE_ROLE=miner"
 if "%MINER_PCT%"=="" set "MINER_PCT=25"

@@ -6,11 +6,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 # The operator fills the Environment= lines (NODE_INTERFACE → The packaged node).
+# MINER_KEY_PATH names the Ed25519 key file the miner's `?miner=` reads from
+# and consolidates against (MINING_INTERFACE → Consolidation).
 Environment="NODE_URL=https://your-node.example.com/testnet/api"
 Environment="MINER_PCT=25"
 Environment="MINING_SECRET=CHANGE_ME"
-Environment="MINER_PUBKEY=a1580bf92e5ffb81a7193c5c658339609f3dc63829e0a850fd12a9e873b58c7a"
-ExecStart=/usr/bin/node /opt/dagsocial-miner/miner.mjs
+Environment="MINER_KEY_PATH=/var/lib/dagsocial/miner-key.json"
+ExecStart=/usr/bin/node /opt/dagsocial/packages/node/scripts/miner.mjs
 Restart=always
 RestartSec=5
 StandardOutput=journal
