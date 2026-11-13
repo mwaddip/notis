@@ -4,13 +4,27 @@
 // only imports. The sync and handshake codecs import these here rather than
 // across one another, because each of those modules has its own set of
 // Node-bound neighbors it keeps apart from `./browser`.
-import { readVlqU, ReaderError } from '@dagsocial/types';
-import type { ByteReader } from '@dagsocial/types';
+import { decodeStruct, readVlqU, ReaderError } from '@dagsocial/types';
+import type { ByteReader, StructCodec } from '@dagsocial/types';
 import {
   isBoundedInt,
   MAX_CAPABILITY_CODE,
   MAX_CAPABILITY_ENTRIES,
 } from './msg-guards.js';
+
+/**
+ * TYPES_INTERFACE → The boundary check → "Callers convert `ReaderError` into
+ * a verdict" — discharged in the shape net's boundary uses: decoders return
+ * `null` instead of throwing, and the caller decides what a `null` means for
+ * the peer that sent it.
+ */
+export function tryDecodeStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null {
+  try {
+    return decodeStruct(codec, bytes);
+  } catch {
+    return null;
+  }
+}
 
 export function readBoundedLpUtf8(r: ByteReader, maxBytes: number, name: string): string {
   const len = readVlqU(r);

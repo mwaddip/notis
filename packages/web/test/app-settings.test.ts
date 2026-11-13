@@ -204,6 +204,43 @@ describe('the App settings control', () => {
     expect(afterButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
   });
 
+  // WEB_INTERFACE → The settings window → "The serve row" — a press moves
+  // the pressed word in place through the App, as the policy and links
+  // rows' presses do. Driven over a serve seam whose set() toggles what
+  // on() answers, so the re-render reads the new value.
+  it('a press on the serve row moves its pressed word in place', async () => {
+    document.body.innerHTML = '';
+    const appbar = document.createElement('header');
+    const workspace = document.createElement('div'); workspace.className = 'workspace';
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    workspace.append(feed, panes);
+    document.body.append(appbar, workspace);
+    let stored = false;
+    const serveSeam = {
+      on: (): boolean => stored,
+      set: (on: boolean): void => { stored = on; },
+    };
+    const app = new App(
+      fakeApi(), undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, serveSeam,
+    );
+    app.mount(appbar, feed, panes);
+    appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!.click();
+    await flush();
+    const serveRow = (): HTMLElement | undefined => [...panes.querySelectorAll<HTMLElement>('.winbody .row')]
+      .find((r) => r.querySelector('label')?.textContent === 'serve posts');
+    expect(serveRow()).toBeDefined();
+    const buttonsBefore = [...serveRow()!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(buttonsBefore.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+    buttonsBefore[1]!.click();
+    await flush();
+    expect(stored).toBe(true);
+    const buttonsAfter = [...serveRow()!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(buttonsAfter.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
+  });
+
   it('notis.layout holds @settings after an open, and a fresh App restores the window', async () => {
     const { appbar } = mount();
     appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!.click();

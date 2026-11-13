@@ -13,18 +13,15 @@ import {
   ReaderError,
   decodeHeader,
   decodeOrderingBlock,
-  decodeStruct,
   encodeHeader,
   encodeOrderingBlock,
   encodeStruct,
   readHexN,
-  readU8,
   readVlqU,
   writeArr,
   writeHexNOrThrow,
   writeLp,
   writeLpUtf8,
-  writeU8OrThrow,
   writeVlqU,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, StructCodec } from '@dagsocial/types';
@@ -36,16 +33,25 @@ import {
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_LOCATOR_HASHES,
   MAX_PEERS_ENTRIES,
-  MAX_INV_IDS,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
 } from './msg-guards.js';
+// NET_INTERFACE → ModifierRequest, NET_INTERFACE → ModifierResponse —
+// the two codecs live in a browser-safe module and this file re-exports
+// them beside its own frame wrappers.
+export { modifierRequestCodec, modifierResponseCodec } from './modifier-codec.js';
+import { modifierRequestCodec, modifierResponseCodec } from './modifier-codec.js';
 
 // The byte-capped lpUtf8 and count-checked capability readers live in
 // `./codec-helpers.js` (browser-safe) and are re-exported here so the
-// stream codecs continue to pick them up at the one import site.
+// stream codecs continue to pick them up at the one import site. The
+// error-to-null decode wrapper `tryDecodeStruct` lives beside them.
 export { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
-import { readBoundedLpUtf8, readBoundedCapabilities } from './codec-helpers.js';
+import {
+  readBoundedLpUtf8,
+  readBoundedCapabilities,
+  tryDecodeStruct,
+} from './codec-helpers.js';
 
 // ---------------------------------------------------------------------------
 // SyncInfo (2) — NET_INTERFACE → SyncInfo (code 2)
@@ -78,39 +84,12 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
 }
 
 // ---------------------------------------------------------------------------
-// ModifierRequest (4) — NET_INTERFACE → ModifierRequest
+// ModifierRequest (4) / ModifierResponse (5) — NET_INTERFACE → ModifierRequest,
+// NET_INTERFACE → ModifierResponse.
 //
-// u8(typeId) ‖ arr( hexN(id, 32) )
-//
-// typeId is u8 — the byte is the domain; unknown values decode and are dropped
-// by the handler (node.ts filters ModifierRequest by typeId before dispatch).
-// 1–MAX_INV_IDS ids; empty is malformed (nonEmpty — no honest sender requests
-// nothing).
+// The two struct codecs live in `./modifier-codec.js` (browser-safe) and the
+// frame wrappers below glue them to the Node frame codec.
 // ---------------------------------------------------------------------------
-
-export const modifierRequestCodec: StructCodec<{ typeId: number; ids: string[] }> = {
-  name: 'modifierRequest',
-  write(w, msg) {
-    writeU8OrThrow(w, msg.typeId);
-    writeArr(w, msg.ids, (iw, id) => writeHexNOrThrow(iw, id, 32));
-  },
-  read(r) {
-    const typeId = readU8(r);
-    const count = readVlqU(r);
-    if (count < 1) {
-      throw new ReaderError('modifierRequest: empty id list', 'out-of-domain');
-    }
-    if (count > MAX_INV_IDS) {
-      throw new ReaderError(
-        `modifierRequest: ${count} ids exceeds ${MAX_INV_IDS}`,
-        'array-too-large',
-      );
-    }
-    const ids: string[] = [];
-    for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
-    return { typeId, ids };
-  },
-};
 
 export function encodeModifierRequest(magic: number, req: ModifierRequest): Uint8Array {
   return encodeFrame(magic, MSG_MODIFIER_REQUEST, encodeStruct(modifierRequestCodec, req));
@@ -119,54 +98,6 @@ export function encodeModifierRequest(magic: number, req: ModifierRequest): Uint
 export function decodeModifierRequest(body: Uint8Array): ModifierRequest | null {
   return tryDecodeStruct(modifierRequestCodec, body);
 }
-
-// ---------------------------------------------------------------------------
-// ModifierResponse (5) — NET_INTERFACE → ModifierResponse
-//
-// u8(typeId) ‖ arr( hexN(id, 32) ‖ lp(data) )
-//
-// 1–MAX_INV_IDS modifiers; empty is malformed — a peer with none of the
-// requested modifiers answers zero bytes, never an empty list.
-// ---------------------------------------------------------------------------
-
-export const modifierResponseCodec: StructCodec<ModifierResponse> = {
-  name: 'modifierResponse',
-  write(w, msg) {
-    writeU8OrThrow(w, msg.typeId);
-    writeArr(w, msg.modifiers, (mw, m) => {
-      writeHexNOrThrow(mw, m.id, 32);
-      writeLp(mw, m.data);
-    });
-  },
-  read(r) {
-    const typeId = readU8(r);
-    const count = readVlqU(r);
-    if (count < 1) {
-      throw new ReaderError('modifierResponse: empty modifier list', 'out-of-domain');
-    }
-    if (count > MAX_INV_IDS) {
-      throw new ReaderError(
-        `modifierResponse: ${count} modifiers exceeds ${MAX_INV_IDS}`,
-        'array-too-large',
-      );
-    }
-    const modifiers: { id: string; data: Uint8Array }[] = [];
-    for (let i = 0; i < count; i++) {
-      const id = readHexN(r, 32);
-      // NET_INTERFACE → Validation (and untrusted-input safety) →
-      // "A peer's bytes are weighed before they are decoded"
-      const dataLen = readVlqU(r);
-      if (dataLen > MAX_ORDERING_BLOCK_BYTES) {
-        throw new ReaderError(
-          `modifierResponse: data ${dataLen} bytes exceeds MAX_ORDERING_BLOCK_BYTES (${MAX_ORDERING_BLOCK_BYTES})`,
-          'out-of-domain',
-        );
-      }
-      modifiers.push({ id, data: new Uint8Array(r.readBytes(dataLen)) });
-    }
-    return { typeId, modifiers };
-  },
-};
 
 export function encodeModifierResponse(magic: number, resp: ModifierResponse): Uint8Array {
   return encodeFrame(magic, MSG_MODIFIER_RESPONSE, encodeStruct(modifierResponseCodec, resp));
@@ -402,22 +333,6 @@ function lpItemsCodec<T>(
       return items;
     },
   };
-}
-
-/**
- * Decode a positional body, converting every `ReaderError` into `null`.
- *
- * TYPES_INTERFACE → The boundary check →
- * "Callers convert `ReaderError` into a verdict" — discharged in the shape the rest of this file uses:
- * decoders at net's boundary never throw, they return `null`, and the caller
- * decides what a `null` means for the peer that sent it.
- */
-function tryDecodeStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null {
-  try {
-    return decodeStruct(codec, bytes);
-  } catch {
-    return null;
-  }
 }
 
 function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {

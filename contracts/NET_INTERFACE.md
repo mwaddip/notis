@@ -379,7 +379,7 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability))
 | `nodeName` | ≤ `MAX_NAME_BYTES` bytes; operator-configured, human-readable, may be empty |
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
 | `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; the multiaddr this node advertises — **its first listen address that is not loopback**, absent when every listen address is loopback. A loopback address advertised to a peer is one no peer can dial |
-| `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing. A full node declares `NODE_CAPABILITIES`, a reader `READER_CAPABILITIES` (→ Readers) |
+| `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing. A full node declares `NODE_CAPABILITIES`, a reader `READER_CAPABILITIES`, or `SERVING_READER_CAPABILITIES` while it serves posts' text (→ Readers) |
 
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
 boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
@@ -556,12 +556,15 @@ body defects as deliberate:
 serves the chain — a node; one that declares neither is a **reader**: a browser, or any client that holds no chain to
 serve. `servesChain(capabilities)` answers which. A full node declares `NODE_CAPABILITIES`, the request codes it
 answers — `SyncInfo` (2), `ModifierRequest` (4), `GetPeers` (8), `GetHeaders` (14), `GetBlocks` (16); a reader
-declares `READER_CAPABILITIES`, none.
+declares `READER_CAPABILITIES`, none, or, while it serves posts' text, `SERVING_READER_CAPABILITIES` — `ModifierRequest`
+(4) alone (→ "A serving reader answers from what it holds").
 
-**A reader is never asked for chain data.** No `SyncInfo`, `GetHeaders`, `GetBlocks`, `ModifierRequest` or `GetPeers`
-goes to a reader. `getConnectedPeers()` answers the chain-serving peers alone — the scheduler, the peer exchange and
-every caller of it draw from them — and `getConnectedReaders()` the readers. A reader is in gossip like any peer
-(→ Gossip Topics) and may query this node as any peer may.
+**A reader is never asked for chain data.** No `SyncInfo`, `GetHeaders`, `GetBlocks` or `GetPeers` goes to a reader.
+`getConnectedPeers()` answers the chain-serving peers alone — the scheduler, the peer exchange and every caller of it
+draw from them — and `getConnectedReaders()` the readers. A post's text is not chain data: a reader that declares
+`ModifierRequest` is asked for posts' text and for nothing else, and `getServingReaders()` answers the Active readers
+that declare it (→ "A serving reader answers from what it holds"). A reader is in gossip like any peer (→ Gossip
+Topics) and may query this node as any peer may.
 
 **A peer is asked for a code only if it declares it.** The scheduler, the peer exchange and `requestPostBodies` send a
 request to a peer only where its capabilities name the request's code; a caller's peer id that does not is refused
@@ -570,6 +573,28 @@ before a stream opens.
 **The peer hooks see chain-serving peers alone.** `onPeerActive` and `onPeerDisconnected` fire for a peer that serves
 the chain and never for a reader — the node's miner readiness and its post-body backfill read them, and a browser tab
 must never stand for a peer there.
+
+**A reader's arrival has a hook of its own.** `onReaderActive` fires once for each peer whose handshake completes
+declaring no chain service and that becomes Active — never for a reader closed for the readers' budget (→ "Readers have
+a budget of their own"), never for a chain-serving peer. It states the arrival and nothing more: what the reader
+declared is `peerCapabilities`'. A reader becomes Active on an inbound connection alone, since a peer this node dialled
+that declares no chain service is closed (→ "A peer dialled for chain service that declares none is closed"). The
+node's body puller reads it (NODE_INTERFACE → "A serving reader is asked for what has been due").
+
+**A serving reader answers from what it holds.** A reader that declares `ModifierRequest` answers it on
+`/dagsocial/sync/1` (`SYNC_PROTOCOL`), on a connection to a node whose handshake it completed as the dialler, and on no
+other. A stream carries one frame under the network's magic — `ModifierRequest` (code 4), `typeId` `MODIFIER_POST_BODY`
+(103), 1–`MAX_INV_IDS` ids — read under `MAX_MODIFIER_REQUEST_FRAME_BYTES`, the largest such frame. The reader answers a
+`ModifierResponse` (code 5) with the text of each asked id it holds, in the request's order, each `encodePostBody`,
+stopping before the body that would pass `MAX_SERVE_BODY_BYTES` with the first always sent, and answers zero bytes when
+it holds none or cannot read what it holds (→ ModifierResponse). Another code, `typeId` or magic, a frame that does not
+decode, a frame past the bound, or no frame within the deadline closes the stream unanswered. **One stream at a time per
+connection**: a stream that opens while the reader answers another on the same connection is closed unanswered, and
+every stream's read and answer run under a deadline, so a node cannot hold a page's work. What a reader serves is
+checked as a node's answer is — each text against the commitment the asker holds, a mismatch the `Misbehavior` penalty
+(→ ModifierResponse) — and nothing is relayed: an id the reader does not hold is left out. A reader that does not
+declare `ModifierRequest` registers no handler for `SYNC_PROTOCOL`. `postTextsHandler` in the browser entry is the one
+implementation (→ The browser entry).
 
 **Readers have a budget of their own.** At most `maxReaders` readers are held at once; one past it is closed after its
 handshake. Readers never count toward `maxPeers`, the outbound floor or the fill (→ Outbound Manager), and a reader
@@ -663,7 +688,8 @@ extend to them — it would fan a request for a withdrawn or withheld body acros
 stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same accumulate-and-stop rule as
 blocks (`MAX_SERVE_BODY_BYTES`). Each returned body is verified by the requester against the commitment of
 the transaction it already holds (`verifyPostBody`) before it is stored; a mismatch is a misbehaviour
-penalty.
+penalty. A serving reader answers by the same rules, from its post cache (→ Readers → "A serving reader answers from
+what it holds").
 
 ### Sync Flow
 
@@ -1667,6 +1693,7 @@ first hop.
 | `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active chain-serving peers — the DAGsocial handshake completed, `servesChain` of its capabilities; never this node's own, never a reader (→ Readers) |
 | `getConnectedReaders()` | `() => string[]` | Peer IDs of the Active readers (→ Readers) |
+| `getServingReaders()` | `() => string[]` | Peer IDs of the Active readers whose handshake declared `ModifierRequest` (→ Readers → "A reader is never asked for chain data") |
 | `peerCapabilities(peerId)` | `(string) => readonly number[] \| null` | The capabilities an Active peer's handshake declared; `null` for a peer not Active |
 | `meshIdentity()` | `() => MeshIdentity \| null` | `{ notisId, peerId, multiaddrs, localAddrs }` once announced; `null` with no mesh (→ The mesh) |
 | `onMeshAddresses(cb)` | `((MeshIdentity) => void) => void` | Each change of the announced set (→ The mesh) |
@@ -1686,13 +1713,17 @@ first hop.
 a build of it with a plugin that refuses any Node built-in (`WEB_INTERFACE → The client's builds substitute nothing`):
 the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `gossipsubOptions`); `BlockCheck`, the
 ordering-block topic's checks of → Stage 1 — the one copy, which the node's own validator calls; the handshake codec,
-`NODE_CAPABILITIES`, `READER_CAPABILITIES` and `servesChain`; and the reader's side — `readerHandshake`,
+`NODE_CAPABILITIES`, `READER_CAPABILITIES`, `SERVING_READER_CAPABILITIES` and `servesChain`; and the reader's side —
+`readerHandshake`, whose `capabilities` option declares the reader's set (`READER_CAPABILITIES` by default),
 `readerLibp2pOptions`, `meshFetch` and `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
-spellings (`MESH_INTERFACE → Identity`). **The frame codec is one code with its checksum handed in**: the Node entry
-hands it `node:crypto`'s `createHash('blake2b512')`, the browser entry `@dagsocial/types`' `hash32` — the same 32 bytes
+spellings (`MESH_INTERFACE → Identity`), and a serving reader's answer — `SYNC_PROTOCOL`, `PostTextProvider`,
+`answerPostTextsRequest` and `postTextsHandler` (→ Readers → "A serving reader answers from what it holds").
+**The frame codec is one code with its checksum handed in**: the Node entry hands it `node:crypto`'s
+`createHash('blake2b512')`, the browser entry `@dagsocial/types`' `hash32` — the same 32 bytes
 (`TYPES_INTERFACE → The protocol hash`), held equal by a case. The node frames block-sized answers, where `hash32` costs
-some 23 times `createHash` (8 MiB: 173 ms against 7.4 ms, measured 2026-11-04 on Node 24); a browser frames handshakes
-alone, under 1 KB.
+some 23 times `createHash` (8 MiB: 173 ms against 7.4 ms, measured 2026-11-04 on Node 24); a browser frames handshakes,
+under 1 KB, and a serving reader's answers, at most `MAX_INV_IDS` posts' text of at most `MAX_CONTENT_BYTES` each —
+some 120 KB.
 
 **A broadcast that sends nothing still resolves.** Each publishes on the node's own topic for its
 payload. Before `start()`, with no peer on the topic, or with the bytes already seen on the topic inside
@@ -1788,6 +1819,7 @@ the block waits as its relayer's pending block (NODE_INTERFACE → Fork choice d
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
+| `onReaderActive(cb)` | `((peerId: string) => void) => void` | Fired when a reader completes the handshake and becomes Active (→ Readers → "A reader's arrival has a hook of its own") |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`), the disconnect a ban's hang-up raises included (→ Handshake, "A ban ends the connection"). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
 | `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its one penalty entry, `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyKind` string as recorded (`'misbehavior'`, `'transient'`, `'protocol_violation'`), `detail` the reason. |
 

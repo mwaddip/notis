@@ -16,7 +16,7 @@
 
 import { NodeClient } from '../api/client.js';
 import { WriteClient } from '../api/write.js';
-import { HAND_NODE_KEY, HAND_NODE_OFF_KEY } from './storage-keys.js';
+import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, SERVE_KEY } from './storage-keys.js';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
 import { createNamesVerifier } from './names-verifier.js';
@@ -31,6 +31,7 @@ import { continues as proofContinues } from '../mesh/memory.js';
 import { decodeNipopowProof } from '@dagsocial/nipopow';
 import type { MeshClient, MeshContact, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
+import type { PostTextProvider } from '@dagsocial/net/browser';
 export type { StorageLike };
 import type {
   FiguresVerifier,
@@ -38,7 +39,7 @@ import type {
   PostResolver,
   TipVerifier,
 } from '../model/state.js';
-import type { HandNodeSeam } from '../view/settings.js';
+import type { HandNodeSeam, ServeSeam } from '../view/settings.js';
 
 /** The seams the App's extension build takes. */
 export interface MeshSeams {
@@ -49,6 +50,7 @@ export interface MeshSeams {
   namesVerifier: NamesVerifier;
   postResolver: PostResolver;
   handNodeSeam: HandNodeSeam;
+  serveSeam: ServeSeam;
 }
 
 export interface CreateMeshSeamsOptions {
@@ -191,7 +193,29 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
     },
   };
 
-  return { readClient, writeClient, tipVerifier, figuresVerifier, namesVerifier, postResolver, handNodeSeam };
+  const serveSeam: ServeSeam = {
+    on(): boolean {
+      // WEB_INTERFACE → The settings window → "The serve row": `'1'` while
+      // on, any other value or none off.
+      return opts.storage.getItem(SERVE_KEY) === '1';
+    },
+    set(on: boolean): void {
+      // WEB_INTERFACE → The settings window → "The serve row": a press that
+      // changes it writes the choice and redials every node at once
+      // (MESH_INTERFACE → Block gossip → "A client that serves answers the
+      // nodes it reads"). `client.setServing` closes every connection the
+      // client holds and dials again so each new handshake declares the
+      // new set.
+      if (on) {
+        opts.storage.setItem(SERVE_KEY, '1');
+      } else {
+        opts.storage.removeItem(SERVE_KEY);
+      }
+      void client.setServing(on);
+    },
+  };
+
+  return { readClient, writeClient, tipVerifier, figuresVerifier, namesVerifier, postResolver, handNodeSeam, serveSeam };
 }
 
 /** The extension's bootstrap: starts the mesh client, kicks the first check
@@ -216,6 +240,15 @@ export interface StartExtensionMeshOptions {
   locks: { request(name: string, fn: () => Promise<void>): Promise<void> };
   window: Pick<Window, 'addEventListener'>;
   startMeshClient: (o: StartMeshClientOptions) => Promise<MeshClient>;
+  /**
+   * WEB_INTERFACE → The settings window → "The serve row",
+   * → The extension → "The post cache" → "A serving read is answered from
+   * it". The provider the serving reader answers `ModifierRequest` from —
+   * `postTextsFromCache(postCache)` in the extension build. The start
+   * reads `SERVE_KEY` from storage and passes `serving: { on, texts }` to
+   * `startMeshClient`.
+   */
+  postTexts: PostTextProvider;
 }
 
 export async function startExtensionMesh(
@@ -289,6 +322,13 @@ export async function startExtensionMesh(
       answered: stored.answered,
     };
   }
+  // WEB_INTERFACE → The settings window → "The serve row": the reader's
+  // choice is read at the mesh client's start and declares the serving
+  // reader's capabilities on the first handshake.
+  startOpts.serving = {
+    on: opts.storage.getItem(SERVE_KEY) === '1',
+    texts: opts.postTexts,
+  };
   const client = await opts.startMeshClient(startOpts);
   seatedClient = client;
   // The App starts at once — the first check never blocks a read

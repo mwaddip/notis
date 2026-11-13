@@ -793,6 +793,11 @@ feed draws the cache's roots and an author window that author's entries — the 
 ties by id, then the pending, at most a page — each live card as any card renders, a withdrawn entry filtered out,
 under the list's error line and with no next page; the next listing that answers lands on those rows as a refresh
 does. A build with no cache — the web build — shows the error line and no row.
+**A serving read is answered from it**: while the reader serves (→ The settings window → "The serve row"), a node's
+request for posts' text is answered with each asked id whose entry holds a live post's text — the kept entries before a
+tip run names a chain included — and with nothing for a withdrawn entry or one without text; the read moves no entry's
+last-seen.
+
 **Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
 its own written with every put, withdrawal and eviction — a put past it evicts the least
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
@@ -2040,6 +2045,7 @@ identity tint   two sample bars · spine · wash · both · off
 node            the node this client reads — blank resets to the build's
 sign each rep action · don't ask / ask — in the extension only (→ The extension)
 a Notis link opens · on the site / here — in the extension only (→ The extension)
+serve posts · off / on — in the extension only (→ The extension)
 ```
 
 **The `theme` row is the phone's theme control**: at one column the workspace header carries none
@@ -2068,6 +2074,14 @@ preference (→ The extension), read from `storage.local` and set through `links
 renders only when the identity module implements `links` — the extension's proxy, in a build whose `notis-public`
 is not empty — so the web build has no such row either. Its hint: *a link that opens a tab of its own lands in this workspace. a link
 followed inside a page stays there — its `add to workspace` brings it here.*
+
+**The serve row**, *serve posts: off · on*, is the reader's choice to answer nodes' requests for posts' text from the
+post cache (`MESH_INTERFACE → Block gossip → "A client that serves answers the nodes it reads"`; → The extension → "A
+serving read is answered from it"): off by default, kept in the page's storage as `notis.serve` — `'1'` while on, any
+other value or none off — with or without an identity. While on, a hint stands beneath it: *nodes this page reads from
+may ask it for posts, and learn which ones you hold and your address.* A press that changes it redials every node at
+once, and the row reads the choice as the press left it. It renders only where the build hands the client a way to
+serve — the extension, which holds a post cache — so the web build has no such row.
 
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).

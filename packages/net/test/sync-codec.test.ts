@@ -7,8 +7,8 @@ import {
   encodeModifierResponse, decodeModifierResponse,
   syncInfoCodec, modifierRequestCodec, modifierResponseCodec,
 } from '@dagsocial/net';
-import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT, MAX_INV_IDS } from '@dagsocial/net';
-import { MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
+import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT, MAX_INV_IDS, MAX_MODIFIER_REQUEST_FRAME_BYTES } from '@dagsocial/net';
+import { MSG_SYNC_INFO, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE, MODIFIER_POST_BODY } from '@dagsocial/net';
 import {
   ByteWriter,
   computeUtxoTxRoot,
@@ -51,6 +51,18 @@ describe('sync codec', () => {
     expect(code).toBe(MSG_MODIFIER_REQUEST);
     const decoded = decodeModifierRequest(b);
     expect(decoded!.ids).toHaveLength(MAX_INV_IDS);
+  });
+
+  // NET_INTERFACE → Readers → "A serving reader answers from what it holds":
+  // the bound a serving reader reads a `ModifierRequest` under. The frame
+  // encodes the request at its send-side cap — `MAX_INV_IDS` ids — so the
+  // bound is a derived number, this encode's bytes.
+  it('MAX_MODIFIER_REQUEST_FRAME_BYTES is the longest ModifierRequest frame', () => {
+    const frame = encodeModifierRequest(MAGIC_TESTNET, {
+      typeId: MODIFIER_POST_BODY,
+      ids: Array.from({ length: MAX_INV_IDS }, () => H32),
+    });
+    expect(frame.length).toBe(MAX_MODIFIER_REQUEST_FRAME_BYTES);
   });
 
   it('round-trips ModifierResponse with binary data', () => {

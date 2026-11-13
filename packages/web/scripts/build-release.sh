@@ -147,6 +147,16 @@ if grep -Fnq "notis.posts." dist/assets/*.js; then
   grep -Fn "notis.posts." dist/assets/*.js | head -5
   exit 1
 fi
+# The web bundle carries no serve-posts setting — WEB_INTERFACE → The
+# settings window → "The serve row". `notis.serve` is the `localStorage`
+# key the extension's serve seam keys on; the row renders only where the
+# build hands the client a way to serve, so a stray chunk that pulled the
+# serve seam into the page script surfaces as a hit here.
+if grep -Fnq "notis.serve" dist/assets/*.js; then
+  echo "FAIL: notis.serve reference found in the web bundle (the serve seam leaked into the zip)"
+  grep -Fn "notis.serve" dist/assets/*.js | head -5
+  exit 1
+fi
 # The web bundle holds no mesh memory — WEB_INTERFACE → The extension →
 # "What the extension remembers". `notis.mesh.memory` is the Web Lock name
 # and the `localStorage` key prefix the extension's memory store keys on,

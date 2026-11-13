@@ -31,6 +31,13 @@ export const NODE_CAPABILITIES: readonly number[] = [
 export const READER_CAPABILITIES: readonly number[] = [];
 
 /**
+ * NET_INTERFACE → Readers → "A peer's capabilities say what it serves":
+ * a serving reader declares `ModifierRequest` (4) alone — the one code
+ * it answers.
+ */
+export const SERVING_READER_CAPABILITIES: readonly number[] = [MSG_MODIFIER_REQUEST];
+
+/**
  * NET_INTERFACE → Readers → "A peer's capabilities say what it serves".
  */
 export function servesChain(caps: readonly number[]): boolean {

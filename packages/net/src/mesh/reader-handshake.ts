@@ -34,6 +34,13 @@ export interface ReaderHandshakeOptions {
   readonly agentName: string;
   readonly chainHeight: number;
   readonly timeoutMs: number;
+  /**
+   * NET_INTERFACE → Readers — "A peer's capabilities say what it serves":
+   * the capability set the reader's handshake declares.
+   * `READER_CAPABILITIES` (the empty set) when omitted;
+   * `SERVING_READER_CAPABILITIES` while the reader serves posts' text.
+   */
+  readonly capabilities?: readonly number[];
 }
 
 /**
@@ -83,7 +90,7 @@ export async function readerHandshake(
       protocolVersion: o.protocolVersion,
       nodeName: '',
       chainHeight: o.chainHeight,
-      capabilities: [...READER_CAPABILITIES],
+      capabilities: [...(o.capabilities ?? READER_CAPABILITIES)],
     },
     browserHashFn(),
   );

@@ -1,9 +1,14 @@
 import { emitPostReceived } from '../journal.js';
 
 // ---------------------------------------------------------------------------
-// Backfill driver — NODE_INTERFACE → Store Interface → Posts DAG, "Backfill
-// after sync". The node's one body puller: requests bodies on a per-id
-// schedule in block height, from the block-applied hook, one pass at a time.
+// Backfill driver — NODE_INTERFACE → "Backfill after sync" and
+// NODE_INTERFACE → "A serving reader is asked for what has been due". The
+// node's one body puller: requests bodies on a per-id schedule in block
+// height, from the block-applied hook, one pass at a time; each pass, after
+// its node-peer asks, asks every serving reader once for the entries whose
+// schedule the puller has advanced before; and a serving reader's arrival
+// asks it once for every such entry, on a trigger of its own that runs in
+// the puller's one-at-a-time order and writes no entry's schedule.
 // ---------------------------------------------------------------------------
 
 interface BackfillEntry {
@@ -13,6 +18,11 @@ interface BackfillEntry {
   retryInterval: number;
   fromPeerId: string;
   attemptCount: number;
+  // Set true by the pass that advances the entry's schedule from its joining
+  // height; a pass with no node peer still sets it, since the advance runs
+  // before `pickPeer` (NODE_INTERFACE → "A serving reader is asked for what
+  // has been due").
+  dueOnce: boolean;
 }
 
 const MAX_RETRY_INTERVAL = 256;
@@ -25,6 +35,11 @@ export interface BackfillDeps {
     peerId: string,
   ) => Promise<Array<{ id: string; content: string }>>;
   getConnectedPeers: () => string[];
+  // NET_INTERFACE → "A reader is never asked for chain data" — the Active
+  // readers whose handshake declared `ModifierRequest`; the puller asks them
+  // for the entries a pass has made due before
+  // (NODE_INTERFACE → "A serving reader is asked for what has been due").
+  getServingReaders: () => string[];
   setPostBody: (postId: string, content: string) => boolean;
   // NODE_INTERFACE → Store Interface → Posts DAG: at init, every row this
   // answers joins the schedule, due at the next applied block.
@@ -36,11 +51,20 @@ export interface BackfillDeps {
 
 let deps: BackfillDeps | null = null;
 
-// NODE_INTERFACE → "Backfill after sync" — one pass at a time, from the
-// block-applied hook. `passRunning` names a pass in flight; `latestScheduled`
-// carries the newest height arrived while one was running.
-let passRunning = false;
+// NODE_INTERFACE → "Backfill after sync" and "A serving reader is asked for
+// what has been due" — one piece of work at a time. `running` names any task
+// in flight: a pass over an applied block, or a reader's arrival ask.
+// `latestScheduled` carries the newest block height arrived while a task was
+// running — multiple applied blocks coalesce into one pass at the tip.
+// `readerQueue` carries each arrival ask by itself: each one's promise
+// resolves after its own call has run.
+interface ReaderTask {
+  peerId: string;
+  resolve: () => void;
+}
+let running = false;
 let latestScheduled: number | null = null;
+const readerQueue: ReaderTask[] = [];
 
 export function initBackfill(d: BackfillDeps): void {
   deps = d;
@@ -53,6 +77,7 @@ export function initBackfill(d: BackfillDeps): void {
       retryInterval: 1,
       fromPeerId: '',
       attemptCount: 0,
+      dueOnce: false,
     });
   }
 }
@@ -66,6 +91,7 @@ export function registerPlaceholder(id: string, contentHash: string, height: num
     retryInterval: 1,
     fromPeerId,
     attemptCount: 0,
+    dueOnce: false,
   });
 }
 
@@ -75,6 +101,25 @@ function pickPeer(entry: BackfillEntry, connectedPeers: string[]): string | null
   }
   if (connectedPeers.length === 0) return null;
   return connectedPeers[entry.attemptCount % connectedPeers.length] ?? null;
+}
+
+// NODE_INTERFACE → "Backfill after sync" and "A serving reader is asked
+// for what has been due": one ask to `peerId` for `wanted`, each stored
+// body leaving pending and emitting `post_received` with `via: 'pull'`.
+// A throw from `requestPostBodies` leaves the helper — callers hold the
+// catch and log line that keeps a failing peer from killing the pass.
+async function requestAndStore(
+  peerId: string,
+  wanted: Array<{ id: string; contentHash: string }>,
+): Promise<void> {
+  const bodies = await deps!.requestPostBodies(wanted, peerId);
+  for (const { id, content } of bodies) {
+    const stored = deps!.setPostBody(id, content);
+    if (stored) {
+      pending.delete(id);
+      emitPostReceived(id, peerId, 'pull');
+    }
+  }
 }
 
 async function runPass(height: number): Promise<void> {
@@ -100,11 +145,17 @@ async function runPass(height: number): Promise<void> {
   }
   if (dueEntries.length === 0) return;
 
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": the
+  // reader-eligible set is the due entries whose schedule a pass has
+  // advanced before — captured before this pass advances the schedule.
+  const readerEligible = dueEntries.filter((e) => e.dueOnce);
+
   // Mark each remaining entry asked — the next due height and the interval
-  // advanced — before any request goes out.
+  // advanced, and `dueOnce` set — before any request goes out.
   for (const entry of dueEntries) {
     entry.nextRetryHeight = height + entry.retryInterval;
     entry.retryInterval = Math.min(entry.retryInterval * 2, MAX_RETRY_INTERVAL);
+    entry.dueOnce = true;
   }
 
   // Group by peer: the relaying peer on the first ask, then the connected
@@ -127,35 +178,95 @@ async function runPass(height: number): Promise<void> {
   for (const [peerId, entries] of byPeer) {
     const wanted = entries.map((e) => ({ id: e.id, contentHash: e.contentHash }));
     try {
-      const bodies = await deps.requestPostBodies(wanted, peerId);
-      for (const { id, content } of bodies) {
-        const stored = deps.setPostBody(id, content);
-        if (stored) {
-          pending.delete(id);
-          emitPostReceived(id, peerId, 'pull');
-        }
-      }
+      await requestAndStore(peerId, wanted);
     } catch (err) {
       console.warn(`Backfill request to ${peerId} failed: ${String(err)}`);
     }
     for (const entry of entries) entry.attemptCount++;
+  }
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": each
+  // pass, after the node-peer asks, sends the reader-eligible set to every
+  // serving reader, one call each, in the order `getServingReaders()`
+  // answers; an entry a node peer stored in the same pass has left
+  // `pending`, so the reader arm asks only for what remains, and sends
+  // nothing when nothing does. A call that rejects leaves the pass asking
+  // the next reader.
+  const stillEligible = readerEligible.filter((e) => pending.has(e.id));
+  if (stillEligible.length > 0) {
+    const wanted = stillEligible.map((e) => ({ id: e.id, contentHash: e.contentHash }));
+    for (const readerId of deps.getServingReaders()) {
+      try {
+        await requestAndStore(readerId, wanted);
+      } catch (err) {
+        console.warn(`Backfill request to ${readerId} failed: ${String(err)}`);
+      }
+    }
+  }
+}
+
+// NODE_INTERFACE → "A serving reader is asked for what has been due":
+// an arrival asks a reader once for every pending entry whose schedule a
+// pass has advanced, after the entries no longer placeholders leave
+// unasked. The schedule is left alone.
+async function askArrivedReader(peerId: string): Promise<void> {
+  if (!deps) return;
+  const eligibleIds: string[] = [];
+  for (const [, entry] of pending) {
+    if (entry.dueOnce) eligibleIds.push(entry.id);
+  }
+  if (eligibleIds.length === 0) return;
+  const stillSet = new Set(deps.getStillPlaceholderIds(eligibleIds));
+  for (const id of eligibleIds) {
+    if (!stillSet.has(id)) pending.delete(id);
+  }
+  const entries: BackfillEntry[] = [];
+  for (const id of eligibleIds) {
+    if (!stillSet.has(id)) continue;
+    const entry = pending.get(id);
+    if (entry) entries.push(entry);
+  }
+  if (entries.length === 0) return;
+
+  const wanted = entries.map((e) => ({ id: e.id, contentHash: e.contentHash }));
+  try {
+    await requestAndStore(peerId, wanted);
+  } catch (err) {
+    console.warn(`Backfill request to ${peerId} failed: ${String(err)}`);
+  }
+}
+
+// The puller's one-at-a-time serializer: at most one pass or arrival ask
+// runs at a time (NODE_INTERFACE → "A serving reader is asked for what has
+// been due"). Passes drain first so an arrival registered during a pass
+// waits for it.
+async function runLoop(): Promise<void> {
+  if (running) return;
+  running = true;
+  try {
+    while (latestScheduled !== null || readerQueue.length > 0) {
+      if (latestScheduled !== null) {
+        const h = latestScheduled;
+        latestScheduled = null;
+        await runPass(h);
+      } else {
+        const task = readerQueue.shift()!;
+        try {
+          await askArrivedReader(task.peerId);
+        } finally {
+          task.resolve();
+        }
+      }
+    }
+  } finally {
+    running = false;
   }
 }
 
 export async function onBlockApplied(height: number): Promise<void> {
   if (!deps) return;
   latestScheduled = latestScheduled === null ? height : Math.max(latestScheduled, height);
-  if (passRunning) return;
-  passRunning = true;
-  try {
-    while (latestScheduled !== null) {
-      const h = latestScheduled;
-      latestScheduled = null;
-      await runPass(h);
-    }
-  } finally {
-    passRunning = false;
-  }
+  await runLoop();
 }
 
 export function getPendingCount(): number {
@@ -164,4 +275,18 @@ export function getPendingCount(): number {
 
 export function clearPending(): void {
   pending.clear();
+}
+
+// NODE_INTERFACE → "A serving reader is asked for what has been due": a
+// peer id `getServingReaders()` does not name is asked nothing; otherwise
+// the arrival joins the puller's queue and the promise resolves after its
+// own ask has run.
+export async function readerArrived(peerId: string): Promise<void> {
+  if (!deps) return;
+  if (!deps.getServingReaders().includes(peerId)) return;
+  let resolve!: () => void;
+  const done = new Promise<void>((res) => { resolve = res; });
+  readerQueue.push({ peerId, resolve });
+  void runLoop();
+  await done;
 }

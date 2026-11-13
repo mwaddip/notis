@@ -81,6 +81,7 @@ async function wireBackfill(fake: FakeNet): Promise<void> {
   backfill.initBackfill({
     requestPostBodies: fake.deps.requestPostBodies,
     getConnectedPeers: fake.deps.getConnectedPeers,
+    getServingReaders: () => [],
     setPostBody: posts.setPostBody,
     getMissingBodies: posts.getMissingBodies,
     getStillPlaceholderIds: posts.getStillPlaceholderIds,

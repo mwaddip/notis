@@ -62,6 +62,7 @@ export type {
 export {
   NODE_CAPABILITIES,
   READER_CAPABILITIES,
+  SERVING_READER_CAPABILITIES,
   servesChain,
   declares,
 } from './capabilities.js';
@@ -141,4 +142,18 @@ export {
   MSG_BLOCKS,
   MODIFIER_POST_BODY,
 } from './types.js';
-export { MAX_HANDSHAKE_FRAME_BYTES } from './msg-guards.js';
+export { MAX_HANDSHAKE_FRAME_BYTES, MAX_MODIFIER_REQUEST_FRAME_BYTES } from './msg-guards.js';
+// NET_INTERFACE → Historical Sync — the one stream protocol every sync
+// query and a serving reader's answer ride.
+export { SYNC_PROTOCOL } from './sync-protocol.js';
+// NET_INTERFACE → Readers — "A serving reader answers from what it holds".
+export {
+  answerPostTextsRequest,
+  postTextsHandler,
+} from './mesh/serve-post-texts.js';
+export type {
+  PostTextProvider,
+  PostTextsHandlerOptions,
+  PostTextsStream,
+  PostTextsConnection,
+} from './mesh/serve-post-texts.js';

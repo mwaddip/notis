@@ -31,6 +31,16 @@ export const MAX_CAPABILITY_CODE = 65_535;
 export const MAX_HANDSHAKE_FRAME_BYTES = 984;
 
 /**
+ * Longest `ModifierRequest` (4) frame a serving reader reads from a stream
+ * (NET_INTERFACE → Readers → "A serving reader answers from what it holds";
+ * CONSTANTS → net). A body of 12 803 bytes — the `typeId` byte, `MAX_INV_IDS`
+ * (400) behind a two-byte count, 400 ids of 32 bytes — in a frame 12 bytes
+ * longer: magic, version, a one-byte code, a two-byte length and the
+ * checksum.
+ */
+export const MAX_MODIFIER_REQUEST_FRAME_BYTES = 12_815;
+
+/**
  * Handshake streams of one connection a listener accepts at once
  * (NET_INTERFACE → Handshake →
  * "A connection carries one handshake, opened by the side that dialled it").

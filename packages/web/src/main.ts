@@ -7,9 +7,10 @@ import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createPostsVerifier } from './extension/posts-verifier';
 import { createPostCache, rememberedChain } from './extension/post-cache';
+import { postTextsFromCache } from './extension/post-texts';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
-import type { HandNodeSeam } from './view/settings';
+import type { HandNodeSeam, ServeSeam } from './view/settings';
 import type { WaitingStorage } from './wallet/waiting';
 import type { LockManager } from './locks';
 import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache, PostResolver } from './model/state';
@@ -52,6 +53,7 @@ let postsVerifier: PostsVerifier | undefined;
 let postCache: PostCache | undefined;
 let postResolver: PostResolver | undefined;
 let handNodeSeam: HandNodeSeam | undefined;
+let serveSeam: ServeSeam | undefined;
 // WEB_INTERFACE → The wallet → "A write no node answers waits". The extension
 // build holds a waiting store over `window.localStorage` and the browser's
 // `navigator.locks` (the same adapter the background uses); the web build
@@ -97,6 +99,11 @@ if (isExtension && BUILD_NETWORK !== null) {
     },
     window,
     startMeshClient,
+    // WEB_INTERFACE → The settings window → "The serve row",
+    // → The extension → "The post cache" → "A serving read is answered
+    // from it". The mesh client's serving reader answers `ModifierRequest`
+    // from the cache the extension build carries.
+    postTexts: postTextsFromCache(postCache),
   });
   readClient = seams.readClient;
   writeClientSeam = seams.writeClient;
@@ -105,6 +112,7 @@ if (isExtension && BUILD_NETWORK !== null) {
   namesVerifier = seams.namesVerifier;
   postResolver = seams.postResolver;
   handNodeSeam = seams.handNodeSeam;
+  serveSeam = seams.serveSeam;
   waitingSeam = {
     storage: window.localStorage,
     locks: {
@@ -119,7 +127,7 @@ if (isExtension && BUILD_NETWORK !== null) {
 new App(
   readClient, writeClientSeam, idm, undefined, tabs, requestFaucetOrigin,
   verifier, figuresVerifier, namesVerifier, postsVerifier, postCache, postResolver,
-  handNodeSeam, waitingSeam,
+  handNodeSeam, waitingSeam, serveSeam,
 ).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the

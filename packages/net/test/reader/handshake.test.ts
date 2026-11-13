@@ -33,6 +33,8 @@ import { readerHandshake } from '../../src/mesh/reader-handshake.js';
 import { readerLibp2pOptions } from '../../src/mesh/reader-options.js';
 import { dhtProtocol } from '../../src/mesh/constants.js';
 import { MAGIC_TESTNET } from '../../src/frame.js';
+import { SERVING_READER_CAPABILITIES } from '../../src/capabilities.js';
+import { MSG_MODIFIER_REQUEST } from '../../src/types.js';
 import { makeConfig } from '../helpers.js';
 
 const validators: NetValidators = {
@@ -147,4 +149,63 @@ describe('NET_INTERFACE → The browser entry — reader handshake', () => {
     // protocol.
     expect(reader.getProtocols()).not.toContain(dhtProtocol('testnet'));
   }, 60_000);
+
+  // NET_INTERFACE → Readers — "A peer's capabilities say what it serves":
+  // the reader's handshake carries the set its caller hands it. Omitted,
+  // the frame carries `READER_CAPABILITIES` (the empty set); with
+  // `SERVING_READER_CAPABILITIES` the frame carries `[MSG_MODIFIER_REQUEST]`.
+  // The NetNode host's inbound handshake handler records the dialler's
+  // declared capabilities on the peer's metadata — `peerCapabilities` reads
+  // them back.
+  it('the reader\'s handshake declares the capabilities it is handed', async () => {
+    async function readerCapsAgainst(
+      capabilities: readonly number[] | undefined,
+    ): Promise<readonly number[]> {
+      const dir = mkdtempSync(join(tmpdir(), 'net-reader-caps-'));
+      dirs.push(dir);
+      const node = new NetNode(makeConfig({
+        nodeKey: generateKeyPair(),
+        listenAddrs: '/ip4/127.0.0.1/tcp/0',
+        mesh: meshOn(dir),
+      }), validators);
+      nodes.push(node);
+      await node.start();
+
+      const reader = await createLibp2p(readerLibp2pOptions({
+        privateKey: nodeKeyFromKeyPair(generateKeyPair()).privateKey,
+        magic: MAGIC_TESTNET,
+        network: 'testnet',
+        iceServers: () => [],
+        denyDialMultiaddr: () => false,
+      }));
+      hosts.push(reader);
+
+      const addr = await webrtcDirectAddrOf(node);
+      const conn = await reader.dial(multiaddr(addr));
+      await readerHandshake(conn, {
+        magic: MAGIC_TESTNET,
+        protocolVersion: PROTOCOL_VERSION,
+        agentName: 'cap-case',
+        chainHeight: 0,
+        timeoutMs: 10_000,
+        ...(capabilities !== undefined ? { capabilities } : {}),
+      });
+      const readerId = reader.peerId.toString();
+      let seen: readonly number[] | null = null;
+      for (let i = 0; i < 200; i++) {
+        seen = node.peerCapabilities(readerId);
+        if (seen !== null) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      return seen ?? [];
+    }
+
+    const servingCaps = await readerCapsAgainst(SERVING_READER_CAPABILITIES);
+    const defaultCaps = await readerCapsAgainst(undefined);
+
+    expect({ servingCaps: [...servingCaps], defaultCaps: [...defaultCaps] }).toEqual({
+      servingCaps: [MSG_MODIFIER_REQUEST],
+      defaultCaps: [],
+    });
+  }, 120_000);
 });

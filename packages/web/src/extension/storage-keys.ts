@@ -30,3 +30,8 @@ export const HAND_NODE_KEY = 'notis.node.hand';
  *  reader has switched it off; a page that loads next starts without the
  *  node until the reader turns it on. */
 export const HAND_NODE_OFF_KEY = 'notis.node.hand.off';
+
+/** The reader's serve-posts choice, in `localStorage` (WEB_INTERFACE → The
+ *  settings window → "The serve row"). Holds `'1'` while on; any other value
+ *  or none is off. Read at the mesh client's start and written at a press. */
+export const SERVE_KEY = 'notis.serve';

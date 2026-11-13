@@ -17,7 +17,7 @@ import { gossipsub } from '@libp2p/gossipsub';
 import type { GossipSub } from '@libp2p/gossipsub';
 import { identify } from '@libp2p/identify';
 import { multiaddr } from '@multiformats/multiaddr';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION, computeContentHash } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -37,6 +37,9 @@ import { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from '../src/sync.js';
 import { decodeFrame, MAGIC_TESTNET } from '../src/frame.js';
 import { gossipTopics, gossipsubOptions } from '../src/gossip-rules.js';
 import { MAX_HANDSHAKE_FRAME_BYTES } from '../src/msg-guards.js';
+import { SERVING_READER_CAPABILITIES } from '../src/capabilities.js';
+import { postTextsHandler } from '../src/mesh/serve-post-texts.js';
+import type { PostTextProvider } from '../src/mesh/serve-post-texts.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 import { makeBlockAt } from './helpers/devnet-block.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
@@ -448,7 +451,7 @@ describe('NET_INTERFACE → Readers', () => {
   // stream opens. The guard is defensive: the normal caller picks from
   // `getConnectedPeers`, which excludes readers (NET_INTERFACE → Readers →
   // "A peer is asked for a code only if it declares it").
-  it('requestPostBodies refuses a reader', async () => {
+  it('requestPostBodies refuses a reader that does not declare ModifierRequest', async () => {
     const nodeA = new NetNode(makeConfig(), validators);
     nodes.push(nodeA);
     await nodeA.start();
@@ -665,4 +668,218 @@ describe('NET_INTERFACE → Readers', () => {
     },
     120_000,
   );
+
+  // NET_INTERFACE → Readers → "A serving reader answers from what it holds":
+  // the reader host registers `postTextsHandler` on `SYNC_PROTOCOL` and
+  // answers the ids it holds.
+  function makeServingReader(
+    held: ReadonlyMap<string, string>,
+  ): Promise<Libp2p> {
+    return makeReaderLibp2p(MAGIC_TESTNET).then(async (host) => {
+      const provider: PostTextProvider = async (ids) => {
+        const out = new Map<string, string>();
+        for (const id of ids) {
+          const t = held.get(id);
+          if (t !== undefined) out.set(id, t);
+        }
+        return out;
+      };
+      await host.handle(SYNC_PROTOCOL, postTextsHandler({
+        magic: MAGIC_TESTNET,
+        texts: provider,
+        timeoutMs: 10_000,
+        accept: () => true,
+      }));
+      return host;
+    });
+  }
+
+  it("a reader that declares ModifierRequest is asked for posts' text", async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const postId = 'aa'.repeat(32);
+    const text = 'hello notis';
+    const reader = await makeServingReader(new Map([[postId, text]]));
+    hosts.push(reader);
+
+    const addrA = nodeTcpAddress(nodeA);
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET, [...SERVING_READER_CAPABILITIES]);
+    await sleep(500);
+
+    const readerId = reader.peerId.toString();
+    // control: the reader is held as a reader.
+    expect(nodeA.getConnectedReaders()).toContain(readerId);
+
+    // last: requestPostBodies answers the held text for the commitment.
+    const got = await nodeA.requestPostBodies(
+      [{ id: postId, contentHash: computeContentHash(text) }],
+      readerId,
+    );
+    expect(got).toEqual([{ id: postId, content: text }]);
+  }, TIMEOUT);
+
+  it('a serving reader is asked for no chain data', async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const addrA = nodeTcpAddress(nodeA);
+    const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+    nodes.push(nodeB);
+    await nodeB.start();
+
+    const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(reader);
+    const readerStreams = registerSyncStreamCounter(reader);
+
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET, [...SERVING_READER_CAPABILITIES]);
+    await sleep(3_000);
+
+    // control: nodeB is held as a chain-serving peer; the reader stands
+    // in the reader list.
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+    expect(nodeA.getConnectedReaders()).toContain(reader.peerId.toString());
+
+    // control: the scheduler's peer exchange picks the chain-serving
+    // peer, never the serving reader.
+    const peerMgr = (nodeA as unknown as { peerMgr: import('../src/peer-mgr.js').PeerManager }).peerMgr;
+    const due = duePeerExchange(peerMgr, new Map(), Date.now());
+    expect(due).toEqual([nodeB.peerId()]);
+
+    // last: no sync stream has been opened against the serving reader.
+    expect(readerStreams.count()).toBe(0);
+  }, TIMEOUT);
+
+  it('getServingReaders lists a serving reader alone', async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const addrA = nodeTcpAddress(nodeA);
+    const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+    nodes.push(nodeB);
+    await nodeB.start();
+
+    const bareReader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(bareReader);
+    await runReaderHandshake(bareReader, addrA, MAGIC_TESTNET);
+
+    const servingReader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(servingReader);
+    await runReaderHandshake(servingReader, addrA, MAGIC_TESTNET, [...SERVING_READER_CAPABILITIES]);
+    await sleep(2_000);
+
+    const bareId = bareReader.peerId.toString();
+    const servingId = servingReader.peerId.toString();
+
+    // control: both readers are held; the node peer stands apart.
+    expect(nodeA.getConnectedReaders().sort()).toEqual([bareId, servingId].sort());
+    expect(nodeA.getConnectedPeers()).toEqual([nodeB.peerId()]);
+
+    // last: getServingReaders names the serving reader alone.
+    expect(nodeA.getServingReaders()).toEqual([servingId]);
+  }, TIMEOUT);
+
+  it('onReaderActive fires for a reader and onPeerActive does not', async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const readerSeen: string[] = [];
+    const peerSeen: string[] = [];
+    nodeA.onReaderActive((peerId) => { readerSeen.push(peerId); });
+    nodeA.onPeerActive((peerId) => { peerSeen.push(peerId); });
+
+    const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(reader);
+    const addrA = nodeTcpAddress(nodeA);
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+    await sleep(500);
+    const readerId = reader.peerId.toString();
+
+    const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+    nodes.push(nodeB);
+    await nodeB.start();
+    await sleep(3_000);
+    const bId = nodeB.peerId();
+
+    // control: both handshakes settled — the reader held as a reader,
+    // nodeB held as a chain-serving peer.
+    expect(nodeA.getConnectedReaders()).toContain(readerId);
+    expect(nodeA.getConnectedPeers()).toContain(bId);
+
+    // last: the reader hook fired once for the reader and the peer hook
+    // once for the chain-serving peer.
+    expect({ reader: readerSeen, peer: peerSeen }).toEqual({
+      reader: [readerId],
+      peer: [bId],
+    });
+  }, TIMEOUT);
+
+  it('onReaderActive does not fire for a reader past maxReaders', async () => {
+    const nodeA = new NetNode(makeConfig({ maxReaders: 1 }), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const seen: string[] = [];
+    nodeA.onReaderActive((peerId) => { seen.push(peerId); });
+
+    const addrA = nodeTcpAddress(nodeA);
+
+    const r1 = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(r1);
+    await runReaderHandshake(r1, addrA, MAGIC_TESTNET);
+    await sleep(500);
+
+    const r2 = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(r2);
+    await runReaderHandshake(r2, addrA, MAGIC_TESTNET);
+    await sleep(500);
+
+    // control: nodeA holds one reader, the second one closed.
+    expect(nodeA.getConnectedReaders()).toHaveLength(1);
+    expect(nodeA.getConnectedReaders()).toContain(r1.peerId.toString());
+
+    // last: the hook fired once, naming the first reader.
+    expect(seen).toEqual([r1.peerId.toString()]);
+  }, TIMEOUT);
+
+  it("a serving reader's text that does not verify is a misbehaviour penalty", async () => {
+    const nodeA = new NetNode(makeConfig(), validators);
+    nodes.push(nodeA);
+    await nodeA.start();
+
+    const postId = 'bb'.repeat(32);
+    const held = 'the body held';
+    const wanted = 'the body wanted';
+    const reader = await makeServingReader(new Map([[postId, held]]));
+    hosts.push(reader);
+
+    const addrA = nodeTcpAddress(nodeA);
+    await runReaderHandshake(reader, addrA, MAGIC_TESTNET, [...SERVING_READER_CAPABILITIES]);
+    await sleep(500);
+
+    const readerId = reader.peerId.toString();
+    // control: the reader is held in the reader list.
+    expect(nodeA.getConnectedReaders()).toContain(readerId);
+
+    const penalties: Array<{ peerId: string; kind: string }> = [];
+    nodeA.onPeerPenalised((peerId, kind) => {
+      penalties.push({ peerId, kind });
+    });
+
+    // The reader answers with `held`; the commitment nodeA holds is for
+    // `wanted`, so verifyPostBody rejects.
+    const got = await nodeA.requestPostBodies(
+      [{ id: postId, contentHash: computeContentHash(wanted) }],
+      readerId,
+    );
+
+    // control: no body comes back.
+    expect(got).toEqual([]);
+    // last: the hook saw a Misbehavior for the reader's id.
+    expect(penalties).toContainEqual({ peerId: readerId, kind: 'misbehavior' });
+  }, TIMEOUT);
 });

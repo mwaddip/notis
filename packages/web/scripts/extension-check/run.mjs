@@ -51,24 +51,41 @@
 // in front of node B — each in one of eight modes at a time (honest, text,
 // drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
 // spawned on 19820.
-// The mesh block (M1 · M2 · M3 · M4) proves the mesh path in the built
-// extension — WEB_INTERFACE → The extension → "The mesh is the extension's
-// first path", → "Nothing retries a rejection"'s **A send that ends with no
-// answer is no rejection**; MESH_INTERFACE → The client's node list → "A
-// routed read goes to a node its need allows", → "The client's order for a
-// need", → "A write goes to one node at a time". The block owns two nodes
-// A' and B' spawned from --node-dist with MESH_ROLE=public, MESH_LISTEN=
-// /ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off (two public
-// nodes on one loopback cannot share STUN_PORT), both bootstrapped off A
-// (--node-p2p) so they are peers on A's chain. The extension built for
-// --mesh names each node in its seed list as `{notisId, addrs:[<webrtc-
-// direct multiaddr with certhash and /p2p/>], api:<HTTP base>}`, and the
-// harness refuses to run unless the shell's `notis-nodes` carries exactly
-// that shape — printing the VITE_NODES to rebuild with. Chromium takes
-// `--allow-loopback-in-peer-connection` for a --mesh run (a harness switch
-// for a loopback stage, not a product setting): without it a browser
-// refuses the RTCPeerConnection to 127.0.0.1 and no mesh connection
-// opens.
+// The mesh block (M1 · M2 · M3 · M4 · M5) proves the mesh path in the built
+// extension — WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path",
+// → "Nothing retries a rejection"'s
+// "A send that ends with no answer is no rejection",
+// → "A serving read is answered from it";
+// WEB_INTERFACE → The settings window → "The serve row";
+// MESH_INTERFACE → The client's node list →
+// "A routed read goes to a node its need allows",
+// → "The client's order for a need",
+// → "A write goes to one node at a time";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received. The block owns
+// two nodes A' and B' spawned from --node-dist with MESH_ROLE=public,
+// MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off
+// (two public nodes on one loopback cannot share STUN_PORT), both
+// bootstrapped off A (--node-p2p) so they are peers on A's chain. For M5
+// the block also owns an isolated node D — its store a consistent copy of
+// A''s taken while A' runs (`sqlite3 .backup`), with M3's post's text
+// nulled on the copy — spawned MESH_ROLE=public, its own MINING_SECRET and
+// miner, BOOTSTRAP_PEERS empty, reached by the extension as a hand-added
+// node (`notis.node.hand` in the extension page's localStorage, the
+// webrtc-direct multiaddr D's identity line carries); M5 does not answer
+// the disagreement the hand-added node raises.
+// The extension built for --mesh names each node in its seed list as
+// `{notisId, addrs:[<webrtc-direct multiaddr with certhash and /p2p/>],
+// api:<HTTP base>}`, and the harness refuses to run unless the shell's
+// `notis-nodes` carries exactly that shape — printing the VITE_NODES to
+// rebuild with. Chromium takes `--allow-loopback-in-peer-connection` for a
+// --mesh run (a harness switch for a loopback stage, not a product
+// setting): without it a browser refuses the RTCPeerConnection to 127.0.0.1
+// and no mesh connection opens.
 //
 // The seed list the extension is built with carries two node entries whose
 // addrs are empty and whose api names the harness's own base — RLA and RLB
@@ -162,13 +179,20 @@
 //     build whose notis-nodes is exactly [RA, RB], not [A, B]; the harness
 //     refuses to run on anything else, and refuses combination with any
 //     --verified-{tip,figures,names} flag.
-//   --mesh: M1·M2·M3·M4. Reads over the mesh, reads at the API base when no
-//     mesh node serves, a write over the mesh, and a write with no answer
-//     going to the next node (WEB_INTERFACE → The extension → "The mesh is
-//     the extension's first path"; MESH_INTERFACE → The client's node list).
-//     Requires --r-key, --node-dist, --scratch and --node-p2p (A' bootstraps
-//     from --node-p2p so A'/B' are peers on A's chain and R's karma reaches
-//     them). Takes an extension build whose notis-nodes is exactly
+//   --mesh: M1·M2·M3·M4·M5. Reads over the mesh, reads at the API base when no
+//     mesh node serves, a write over the mesh, a write with no answer
+//     going to the next node, and a node filling a post's text from a
+//     serving extension — WEB_INTERFACE → The extension →
+//     "The mesh is the extension's first path",
+//     WEB_INTERFACE → The settings window → "The serve row";
+//     MESH_INTERFACE → The client's node list, → Block gossip →
+//     "A client that serves answers the nodes it reads";
+//     NODE_INTERFACE → Posts DAG →
+//     "A serving reader is asked for what has been due".
+//     Requires --r-key, --node-dist, --miner, --scratch and --node-p2p (A'
+//     bootstraps from --node-p2p so A'/B' are peers on A's chain and R's
+//     karma reaches them; --miner mines M5's isolated D). Takes an extension
+//     build whose notis-nodes is exactly
 //     [{notisId:<A'>, addrs:[<A' webrtc-direct>], api:<A' HTTP base>},
 //     {notisId:<B'>, …}]; refuses otherwise, and refuses combination with
 //     --verified-{tip,figures,names} or --light.
@@ -183,7 +207,7 @@
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--mesh --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
+//     [--mesh --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--waiting-only] \
 //     [--public <origin+base> --web-dist <dir>]
 
@@ -265,21 +289,36 @@ const VERIFIED_NAMES = args.get('verified-names') === true;
 // hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
 // Absent, every step reads NOT RUN by name.
 const LIGHT = args.get('light') === true;
-// The mesh block — WEB_INTERFACE → The extension → "The mesh is the
-// extension's first path", `→ "Nothing retries a rejection"`'s `**A send
-// that ends with no answer is no rejection**`;
-// MESH_INTERFACE → The client's node list → "A routed read goes to a node
-// its need allows", "The client's order for a need", "A write goes to one
-// node at a time". Steps M1 · M2 · M3 · M4: reads over the mesh with zero
-// HTTP, reads at the API base when no mesh node serves, a write over the
-// mesh landing on both nodes, and a write with no answer going to the next
-// node. The block owns its own two mesh nodes A' and B' (spawned from
-// NODE_DIST with MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/
-// webrtc-direct, MESH_STUN=off; B' bootstrapped from A') and refuses to
-// run unless the extension under check was built with the seed list naming
-// each as `{notisId:<key>, addrs:[<webrtc-direct multiaddr with certhash>],
-// api:<HTTP base>}` — the harness prints the VITE_NODES to rebuild with
-// when the shape disagrees. Absent, every step reads NOT RUN by name.
+// The mesh block — WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path",
+// → "Nothing retries a rejection"'s
+// "A send that ends with no answer is no rejection",
+// → "A serving read is answered from it";
+// WEB_INTERFACE → The settings window → "The serve row";
+// MESH_INTERFACE → The client's node list →
+// "A routed read goes to a node its need allows",
+// → "The client's order for a need",
+// → "A write goes to one node at a time";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received.
+// Steps M1 · M2 · M3 · M4 · M5: reads over the mesh with zero HTTP, reads at
+// the API base when no mesh node serves, a write over the mesh landing on
+// both nodes, a write with no answer going to the next node, and a node
+// filling a post's text from a serving extension. The block owns its own
+// two mesh nodes A' and B' (spawned from NODE_DIST with MESH_ROLE=public,
+// MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct, MESH_STUN=off; B'
+// bootstrapped from A') and refuses to run unless the extension under check
+// was built with the seed list naming each as `{notisId:<key>,
+// addrs:[<webrtc-direct multiaddr with certhash>], api:<HTTP base>}` — the
+// harness prints the VITE_NODES to rebuild with when the shape disagrees.
+// For M5 the block owns an isolated node D — its store a consistent copy
+// of A''s taken while A' runs, M3's post's text nulled on the copy — with
+// its own MINING_SECRET and miner, no peers, reached by the extension as a
+// hand-added node through `notis.node.hand` in the extension page's
+// localStorage. Absent, every step reads NOT RUN by name.
 const MESH = args.get('mesh') === true;
 // --waiting-only: iterate on the waiting-writes block alone. The harness
 // runs steps 1 and 2 (the seed list check and R's import — the only
@@ -396,11 +435,38 @@ const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
 // The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
 // on their own ports — only the HTTP listener is moved.
 const AP_ALT_HTTP_PORT = 19834;
+// M5's isolated node D — a miner with its own MINING_SECRET on a copy of
+// A''s store, BOOTSTRAP_PEERS empty so it peers with no node and no node
+// can give it M3's post's text, reached by the extension as a hand-added
+// node over the mesh:
+//   NODE_INTERFACE → Posts DAG →
+//     "A serving reader is asked for what has been due";
+//   WEB_INTERFACE → The settings window → "The serve row";
+//   WEB_INTERFACE → The extension → "A serving read is answered from it".
+// Ports clear of every other harness child: B (19770–72), the tip relays
+// (19780–81), D for the verified-tip block (19795–97), the light relays
+// (19810/15), DL (19820–22), A' (19830–34) and B' (19835–38).
+const DM5_HTTP_PORT = 19860;
+const DM5_ADMIN_PORT = 19861;
+const DM5_P2P_PORT = 19862;
+const DM5_MESH_PORT = 19863;
+const DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
 // step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
+
+// The refusal of a setup that runs after the browser has launched:
+// `setupMeshStack` checks the built shell's `notis-nodes` against each node's
+// identity line, and a mismatch is a configuration error, exit code 2 as the
+// pre-launch argument checks exit. The outer try/catch sets `exitCode = 2`, and
+// the teardown, `proc.kill()` and `webServer.close()` the normal end runs close
+// every process the run launched. The pre-launch argument checks exit inline:
+// no process stands to close.
+class ConfigError extends Error {
+  constructor(message) { super(message); this.name = 'ConfigError'; }
+}
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 // --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
@@ -600,13 +666,14 @@ if (LIGHT) {
 }
 
 // --mesh runs 1–16 against the extension's seed list — the two mesh nodes
-// A' and B' this block owns — and then M1–M4. A' bootstraps from the
+// A' and B' this block owns — and then M1–M4–M5. A' bootstraps from the
 // operator's A over p2p (the --node-p2p multiaddr), so A' and B' are
 // peers on A's chain and R's karma (promoted by the operator on A) is
 // read through them like any other block. --r-key for R's identity,
-// --node-dist for the spawn's entry, --scratch for the two stores
-// (ap.db and bp.db), --node-p2p for A''s bootstrap peer — the same
-// lifecycle arguments the figures block reads, with the same shapes.
+// --node-dist for the spawn's entry, --miner for M5's isolated D, --scratch
+// for the two stores (ap.db and bp.db) and D's copy (d-m5.db), --node-p2p
+// for A''s bootstrap peer — the same lifecycle arguments the figures block
+// reads, with --miner added for M5.
 if (MESH) {
   if (!R_KEY) {
     console.error('--mesh requires --r-key <path> — R\'s identity is what steps 2–12 import and M3 signs with');
@@ -614,6 +681,10 @@ if (MESH) {
   }
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
     console.error('--mesh requires --node-dist <packages/node/dist/index.js> — spawns the two mesh nodes A\' and B\'');
+    process.exit(2);
+  }
+  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
+    console.error('--mesh requires --miner <packages/node/scripts/miner.mjs> — M5 mines the isolated D on a store copied from A\'');
     process.exit(2);
   }
   if (!SCRATCH) {
@@ -8890,7 +8961,14 @@ async function lightSteps(cx, targetId = 'unknown') {
 //        same bytes sent to the next node, the post landing once.
 // ---------------------------------------------------------------------------
 
-const MESH_STEPS = ['M1', 'M2', 'M3', 'M4'];
+const MESH_STEPS = ['M1', 'M2', 'M3', 'M4', 'M5'];
+
+// M3's post, read from a node's listing once both carry it. M5 copies A''s
+// store and nulls this id's text on the copy, then waits for the serving
+// extension to fill the text on D — NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due". `null` until M3
+// records a pass; M5 records `NOT RUN` naming that if it stays null.
+let m3Post = null;
 
 // The pair of mesh nodes `setupMeshStack` sets up before the browser
 // launches when --mesh is given. Each holds the DB path (so a restart
@@ -9083,6 +9161,34 @@ async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
   return false;
 }
 
+// Wait for a node's log to carry a new `[net] inbound handshake from <peerId>
+// on id=<connId>: ok=true height=<h>` line past `sinceOffset` — the one line
+// `packages/net`'s node writer records when an inbound handshake completes.
+// D peers with no node in M5 (`BOOTSTRAP_PEERS=""`), so every inbound
+// handshake is a reader's; the matched line names which reader connected and
+// the offset after it lets the caller start the next wait from this point.
+// Returns `{ peerId, matched, offsetAfter }` on match, `null` on timeout.
+async function waitForNewInboundHandshakeInLog(logPath, sinceOffset, ms = 90000) {
+  const needle = /\[net\] inbound handshake from (\S+) on id=\S+: ok=true/;
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const data = readFileSync(logPath, 'utf8');
+      if (data.length > sinceOffset) {
+        const slice = data.slice(sinceOffset);
+        const m = needle.exec(slice);
+        if (m !== null) {
+          const lineEndRel = slice.indexOf('\n', m.index);
+          const offsetAfter = sinceOffset + (lineEndRel === -1 ? slice.length : lineEndRel + 1);
+          return { peerId: m[1], matched: m[0], offsetAfter };
+        }
+      }
+    } catch { /* log not written yet or vanished — poll again */ }
+    await sleep(500);
+  }
+  return null;
+}
+
 // `GET /blocks/current` of a node as `{height, hash}` or null; a height-0
 // chain reads `{height: 0, hash: null}` (`NODE_INTERFACE → Blocks` —
 // `/blocks/current`).
@@ -9176,11 +9282,14 @@ async function setupMeshStack() {
   const ok = Array.isArray(parsed) && parsed.length === 2
     && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
   if (!ok || apAddr === null || bpAddr === null) {
-    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities`);
-    console.error(`      rebuild with VITE_NODES set exactly to:`);
-    console.error(`      ${JSON.stringify(expected)}`);
-    console.error(`      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`);
-    process.exit(2);
+    // The refusal is a `ConfigError`: the outer try/catch reads it as exit code
+    // 2 and closes the browser, A' and B' through the normal teardown.
+    throw new ConfigError(
+      `shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities\n`
+      + `      rebuild with VITE_NODES set exactly to:\n`
+      + `      ${JSON.stringify(expected)}\n`
+      + `      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`,
+    );
   }
   console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
 }
@@ -9191,6 +9300,8 @@ async function teardownMeshStack() {
     await stopChild('ap').catch(() => {});
     await stopChild('ap-m4').catch(() => {});
     await stopChild('bp').catch(() => {});
+    await stopChild('d-m5-miner').catch(() => {});
+    await stopChild('d-m5').catch(() => {});
   }
 }
 
@@ -9430,6 +9541,10 @@ async function runMeshStepM3(bcx) {
     // Wait for the pending card or for the content to appear in the feed
     // (silent karma policy signs through the background and lands; the
     // proxy's `sign` resolves without a prompt page for a rep write).
+    // On a landing both nodes name the same row id; m3Post keeps that id
+    // and CONTENT for M5, which takes a copy of A''s store and nulls this
+    // id's text on the copy — NODE_INTERFACE → Posts DAG →
+    // "A serving reader is asked for what has been due".
     const landed = await (async () => {
       const t0 = Date.now();
       // The operator's miner is paced (40 s stopped, 3 s running per
@@ -9442,9 +9557,12 @@ async function runMeshStepM3(bcx) {
           fetch(`${AP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
           fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=10`).then((r) => r.json()).catch(() => null),
         ]);
-        const inA = Array.isArray(a?.posts) && a.posts.some((p) => p?.content === CONTENT);
-        const inB = Array.isArray(b?.posts) && b.posts.some((p) => p?.content === CONTENT);
-        if (inA && inB) return true;
+        const matchA = Array.isArray(a?.posts) ? a.posts.find((p) => p?.content === CONTENT) : null;
+        const matchB = Array.isArray(b?.posts) ? b.posts.find((p) => p?.content === CONTENT) : null;
+        if (matchA && matchB && typeof matchA.id === 'string' && matchA.id === matchB.id) {
+          m3Post = { id: matchA.id, content: CONTENT };
+          return true;
+        }
         await sleep(1000);
       }
       return false;
@@ -9636,9 +9754,360 @@ async function runMeshStepM4(bcx) {
   }
 }
 
-// The mesh block's four steps, each on its own fresh extension page.
+// --- M5
+// WEB_INTERFACE → The extension → "A serving read is answered from it";
+// WEB_INTERFACE → The settings window → "The serve row";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received. A node holding a post's commit but not
+// its text gets the text from an extension that serves, over the mesh, on
+// the connection the extension holds as a hand-added node — and with
+// serving off it gets nothing.
+//
+// The rig: node D's store is a consistent copy of A''s taken while A' runs
+// (`sqlite3 <db> ".backup <copy>"`), and NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due" lists the puller's
+// preconditions: `dag_posts.content IS NULL AND withdrawn_at_height IS
+// NULL` reads as a placeholder from `getMissingBodies`. The copy has M3's
+// post id and every table D needs; an UPDATE nulls P's text on the copy
+// alone. D spawns MESH_ROLE=public, NODE_ROLE=miner with its own
+// MINING_SECRET, BOOTSTRAP_PEERS empty — so it peers with no node, no
+// node gives it P's text, and its puller asks the serving reader alone —
+// and its own miner runs at MINER_PCT=10 so a block lands every few
+// seconds rather than as fast as the CPU allows. The extension reaches D
+// as the reader's own node by writing `notis.node.hand` in the extension
+// page's localStorage to D's webrtc-direct multiaddr from its identity
+// line (certhash and /p2p/ included), with `notis.node.hand.off` removed,
+// before a fresh page opens — WEB_INTERFACE → The settings window →
+// "In the extension the row adds a node by hand"; MESH_INTERFACE →
+// Discovery → "A node added by hand". A hand-added node that disagrees
+// raises the reader's question; the question does not stop D's connection
+// or its handshake, and the serving handler answers it — MESH_INTERFACE →
+// Discovery →
+// "A disagreement is the reader's question, never the client's choice".
+//
+// M5a — serving off (the default; `notis.serve` holds `'1'` while on):
+// after page5a opens, D's log carries a new `[net] inbound handshake from
+// <peerId> on id=<connId>: ok=true` line within 90 s — D peers with no
+// node, so every inbound handshake is a reader, and page5a's connection
+// to D is a precondition of the no-text-arrived check. Across five of
+// D's blocks after that, D's `GET /posts/<P>` answers P with
+// `content: null`, and D's log holds no `post_received` line naming P.
+// M5b — serving on, pressed through `btn.click()` inside `cx.eval(...,
+// true)` on the serve row's `on` word (the harness's settings-row press
+// pattern, from `setLinksPrefViaUi`), the hint standing beneath the row.
+// The seam reads the storage write and calls `client.setServing`, which
+// closes every connection the client holds and dials again; D's log
+// carries a second new `ok=true` inbound handshake line past the offset
+// captured before the press within 90 s, and `post_received`'s `source`
+// for P equals that redial's peer id. Within ten of D's blocks or 120 s,
+// whichever is later, and bounded at 300 s from the press whatever D's
+// height so a D that stops mining does not keep the wait running, D's
+// `GET /posts/<P>` answers P's text, and D's log holds a `post_received`
+// line naming P with `via` `pull`. D's heights at each read, and the
+// seconds between the M5a and M5b reads, land in the detail — the record
+// shows the pace the run had.
+async function runSqliteCmd(args) {
+  await new Promise((resolve, reject) => {
+    const child = spawn('sqlite3', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (c) => { stderr += c.toString('utf8'); });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`sqlite3 ${JSON.stringify(args)} exited code=${code} signal=${signal}: ${stderr}`));
+    });
+  });
+}
+
+async function runMeshStepM5(cx, bcx) {
+  if (m3Post === null) {
+    record('M5', 'NOT RUN',
+      `M3 did not record a pass, so M5 carries no post id or text to copy, null and refill (NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has been due")`);
+    return;
+  }
+  const P_ID = m3Post.id;
+  const P_CONTENT = m3Post.content;
+  let page5a = null;
+  let page5b = null;
+  let dSpawn = null;
+  try {
+    const dM5Db = join(SCRATCH, 'd-m5.db');
+    for (const suffix of ['', '-shm', '-wal', '.mesh']) {
+      try { rmSync(dM5Db + suffix, { force: true, recursive: true }); } catch {}
+    }
+    await runSqliteCmd([meshNodes.ap.dbPath, `.backup ${dM5Db}`]);
+    await runSqliteCmd([dM5Db, `UPDATE dag_posts SET content = NULL WHERE id = '${P_ID}';`]);
+    console.log(`[vm] M5: copied ${meshNodes.ap.dbPath} → ${dM5Db} and nulled content on id=${P_ID.slice(0, 16)}…`);
+    const dSecret = randomBytes(32).toString('hex');
+    console.log(`[vm] M5: spawning D: http=${DM5_HTTP_PORT} admin=${DM5_ADMIN_PORT} p2p=${DM5_P2P_PORT} mesh=${DM5_MESH_PORT} db=${dM5Db} isolated (no bootstrap)`);
+    dSpawn = await spawnMeshNode('d-m5', {
+      NETWORK_TYPE: 'devnet',
+      NODE_ROLE: 'miner',
+      PORT: String(DM5_HTTP_PORT),
+      ADMIN_PORT: String(DM5_ADMIN_PORT),
+      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DM5_P2P_PORT}`,
+      BOOTSTRAP_PEERS: '',
+      DB_PATH: dM5Db,
+      MINING_SECRET: dSecret,
+      MESH_ROLE: 'public',
+      MESH_LISTEN: `/ip4/127.0.0.1/udp/${DM5_MESH_PORT}/webrtc-direct`,
+      MESH_STUN: 'off',
+    });
+    const dUp = await waitForHttpUp(DM5_ORIGIN, 60000);
+    if (!dUp) throw new Error(`D did not answer at ${DM5_ORIGIN} within 60 s`);
+    const dAddr = pickWebRtcDirectAddr(dSpawn.identity, DM5_MESH_PORT);
+    if (dAddr === null) throw new Error(`D did not print a webrtc-direct multiaddr on port ${DM5_MESH_PORT} in its identity line: ${JSON.stringify(dSpawn.identity.multiaddrs)}`);
+    console.log(`[vm] M5: D up: notisId=${dSpawn.identity.notisId.slice(0, 16)}…, peerId=${dSpawn.identity.peerId}, mesh addr=${dAddr}`);
+    const dPeerId = dSpawn.identity.peerId;
+
+    // D's miner runs at `MINER_PCT=10` — a paced miner, not a tight CPU
+    // loop, so every block D mines is gossiped to the page which checks each
+    // one at the pace D sets, not at the pace the CPU allows.
+    spawnDaemon('d-m5-miner', MINER_SCRIPT, {
+      NODE_URL: DM5_ORIGIN,
+      MINING_SECRET: dSecret,
+      MINER_PCT: '10',
+    });
+    const dLogPath = join(SCRATCH, 'd-m5.log');
+
+    const h5aBase = await currentHeight(DM5_ORIGIN);
+    if (h5aBase === null) throw new Error(`could not read D height at M5a start`);
+    if ((await waitForHeight(DM5_ORIGIN, h5aBase + 1, 180000)) === null) {
+      throw new Error(`D did not mine its first block within 180 s after mining start (base=${h5aBase})`);
+    }
+
+    await cx.eval(`(() => {
+      localStorage.setItem('notis.node.hand', ${JSON.stringify(dAddr)});
+      localStorage.removeItem('notis.node.hand.off');
+      localStorage.removeItem('notis.serve');
+      return { hand: localStorage.getItem('notis.node.hand'), off: localStorage.getItem('notis.node.hand.off'), serve: localStorage.getItem('notis.serve') };
+    })()`);
+
+    // M5a — serve off (the default). D's inbound handshake log carries one
+    // line per reader that connected; D peers with no node so every such
+    // line names a reader (`packages/net`'s node writer logs `[net] inbound
+    // handshake from <peerId> on id=<connId>: ok=true height=<h>`). Capture
+    // the offset before page5a opens; the first new `ok=true` line past the
+    // offset names page5a's first connection to D (not a redial — this is
+    // page5a's own first dial, as a fresh page with D in its node list) —
+    // without it, no reader reached D and "content is null" would hold for
+    // a page that never connected.
+    const inHsOffsetBeforePage5a = logOffset(dLogPath);
+    page5a = await openFreshExtensionPage(bcx);
+    await page5a.cx.waitFor(`!!document.querySelector('.corner')`, 'corner m5a', 30000);
+    await waitForCornerState(
+      page5a.cx,
+      (r) => typeof r.ledClass === 'string' && r.ledClass !== null && r.tipText !== null && r.tipText !== '—',
+      'first corner reading on M5a (D as hand-added)',
+      90000,
+    );
+    const page5aHandshake = await waitForNewInboundHandshakeInLog(dLogPath, inHsOffsetBeforePage5a, 90000);
+    if (page5aHandshake === null) {
+      throw new Error(`M5a: D's log carried no new \`[net] inbound handshake from <peerId> on id=<connId>: ok=true\` line past offset ${inHsOffsetBeforePage5a} within 90 s — the extension never reached D as the hand-added node (${dAddr})`);
+    }
+    const page5aPeerId = page5aHandshake.peerId;
+    console.log(`[vm] M5a: D saw inbound handshake from reader peerId=${page5aPeerId}`);
+    const h5aAfterOpen = await currentHeight(DM5_ORIGIN);
+    if (h5aAfterOpen === null) throw new Error(`could not read D height after the fresh page opened on M5a`);
+    const h5aTarget = h5aAfterOpen + 5;
+    const h5aReached = await waitForHeight(DM5_ORIGIN, h5aTarget, 300000);
+    if (h5aReached === null) {
+      throw new Error(`D did not reach ${h5aTarget} within 300 s on M5a (last=${await currentHeight(DM5_ORIGIN)})`);
+    }
+    const m5aReadAt = Date.now();
+    const h5aAtRead = await currentHeight(DM5_ORIGIN);
+    const p5aAnswer = await fetch(`${DM5_ORIGIN}/posts/${P_ID}`).then((r) => r.json()).catch(() => null);
+    const p5aContentNull = p5aAnswer !== null && p5aAnswer.content === null;
+    const log5aText = (() => { try { return readFileSync(dLogPath, 'utf8'); } catch { return ''; } })();
+    const postReceivedRe = new RegExp(`"event":"post_received"[^\\n]*"post_id":"${P_ID}"`);
+    const received5a = postReceivedRe.test(log5aText);
+
+    try { page5a.cx.s.close(); } catch {}
+    await bcx.call('Target.closeTarget', { targetId: page5a.targetId }).catch(() => {});
+    page5a = null;
+
+    page5b = await openFreshExtensionPage(bcx);
+    await page5b.cx.waitFor(`!!document.querySelector('.corner')`, 'corner m5b', 30000);
+    await waitForCornerState(
+      page5b.cx,
+      (r) => typeof r.ledClass === 'string' && r.ledClass !== null && r.tipText !== null && r.tipText !== '—',
+      'first corner reading on M5b (D as hand-added)',
+      90000,
+    );
+    await page5b.cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+    await page5b.cx.waitFor(`(() => {
+      const rows = [...document.querySelectorAll('.row')];
+      return rows.some((r) => r.querySelector('label')?.textContent === 'serve posts');
+    })()`, 'settings serve row', 15000);
+    // The press runs through `btn.click()` inside `cx.eval(..., true)`, as
+    // `setLinksPrefViaUi` presses its word: the seam writes `notis.serve` and
+    // calls `client.setServing`, which closes every connection the client
+    // holds and dials again. The redial's new `ok=true` inbound handshake
+    // arrives on D past the offset captured right before the press; its
+    // `peerId` is what D's `post_received` `source` reads for the pulled text.
+    const inHsOffsetBeforePress = logOffset(dLogPath);
+    await page5b.cx.eval(`(() => {
+      const rows = [...document.querySelectorAll('.row')];
+      const row = rows.find((r) => r.querySelector('label')?.textContent === 'serve posts');
+      const btn = [...row.querySelectorAll('button.word')].find((b) => b.textContent.trim() === 'on');
+      btn.click();
+    })()`, true);
+    const pressAt = Date.now();
+    const serveApplied = await (async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 5000) {
+        const v = await page5b.cx.eval(`localStorage.getItem('notis.serve')`).catch(() => null);
+        if (v === '1') return true;
+        await sleep(50);
+      }
+      return false;
+    })();
+    const hintUnderRow = await page5b.cx.eval(`(() => {
+      const rows = [...document.querySelectorAll('.row')];
+      const row = rows.find((r) => r.querySelector('label')?.textContent === 'serve posts');
+      const hint = row?.querySelector('.hint');
+      return hint !== null && hint !== undefined ? hint.textContent : null;
+    })()`);
+    const hintExpected = 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.';
+    const redialHandshake = await waitForNewInboundHandshakeInLog(dLogPath, inHsOffsetBeforePress, 90000);
+    if (redialHandshake === null) {
+      throw new Error(`M5b: D's log carried no new \`[net] inbound handshake from <peerId> on id=<connId>: ok=true\` line past offset ${inHsOffsetBeforePress} within 90 s — the serve press did not redial D (notis.serve=${serveApplied ? '1' : 'unapplied'}, hint=${JSON.stringify(hintUnderRow)})`);
+    }
+    const page5bPeerId = redialHandshake.peerId;
+    console.log(`[vm] M5b: D saw redial handshake from reader peerId=${page5bPeerId}`);
+
+    const h5bStart = await currentHeight(DM5_ORIGIN);
+    if (h5bStart === null) throw new Error(`could not read D height at M5b press`);
+    const h5bBlocksTarget = h5bStart + 10;
+    const cornerReadings = [];
+    const pollDone = { stop: false };
+    const pollerTask = (async () => {
+      let nextTick = Date.now();
+      while (!pollDone.stop) {
+        try {
+          const now = Date.now();
+          if (now < nextTick) { await sleep(nextTick - now); continue; }
+          const reading = await readCorner(page5b.cx).catch(() => null);
+          if (reading !== null && reading.present) {
+            cornerReadings.push({ at: Date.now() - pressAt, dot: reading.ledClass, title: reading.title });
+          }
+          nextTick = Date.now() + 1000;
+        } catch { nextTick = Date.now() + 1000; }
+      }
+    })();
+    // The landing wait ends on one of three outcomes: the text arrived (the
+    // step passes on M5b's primary check), or D's height crossed the
+    // 10-block target AND 120 s have passed since the press (both floors
+    // must hold, ten of D's blocks or 120 s whichever is later), or 300 s
+    // have passed from the press whatever D's height (the ceiling, so a D
+    // that stops mining does not keep the wait running). Each path sets
+    // `landedResult` to one of three constants; the detail names which.
+    const LANDING_WALL_MS = 300000;
+    const LANDING_HEIGHT_FLOOR_MS = 120000;
+    let m5bReadAt = null;
+    let h5bAtRead = null;
+    let landedResult = 'unset';
+    let lastPollAnswer = null;
+    {
+      const t0 = Date.now();
+      while (true) {
+        const p = await fetch(`${DM5_ORIGIN}/posts/${P_ID}`).then((r) => r.json()).catch(() => null);
+        lastPollAnswer = p;
+        if (p !== null && p.content === P_CONTENT) {
+          m5bReadAt = Date.now();
+          h5bAtRead = await currentHeight(DM5_ORIGIN);
+          landedResult = 'landed';
+          break;
+        }
+        const hNow = await currentHeight(DM5_ORIGIN) ?? h5bStart;
+        const elapsed = Date.now() - t0;
+        if (elapsed >= LANDING_WALL_MS) {
+          landedResult = 'wall';
+          m5bReadAt = Date.now();
+          h5bAtRead = hNow;
+          break;
+        }
+        if (hNow >= h5bBlocksTarget && elapsed >= LANDING_HEIGHT_FLOOR_MS) {
+          landedResult = 'both-floors';
+          m5bReadAt = Date.now();
+          h5bAtRead = hNow;
+          break;
+        }
+        await sleep(500);
+      }
+    }
+    pollDone.stop = true;
+    await pollerTask;
+    const landed = landedResult === 'landed';
+    const h5bEnd = await currentHeight(DM5_ORIGIN);
+    const log5bText = (() => { try { return readFileSync(dLogPath, 'utf8'); } catch { return ''; } })();
+    const recvLineRe = new RegExp(`\\{[^\\n]*"event":"post_received"[^\\n]*"post_id":"${P_ID}"[^\\n]*\\}`);
+    const recvMatch = recvLineRe.exec(log5bText);
+    const recvLine = recvMatch !== null ? recvMatch[0] : null;
+    let recvVia = null;
+    let recvSource = null;
+    let recvViaPull = false;
+    let recvSourceIsRedial = false;
+    let recvSourceNotD = false;
+    if (recvLine !== null) {
+      try {
+        const obj = JSON.parse(recvLine);
+        recvVia = obj.via ?? null;
+        recvSource = obj.source ?? null;
+        recvViaPull = recvVia === 'pull';
+        recvSourceIsRedial = typeof recvSource === 'string' && recvSource === page5bPeerId;
+        recvSourceNotD = typeof recvSource === 'string' && recvSource !== dPeerId;
+      } catch { /* malformed line — keep nulls */ }
+    }
+
+    const ok = p5aContentNull && !received5a
+      && serveApplied && hintUnderRow === hintExpected
+      && landed && recvLine !== null && recvViaPull && recvSourceIsRedial;
+    const cornerShort = cornerReadings.length <= 30
+      ? cornerReadings
+      : [...cornerReadings.slice(0, 15), { note: `… +${cornerReadings.length - 30} more` }, ...cornerReadings.slice(-15)];
+    const paceS = m5bReadAt !== null && m5aReadAt !== null ? ((m5bReadAt - m5aReadAt) / 1000).toFixed(1) : '?';
+    const paceHeight = typeof h5bAtRead === 'number' && typeof h5aAtRead === 'number' ? (h5bAtRead - h5aAtRead) : '?';
+    record('M5', ok,
+      `D peerId=${dPeerId}, mesh addr=${dAddr}, miner MINER_PCT=10; `
+      + `M5a (serve off, default): D height ${h5aAtRead} at the /posts/${P_ID.slice(0, 16)}… read (target ${h5aTarget} past page5a open), content=null=${p5aContentNull} (answer=${JSON.stringify(p5aAnswer === null ? null : { id: p5aAnswer.id, content: p5aAnswer.content })}), post_received for P in log=${received5a} (expect false), inbound handshake from reader peerId=${page5aPeerId}; `
+      + `M5b (serve on, pressed): serve 'on' applied=${serveApplied}, hint=${JSON.stringify(hintUnderRow)} (expected the words beneath the row); redial handshake from reader peerId=${page5bPeerId}; D heights ${h5bStart} → ${h5bEnd} (10-block target ${h5bBlocksTarget}, 120 s floor, 300 s wall), landing result=${landedResult} (text landed=${landed}), D height at the M5b read=${h5bAtRead}, last /posts answer=${JSON.stringify(lastPollAnswer === null ? null : { id: lastPollAnswer.id, content: lastPollAnswer.content === P_CONTENT ? '<P_CONTENT>' : lastPollAnswer.content })}; `
+      + `pace: ${paceHeight} D blocks in ${paceS} s between the M5a and M5b reads; `
+      + `post_received line=${JSON.stringify(recvLine)}, via=${JSON.stringify(recvVia)} (expect "pull"), source=${JSON.stringify(recvSource)} (expect == redial peerId ${page5bPeerId}, redial match=${recvSourceIsRedial}; weaker check source !== D peerId ${dPeerId.slice(0, 16)}… = ${recvSourceNotD}); `
+      + `corner readings from press=${JSON.stringify(cornerShort)}`);
+  } catch (e) {
+    record('M5', false, `error: ${e?.stack ?? String(e)}`);
+  } finally {
+    if (page5b) {
+      try { page5b.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page5b.targetId }).catch(() => {});
+    }
+    if (page5a) {
+      try { page5a.cx.s.close(); } catch {}
+      await bcx.call('Target.closeTarget', { targetId: page5a.targetId }).catch(() => {});
+    }
+    await stopChild('d-m5-miner').catch(() => {});
+    await stopChild('d-m5').catch(() => {});
+    try {
+      await cx.eval(`(() => {
+        localStorage.removeItem('notis.node.hand');
+        localStorage.removeItem('notis.node.hand.off');
+        localStorage.removeItem('notis.serve');
+        return true;
+      })()`);
+    } catch { /* main page CDP closed by the block's cleanup — fine */ }
+  }
+}
+
+// The mesh block's five steps, each on its own fresh extension page.
 // Precondition: `setupMeshStack` ran before the browser launched, so A'
-// and B' are up with mesh and the identity-line/shell check holds.
+// and B' are up with mesh and the identity-line/shell check holds. M5 uses
+// `cx` (the main page) to seat `notis.node.hand` in the extension page
+// origin's `localStorage` before its fresh pages open (`WEB_INTERFACE →
+// The settings window → "In the extension the row adds a node by hand"`).
 async function meshSteps(cx, bcx, targetId = 'unknown') {
   if (meshNodes.ap === null || meshNodes.bp === null) {
     markMeshFail(`setupMeshStack did not complete; target=${targetId}`);
@@ -9648,6 +10117,7 @@ async function meshSteps(cx, bcx, targetId = 'unknown') {
   await runMeshStepM2(bcx);
   await runMeshStepM3(bcx);
   await runMeshStepM4(bcx);
+  await runMeshStepM5(cx, bcx);
 }
 
 // ---------------------------------------------------------------------------
@@ -11483,8 +11953,18 @@ try {
   await setupMeshStack();
   await main();
 } catch (e) {
-  console.error('proof failed:', e);
-  exitCode = 1;
+  // `ConfigError` is the setup's refusal of a build whose values do not match
+  // what the harness owns — the pre-launch argument checks' exit code 2, from
+  // a check that runs after the browser launched. The teardown below still
+  // runs, then `proc.kill()` and `webServer.close()` close the child
+  // Chromium and the harness's own web server.
+  if (e instanceof ConfigError) {
+    console.error(`FAIL: ${e.message}`);
+    exitCode = 2;
+  } else {
+    console.error('proof failed:', e);
+    exitCode = 1;
+  }
 }
 await teardownTipRelays();
 await teardownLightRelays();
@@ -11500,7 +11980,10 @@ const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
 console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
 console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
-if (fail > 0) exitCode = 1;
+// A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
+// is a run that recorded step failures, which is exit code 1 only when the
+// outer catch did not already set a higher one.
+if (fail > 0 && exitCode === 0) exitCode = 1;
 
 proc.kill();
 if (webServer) await new Promise((r) => webServer.close(() => r()));

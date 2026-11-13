@@ -144,10 +144,20 @@ most `STUN_SERVERS_MAX`. With no public node held the list is empty, and the ICE
 
 **A client is a reader of every node it holds a connection to.** On each connection it opens, before any read, it runs
 `net`'s handshake as the dialler (`NET_INTERFACE → Handshake`) with a reader's body: no `declaredAddress`, an empty
-`nodeName`, its held chain's tip height (0 before it holds one) and the reader's capabilities, none
-(`NET_INTERFACE → Readers`). A node whose handshake fails is `retry`, the handshake named, never a lie; a node whose
+`nodeName`, its held chain's tip height (0 before it holds one) and the reader's capabilities — none, or
+`ModifierRequest` alone while the reader serves posts' text (→ "A client that serves answers the nodes it reads";
+`NET_INTERFACE → Readers`). A node whose handshake fails is `retry`, the handshake named, never a lie; a node whose
 handshake declares no chain service is not read. The client subscribes to the ordering-block topic alone and publishes
 nothing of its own.
+
+**A client that serves answers the nodes it reads.** A client its reader has set to serve declares `ModifierRequest` and
+answers it from the posts it holds, on the connections it holds to nodes, by `net`'s rule (`NET_INTERFACE → Readers →
+"A serving reader answers from what it holds"`) — the extension from its post cache (`WEB_INTERFACE → The settings
+window → "The serve row"`). A node it reads may then learn which of the ids it asks this client holds, with the
+connection's address; the client announces nothing it holds, and only a node it dialled can ask. A change of the setting
+waits for a check in flight to end, then closes every connection the client holds and dials again at once, so each new
+handshake declares the new set; the client's chain and its node list are kept, as across any lost connection, and the
+last change made is the one that stands. A client handed no way to serve never declares `ModifierRequest`.
 
 **One router, `net`'s rules.** A node and a client each run gossipsub with `net`'s options (`gossipsubOptions`), a client
 on the ordering-block topic alone, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`):

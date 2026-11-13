@@ -445,3 +445,58 @@ describe('settings window — no faucet row', () => {
     expect(rowField(render(withPolicy), 'faucet')).toBeNull();
   });
 });
+
+// WEB_INTERFACE → The settings window → "The serve row": the reader's
+// choice to answer nodes' requests for posts' text from the post cache.
+// Off by default, `'1'` while on; the row renders only with the seam —
+// the web build has no such row.
+describe('settings window — the serve row', () => {
+  it('the serve row stands only with a serve seam', () => {
+    expect(rowField(render(handlers()), 'serve posts')).toBeNull();
+    const withServe = render(handlers({
+      serve: { on: () => false, set: () => {} },
+    }));
+    expect(rowField(withServe, 'serve posts')).not.toBeNull();
+  });
+
+  it('the serve row reads off by default and on when the seam says so', () => {
+    const offBody = render(handlers({
+      serve: { on: () => false, set: () => {} },
+    }));
+    const offButtons = [...rowField(offBody, 'serve posts')!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(offButtons.map((b) => b.textContent?.trim())).toEqual(['off', 'on']);
+    expect(offButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+    const onBody = render(handlers({
+      serve: { on: () => true, set: () => {} },
+    }));
+    const onButtons = [...rowField(onBody, 'serve posts')!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(onButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
+  });
+
+  it('pressing on calls set(true), and off calls set(false)', () => {
+    const set = vi.fn();
+    const body = render(handlers({
+      serve: { on: () => false, set },
+    }));
+    const buttons = [...rowField(body, 'serve posts')!.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    buttons[1]!.click();
+    expect(set).toHaveBeenLastCalledWith(true);
+    buttons[0]!.click();
+    expect(set).toHaveBeenLastCalledWith(false);
+  });
+
+  it('the serve hint stands while on and only then', () => {
+    const hintText = 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.';
+    // Off: no hint beneath the row.
+    const offField = rowField(render(handlers({
+      serve: { on: () => false, set: () => {} },
+    })), 'serve posts')!;
+    expect([...offField.querySelectorAll('.hint')].map((h) => h.textContent)).not.toContain(hintText);
+    // On: the hint beneath the row, the contract's words exactly.
+    const onField = rowField(render(handlers({
+      serve: { on: () => true, set: () => {} },
+    })), 'serve posts')!;
+    const hints = [...onField.querySelectorAll('.hint')].map((h) => h.textContent);
+    expect(hints).toContain(hintText);
+  });
+});

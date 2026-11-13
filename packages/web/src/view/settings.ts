@@ -51,6 +51,9 @@ export interface SettingsHandlers {
   // holds the question"). `undefined` is a build with no verifier, `null` is
   // one whose first verdict has not returned.
   verdict?: () => TipVerdict | null | undefined;
+  // The extension's serve-posts seam — the row renders only with it
+  // (WEB_INTERFACE → The settings window → "The serve row").
+  serve?: ServeSeam;
 }
 
 /** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
@@ -67,6 +70,17 @@ export interface HandNodeSeam {
   off(): boolean;
   setOff(off: boolean): void;
   answer(decision: 'continue' | 'disable'): void;
+}
+
+/** The extension's serve-posts seam (WEB_INTERFACE → The settings window →
+ *  "The serve row"). `on` reads the choice as stored; `set(on)` writes the
+ *  choice and calls the mesh client's `setServing(on)`, which closes every
+ *  connection the client holds and dials again so each new handshake
+ *  declares the new set (MESH_INTERFACE → Block gossip → "A client that
+ *  serves answers the nodes it reads"). */
+export interface ServeSeam {
+  on(): boolean;
+  set(on: boolean): void;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -277,6 +291,33 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
     const { row: r, field } = row('a Notis link opens');
     field.appendChild(choice([['on the site', 'site'], ['here', 'here']], links, (v) => void setLinks(v), draws));
     field.appendChild(el('div', 'hint', 'a link that opens a tab of its own lands in this workspace. a link followed inside a page stays there — its add to workspace brings it here.'));
+    b.appendChild(r);
+  }
+
+  // The extension's serve-posts row — the row renders only with the seam
+  // (WEB_INTERFACE → The settings window → "The serve row"). A press moves
+  // the pressed word and the hint in place; the hint stands while on and
+  // only then.
+  if (handlers.serve) {
+    const serve = handlers.serve;
+    const { row: r, field } = row('serve posts');
+    field.appendChild(choice<'off' | 'on'>(
+      [['off', 'off'], ['on', 'on']],
+      () => serve.on() ? 'on' : 'off',
+      (v) => serve.set(v === 'on'),
+      draws,
+    ));
+    const hint = el('div', 'hint', 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.');
+    // The hint stands while on and only then; placed and taken by the
+    // row's own draw, so a press moves it in place and nothing else in
+    // the page moves (HOUSE_STYLE → Motion).
+    draws.push(() => {
+      if (serve.on()) {
+        if (hint.parentNode !== field) field.appendChild(hint);
+      } else {
+        if (hint.parentNode === field) field.removeChild(hint);
+      }
+    });
     b.appendChild(r);
   }
 
