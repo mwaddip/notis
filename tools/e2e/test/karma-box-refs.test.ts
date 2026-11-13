@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { LIKE_KARMA_COST } from '@dagsocial/types';
+import { LIKE_KARMA_COST, POST_PRICE_THREAD } from '@dagsocial/types';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { karmaBoxRefs } from '../src/tx/karma.js';
 import { buildLikeTx } from '../src/tx/like.js';
+import { buildThreadTx } from '../src/tx/post.js';
 import type { KarmaPageBox } from '../src/http.js';
 
 // NODE_INTERFACE → UTXO queries — a karma box carries `income: true` when it
@@ -48,19 +49,18 @@ describe('karma box refs', () => {
     expect(tx.json.inputs).toEqual([OWN_BOX_ID]);
   });
 
-  it('buildLikeTx over the refs names the own box and the income box when the own box does not cover the like cost', () => {
+  it('buildThreadTx over the refs names the own box and the income box when the own box does not cover the thread price', () => {
     const boxes: KarmaPageBox[] = [
-      { boxId: OWN_BOX_ID, value: '0' },
+      { boxId: OWN_BOX_ID, value: '2' },
       { boxId: INCOME_BOX_ID, value: '4', income: true },
     ];
     const refs = karmaBoxRefs({ boxes });
-    const target = fresh();
 
     expect(refs.length).toBe(2);
-    expect(refs[0]!.value < LIKE_KARMA_COST).toBe(true);
-    expect(refs[0]!.value + refs[1]!.value >= LIKE_KARMA_COST).toBe(true);
+    expect(refs[0]!.value < POST_PRICE_THREAD).toBe(true);
+    expect(refs[0]!.value + refs[1]!.value >= POST_PRICE_THREAD).toBe(true);
 
-    const tx = buildLikeTx(DEVNET_FAUCET, refs, POST_ID, target.publicKeyHex, 100, 1);
+    const tx = buildThreadTx(DEVNET_FAUCET, refs, 'thread body', 100, 1);
     expect(tx.json.inputs).toEqual([OWN_BOX_ID, INCOME_BOX_ID]);
   });
 });
