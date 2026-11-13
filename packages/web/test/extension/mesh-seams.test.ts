@@ -368,7 +368,7 @@ describe('startExtensionMesh — the lifecycle', () => {
   // read at the mesh client's start — `'1'` is on, any other value or
   // none off — and passed as `serving: { on, texts }` to
   // `startMeshClient`.
-  it.fails("serving starts off with no key and on with '1'", async () => {
+  it("serving starts off with no key and on with '1'", async () => {
     const texts: PostTextProvider = async (ids) => new Map(ids.map((id) => [id, 'x']));
     // No key: serving.on is false; the texts the provider handed in are
     // passed through.
@@ -397,7 +397,7 @@ describe('startExtensionMesh — the lifecycle', () => {
   // WEB_INTERFACE → The settings window → "The serve row": `set(true)`
   // writes `'1'` under `SERVE_KEY` and calls `client.setServing(true)`;
   // `set(false)` removes the key and calls `client.setServing(false)`.
-  it.fails('set writes the key and calls setServing', () => {
+  it('set writes the key and calls setServing', () => {
     const servingCalls: boolean[] = [];
     const client = {
       ...fakeClient(),

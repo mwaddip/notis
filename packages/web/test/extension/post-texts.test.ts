@@ -55,7 +55,7 @@ function openRemembered(cache: ReturnType<typeof createPostCache>): Promise<void
 }
 
 describe('postTextsFromCache — the provider', () => {
-  it.fails("answers a live entry's text, and nothing for a withdrawn or textless one", async () => {
+  it("answers a live entry's text, and nothing for a withdrawn or textless one", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -74,7 +74,7 @@ describe('postTextsFromCache — the provider', () => {
     expect(out.has(hid('missing'))).toBe(false);
   });
 
-  it.fails('answers the kept entries before a chain is named', async () => {
+  it('answers the kept entries before a chain is named', async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();
@@ -89,7 +89,7 @@ describe('postTextsFromCache — the provider', () => {
     expect(out.get(r.id)).toBe('kept');
   });
 
-  it.fails("moves no entry's last-seen", async () => {
+  it("moves no entry's last-seen", async () => {
     const idb = new IDBFactory();
     const ls = fakeLs();
     const c = clock();

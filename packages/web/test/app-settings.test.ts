@@ -208,7 +208,7 @@ describe('the App settings control', () => {
   // the pressed word in place through the App, as the policy and links
   // rows' presses do. Driven over a serve seam whose set() toggles what
   // on() answers, so the re-render reads the new value.
-  it.fails('a press on the serve row moves its pressed word in place', async () => {
+  it('a press on the serve row moves its pressed word in place', async () => {
     document.body.innerHTML = '';
     const appbar = document.createElement('header');
     const workspace = document.createElement('div'); workspace.className = 'workspace';

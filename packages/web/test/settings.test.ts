@@ -451,7 +451,7 @@ describe('settings window — no faucet row', () => {
 // Off by default, `'1'` while on; the row renders only with the seam —
 // the web build has no such row.
 describe('settings window — the serve row', () => {
-  it.fails('the serve row stands only with a serve seam', () => {
+  it('the serve row stands only with a serve seam', () => {
     expect(rowField(render(handlers()), 'serve posts')).toBeNull();
     const withServe = render(handlers({
       serve: { on: () => false, set: () => {} },
@@ -459,7 +459,7 @@ describe('settings window — the serve row', () => {
     expect(rowField(withServe, 'serve posts')).not.toBeNull();
   });
 
-  it.fails('the serve row reads off by default and on when the seam says so', () => {
+  it('the serve row reads off by default and on when the seam says so', () => {
     const offBody = render(handlers({
       serve: { on: () => false, set: () => {} },
     }));
@@ -473,7 +473,7 @@ describe('settings window — the serve row', () => {
     expect(onButtons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
   });
 
-  it.fails('pressing on calls set(true), and off calls set(false)', () => {
+  it('pressing on calls set(true), and off calls set(false)', () => {
     const set = vi.fn();
     const body = render(handlers({
       serve: { on: () => false, set },
@@ -485,7 +485,7 @@ describe('settings window — the serve row', () => {
     expect(set).toHaveBeenLastCalledWith(false);
   });
 
-  it.fails('the serve hint stands while on and only then', () => {
+  it('the serve hint stands while on and only then', () => {
     const hintText = 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.';
     // Off: no hint beneath the row.
     const offField = rowField(render(handlers({
