@@ -322,7 +322,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('at the minimum spendable the check posts one transaction, and logs its id and input count', async () => {
+  it('at the minimum spendable the check posts one transaction, and logs its id and input count', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
