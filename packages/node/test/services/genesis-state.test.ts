@@ -540,6 +540,88 @@ describe('assertGenesisRoot', () => {
       vi.resetModules();
     }
   });
+
+  it.fails('the seed\'s own refusal leaves the catch, over a store whose height-0 version row is absent', async () => {
+    // NODE_INTERFACE → "A refused seed puts the prover back by reference". The
+    // seed holds the prover's root and tree height before its transaction and
+    // puts them back on any throw; nothing in the catch reads a row, so a store
+    // whose AVL version row at height 0 is absent still leaves the catch with
+    // the seed's own refusal — `genesis state root mismatch` rather than
+    // whatever the store would have raised. The damage is the one row
+    // `createAvlProver` wrote and nothing else; SQLite's rollback restores the
+    // transaction's writes to the row-absent baseline.
+    vi.resetModules();
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: {
+          ...actual.config,
+          profile: { ...actual.config.profile, genesisStateRoot: 'ab'.repeat(33) },
+        },
+      };
+    });
+    try {
+      const s = await importFresh();
+      s.initDb(':memory:');
+      s.prover.createAvlProver();
+
+      s.getDb().prepare('DELETE FROM avl_tree_versions WHERE height = ?').run(0);
+      expect(
+        s.getDb().prepare('SELECT 1 FROM avl_tree_versions WHERE height = ?').get(0),
+      ).toBeUndefined();
+
+      expect(() => s.genesis.seedGenesisState())
+        .toThrow(/genesis state root mismatch/i);
+      s.closeDb();
+    } finally {
+      vi.doUnmock('../../src/config.js');
+      vi.resetModules();
+    }
+  });
+
+  it.fails('the prover holds the empty tree after a refused seed over a store whose height-0 version row is absent', async () => {
+    // NODE_INTERFACE → "A refused seed puts the prover back by reference". The
+    // saved root and tree height put the prover back by reference, so the
+    // in-memory tree after a refused seed is the one the seed opened on —
+    // empty, because `createAvlProver` ran on a fresh store — and not the
+    // bootstrap's grown tree. The damage keeps the store's `rollback` from
+    // resolving the empty tree at all; the restore reads no row and the empty
+    // tree stands.
+    const empty = await emptyTreeRoot();
+    vi.resetModules();
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: {
+          ...actual.config,
+          profile: { ...actual.config.profile, genesisStateRoot: 'ab'.repeat(33) },
+        },
+      };
+    });
+    try {
+      const s = await importFresh();
+      s.initDb(':memory:');
+      s.prover.createAvlProver();
+
+      s.getDb().prepare('DELETE FROM avl_tree_versions WHERE height = ?').run(0);
+      expect(
+        s.getDb().prepare('SELECT 1 FROM avl_tree_versions WHERE height = ?').get(0),
+      ).toBeUndefined();
+      expect(() => s.genesis.seedGenesisState()).toThrow();
+
+      expect(rootOf(s)).toBe(empty);
+      s.closeDb();
+    } finally {
+      vi.doUnmock('../../src/config.js');
+      vi.resetModules();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
