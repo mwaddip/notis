@@ -1428,6 +1428,17 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
     return false;
   }
 
+  function rentSpentBoxIds(tpl: OrderingBlock): Set<string> {
+    const ids = new Set<string>();
+    for (const bytes of tpl.utxoTxTree.utxoTxs) {
+      const tx = decodeTx(bytes);
+      if (tx.inputs.length !== 1) continue;
+      if (Object.keys(tx.signatures).length !== 0) continue;
+      ids.add(tx.inputs[0]!);
+    }
+    return ids;
+  }
+
   function rentTxCount(tpl: OrderingBlock): number {
     let n = 0;
     for (const bytes of tpl.utxoTxTree.utxoTxs) {
@@ -1437,22 +1448,6 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
     return n;
   }
 
-  // Plain-`it` run read, at the last assertion:
-  //   AssertionError: expected { carriesTransfer: false, …(2) } to deeply equal { carriesTransfer: true, …(2) }
-  //   - Expected
-  //   + Received
-  //     Object {
-  //   -   "carriesTransfer": true,
-  //   -   "rentSpendsBox": false,
-  //   -   "transferPooled": true,
-  //   +   "carriesTransfer": false,
-  //   +   "rentSpendsBox": true,
-  //   +   "transferPooled": false,
-  //     }
-  // (eviction fallback `Block at height 2: speculation returned body-rejected
-  // and the screen refused no pooled transaction; evicting all 1 mempool
-  // entries the body carried` dropped the transfer, and the rebuild offered
-  // rent over the box alone.)
   it(
     'a pooled transfer of a box that falls due at the next template rides it, and no rent transaction spends the box',
     async () => {
@@ -1514,13 +1509,6 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
     },
   );
 
-  // Plain-`it` run read, at the last assertion:
-  //   AssertionError: expected true to be false // Object.is equality
-  //   - Expected
-  //   + Received
-  //   - false
-  //   + true
-  // (the offer took the box although the pool held a spender of it.)
   it(
     'a pooled spend the fill leaves out keeps its box from the rent transactions',
     async () => {
@@ -1573,18 +1561,6 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
     },
   );
 
-  // Plain-`it` run read, at the last assertion:
-  //   AssertionError: expected { oldestHoldsRent: true, …(1) } to deeply equal { oldestHoldsRent: false, …(1) }
-  //   - Expected
-  //   + Received
-  //     Object {
-  //   -   "oldestHoldsRent": false,
-  //   -   "youngestHoldsRent": true,
-  //   +   "oldestHoldsRent": true,
-  //   +   "youngestHoldsRent": false,
-  //     }
-  // (the limit counted the pool-spent box, so the oldest 32 of the 33 rode
-  // the body and the youngest stayed outside.)
   it(
     'the rent transactions take up to their limit from the boxes no pooled entry spends',
     async () => {
@@ -1601,10 +1577,7 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
       // `src/services/block-creator.ts` at value 32 (not exported).
       // `MAX_RENT_TXS_PER_BLOCK + 1 = 33` credit boxes due at height 1 —
       // `created_at_block = 0`, `storageRentPeriodBlocks = 0`, so
-      // `0 < 1 − 0` holds. `getRentEligibleCreditBoxes` orders by
-      // `created_at_block ASC`; with equal heights SQLite breaks ties by
-      // insertion order, so the first `insertBox` is the oldest the
-      // offer reaches and the last is the youngest.
+      // `0 < 1 − 0` holds.
       const COUNT = 33;
       const owner = makeTestIdentity().userId;
       const boxes: CreditBox[] = [];
@@ -1615,14 +1588,13 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
         ));
       }
       for (const b of boxes) utxo.insertBox(b);
-      const oldest = boxes[0]!;
-      const youngest = boxes[COUNT - 1]!;
+      const pooled = boxes[0]!;
 
-      // A filler-shape foreign transaction spending the oldest box: the
+      // A filler-shape foreign transaction spending one box: the
       // fill skips it (version 1 under era 2) and its input is recorded
       // in `mempool_inputs`.
       const foreign: UtxoTransaction = {
-        inputs: [oldest.id!],
+        inputs: [pooled.id!],
         outputs: [],
         signatures: {},
         protocolVersion: 1,
@@ -1637,16 +1609,14 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
       expect(tpl).not.toBeNull();
 
       // Control: the template holds exactly 32 rent transactions — the
-      // limit — under either rule.
+      // limit.
       expect(rentTxCount(tpl!)).toBe(COUNT - 1);
 
-      // Last assertion: no rent transaction spends the pool-spent (oldest)
-      // box, and one rent transaction spends the youngest box — which the
-      // offer reaches only because the limit counts boxes it can take.
-      expect({
-        oldestHoldsRent: rentSpendsBox(tpl!, oldest.id!),
-        youngestHoldsRent: rentSpendsBox(tpl!, youngest.id!),
-      }).toEqual({ oldestHoldsRent: false, youngestHoldsRent: true });
+      // Last assertion: the boxes the rent transactions spend are the 32
+      // boxes the pooled entry does not spend.
+      expect(rentSpentBoxIds(tpl!)).toEqual(
+        new Set(boxes.filter((b) => b !== pooled).map((b) => b.id!)),
+      );
     },
   );
 
@@ -1654,8 +1624,7 @@ describe('the rent offer leaves out boxes a pooled entry spends', () => {
   // that block and leaves the pool at its application
   // (NODE_INTERFACE → "This node's producer collects at its template, from
   // the boxes no pooled transaction spends"; MEMPOOL_INTERFACE →
-  // followAppliedBlock). Plain `it` because the predecessor and the rule
-  // agree here.
+  // followAppliedBlock).
   it('a spend admitted after the template that collects its box leaves the pool when that block applies', async () => {
     await configWith({ storageRentPeriodBlocks: 0 });
     const db = await importDb();
