@@ -3,10 +3,15 @@ import type { BoxRef } from './render.js';
 import type { KarmaPageBox } from '../http.js';
 
 // NODE_INTERFACE → UTXO queries — a karma listing's rows map to refs in the
-// listing's order, their `value` parsed as `bigint` (TYPES_INTERFACE →
-// KarmaBox).
+// listing's order, their `value` parsed as `bigint`, each marked box's
+// `income: true` carried through (TYPES_INTERFACE → KarmaBox; NODE_INTERFACE
+// → Karma transition rules → "An identity holds at most two karma boxes").
 export function karmaBoxRefs(page: { boxes: readonly KarmaPageBox[] }): BoxRef[] {
-  return page.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
+  return page.boxes.map((b) =>
+    b.income === true
+      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
+      : { boxId: b.boxId, value: BigInt(b.value) },
+  );
 }
 
 // A karma spend names the own box, the income box only when the own box does
