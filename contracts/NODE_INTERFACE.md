@@ -1805,10 +1805,6 @@ leaves the pool at the block's application (MEMPOOL_INTERFACE → followAppliedB
 consensus**, as the admission refusal below is: a block that collects a box a pooled spend names is
 valid whoever built it.
 
-> ⚠ **AHEAD OF CODE (2026-11-13).** `offerRent` takes its boxes from `getRentEligibleCreditBoxes`, which leaves out
-no box a pooled entry spends: a body can carry one box in a pooled transfer and in a rent transaction, the screen
-refuses the rent transaction, and the creator evicts every pooled row the body carried.
-
 ⛔ **A rent transaction is REFUSED AT MEMPOOL ADMISSION, and that is what makes collection the
 producer's.** `admitTx` rejects one outright — the same seam the fee floor occupies and for the same
 reason: **policy, not consensus.** A block carrying a rent transaction is valid whoever built it, and

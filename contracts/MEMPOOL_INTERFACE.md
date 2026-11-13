@@ -597,9 +597,6 @@ pending entries:
    body that carried no row ends the build. Rows a *peer's* block confirms are reached by that block's application
    (`followAppliedBlock`), not by this step
 
-> ⚠ **AHEAD OF CODE (2026-11-13).** Step 2's rent transactions: `offerRent` takes every eligible box
-`getRentEligibleCreditBoxes` answers, a box a pooled entry spends among them.
-
 ### The fill budget is bytes; `getPendingEntries` is a count
 
 ⛔ **A SQL `LIMIT` does not express a byte budget.** The two do not correspond: 2 MB of body is
