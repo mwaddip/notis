@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Ensures a persistent Ed25519 miner keypair for the coinbase recipient
-// (MINER_PUBKEY) and prints its public key to stdout, so a launcher captures the
-// pubkey the same way whether or not the key already existed. Standalone —
-// `crypto` only, no build and no @dagsocial/types import, like miner.mjs — and
-// byte-compatible with `generateKeyPair` (TYPES_INTERFACE → Identity): a user
-// identity IS the 32-byte raw Ed25519 public key, which the SPKI DER wraps at
-// its tail. Idempotent: the keypair on disk is never overwritten.
+// Writes a persistent Ed25519 miner key file where `MINER_KEY_PATH` names
+// (MINING_INTERFACE → Consolidation) and prints its public key to stdout, for
+// a caller that wants it. Standalone — `crypto` only, no build and no
+// @dagsocial/types import, like miner.mjs — and byte-compatible with
+// `generateKeyPair` (TYPES_INTERFACE → Identity): a user identity IS the
+// 32-byte raw Ed25519 public key, which the SPKI DER wraps at its tail.
+// Idempotent: the keypair on disk is never overwritten.
 import { generateKeyPairSync } from 'crypto';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 
