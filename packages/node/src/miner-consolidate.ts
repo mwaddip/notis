@@ -2,7 +2,8 @@
 // file is built beside `src/index.ts` so a miner's key-file branch can import
 // it without loading the server (MINING_INTERFACE → Consolidation → "With a
 // key file the script loads node's build; without one it loads nothing more").
-// Imports `@dagsocial/types`, `@dagsocial/node-reads` and `node:crypto` alone.
+// Imports `@dagsocial/types`, `@dagsocial/node-reads`, `node:crypto` and
+// `node:fs` alone.
 
 import {
   createPrivateKey,
@@ -35,9 +36,9 @@ import {
 } from '@dagsocial/node-reads';
 
 // MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
-// the policy-tier figure as `contracts/CONSTANTS.md → Producer policy` holds
-// it. A `(literal)` row there and nowhere in `@dagsocial/types` because a
-// client's cadence reads it, not a block's apply.
+// the policy-tier figure as `CONSTANTS → Producer policy` holds it. A
+// `(literal)` row there and nowhere in `@dagsocial/types` because a client's
+// cadence reads it, not a block's apply.
 const CONSOLIDATE_MIN_BOXES = 100;
 
 // ------------------------------------------------------------------------
@@ -223,9 +224,8 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
   // (NODE_INTERFACE → Spend timing).
   let after: string | null = null;
   const spendable: Spendable[] = [];
-  // How many inputs still fit under MAX_TX_BYTES — the stop that says the
-  // byte bound, not the listing's end, ended the read. Measured at the
-  // sum-so-far after every addition.
+  // Whether the byte bound, not the listing's end, stopped the read — the
+  // flag the outcome's `full` answers.
   let fullAtByteBound = false;
   let listingEnded = false;
   const owner = Buffer.from(key.publicKeyHex, 'hex');

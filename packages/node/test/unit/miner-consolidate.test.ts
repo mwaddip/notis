@@ -31,8 +31,8 @@ import {
 } from '../../src/miner-consolidate.js';
 
 // MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
-// the value in `contracts/CONSTANTS.md → Producer policy` (100), restated in
-// the file for assertions that keyword it rather than the module.
+// the value in `CONSTANTS → Producer policy` (100), restated in the file
+// for assertions that keyword it rather than the module.
 const MIN = 100;
 
 /** A pair of ed25519 keys for the case, both as the file reader expects them. */
@@ -252,11 +252,9 @@ function escapeRegex(s: string): string {
 function makeCaseBoxes(n: number, value: bigint): StubBox[] {
   const boxes: StubBox[] = [];
   for (let i = 0; i < n; i++) {
-    // Ids descending so that at equal value, the order `value DESC, id` fits
-    // the array order the stub answers in.
     boxes.push({ boxId: bytesToHex(randomBytes(32)), value });
   }
-  // Stable `value DESC, id` is the node's order; equal values go by id ASC.
+  // The node's order on the listing: value DESC, id ASC at equal value.
   boxes.sort((a, b) => (a.value === b.value ? a.boxId.localeCompare(b.boxId) : b.value > a.value ? 1 : -1));
   return boxes;
 }
