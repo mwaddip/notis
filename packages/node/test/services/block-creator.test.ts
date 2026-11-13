@@ -1592,8 +1592,8 @@ describe('a stored tip whose body will not read', () => {
         // `MAX_RENT_TXS_PER_BLOCK + 1 = 33` credit boxes due at height 1 —
         // `created_at_block = 0`, `storageRentPeriodBlocks = 0`, so
         // `0 < 1 − 0` holds. `getRentEligibleCreditBoxes` orders by
-        // `created_at_block ASC`; with equal heights the plan's tie-breaker
-        // is insertion order, so the first `insertBox` is the oldest the
+        // `created_at_block ASC`; with equal heights SQLite breaks ties by
+        // insertion order, so the first `insertBox` is the oldest the
         // offer reaches and the last is the youngest.
         const COUNT = 33;
         const owner = makeTestIdentity().userId;
@@ -1695,7 +1695,7 @@ describe('a stored tip whose body will not read', () => {
       expect(utxoAfter.getCreditValue(author.userId)).toBeLessThan(box.value);
       // The transfer never applied: the recipient holds nothing.
       expect(utxoAfter.getCreditValue(recipient.userId)).toBe(0n);
-      // And the transfer is no longer pooled — `followAppliedBlock` purged it
+      // And the transfer left the pool — `followAppliedBlock` purged it
       // with the applied spend.
       expect(mempool.getPendingEntries(10).map((e) => e.rowid)).not.toContain(transferRow);
     });
