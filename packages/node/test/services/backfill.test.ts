@@ -305,7 +305,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due": the
   // arrival asks the reader once for every scheduled entry that has been due.
-  it.fails('readerArrived asks the reader for every pending entry due once, and moves no schedule', async () => {
+  it('readerArrived asks the reader for every pending entry due once, and moves no schedule', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -351,7 +351,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due": a
   // peer id `getServingReaders()` does not name is asked nothing.
-  it.fails('readerArrived asks a reader that does not serve nothing', async () => {
+  it('readerArrived asks a reader that does not serve nothing', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -367,7 +367,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due":
   // after the entries no longer placeholders leave unasked.
-  it.fails('readerArrived skips an entry that is no longer a placeholder', async () => {
+  it('readerArrived skips an entry that is no longer a placeholder', async () => {
     connectedPeers = [];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -396,7 +396,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due": the
   // arrival runs in the puller's one-at-a-time order, never beside a pass.
-  it.fails('readerArrived during a pass runs after it', async () => {
+  it('readerArrived during a pass runs after it', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -427,7 +427,7 @@ describe('backfill driver', () => {
   // NODE_INTERFACE → "A serving reader is asked for what has been due":
   // the entry stored through the arrival leaves pending, so the next due
   // pass asks no one for it.
-  it.fails('a text a reader sends leaves the schedule', async () => {
+  it('a text a reader sends leaves the schedule', async () => {
     initBackfill({
       requestPostBodies: async (wanted, peerId) => {
         requestLog.push({ wanted, peerId });
