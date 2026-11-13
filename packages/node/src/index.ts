@@ -45,7 +45,7 @@ import {
   peerStorage,
   getKarmaOwners,
 } from './store/index.js';
-import { initBackfill } from './services/backfill.js';
+import { initBackfill, readerArrived } from './services/backfill.js';
 
 const startTime = Date.now();
 
@@ -245,6 +245,12 @@ initBackfill({
   getMissingBodies,
   getStillPlaceholderIds,
 });
+
+// NET_INTERFACE → "A reader's arrival has a hook of its own" — the puller
+// asks an arriving serving reader once for every scheduled entry that has
+// been due (NODE_INTERFACE → "A serving reader is asked for what has been
+// due").
+net.onReaderActive((id) => { void readerArrived(id); });
 
 // 4. Start net
 //
