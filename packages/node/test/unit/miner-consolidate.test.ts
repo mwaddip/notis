@@ -30,9 +30,9 @@ import {
   createCadence,
 } from '../../src/miner-consolidate.js';
 
-// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES`
-// heights" — the value in `contracts/CONSTANTS.md → Producer policy` (100),
-// restated in the test for assertions that keyword it rather than the module.
+// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
+// the value in `contracts/CONSTANTS.md → Producer policy` (100), restated in
+// the file for assertions that keyword it rather than the module.
 const MIN = 100;
 
 /** A pair of ed25519 keys for the case, both as the file reader expects them. */

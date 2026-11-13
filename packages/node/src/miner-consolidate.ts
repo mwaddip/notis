@@ -34,10 +34,10 @@ import {
   type HttpFetch,
 } from '@dagsocial/node-reads';
 
-// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES`
-// heights" — the policy-tier figure as `contracts/CONSTANTS.md → Producer
-// policy` holds it. A `(literal)` row there and nowhere in `@dagsocial/types`
-// because a client's cadence reads it, not a block's apply.
+// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
+// the policy-tier figure as `contracts/CONSTANTS.md → Producer policy` holds
+// it. A `(literal)` row there and nowhere in `@dagsocial/types` because a
+// client's cadence reads it, not a block's apply.
 const CONSOLIDATE_MIN_BOXES = 100;
 
 // ------------------------------------------------------------------------
@@ -370,8 +370,8 @@ function errMsg(err: unknown): string {
 // The cadence
 // ------------------------------------------------------------------------
 
-/** MINING_INTERFACE → Consolidation → "A check runs every
- *  `CONSOLIDATE_MIN_BOXES` heights" — the stateful cadence. */
+/** MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
+ *  the stateful cadence. */
 export interface Cadence {
   tick(templateHeight: number): Promise<void>;
 }
@@ -382,11 +382,11 @@ interface CadenceState {
 }
 
 /**
- * MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES`
- * heights". The cadence runs a check at the first template height it is called
- * with, then at the first template height `CONSOLIDATE_MIN_BOXES` above the
- * last check's, or at the next template height where the last check was full.
- * A failing check moves the cadence forward the same as a passing one; a
+ * MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window."
+ * The cadence runs a check at the first template height it is called with,
+ * then at the first template height `CONSOLIDATE_MIN_BOXES` above the last
+ * check's, or at the next template height where the last check was full. A
+ * failing check moves the cadence forward the same as a passing one; a
  * subsequent due height checks again.
  */
 export function createCadence(opts: CheckOptions): Cadence {
