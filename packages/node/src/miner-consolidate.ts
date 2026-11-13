@@ -323,7 +323,9 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
     logger(`consolidation submit answer has status=${String(postRead.data['status'])}`);
     return idle;
   }
-  // MINING_INTERFACE → Consolidation → "A consolidation the node answers `pending` logs one line naming its id and its input count."
+  // MINING_INTERFACE → Consolidation → "A check spends what the pending view leaves spendable." — the paragraph's
+  // tail: "A consolidation the node answers `pending` logs one line
+  // naming its id and its input count."
   logger(`consolidation sent: ${txId} (${spendable.length} inputs)`);
   return { sent: true, inputCount: spendable.length, full: fullAtByteBound };
 }

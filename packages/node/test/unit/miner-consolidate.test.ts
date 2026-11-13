@@ -337,9 +337,10 @@ describe('runConsolidateCheck', () => {
       expect(outcome.sent).toBe(true);
       expect(outcome.inputCount).toBe(MIN);
       expect(state.posts).toHaveLength(1);
-      // MINING_INTERFACE → Consolidation → "A consolidation the node answers `pending` logs one line naming its id and its input count." —
-      // the id is the one over the posted transaction, recomputed from the
-      // stub's record.
+      // MINING_INTERFACE → Consolidation → "A check spends what the pending view leaves spendable." — the paragraph's tail:
+      // "A consolidation the node answers `pending` logs one line naming its
+      // id and its input count." — the id is the one over the posted
+      // transaction, recomputed from the stub's record.
       const posted = jsonToTx(state.posts[0]!, state.protocolVersion);
       const txId = computeTxId(posted);
       expect(lines).toHaveLength(1);
