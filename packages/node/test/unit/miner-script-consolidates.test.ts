@@ -383,15 +383,18 @@ describe('miner.mjs — consolidation', () => {
 
   it('without MINER_KEY_PATH the script asks /mining/template and nothing of /status or /credits', async () => {
     const harness = await startStub({
-      templates: [{ height: 1001, powPreimage: 'aa'.repeat(16), powTargetBits: TRIVIAL_POW_TARGET_BITS }],
+      templates: [
+        { height: 1001, powPreimage: 'aa'.repeat(16), powTargetBits: TRIVIAL_POW_TARGET_BITS },
+        { height: 1001, powPreimage: 'aa'.repeat(16), powTargetBits: TRIVIAL_POW_TARGET_BITS },
+      ],
       tip: 1000,
     });
     try {
       spawnMiner({ port: harness.port });
-      await harness.waitForTemplate(10_000);
-      // Give the script a short tick to run the main loop and refrain
-      // from asking /status or /credits.
-      await new Promise((r) => setTimeout(r, 500));
+      // Wait on the stub's own events: at least two template reads. A tick
+      // under this branch would have run before the first search, so a
+      // second template read lands after a tick's /status would have fired.
+      await harness.waitForNthTemplate(2, 15_000);
       const paths = new Set(harness.state.calls.map((c) => new URL(c.url, 'http://x').pathname));
       expect(paths.has('/mining/template')).toBe(true);
       expect(paths.has('/status')).toBe(false);
