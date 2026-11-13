@@ -798,8 +798,6 @@ request for posts' text is answered with each asked id whose entry holds a live 
 tip run names a chain included — and with nothing for a withdrawn entry or one without text; the read moves no entry's
 last-seen.
 
-> ⚠ **AHEAD OF CODE (2026-11-12).** No node's request reaches the cache.
-
 **Size**: `POST_CACHE_BYTES` (`CONSTANTS → Client defaults`) over the entries' sizes, the total kept in a record of
 its own written with every put, withdrawal and eviction — a put past it evicts the least
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
@@ -2084,8 +2082,6 @@ other value or none off — with or without an identity. While on, a hint stands
 may ask it for posts, and learn which ones you hold and your address.* A press that changes it redials every node at
 once, and the row reads the choice as the press left it. It renders only where the build hands the client a way to
 serve — the extension, which holds a post cache — so the web build has no such row.
-
-> ⚠ **AHEAD OF CODE (2026-11-12).** The settings window has no serve row, and `notis.serve` is read by nothing.
 
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).

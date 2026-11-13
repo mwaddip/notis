@@ -3641,19 +3641,17 @@ with the pending transaction that held it. A received body is verified and store
 
 **A serving reader is asked for what has been due.** The puller asks the serving readers (NET_INTERFACE → Readers →
 "A reader is never asked for chain data") for the entries a pass has made due before: an entry reaches readers once its
-schedule has advanced, whether a node peer was asked for it and left it unanswered or no node peer was connected to
-ask. Two triggers. **Each pass**, after its asks to node peers, sends the due entries that were due before to every
-serving reader, one call each — one peer per due height would reach the twentieth reader after 2²⁰ blocks. **A serving
-reader's arrival** (NET_INTERFACE → Readers → "A reader's arrival has a hook of its own") asks that reader once for
-every scheduled entry that has been due — a page is online for minutes, and an entry on its 256-block interval would
-rarely be due while it is — on a path of its own that writes no entry's schedule and runs in the puller's
-one-at-a-time order, never beside a pass; a reader the hook names that does not serve is asked nothing. A text a reader
-sends is verified and stored as a node peer's is, `emitPostReceived(postId, readerPeerId, via: 'pull')`; one that does
-not verify is the reader's `Misbehavior` penalty (NET_INTERFACE → ModifierResponse). An entry's first due pass goes to
-node peers alone, so a node in a cold sync — every post since its tip a placeholder — asks readers only for what the
-relaying peer left unanswered.
-
-> ⚠ **AHEAD OF CODE (2026-11-12).** The puller asks node peers alone; no reader is asked for a post's text.
+schedule has advanced, whether a node peer was asked for it and left it unanswered or no node peer was connected to ask.
+Two triggers. **Each pass**, after its asks to node peers, sends the due entries that were due before and that its node
+peers left unanswered to every serving reader, one call each, and asks no reader when none is left — one peer per due
+height would reach the twentieth reader after 2²⁰ blocks. **A serving reader's arrival** (NET_INTERFACE → Readers →
+"A reader's arrival has a hook of its own") asks that reader once for every scheduled entry that has been due — a page
+is online for minutes, and an entry on its 256-block interval would rarely be due while it is — on a path of its own
+that writes no entry's schedule and runs in the puller's one-at-a-time order, never beside a pass; a reader the hook
+names that does not serve is asked nothing. A text a reader sends is verified and stored as a node peer's is,
+`emitPostReceived(postId, readerPeerId, via: 'pull')`; one that does not verify is the reader's `Misbehavior` penalty
+(NET_INTERFACE → ModifierResponse). An entry's first due pass goes to node peers alone, so a node in a cold sync — every
+post since its tip a placeholder — asks readers only for what the relaying peer left unanswered.
 
 ### Like-records
 

@@ -154,13 +154,10 @@ nothing of its own.
 answers it from the posts it holds, on the connections it holds to nodes, by `net`'s rule (`NET_INTERFACE → Readers →
 "A serving reader answers from what it holds"`) — the extension from its post cache (`WEB_INTERFACE → The settings
 window → "The serve row"`). A node it reads may then learn which of the ids it asks this client holds, with the
-connection's address; the client announces nothing it holds, and only a node it dialled can ask. A change of the
-setting closes every connection the client holds and dials again, so each new handshake declares the new set; the
-client's chain and its node list are kept, as across any lost connection, and the last change made is the one that
-stands. A client handed no way to serve never declares `ModifierRequest`.
-
-> ⚠ **AHEAD OF CODE (2026-11-12).** The mesh client declares no capability and registers no handler; it has no
-setting to serve.
+connection's address; the client announces nothing it holds, and only a node it dialled can ask. A change of the setting
+waits for a check in flight to end, then closes every connection the client holds and dials again at once, so each new
+handshake declares the new set; the client's chain and its node list are kept, as across any lost connection, and the
+last change made is the one that stands. A client handed no way to serve never declares `ModifierRequest`.
 
 **One router, `net`'s rules.** A node and a client each run gossipsub with `net`'s options (`gossipsubOptions`), a client
 on the ordering-block topic alone, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`):

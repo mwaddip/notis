@@ -566,9 +566,6 @@ draw from them — and `getConnectedReaders()` the readers. A post's text is not
 that declare it (→ "A serving reader answers from what it holds"). A reader is in gossip like any peer (→ Gossip
 Topics) and may query this node as any peer may.
 
-> ⚠ **AHEAD OF CODE (2026-11-12).** `getServingReaders` is not built, and the cases in `packages/net/test` and
-`tools/mesh-poc/test` that hold a reader to no `ModifierRequest` assert that a reader is asked for no post text.
-
 **A peer is asked for a code only if it declares it.** The scheduler, the peer exchange and `requestPostBodies` send a
 request to a peer only where its capabilities name the request's code; a caller's peer id that does not is refused
 before a stream opens.
@@ -590,17 +587,14 @@ other. A stream carries one frame under the network's magic — `ModifierRequest
 (103), 1–`MAX_INV_IDS` ids — read under `MAX_MODIFIER_REQUEST_FRAME_BYTES`, the largest such frame. The reader answers a
 `ModifierResponse` (code 5) with the text of each asked id it holds, in the request's order, each `encodePostBody`,
 stopping before the body that would pass `MAX_SERVE_BODY_BYTES` with the first always sent, and answers zero bytes when
-it holds none (→ ModifierResponse). Another code, `typeId` or magic, a frame that does not decode, a frame past the
-bound, or no frame within the deadline closes the stream unanswered. **One stream at a time per connection**: a stream
-that opens while the reader answers another on the same connection is closed unanswered, and every stream's read and
-answer run under a deadline, so a node cannot hold a page's work. What a reader serves is checked as a node's answer is
-— each text against the commitment the asker holds, a mismatch the `Misbehavior` penalty (→ ModifierResponse) — and
-nothing is relayed: an id the reader does not hold is left out. A reader that does not declare `ModifierRequest`
-registers no handler for `SYNC_PROTOCOL`. `postTextsHandler` in the browser entry is the one implementation (→ The
-browser entry).
-
-> ⚠ **AHEAD OF CODE (2026-11-12).** `onReaderActive`, `SERVING_READER_CAPABILITIES` and `postTextsHandler` are not
-built: no reader declares a capability, and the browser entry carries no handler for `SYNC_PROTOCOL`.
+it holds none or cannot read what it holds (→ ModifierResponse). Another code, `typeId` or magic, a frame that does not
+decode, a frame past the bound, or no frame within the deadline closes the stream unanswered. **One stream at a time per
+connection**: a stream that opens while the reader answers another on the same connection is closed unanswered, and
+every stream's read and answer run under a deadline, so a node cannot hold a page's work. What a reader serves is
+checked as a node's answer is — each text against the commitment the asker holds, a mismatch the `Misbehavior` penalty
+(→ ModifierResponse) — and nothing is relayed: an id the reader does not hold is left out. A reader that does not
+declare `ModifierRequest` registers no handler for `SYNC_PROTOCOL`. `postTextsHandler` in the browser entry is the one
+implementation (→ The browser entry).
 
 **Readers have a budget of their own.** At most `maxReaders` readers are held at once; one past it is closed after its
 handshake. Readers never count toward `maxPeers`, the outbound floor or the fill (→ Outbound Manager), and a reader
