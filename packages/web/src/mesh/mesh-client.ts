@@ -64,6 +64,9 @@ import {
   readerLibp2pOptions,
   readerHandshake,
   servesChain,
+  SERVING_READER_CAPABILITIES,
+  SYNC_PROTOCOL,
+  postTextsHandler,
   type PostTextProvider,
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
@@ -674,7 +677,7 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // live node list, so a hand-add or an update of the list is visible
   // to the next dial.
   configuredHolder.current = (notisId) => client.configuredAddrs(notisId);
-  client.start();
+  await client.start();
   return client;
 }
 
@@ -852,6 +855,28 @@ class MeshClientImpl implements MeshClient {
   // bound reference so `removeEventListener` reads the same identity
   // on stop.
   private readonly onGossipMessage: (ev: unknown) => void;
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — the reader's own way to serve posts' text. `null`
+   * when the client was handed no `serving` option; a call of
+   * `setServing` then answers and does nothing.
+   */
+  private readonly servingTexts: PostTextProvider | null;
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — whether the client declares
+   * `SERVING_READER_CAPABILITIES` in its handshake and `SYNC_PROTOCOL`
+   * is registered on its libp2p. False when `servingTexts` is null.
+   */
+  private servingOn: boolean;
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — "Calls are serialised — a call made while another
+   * runs waits for it — so the last call's value is the state that
+   * stands". The chain of applied setServing promises; the next call's
+   * work runs after this resolves.
+   */
+  private servingLock: Promise<void> = Promise.resolve();
 
   constructor(
     node: Libp2p,
@@ -998,9 +1023,14 @@ class MeshClientImpl implements MeshClient {
       },
     );
     this.onGossipMessage = (ev): void => this.handleGossipMessage(ev);
+    // MESH_INTERFACE → Block gossip → "A client that serves answers the
+    // nodes it reads" — absent `serving` leaves the reader in the
+    // reader's default set and registers no handler.
+    this.servingTexts = o.serving?.texts ?? null;
+    this.servingOn = this.servingTexts !== null && (o.serving?.on ?? false);
   }
 
-  start(): void {
+  async start(): Promise<void> {
     // The DHT reports a peer the first time it hears of one; every one
     // becomes a `NodeList` entry before any later event can name it
     // (MESH_INTERFACE → Discovery).
@@ -1013,11 +1043,33 @@ class MeshClientImpl implements MeshClient {
     // check, so a mesh service it reaches finds it already in the
     // topic's mesh.
     this.startGossip();
+    // MESH_INTERFACE → Block gossip → "A client that serves answers the
+    // nodes it reads" — with `serving.on` true, the handler is
+    // registered before the first check so the first handshake's reader
+    // peer on the other side can open a stream right away.
+    if (this.servingOn && this.servingTexts !== null) {
+      await this.libp2p.handle(SYNC_PROTOCOL, this.makeServingHandler(this.servingTexts));
+    }
     // The first check runs at start (MESH_INTERFACE → The client's node
     // list → "A check"); a failure here does not take the client down, it
     // is reflected in the state and the next check comes on the ordinary
     // cadence.
     this.scheduleNextCheck(0);
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — build the handler each registration uses: the
+   * network's magic, this client's provider, the accept gate reading
+   * the handshake's verdict for the connection id (`passed` alone).
+   */
+  private makeServingHandler(texts: PostTextProvider): ReturnType<typeof postTextsHandler> {
+    return postTextsHandler({
+      magic: this.profile.magic,
+      texts,
+      timeoutMs: 10_000,
+      accept: (id) => this.handshakeResults.get(id) === 'passed',
+    });
   }
 
   private getPubsub(): GossipSub & {
@@ -1609,12 +1661,45 @@ class MeshClientImpl implements MeshClient {
   }
 
   /**
-   * MESH_INTERFACE → Block gossip → "A client that serves answers the nodes
-   * it reads" — flip the client's serving setting.
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — flip the client's serving setting. With no
+   * `serving` option the client never serves; a call then resolves and
+   * does nothing. Calls are serialised through `servingLock`; two
+   * quick calls run in order and the last stands. An unchanged value
+   * does nothing.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async setServing(_on: boolean): Promise<void> {
-    return;
+  setServing(on: boolean): Promise<void> {
+    if (this.servingTexts === null) return Promise.resolve();
+    const next = this.servingLock.then(() => this.applyServing(on));
+    // The chain survives a throw: one call's failure does not strand
+    // the calls after it.
+    this.servingLock = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the
+   * nodes it reads" — the body serving each `setServing` call runs
+   * inside `servingLock`. An unchanged value is a no-op; a change
+   * registers or unregisters `postTextsHandler` on `SYNC_PROTOCOL`,
+   * closes every connection the client holds and dials again
+   * (`triggerImmediateCheck`), so each new handshake declares the new
+   * set.
+   */
+  private async applyServing(on: boolean): Promise<void> {
+    if (this.stopped) return;
+    if (on === this.servingOn) return;
+    this.servingOn = on;
+    if (on) {
+      await this.libp2p.handle(SYNC_PROTOCOL, this.makeServingHandler(this.servingTexts!));
+    } else {
+      await this.libp2p.unhandle(SYNC_PROTOCOL);
+    }
+    // Close every connection the client holds; a new one's handshake
+    // declares the current `servingOn`'s set.
+    const conns = this.libp2p.getConnections();
+    await Promise.all(conns.map((c) => c.close().catch(() => undefined)));
+    this.triggerImmediateCheck();
   }
 
   async stop(): Promise<void> {
@@ -3013,12 +3098,17 @@ class MeshClientImpl implements MeshClient {
     }
     const tip = this.chain.tip();
     const chainHeight = tip !== null ? tip.height : 0;
+    // MESH_INTERFACE → Block gossip → "A client that serves answers
+    // the nodes it reads" — the dialler declares
+    // `SERVING_READER_CAPABILITIES` while the reader has been set to
+    // serve, and the reader's default empty set otherwise.
     const result = await readerHandshake(conn, {
       magic: this.profile.magic,
       protocolVersion: PROTOCOL_VERSION,
       agentName: this.agentName,
       chainHeight,
       timeoutMs: 10_000,
+      capabilities: this.servingOn ? SERVING_READER_CAPABILITIES : undefined,
     });
     if (this.stopped) return 'failed';
     if (!result.ok) {
