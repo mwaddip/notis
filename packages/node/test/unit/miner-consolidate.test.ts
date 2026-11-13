@@ -189,6 +189,14 @@ function buildStub(state: StubState): HttpFetch {
         protocolVersion: state.protocolVersion,
       });
     }
+    if (u.pathname === '/credits/transfer' && method === 'POST') {
+      const parsed = JSON.parse(body!) as { tx: Record<string, unknown> };
+      state.posts.push(parsed.tx);
+      return new Response(JSON.stringify(state.postAnswer.body), {
+        status: state.postAnswer.status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (u.pathname.startsWith('/credits/')) {
       if (state.listingMalformed) {
         return json({ not: 'a listing' });
@@ -217,14 +225,6 @@ function buildStub(state: StubState): HttpFetch {
         })),
         boxCount: state.boxes.length,
         next,
-      });
-    }
-    if (u.pathname === '/credits/transfer' && method === 'POST') {
-      const parsed = JSON.parse(body!) as { tx: Record<string, unknown> };
-      state.posts.push(parsed.tx);
-      return new Response(JSON.stringify(state.postAnswer.body), {
-        status: state.postAnswer.status,
-        headers: { 'Content-Type': 'application/json' },
       });
     }
     return new Response('not found', { status: 404 });
@@ -309,12 +309,14 @@ describe('runConsolidateCheck', () => {
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
       const held = readMinerKey(file, null);
+      const lines: string[] = [];
       const outcome = await runConsolidateCheck({
         nodeUrl: 'http://stub',
         key: held,
         httpFetch: buildStub(state),
-        logger: () => {},
+        logger: (l) => lines.push(l),
       });
+      expect(lines).toEqual([]);
       expect(outcome.sent).toBe(true);
       expect(outcome.inputCount).toBe(MIN);
       expect(state.posts).toHaveLength(1);
@@ -408,13 +410,12 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it.fails('the listing is read under pending=1, page after page, until enough is held', async () => {
+  it.fails('every listing read carries pending=1, and the read stops once a full transaction is held', async () => {
     const { file, done } = setupKey();
     try {
-      // More spendable boxes than fit one page: 2·PAGE_LIMIT_MAX − 1 spendable
-      // boxes of a small value, enough to need a second page and then stop
-      // short of a third (MIN ≤ PAGE_LIMIT_MAX).
-      const boxes = makeCaseBoxes(2 * PAGE_LIMIT_MAX - 1, 1_000_000n);
+      // Far more spendable boxes than one transaction carries — the check
+      // holds its load on the first few pages and stops short of the end.
+      const boxes = makeCaseBoxes(10 * PAGE_LIMIT_MAX, 1_000_000n);
       const state = newCaseState(1000, boxes);
       const held = readMinerKey(file, null);
       await runConsolidateCheck({
@@ -429,9 +430,9 @@ describe('runConsolidateCheck', () => {
         const u = new URL(g.url);
         expect(u.searchParams.get('pending')).toBe('1');
       }
-      // The check held enough on the first page to post one transaction,
-      // so it never asked for a second page.
-      expect(gets.length).toBe(1);
+      // The read ended short of the listing — the last page carried a
+      // non-null `next` the check never followed.
+      expect(gets.length).toBeLessThan(10);
     } finally { done(); }
   });
 
