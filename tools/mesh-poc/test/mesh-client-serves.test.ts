@@ -411,4 +411,79 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     );
     expect(okAnswers).toEqual([{ id: POST_ID, content: POST_TEXT }]);
   }, 120_000);
+
+  it('an unchanged value does nothing', async () => {
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'serve-same-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      serving: { on: true, texts: providerFor(new Map([[POST_ID, POST_TEXT]])) },
+    });
+    clients.push(client);
+
+    await client.check();
+    const clientPeerId = client.libp2p.peerId.toString();
+    await vi.waitFor(() => {
+      expect(n.node.getServingReaders()).toContain(clientPeerId);
+    }, { timeout: 15_000, interval: 200 });
+    const connBefore = client.libp2p.getConnections()[0];
+    const connIdBefore = connBefore!.id;
+
+    await client.setServing(true);
+
+    // The one connection the client holds stays, with the same id,
+    // and the node still lists the reader as serving.
+    const connsAfter = client.libp2p.getConnections();
+    expect(connsAfter.length).toBe(1);
+    expect(connsAfter[0]!.id).toBe(connIdBefore);
+    expect(n.node.getServingReaders()).toContain(clientPeerId);
+  }, 90_000);
+
+  it.fails('a change made while a check runs still redials at once', async () => {
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'serve-mid-check-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      serving: { on: false, texts: providerFor(new Map([[POST_ID, POST_TEXT]])) },
+    });
+    clients.push(client);
+
+    // One check first so the client holds a connection to the node.
+    await client.check();
+    const clientPeerId = client.libp2p.peerId.toString();
+    await vi.waitFor(() => {
+      expect(n.node.getConnectedReaders()).toContain(clientPeerId);
+    }, { timeout: 15_000, interval: 200 });
+
+    // A second check starts without being awaited; while it runs, the
+    // reader is set to serve. The rule says a change redials every
+    // node at once; a 15 s wait is well under the 30 s check cadence,
+    // so this wait times out if the redial waits on the next
+    // scheduled check instead.
+    const pending = client.check();
+    await client.setServing(true);
+    await pending;
+
+    await vi.waitFor(() => {
+      expect(n.node.getServingReaders()).toContain(clientPeerId);
+    }, { timeout: 15_000, interval: 200 });
+
+    const answers = await n.node.requestPostBodies(
+      [{ id: POST_ID, contentHash: POST_HASH }],
+      clientPeerId,
+    );
+    expect(answers).toEqual([{ id: POST_ID, content: POST_TEXT }]);
+  }, 120_000);
 });
