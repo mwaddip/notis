@@ -107,6 +107,26 @@ describe('readMinerKey', () => {
     } finally { t.done(); }
   });
 
+  it("an encrypted envelope's refusal says it is an encrypted envelope", () => {
+    // The envelope carries every ordinary-form field (`pubKeyHex` beside the
+    // crypto fields), so the "carries neither …" line would refuse it too —
+    // the envelope's own refusal is the one the diagnostic reader reads.
+    const t = tmp('encrypted.json');
+    try {
+      const k = makeKey();
+      const envelope = {
+        version: 1,
+        pubKeyHex: k.publicKeyHex,
+        privKeyBase64: k.privKeyBase64,
+        kdf: { name: 'scrypt', salt: '00'.repeat(16), N: 65536, r: 8, p: 1 },
+        cipher: { name: 'chacha20-poly1305', nonce: '00'.repeat(12) },
+        ciphertext: '00'.repeat(48),
+      };
+      writeFileSync(t.file, JSON.stringify(envelope));
+      expect(() => readMinerKey(t.file, null)).toThrow(/encrypted identity envelope/);
+    } finally { t.done(); }
+  });
+
   it('a file that parses as neither form refuses, with the file in the message', () => {
     const t = tmp('garbage.json');
     try {
@@ -534,6 +554,7 @@ describe('runConsolidateCheck', () => {
       expect(lines).toHaveLength(1);
     } finally { done(); }
   });
+
 });
 
 // -------------------------------------------------------------------------
