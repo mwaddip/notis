@@ -5155,6 +5155,16 @@ records, the network record, the tree rows and the flag together, so a divergent
 committed. Checked after the commit it would fail exactly once: the next start finds the flag set,
 skips seeding, and runs on the divergent state with nothing left to check it.
 
+**A refused seed puts the prover back by reference.** SQLite's rollback takes back the rows and reaches none of the
+prover's in-memory tree, so `seedGenesisState` holds the prover's root and tree height before its transaction and, on
+any throw, puts them back with `restoreRoot`, as the apply funnel does (→ AVL+ State Root); the kept roots are emptied
+(→ "A proof at an older height restores a kept root"). The restore reads no row — the library never mutates a node,
+so the held root is still the tree as it stood before the seed — and nothing in it can throw in place of the seed's own
+error, which is the one the three-step exit below prints.
+
+> ⚠ **AHEAD OF CODE (2026-11-13).** `seedGenesisState`'s catch calls `prover.rollback` with the pre-seed digest, which
+> resolves the tree from SQLite; a rollback that throws there replaces the seed's error.
+
 **The backer table is validated before the root is compared, inside the seeding transaction.** Keys unique
 and ascending byte-wise, every `weight ≥ 1n`, their sum at most `backerSupply`, and `backerSupply > 0n` when
 a row exists — each refusal names the row and the rule, so a bad module is refused as itself and never as a
