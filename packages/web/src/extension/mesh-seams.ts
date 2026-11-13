@@ -17,6 +17,7 @@
 import { NodeClient } from '../api/client.js';
 import { WriteClient } from '../api/write.js';
 import { HAND_NODE_KEY, HAND_NODE_OFF_KEY } from './storage-keys.js';
+import type { PostTextProvider } from '@dagsocial/net/browser';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
 import { createNamesVerifier } from './names-verifier.js';
@@ -38,7 +39,7 @@ import type {
   PostResolver,
   TipVerifier,
 } from '../model/state.js';
-import type { HandNodeSeam } from '../view/settings.js';
+import type { HandNodeSeam, ServeSeam } from '../view/settings.js';
 
 /** The seams the App's extension build takes. */
 export interface MeshSeams {
@@ -49,6 +50,7 @@ export interface MeshSeams {
   namesVerifier: NamesVerifier;
   postResolver: PostResolver;
   handNodeSeam: HandNodeSeam;
+  serveSeam: ServeSeam;
 }
 
 export interface CreateMeshSeamsOptions {
@@ -191,7 +193,12 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
     },
   };
 
-  return { readClient, writeClient, tipVerifier, figuresVerifier, namesVerifier, postResolver, handNodeSeam };
+  const serveSeam: ServeSeam = {
+    on(): boolean { return false; },
+    set(_on: boolean): void { /* stubbed */ },
+  };
+
+  return { readClient, writeClient, tipVerifier, figuresVerifier, namesVerifier, postResolver, handNodeSeam, serveSeam };
 }
 
 /** The extension's bootstrap: starts the mesh client, kicks the first check
@@ -216,6 +223,13 @@ export interface StartExtensionMeshOptions {
   locks: { request(name: string, fn: () => Promise<void>): Promise<void> };
   window: Pick<Window, 'addEventListener'>;
   startMeshClient: (o: StartMeshClientOptions) => Promise<MeshClient>;
+  /**
+   * WEB_INTERFACE → The settings window → "The serve row",
+   * → The extension → "The post cache" → "A serving read is answered from
+   * it". The provider the serving reader answers `ModifierRequest` from —
+   * `postTextsFromCache(postCache)` in the extension build.
+   */
+  postTexts: PostTextProvider;
 }
 
 export async function startExtensionMesh(

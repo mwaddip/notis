@@ -3,8 +3,11 @@ import { describe, it, expect, vi } from 'vitest';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshContact, StartMeshClientOptions } from '../../src/mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
+import type { PostTextProvider } from '@dagsocial/net/browser';
 import { createMeshSeams, startExtensionMesh, parseHandNodeAddress, type StorageLike } from '../../src/extension/mesh-seams.js';
-import { HAND_NODE_KEY } from '../../src/extension/storage-keys.js';
+import { HAND_NODE_KEY, SERVE_KEY } from '../../src/extension/storage-keys.js';
+
+const emptyPostTexts: PostTextProvider = async () => new Map<string, string>();
 
 const PEER_HEX = '68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09';
 // The peer id string the hand-added test parses. 12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa
@@ -232,7 +235,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const window = { addEventListener: addHandler };
     await startExtensionMesh({
       firstContact, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window, startMeshClient,
+      check, storage, locks: fakeLocks(), window, startMeshClient, postTexts: emptyPostTexts,
     });
     expect(startMeshClient).toHaveBeenCalledTimes(1);
     expect(startOpts!.network).toBe('devnet');
@@ -253,7 +256,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
     });
     expect(addCalls).toEqual([PEER_HEX]);
   });
@@ -296,7 +299,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient,
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
     });
     expect(capturedOnChecked).not.toBeNull();
     // Trigger the check-end callback with a snapshot carrying a decodable
@@ -340,11 +343,11 @@ describe('startExtensionMesh — the lifecycle', () => {
       .mockImplementationOnce(async (): Promise<MeshClient> => client2);
     const { seams: seams1 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient, postTexts: emptyPostTexts,
     });
     const { seams: seams2 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient, postTexts: emptyPostTexts,
     });
 
     // Both seams read their own client's base.
@@ -359,5 +362,54 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(seams2.tipVerifier).toBeDefined();
     expect(read1).toBeDefined();
     expect(read2).toBeDefined();
+  });
+
+  // WEB_INTERFACE → The settings window → "The serve row": `SERVE_KEY` is
+  // read at the mesh client's start — `'1'` is on, any other value or
+  // none off — and passed as `serving: { on, texts }` to
+  // `startMeshClient`.
+  it.fails("serving starts off with no key and on with '1'", async () => {
+    const texts: PostTextProvider = async (ids) => new Map(ids.map((id) => [id, 'x']));
+    // No key: serving.on is false; the texts the provider handed in are
+    // passed through.
+    const client1 = fakeClient();
+    const start1 = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { captured1 = opts; return client1; });
+    let captured1: StartMeshClientOptions | null = null;
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start1, postTexts: texts,
+    });
+    expect(captured1!.serving).toBeDefined();
+    expect(captured1!.serving!.on).toBe(false);
+    expect(captured1!.serving!.texts).toBe(texts);
+    // `SERVE_KEY === '1'`: serving.on is true, texts the same.
+    const client2 = fakeClient();
+    let captured2: StartMeshClientOptions | null = null;
+    const start2 = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { captured2 = opts; return client2; });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage({ [SERVE_KEY]: '1' }), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start2, postTexts: texts,
+    });
+    expect(captured2!.serving!.on).toBe(true);
+    expect(captured2!.serving!.texts).toBe(texts);
+  });
+
+  // WEB_INTERFACE → The settings window → "The serve row": `set(true)`
+  // writes `'1'` under `SERVE_KEY` and calls `client.setServing(true)`;
+  // `set(false)` removes the key and calls `client.setServing(false)`.
+  it.fails('set writes the key and calls setServing', () => {
+    const servingCalls: boolean[] = [];
+    const client = {
+      ...fakeClient(),
+      setServing: (on: boolean): Promise<void> => { servingCalls.push(on); return Promise.resolve(); },
+    };
+    const storage = fakeStorage();
+    const seams = createMeshSeams({ client, network: 'devnet', check, storage });
+    seams.serveSeam.set(true);
+    expect(storage.map.get(SERVE_KEY)).toBe('1');
+    expect(servingCalls).toEqual([true]);
+    seams.serveSeam.set(false);
+    expect(storage.map.has(SERVE_KEY)).toBe(false);
+    expect(servingCalls).toEqual([true, false]);
   });
 });

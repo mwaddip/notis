@@ -51,6 +51,9 @@ export interface SettingsHandlers {
   // holds the question"). `undefined` is a build with no verifier, `null` is
   // one whose first verdict has not returned.
   verdict?: () => TipVerdict | null | undefined;
+  // The extension's serve-posts seam — the row renders only with it
+  // (WEB_INTERFACE → The settings window → "The serve row").
+  serve?: ServeSeam;
 }
 
 /** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
@@ -67,6 +70,17 @@ export interface HandNodeSeam {
   off(): boolean;
   setOff(off: boolean): void;
   answer(decision: 'continue' | 'disable'): void;
+}
+
+/** The extension's serve-posts seam (WEB_INTERFACE → The settings window →
+ *  "The serve row"). `on` reads the choice as stored; `set(on)` writes the
+ *  choice and calls the mesh client's `setServing(on)`, which closes every
+ *  connection the client holds and dials again so each new handshake
+ *  declares the new set (MESH_INTERFACE → Block gossip → "A client that
+ *  serves answers the nodes it reads"). */
+export interface ServeSeam {
+  on(): boolean;
+  set(on: boolean): void;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
