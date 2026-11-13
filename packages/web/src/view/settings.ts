@@ -294,6 +294,34 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
     b.appendChild(r);
   }
 
+  // The extension's serve-posts row — the row renders only with the seam
+  // (WEB_INTERFACE → The settings window → "The serve row"). A press moves
+  // the pressed word and the hint in place; the hint stands while on and
+  // only then — nodes this page reads from may ask it for posts, and
+  // learn which ones you hold and the reader's address.
+  if (handlers.serve) {
+    const serve = handlers.serve;
+    const { row: r, field } = row('serve posts');
+    field.appendChild(choice<'off' | 'on'>(
+      [['off', 'off'], ['on', 'on']],
+      () => serve.on() ? 'on' : 'off',
+      (v) => serve.set(v === 'on'),
+      draws,
+    ));
+    const hint = el('div', 'hint', 'nodes this page reads from may ask it for posts, and learn which ones you hold and your address.');
+    // The hint stands while on and only then; placed and taken by the
+    // row's own draw, so a press moves it in place and nothing else in
+    // the page moves (HOUSE_STYLE → Motion).
+    draws.push(() => {
+      if (serve.on()) {
+        if (hint.parentNode !== field) field.appendChild(hint);
+      } else {
+        if (hint.parentNode === field) field.removeChild(hint);
+      }
+    });
+    b.appendChild(r);
+  }
+
   const update = (): void => {
     for (const draw of draws) draw();
   };

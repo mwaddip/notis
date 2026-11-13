@@ -498,9 +498,6 @@ export class App {
   // hand-added form only when the seam is present; the web build's row is
   // the same without it.
   private handNodeSeam: HandNodeSeam | null;
-  // WEB_INTERFACE → The settings window → "The serve row" — the reader's
-  // serve-posts seam. Non-null only in the extension build; the web build
-  // is handed none.
   private serveSeam: ServeSeam | null;
   // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
   // waits". Non-null only when the extension build hands the App a seam and an
@@ -734,7 +731,15 @@ export class App {
       ...(this.handNodeSeam ? { handNode: this.handNodeSeam } : {}),
       // WEB_INTERFACE → The settings window → "The serve row" — the serve
       // seam is wired as a settings handler only in the extension build.
-      ...(this.serveSeam ? { serve: this.serveSeam } : {}),
+      // A press moves the pressed word and the hint in place through
+      // `renderRegionsFor('@settings')`, the path setPolicy and setLinks
+      // reuse.
+      ...(this.serveSeam ? {
+        serve: {
+          on: (): boolean => this.serveSeam!.on(),
+          set: (on: boolean): void => { this.serveSeam!.set(on); this.renderRegionsFor('@settings'); },
+        },
+      } : {}),
       // WEB_INTERFACE → The settings window → "While it disagrees the row
       // holds the question" — the row reads the latest verdict to decide
       // whether the question stands. Wired in every build; the web build has
