@@ -212,7 +212,7 @@ describe('backfill driver', () => {
   // entry's first due pass is a pass that advances its schedule, and the
   // reader-eligible set is the due entries whose schedule a pass has
   // advanced before.
-  it.fails('an entry is not asked of a reader at its first due pass, and is at its second', async () => {
+  it('an entry is not asked of a reader at its first due pass, and is at its second', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -231,7 +231,7 @@ describe('backfill driver', () => {
   // NODE_INTERFACE → "A serving reader is asked for what has been due": the
   // schedule advances even when no node peer is connected, so an entry's
   // schedule a pass advanced is reader-eligible at its next due height.
-  it.fails('with no node peer, an entry due once reaches readers at its next due pass', async () => {
+  it('with no node peer, an entry due once reaches readers at its next due pass', async () => {
     connectedPeers = [];
     servingReaders = ['reader-a'];
     storedBodies.set('post-1', 'the body');
@@ -250,7 +250,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due": each
   // serving reader is asked once a pass, with the whole reader-eligible set.
-  it.fails('every serving reader is asked, one call each', async () => {
+  it('every serving reader is asked, one call each', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a', 'reader-b', 'reader-c'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
@@ -271,7 +271,7 @@ describe('backfill driver', () => {
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due": a
   // reader's call that rejects leaves the pass asking the next reader.
-  it.fails('a reader whose call rejects leaves the pass asking the next reader', async () => {
+  it('a reader whose call rejects leaves the pass asking the next reader', async () => {
     initBackfill({
       requestPostBodies: async (wanted, peerId) => {
         requestLog.push({ wanted, peerId });
