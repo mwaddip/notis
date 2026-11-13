@@ -823,10 +823,6 @@ the script consolidates, → Consolidation), `MINER_PUBKEY` (optional coinbase p
 
 ### Consolidation
 
-> ⚠ **AHEAD OF CODE (2026-11-13).** This section, `MINER_KEY_PATH` and the key file in the Config line and item 1
-> above, and `NODE_INTERFACE → The packaged node`'s miner lines: `miner.mjs`, `dagsocial-miner.service`,
-> `scripts/build-tarball.sh` and `scripts/windows/launch-miner.cmd` carry none of it yet.
-
 **With a key file, the script consolidates its payout key's credit boxes.** Every block it mines pays one coinbase
 credit box to the payout key, locked for `creditMinerRewardDelay` blocks (→ Coinbase Application), so a key that mines
 holds a box a block, and a light client reads a key's credit boxes whole only up to `LEDGER_READ_MAX`
@@ -849,8 +845,8 @@ built checkout. Where that file does not load, as beside a bare copy of the scri
 script refuses to start, naming the file. Without `MINER_KEY_PATH` it imports `node:crypto` alone.
 
 **A check runs once an interval, never inside a work window.** The first runs at the script's first template; each
-next one at the first template height an interval above the last check's — the interval as that check read it, and
-the next height where no check has read one yet — or at the next height where the last check sent a full
+next one at the first template height an interval above the last check that read the interval — the interval as it
+read it — or at the next height where no check has read one, or at the next height after a check that sent a full
 transaction. A check runs between work windows, and one that fails — a read refused or cut, a submit refused — logs
 one line, and the script mines on.
 
