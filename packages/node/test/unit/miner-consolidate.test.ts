@@ -743,28 +743,46 @@ describe('createCadence', () => {
     } finally { done(); }
   });
 
-  it('a tick whose check fails still moves the height forward so the next due height checks', async () => {
+  // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
+  // a check that fails after reading the interval — `/status` answered, the
+  // listing refused — keeps the interval; the next check sits one interval
+  // on. On testnet the interval is 100.
+  it('a check that reads the interval and fails on the listing moves the next check one interval on', async () => {
     const { file, done } = setupKey();
     try {
-      const boxes = makeCaseBoxes(MIN, 1_000_000n);
-      let httpCalls = 0;
-      let makeFail = true;
+      const state = newCaseState(1000, [], 'testnet');  // interval 100
+      state.listingMalformed = true;  // every listing read is refused
+      const stub = buildStub(state);
       const cadence = createCadence({
         nodeUrl: 'http://stub',
         key: readMinerKey(file, null),
-        httpFetch: async (url: string, init?: RequestInit) => {
-          httpCalls++;
-          const state = newCaseState(1000, boxes);
-          if (makeFail) state.statusRefuse = true;
-          return buildStub(state)(url, init);
-        },
+        httpFetch: stub,
         logger: () => {},
       });
-      await cadence.tick(1);                // first tick: /status refused
-      const afterFirst = httpCalls;
-      makeFail = false;
-      await cadence.tick(1 + MIN);          // at the next due height the cadence checks again
-      expect(httpCalls).toBeGreaterThan(afterFirst);
+
+      // First tick: /status OK (interval 100), listing malformed → the check
+      // returns idle. The cadence keeps {height: 1, interval: 100}.
+      await cadence.tick(1);
+      const statusAfterFirst = state.calls.filter(
+        (c) => new URL(c.url).pathname === '/status',
+      ).length;
+      expect(statusAfterFirst).toBe(1);
+
+      // A tick 99 heights above the first check — short of the next due
+      // (1 + 100 = 101) — must not check.
+      await cadence.tick(1 + 99);
+      const statusAfterShort = state.calls.filter(
+        (c) => new URL(c.url).pathname === '/status',
+      ).length;
+      expect(statusAfterShort).toBe(statusAfterFirst);
+
+      // A tick at the next due height (1 + 100 = 101) — the kept interval —
+      // must check.
+      await cadence.tick(1 + 100);
+      const statusAfterDue = state.calls.filter(
+        (c) => new URL(c.url).pathname === '/status',
+      ).length;
+      expect(statusAfterDue).toBeGreaterThan(statusAfterShort);
     } finally { done(); }
   });
 
