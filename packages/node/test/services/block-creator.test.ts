@@ -1360,303 +1360,114 @@ describe('a stored tip whose body will not read', () => {
     expect(tpl).not.toBeNull();
     expect(tpl!.header.prevBlockHash).toBe(expectedPrev);
   });
+});
 
-  // -----------------------------------------------------------------------
-  // NODE_INTERFACE → "This node's producer collects at its template, from the
-  // boxes no pooled transaction spends": the rent offer leaves out every
-  // credit box an entry of this node's pool spends — the fill's selection or
-  // what it left out alike — so no body carries one box in a pooled
-  // transaction and in a rent transaction, and the limit counts boxes the
-  // offer can take.
-  // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// NODE_INTERFACE → "This node's producer collects at its template, from the
+// boxes no pooled transaction spends": the rent offer leaves out every
+// credit box an entry of this node's pool spends — the fill's selection or
+// what it left out alike — so no body carries one box in a pooled
+// transaction and in a rent transaction, and the limit counts boxes the
+// offer can take.
+// -----------------------------------------------------------------------
 
-  describe('the rent offer leaves out boxes a pooled entry spends', () => {
-    afterEach(() => {
-      vi.doUnmock('../../src/config.js');
+describe('the rent offer leaves out boxes a pooled entry spends', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+    vi.doUnmock('../../src/config.js');
+  });
+
+  async function configWith(overrides: Partial<Config>): Promise<void> {
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: Object.freeze({ ...actual.config, ...overrides }),
+      };
     });
+    vi.resetModules();
+  }
 
-    async function configWith(overrides: Partial<Config>): Promise<void> {
-      vi.doMock('../../src/config.js', async () => {
-        const actual = await vi.importActual<typeof import('../../src/config.js')>(
-          '../../src/config.js',
-        );
-        return {
-          ...actual,
-          config: Object.freeze({ ...actual.config, ...overrides }),
-        };
-      });
-      vi.resetModules();
+  // Submit the template the creator already holds — no `createOrderingBlock`
+  // call — so what the block applies is the body offered before a pool-side
+  // change, which is how `mineNextBlock`'s eager rebuild would mask the
+  // control that a pooled entry post-dates `startBlockCreator`.
+  async function submitHeldTemplate(bc: BlockCreatorModule): Promise<OrderingBlock | null> {
+    await liveProver();
+    await wireIntakeForTests();
+    const intake = await import('../../src/services/intake.js');
+    intake.gateHeld();
+    const tpl = bc.getCurrentTemplate();
+    if (tpl === null) return null;
+    const nonce = solveHeaderPow(tpl.header);
+    if (bc.submitMinedBlock(nonce, tpl.header.height) === null) return null;
+    const { getOrderingBlock } = await import('../../src/store/ordering.js');
+    return getOrderingBlock(tpl.header.height);
+  }
+
+  // A rent transaction has one input, an empty signature map and declares
+  // the era: enough to tell one apart from a settlement (whose inputs are
+  // the body's `FeeBox` outputs) or a signed user transaction.
+  function rentSpendsBox(tpl: OrderingBlock, boxId: string): boolean {
+    for (const bytes of tpl.utxoTxTree.utxoTxs) {
+      const tx = decodeTx(bytes);
+      if (tx.inputs.length !== 1) continue;
+      if (Object.keys(tx.signatures).length !== 0) continue;
+      if (tx.inputs[0] === boxId) return true;
     }
+    return false;
+  }
 
-    // Submit the template the creator already holds — no `createOrderingBlock`
-    // call — so what the block applies is the body offered before a pool-side
-    // change, which is how `mineNextBlock`'s eager rebuild would mask the
-    // control that a pooled entry post-dates `startBlockCreator`.
-    async function submitHeldTemplate(bc: BlockCreatorModule): Promise<OrderingBlock | null> {
-      await liveProver();
-      await wireIntakeForTests();
-      const intake = await import('../../src/services/intake.js');
-      intake.gateHeld();
-      const tpl = bc.getCurrentTemplate();
-      if (tpl === null) return null;
-      const nonce = solveHeaderPow(tpl.header);
-      if (bc.submitMinedBlock(nonce, tpl.header.height) === null) return null;
-      const { getOrderingBlock } = await import('../../src/store/ordering.js');
-      return getOrderingBlock(tpl.header.height);
+  function rentTxCount(tpl: OrderingBlock): number {
+    let n = 0;
+    for (const bytes of tpl.utxoTxTree.utxoTxs) {
+      const tx = decodeTx(bytes);
+      if (tx.inputs.length === 1 && Object.keys(tx.signatures).length === 0) n++;
     }
+    return n;
+  }
 
-    // A rent transaction has one input, an empty signature map and declares
-    // the era: enough to tell one apart from a settlement (whose inputs are
-    // the body's `FeeBox` outputs) or a signed user transaction.
-    function rentSpendsBox(tpl: OrderingBlock, boxId: string): boolean {
-      for (const bytes of tpl.utxoTxTree.utxoTxs) {
-        const tx = decodeTx(bytes);
-        if (tx.inputs.length !== 1) continue;
-        if (Object.keys(tx.signatures).length !== 0) continue;
-        if (tx.inputs[0] === boxId) return true;
-      }
-      return false;
-    }
-
-    function rentTxCount(tpl: OrderingBlock): number {
-      let n = 0;
-      for (const bytes of tpl.utxoTxTree.utxoTxs) {
-        const tx = decodeTx(bytes);
-        if (tx.inputs.length === 1 && Object.keys(tx.signatures).length === 0) n++;
-      }
-      return n;
-    }
-
-    // Plain-`it` run read, at the last assertion:
-    //   AssertionError: expected { carriesTransfer: false, …(2) } to deeply equal { carriesTransfer: true, …(2) }
-    //   - Expected
-    //   + Received
-    //     Object {
-    //   -   "carriesTransfer": true,
-    //   -   "rentSpendsBox": false,
-    //   -   "transferPooled": true,
-    //   +   "carriesTransfer": false,
-    //   +   "rentSpendsBox": true,
-    //   +   "transferPooled": false,
-    //     }
-    // (eviction fallback `Block at height 2: speculation returned body-rejected
-    // and the screen refused no pooled transaction; evicting all 1 mempool
-    // entries the body carried` dropped the transfer, and the rebuild offered
-    // rent over the box alone.)
-    it(
-      'a pooled transfer of a box that falls due at the next template rides it, and no rent transaction spends the box',
-      async () => {
-        await configWith({ storageRentPeriodBlocks: 1 });
-        const db = await importDb();
-        db.initDb(':memory:');
-        db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-        // A credit box owned by the author, created at height 0. Under period
-        // 1 the box is eligible at height 2 (0 < 2 − 1), not at height 1
-        // (0 < 1 − 1 is false), which is the height-1 control's whole shape.
-        const author = makeTestIdentity();
-        const box = seedProvenance<CreditBox>(
-          { boxType: 'credit', value: 100_000_000n, owner: author.userId, createdAtBlock: 0 },
-          777,
-        );
-        const utxo = await importUtxo();
-        utxo.insertBox(box);
-
-        const bc = await importBlockCreator();
-        await liveProver();
-        bc.startBlockCreator(testConfig);
-
-        // The template for height 1 carries no rent transaction over the box
-        // (control: the box is not yet eligible at this height).
-        const tpl1 = bc.getCurrentTemplate();
-        expect(tpl1).not.toBeNull();
-        expect(tpl1!.header.height).toBe(1);
-        expect(rentSpendsBox(tpl1!, box.id!)).toBe(false);
-
-        // Pool a signed transfer that moves the full value to a recipient.
-        const recipient = makeTestIdentity();
-        const transfer = makeCreditTx(author, [box], 0n, recipient.userId);
-        const mempool = await importMempoolFresh();
-        const transferRow = mempool.insertUtxoTx(transfer, computeTxId(transfer), 1000);
-
-        // Mine height 1 against the template the creator already holds: the
-        // transfer post-dates it and must not ride it (control).
-        const block1 = await submitHeldTemplate(bc);
-        expect(block1).not.toBeNull();
-        expect(block1!.header.height).toBe(1);
-        expect(block1!.utxoTxTree.utxoTxIds).not.toContain(computeTxId(transfer));
-
-        // The commit at the applied tip builds the template for height 2
-        // (NODE_INTERFACE → Triggers → "The template is voided at the commit
-        // that moves the tip, and nowhere else").
-        const tpl2 = bc.getCurrentTemplate();
-        expect(tpl2).not.toBeNull();
-        expect(tpl2!.header.height).toBe(2);
-
-        // Last assertion: the template for height 2 carries the transfer's
-        // id, no rent transaction in it spends the box, and the transfer is
-        // still pooled.
-        expect({
-          carriesTransfer: tpl2!.utxoTxTree.utxoTxIds.includes(computeTxId(transfer)),
-          rentSpendsBox: rentSpendsBox(tpl2!, box.id!),
-          transferPooled: mempool.getPendingEntries(10).map((e) => e.rowid).includes(transferRow),
-        }).toEqual({ carriesTransfer: true, rentSpendsBox: false, transferPooled: true });
-      },
-    );
-
-    // Plain-`it` run read, at the last assertion:
-    //   AssertionError: expected true to be false // Object.is equality
-    //   - Expected
-    //   + Received
-    //   - false
-    //   + true
-    // (the offer took the box although the pool held a spender of it.)
-    it(
-      'a pooled spend the fill leaves out keeps its box from the rent transactions',
-      async () => {
-        await configWith({
-          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 1 }],
-          storageRentPeriodBlocks: 0,
-        });
-
-        const db = await importDb();
-        db.initDb(':memory:');
-        db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-        const utxo = await importUtxo();
-
-        // Credit box created at height 0; period 0 makes it eligible at
-        // height 1 (0 < 1 − 0).
-        const owner = makeTestIdentity().userId;
-        const box = seedProvenance<CreditBox>(
-          { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
-          99,
-        );
-        utxo.insertBox(box);
-
-        // A filler-shape transaction naming the box as input, with
-        // `protocolVersion = 1` (foreign under era 2). The neighbouring era
-        // case pools a filler the same way: `insertUtxoTx` records its input
-        // in `mempool_inputs` without the admission gates `admitTx` layers
-        // on top, so the fill meets an entry exactly as the pool holds one.
-        const foreign: UtxoTransaction = {
-          inputs: [box.id!],
-          outputs: [],
-          signatures: {},
-          protocolVersion: 1,
-        };
-        const mempool = await importMempoolFresh();
-        const foreignRow = mempool.insertUtxoTx(foreign, computeTxId(foreign), 1000);
-
-        const bc = await importBlockCreator();
-        await liveProver();
-        bc.startBlockCreator(testConfig);
-        const tpl = bc.getCurrentTemplate();
-        expect(tpl).not.toBeNull();
-
-        // Control: the fill leaves out the foreign entry (version 1 under
-        // era 2), and the entry is still pooled.
-        expect(tpl!.utxoTxTree.utxoTxIds).not.toContain(computeTxId(foreign));
-        expect(mempool.getPendingEntries(10).map((e) => e.rowid)).toContain(foreignRow);
-
-        // Last assertion: no rent transaction in the template spends the box.
-        expect(rentSpendsBox(tpl!, box.id!)).toBe(false);
-      },
-    );
-
-    // Plain-`it` run read, at the last assertion:
-    //   AssertionError: expected { oldestHoldsRent: true, …(1) } to deeply equal { oldestHoldsRent: false, …(1) }
-    //   - Expected
-    //   + Received
-    //     Object {
-    //   -   "oldestHoldsRent": false,
-    //   -   "youngestHoldsRent": true,
-    //   +   "oldestHoldsRent": true,
-    //   +   "youngestHoldsRent": false,
-    //     }
-    // (the limit counted the pool-spent box, so the oldest 32 of the 33 rode
-    // the body and the youngest stayed outside.)
-    it(
-      'the rent transactions take up to their limit from the boxes no pooled entry spends',
-      async () => {
-        await configWith({
-          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 1 }],
-          storageRentPeriodBlocks: 0,
-        });
-        const db = await importDb();
-        db.initDb(':memory:');
-        db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-        const utxo = await importUtxo();
-
-        // `MAX_RENT_TXS_PER_BLOCK` is a private module member of
-        // `src/services/block-creator.ts` at value 32 (not exported).
-        // `MAX_RENT_TXS_PER_BLOCK + 1 = 33` credit boxes due at height 1 —
-        // `created_at_block = 0`, `storageRentPeriodBlocks = 0`, so
-        // `0 < 1 − 0` holds. `getRentEligibleCreditBoxes` orders by
-        // `created_at_block ASC`; with equal heights SQLite breaks ties by
-        // insertion order, so the first `insertBox` is the oldest the
-        // offer reaches and the last is the youngest.
-        const COUNT = 33;
-        const owner = makeTestIdentity().userId;
-        const boxes: CreditBox[] = [];
-        for (let i = 0; i < COUNT; i++) {
-          boxes.push(seedProvenance<CreditBox>(
-            { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
-            2000 + i,
-          ));
-        }
-        for (const b of boxes) utxo.insertBox(b);
-        const oldest = boxes[0]!;
-        const youngest = boxes[COUNT - 1]!;
-
-        // A filler-shape foreign transaction spending the oldest box: the
-        // fill skips it (version 1 under era 2) and its input is recorded
-        // in `mempool_inputs`.
-        const foreign: UtxoTransaction = {
-          inputs: [oldest.id!],
-          outputs: [],
-          signatures: {},
-          protocolVersion: 1,
-        };
-        const mempool = await importMempoolFresh();
-        mempool.insertUtxoTx(foreign, computeTxId(foreign), 1000);
-
-        const bc = await importBlockCreator();
-        await liveProver();
-        bc.startBlockCreator(testConfig);
-        const tpl = bc.getCurrentTemplate();
-        expect(tpl).not.toBeNull();
-
-        // Control: the template holds exactly 32 rent transactions — the
-        // limit — under either rule.
-        expect(rentTxCount(tpl!)).toBe(COUNT - 1);
-
-        // Last assertion: no rent transaction spends the pool-spent (oldest)
-        // box, and one rent transaction spends the youngest box — which the
-        // offer reaches only because the limit counts boxes it can take.
-        expect({
-          oldestHoldsRent: rentSpendsBox(tpl!, oldest.id!),
-          youngestHoldsRent: rentSpendsBox(tpl!, youngest.id!),
-        }).toEqual({ oldestHoldsRent: false, youngestHoldsRent: true });
-      },
-    );
-
-    // A spend admitted after the template that collects its box loses to
-    // that block and leaves the pool at its application
-    // (NODE_INTERFACE → "This node's producer collects at its template, from
-    // the boxes no pooled transaction spends"; MEMPOOL_INTERFACE →
-    // followAppliedBlock). Plain `it` because the predecessor and the rule
-    // agree here.
-    it('a spend admitted after the template that collects its box leaves the pool when that block applies', async () => {
-      await configWith({ storageRentPeriodBlocks: 0 });
+  // Plain-`it` run read, at the last assertion:
+  //   AssertionError: expected { carriesTransfer: false, …(2) } to deeply equal { carriesTransfer: true, …(2) }
+  //   - Expected
+  //   + Received
+  //     Object {
+  //   -   "carriesTransfer": true,
+  //   -   "rentSpendsBox": false,
+  //   -   "transferPooled": true,
+  //   +   "carriesTransfer": false,
+  //   +   "rentSpendsBox": true,
+  //   +   "transferPooled": false,
+  //     }
+  // (eviction fallback `Block at height 2: speculation returned body-rejected
+  // and the screen refused no pooled transaction; evicting all 1 mempool
+  // entries the body carried` dropped the transfer, and the rebuild offered
+  // rent over the box alone.)
+  it(
+    'a pooled transfer of a box that falls due at the next template rides it, and no rent transaction spends the box',
+    async () => {
+      await configWith({ storageRentPeriodBlocks: 1 });
       const db = await importDb();
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
+      // A credit box owned by the author, created at height 0. Under period
+      // 1 the box is eligible at height 2 (0 < 2 − 1), not at height 1
+      // (0 < 1 − 1 is false), which is the height-1 control's whole shape.
       const author = makeTestIdentity();
-      const recipient = makeTestIdentity();
       const box = seedProvenance<CreditBox>(
         { boxType: 'credit', value: 100_000_000n, owner: author.userId, createdAtBlock: 0 },
-        555,
+        777,
       );
       const utxo = await importUtxo();
       utxo.insertBox(box);
@@ -1665,39 +1476,237 @@ describe('a stored tip whose body will not read', () => {
       await liveProver();
       bc.startBlockCreator(testConfig);
 
-      // Control: the template at height 1 carries a rent transaction over
-      // the box — the pool is empty when the template is built.
+      // The template for height 1 carries no rent transaction over the box
+      // (control: the box is not yet eligible at this height).
       const tpl1 = bc.getCurrentTemplate();
       expect(tpl1).not.toBeNull();
-      expect(rentSpendsBox(tpl1!, box.id!)).toBe(true);
+      expect(tpl1!.header.height).toBe(1);
+      expect(rentSpendsBox(tpl1!, box.id!)).toBe(false);
 
-      // Pool a signed transfer spending the box, after the template exists.
+      // Pool a signed transfer that moves the full value to a recipient.
+      const recipient = makeTestIdentity();
       const transfer = makeCreditTx(author, [box], 0n, recipient.userId);
       const mempool = await importMempoolFresh();
       const transferRow = mempool.insertUtxoTx(transfer, computeTxId(transfer), 1000);
 
-      // Mine the held template — the rent transaction over the box applies
-      // at height 1.
+      // Mine height 1 against the template the creator already holds: the
+      // transfer post-dates it and must not ride it (control).
       const block1 = await submitHeldTemplate(bc);
       expect(block1).not.toBeNull();
       expect(block1!.header.height).toBe(1);
+      expect(block1!.utxoTxTree.utxoTxIds).not.toContain(computeTxId(transfer));
 
-      // The box is spent at height 1; `getBox` answers unspent boxes, so a
-      // spent one reads null (NODE_INTERFACE → Storage rent is a transition
-      // requiring no signature).
-      const utxoAfter = await import('../../src/store/utxo.js') as unknown as {
-        getBox: (id: string) => unknown | null;
-        getCreditValue: (owner: Uint8Array) => bigint;
+      // The commit at the applied tip builds the template for height 2
+      // (NODE_INTERFACE → Triggers → "The template is voided at the commit
+      // that moves the tip, and nowhere else").
+      const tpl2 = bc.getCurrentTemplate();
+      expect(tpl2).not.toBeNull();
+      expect(tpl2!.header.height).toBe(2);
+
+      // Last assertion: the template for height 2 carries the transfer's
+      // id, no rent transaction in it spends the box, and the transfer is
+      // still pooled.
+      expect({
+        carriesTransfer: tpl2!.utxoTxTree.utxoTxIds.includes(computeTxId(transfer)),
+        rentSpendsBox: rentSpendsBox(tpl2!, box.id!),
+        transferPooled: mempool.getPendingEntries(10).map((e) => e.rowid).includes(transferRow),
+      }).toEqual({ carriesTransfer: true, rentSpendsBox: false, transferPooled: true });
+    },
+  );
+
+  // Plain-`it` run read, at the last assertion:
+  //   AssertionError: expected true to be false // Object.is equality
+  //   - Expected
+  //   + Received
+  //   - false
+  //   + true
+  // (the offer took the box although the pool held a spender of it.)
+  it(
+    'a pooled spend the fill leaves out keeps its box from the rent transactions',
+    async () => {
+      await configWith({
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 1 }],
+        storageRentPeriodBlocks: 0,
+      });
+
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const utxo = await importUtxo();
+
+      // Credit box created at height 0; period 0 makes it eligible at
+      // height 1 (0 < 1 − 0).
+      const owner = makeTestIdentity().userId;
+      const box = seedProvenance<CreditBox>(
+        { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
+        99,
+      );
+      utxo.insertBox(box);
+
+      // A filler-shape transaction naming the box as input, with
+      // `protocolVersion = 1` (foreign under era 2). The neighbouring era
+      // case pools a filler the same way: `insertUtxoTx` records its input
+      // in `mempool_inputs` without the admission gates `admitTx` layers
+      // on top, so the fill meets an entry exactly as the pool holds one.
+      const foreign: UtxoTransaction = {
+        inputs: [box.id!],
+        outputs: [],
+        signatures: {},
+        protocolVersion: 1,
       };
-      expect(utxoAfter.getBox(box.id!)).toBeNull();
-      // The owner's successor holds the box's value less the rent charge.
-      expect(utxoAfter.getCreditValue(author.userId)).toBeGreaterThan(0n);
-      expect(utxoAfter.getCreditValue(author.userId)).toBeLessThan(box.value);
-      // The transfer never applied: the recipient holds nothing.
-      expect(utxoAfter.getCreditValue(recipient.userId)).toBe(0n);
-      // And the transfer left the pool — `followAppliedBlock` purged it
-      // with the applied spend.
-      expect(mempool.getPendingEntries(10).map((e) => e.rowid)).not.toContain(transferRow);
-    });
+      const mempool = await importMempoolFresh();
+      const foreignRow = mempool.insertUtxoTx(foreign, computeTxId(foreign), 1000);
+
+      const bc = await importBlockCreator();
+      await liveProver();
+      bc.startBlockCreator(testConfig);
+      const tpl = bc.getCurrentTemplate();
+      expect(tpl).not.toBeNull();
+
+      // Control: the fill leaves out the foreign entry (version 1 under
+      // era 2), and the entry is still pooled.
+      expect(tpl!.utxoTxTree.utxoTxIds).not.toContain(computeTxId(foreign));
+      expect(mempool.getPendingEntries(10).map((e) => e.rowid)).toContain(foreignRow);
+
+      // Last assertion: no rent transaction in the template spends the box.
+      expect(rentSpendsBox(tpl!, box.id!)).toBe(false);
+    },
+  );
+
+  // Plain-`it` run read, at the last assertion:
+  //   AssertionError: expected { oldestHoldsRent: true, …(1) } to deeply equal { oldestHoldsRent: false, …(1) }
+  //   - Expected
+  //   + Received
+  //     Object {
+  //   -   "oldestHoldsRent": false,
+  //   -   "youngestHoldsRent": true,
+  //   +   "oldestHoldsRent": true,
+  //   +   "youngestHoldsRent": false,
+  //     }
+  // (the limit counted the pool-spent box, so the oldest 32 of the 33 rode
+  // the body and the youngest stayed outside.)
+  it(
+    'the rent transactions take up to their limit from the boxes no pooled entry spends',
+    async () => {
+      await configWith({
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 1 }],
+        storageRentPeriodBlocks: 0,
+      });
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const utxo = await importUtxo();
+
+      // `MAX_RENT_TXS_PER_BLOCK` is a private module member of
+      // `src/services/block-creator.ts` at value 32 (not exported).
+      // `MAX_RENT_TXS_PER_BLOCK + 1 = 33` credit boxes due at height 1 —
+      // `created_at_block = 0`, `storageRentPeriodBlocks = 0`, so
+      // `0 < 1 − 0` holds. `getRentEligibleCreditBoxes` orders by
+      // `created_at_block ASC`; with equal heights SQLite breaks ties by
+      // insertion order, so the first `insertBox` is the oldest the
+      // offer reaches and the last is the youngest.
+      const COUNT = 33;
+      const owner = makeTestIdentity().userId;
+      const boxes: CreditBox[] = [];
+      for (let i = 0; i < COUNT; i++) {
+        boxes.push(seedProvenance<CreditBox>(
+          { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
+          2000 + i,
+        ));
+      }
+      for (const b of boxes) utxo.insertBox(b);
+      const oldest = boxes[0]!;
+      const youngest = boxes[COUNT - 1]!;
+
+      // A filler-shape foreign transaction spending the oldest box: the
+      // fill skips it (version 1 under era 2) and its input is recorded
+      // in `mempool_inputs`.
+      const foreign: UtxoTransaction = {
+        inputs: [oldest.id!],
+        outputs: [],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      const mempool = await importMempoolFresh();
+      mempool.insertUtxoTx(foreign, computeTxId(foreign), 1000);
+
+      const bc = await importBlockCreator();
+      await liveProver();
+      bc.startBlockCreator(testConfig);
+      const tpl = bc.getCurrentTemplate();
+      expect(tpl).not.toBeNull();
+
+      // Control: the template holds exactly 32 rent transactions — the
+      // limit — under either rule.
+      expect(rentTxCount(tpl!)).toBe(COUNT - 1);
+
+      // Last assertion: no rent transaction spends the pool-spent (oldest)
+      // box, and one rent transaction spends the youngest box — which the
+      // offer reaches only because the limit counts boxes it can take.
+      expect({
+        oldestHoldsRent: rentSpendsBox(tpl!, oldest.id!),
+        youngestHoldsRent: rentSpendsBox(tpl!, youngest.id!),
+      }).toEqual({ oldestHoldsRent: false, youngestHoldsRent: true });
+    },
+  );
+
+  // A spend admitted after the template that collects its box loses to
+  // that block and leaves the pool at its application
+  // (NODE_INTERFACE → "This node's producer collects at its template, from
+  // the boxes no pooled transaction spends"; MEMPOOL_INTERFACE →
+  // followAppliedBlock). Plain `it` because the predecessor and the rule
+  // agree here.
+  it('a spend admitted after the template that collects its box leaves the pool when that block applies', async () => {
+    await configWith({ storageRentPeriodBlocks: 0 });
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const recipient = makeTestIdentity();
+    const box = seedProvenance<CreditBox>(
+      { boxType: 'credit', value: 100_000_000n, owner: author.userId, createdAtBlock: 0 },
+      555,
+    );
+    const utxo = await importUtxo();
+    utxo.insertBox(box);
+
+    const bc = await importBlockCreator();
+    await liveProver();
+    bc.startBlockCreator(testConfig);
+
+    // Control: the template at height 1 carries a rent transaction over
+    // the box — the pool is empty when the template is built.
+    const tpl1 = bc.getCurrentTemplate();
+    expect(tpl1).not.toBeNull();
+    expect(rentSpendsBox(tpl1!, box.id!)).toBe(true);
+
+    // Pool a signed transfer spending the box, after the template exists.
+    const transfer = makeCreditTx(author, [box], 0n, recipient.userId);
+    const mempool = await importMempoolFresh();
+    const transferRow = mempool.insertUtxoTx(transfer, computeTxId(transfer), 1000);
+
+    // Mine the held template — the rent transaction over the box applies
+    // at height 1.
+    const block1 = await submitHeldTemplate(bc);
+    expect(block1).not.toBeNull();
+    expect(block1!.header.height).toBe(1);
+
+    // The box is spent at height 1; `getBox` answers unspent boxes, so a
+    // spent one reads null (NODE_INTERFACE → Storage rent is a transition
+    // requiring no signature).
+    const utxoAfter = await import('../../src/store/utxo.js') as unknown as {
+      getBox: (id: string) => unknown | null;
+      getCreditValue: (owner: Uint8Array) => bigint;
+    };
+    expect(utxoAfter.getBox(box.id!)).toBeNull();
+    // The owner's successor holds the box's value less the rent charge.
+    expect(utxoAfter.getCreditValue(author.userId)).toBeGreaterThan(0n);
+    expect(utxoAfter.getCreditValue(author.userId)).toBeLessThan(box.value);
+    // The transfer never applied: the recipient holds nothing.
+    expect(utxoAfter.getCreditValue(recipient.userId)).toBe(0n);
+    // And the transfer left the pool — `followAppliedBlock` purged it
+    // with the applied spend.
+    expect(mempool.getPendingEntries(10).map((e) => e.rowid)).not.toContain(transferRow);
   });
 });
