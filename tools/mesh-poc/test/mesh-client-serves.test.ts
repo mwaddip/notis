@@ -486,4 +486,41 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     );
     expect(answers).toEqual([{ id: POST_ID, content: POST_TEXT }]);
   }, 120_000);
+
+  it('a call made while another runs resolves after it', async () => {
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'serve-queue-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      serving: { on: false, texts: providerFor(new Map([[POST_ID, POST_TEXT]])) },
+    });
+    clients.push(client);
+
+    await client.check();
+    const clientPeerId = client.libp2p.peerId.toString();
+    await vi.waitFor(() => {
+      expect(n.node.getConnectedReaders()).toContain(clientPeerId);
+    }, { timeout: 15_000, interval: 200 });
+    const conns = client.libp2p.getConnections();
+    expect(conns.length).toBeGreaterThan(0);
+    const connBefore = conns[0]!;
+    expect(connBefore.status).toBe('open');
+
+    // Two calls in rapid succession. The second's work waits on the
+    // first through `servingLock`; by the time `second` resolves, the
+    // first has already closed the one connection the client held.
+    const first = client.setServing(true);
+    const second = client.setServing(true);
+    await second;
+
+    expect(connBefore.status).not.toBe('open');
+
+    await first;
+  }, 90_000);
 });
