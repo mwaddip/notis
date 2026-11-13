@@ -445,7 +445,7 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     expect(n.node.getServingReaders()).toContain(clientPeerId);
   }, 90_000);
 
-  it.fails('a change made while a check runs still redials at once', async () => {
+  it('a change made while a check runs still redials at once', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'serve-mid-check-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
