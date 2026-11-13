@@ -394,6 +394,39 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(captured2!.serving!.texts).toBe(texts);
   });
 
+  // WEB_INTERFACE → The settings window → "The serve row": `on()` reads
+  // the stored choice — `'1'` is on, any other value or none off.
+  it('the serve seam reads the stored choice', async () => {
+    const start = async (_o: StartMeshClientOptions): Promise<MeshClient> => fakeClient();
+    // No key: on() reads false.
+    {
+      const storage = fakeStorage();
+      const { seams } = await startExtensionMesh({
+        firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+      });
+      expect(seams.serveSeam.on()).toBe(false);
+    }
+    // `'1'`: on() reads true.
+    {
+      const storage = fakeStorage({ [SERVE_KEY]: '1' });
+      const { seams } = await startExtensionMesh({
+        firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+      });
+      expect(seams.serveSeam.on()).toBe(true);
+    }
+    // Any other value: on() reads false.
+    {
+      const storage = fakeStorage({ [SERVE_KEY]: 'yes' });
+      const { seams } = await startExtensionMesh({
+        firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+      });
+      expect(seams.serveSeam.on()).toBe(false);
+    }
+  });
+
   // WEB_INTERFACE → The settings window → "The serve row": `set(true)`
   // writes `'1'` under `SERVE_KEY` and calls `client.setServing(true)`;
   // `set(false)` removes the key and calls `client.setServing(false)`.
