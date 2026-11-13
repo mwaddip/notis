@@ -584,7 +584,10 @@ pending entries:
    Admission reads the pool's pending state for an input and for a reply's parent, only a reorg
    returns a like's target or a withdrawal's post to the pool, and the owner's pending spend only
    lowers what admission allowed — so a transaction a body's screen refuses is never one that waits
-   (`MINING_INTERFACE → Template and submit`)
+   (`MINING_INTERFACE → Template and submit`). **The rent transactions this node builds follow both classes, under
+   the same bounds, from the eligible boxes no pooled entry spends** — an entry the fill selected or one it left out
+   alike (NODE_INTERFACE → "This node's producer collects at its template, from the boxes no pooled transaction
+   spends") — so no body carries one box in a pooled transaction and in a rent transaction
 3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
 4. Tracks `confirmedRowids` — **every** row the template carries
 5. Once the intake answers a mined block, the sweep of each tracked rowid: `removeEntry` where the block applied,
@@ -593,6 +596,9 @@ pending entries:
    pooled one — and the creator fills again from what remains (`MINING_INTERFACE → Template and submit`); a rejected
    body that carried no row ends the build. Rows a *peer's* block confirms are reached by that block's application
    (`followAppliedBlock`), not by this step
+
+> ⚠ **AHEAD OF CODE (2026-11-13).** Step 2's rent transactions: `offerRent` takes every eligible box
+`getRentEligibleCreditBoxes` answers, a box a pooled entry spends among them.
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
