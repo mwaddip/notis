@@ -179,6 +179,9 @@ interface StubBox {
 interface StubState {
   readonly tip: number;
   readonly protocolVersion: number;
+  // What the stub's `/status` names. A string so a case can pass one the
+  // types do not name.
+  networkType: string;
   // Ordered as the node answers `GET /credits/:userId?pending=1`: value DESC, id ASC.
   readonly boxes: readonly StubBox[];
   // Each call is recorded, URL and body (JSON string or null for GET).
@@ -191,6 +194,11 @@ interface StubState {
   listingMalformed?: boolean;
   // Where the status read is refused (a 500 body).
   statusRefuse?: boolean;
+  // Where only the first `/status` read is refused, the rest answered.
+  refuseFirstStatus?: boolean;
+  // Internal — how many `/status` reads the stub has served so far (or tried
+  // to; a refused read still counts).
+  statusReadCount: number;
 }
 
 function buildStub(state: StubState): HttpFetch {
@@ -200,11 +208,15 @@ function buildStub(state: StubState): HttpFetch {
     state.calls.push({ method, url, body });
     const u = new URL(url);
     if (u.pathname === '/status') {
+      state.statusReadCount++;
       if (state.statusRefuse) {
         return new Response('upstream', { status: 500 });
       }
+      if (state.refuseFirstStatus && state.statusReadCount === 1) {
+        return new Response('upstream', { status: 500 });
+      }
       return json({
-        networkType: 'testnet',
+        networkType: state.networkType,
         blockHeight: state.tip,
         protocolVersion: state.protocolVersion,
       });
@@ -279,17 +291,23 @@ function makeCaseBoxes(n: number, value: bigint): StubBox[] {
   return boxes;
 }
 
-function newCaseState(tip: number, boxes: readonly StubBox[]): StubState {
-  const profile = profileFor('testnet');
+function newCaseState(
+  tip: number,
+  boxes: readonly StubBox[],
+  networkType: string = 'testnet',
+): StubState {
+  const profile = profileFor(networkType as 'devnet' | 'testnet' | 'mainnet');
   const schedule = profile.protocolVersionSchedule;
   const protocolVersion = protocolVersionAt(schedule, tip + 1)!;
   return {
     tip,
     protocolVersion,
+    networkType,
     boxes,
     calls: [],
     posts: [],
     postAnswer: { status: 200, body: { status: 'pending', txId: 'aa'.repeat(32), expiresAtHeight: tip + 60 } },
+    statusReadCount: 0,
   };
 }
 
@@ -584,6 +602,81 @@ describe('runConsolidateCheck', () => {
       expect(lines).toHaveLength(1);
     } finally { done(); }
   });
+
+  // MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
+  // devnet 15, testnet 100, mainnet 100 (`profileFor` over the stub's
+  // `/status`). The outcome answers the interval the check read.
+  it.fails('the check reads the interval from the network /status names: devnet 15, testnet 100, mainnet 100', async () => {
+    const { file, done } = setupKey();
+    try {
+      for (const [networkType, expected] of [
+        ['devnet', 15],
+        ['testnet', 100],
+        ['mainnet', 100],
+      ] as const) {
+        const state = newCaseState(1000, [], networkType);
+        const outcome = await runConsolidateCheck({
+          nodeUrl: 'http://stub',
+          key: readMinerKey(file, null),
+          httpFetch: buildStub(state),
+          logger: () => {},
+        });
+        expect((outcome as unknown as { interval: number | null }).interval).toBe(expected);
+      }
+    } finally { done(); }
+  });
+
+  // MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
+  // on devnet the interval is 15. One fewer than the interval sends nothing;
+  // exactly the interval sends one transaction naming each spendable box.
+  it.fails('on devnet 14 spendable boxes send nothing and 15 send one transaction of 15 inputs', async () => {
+    const { file, done } = setupKey();
+    try {
+      const below = newCaseState(1000, makeCaseBoxes(14, 1_000_000n), 'devnet');
+      const belowOutcome = await runConsolidateCheck({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: buildStub(below),
+        logger: () => {},
+      });
+      expect(belowOutcome.sent).toBe(false);
+      expect(below.posts).toHaveLength(0);
+
+      const atExactly = newCaseState(1000, makeCaseBoxes(15, 1_000_000n), 'devnet');
+      const outcome = await runConsolidateCheck({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: buildStub(atExactly),
+        logger: () => {},
+      });
+      expect(outcome.sent).toBe(true);
+      expect(outcome.inputCount).toBe(15);
+      expect(atExactly.posts).toHaveLength(1);
+    } finally { done(); }
+  });
+
+  // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
+  // a `/status` whose `networkType` the types do not name has no interval,
+  // and the check answers idle with one log line.
+  it.fails('a /status whose networkType the types do not name logs one line and sends nothing', async () => {
+    const { file, done } = setupKey();
+    try {
+      // `profileFor` is only called when the stub builds its state, so the
+      // bogus name is set after newCaseState has seeded the stub profile.
+      const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n), 'testnet');
+      state.networkType = 'notanetwork';
+      const lines: string[] = [];
+      const outcome = await runConsolidateCheck({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: buildStub(state),
+        logger: (l) => lines.push(l),
+      });
+      expect(outcome.sent).toBe(false);
+      expect(state.posts).toHaveLength(0);
+      expect(lines).toHaveLength(1);
+    } finally { done(); }
+  });
 });
 
 // -------------------------------------------------------------------------
@@ -672,6 +765,98 @@ describe('createCadence', () => {
       makeFail = false;
       await cadence.tick(1 + MIN);          // at the next due height the cadence checks again
       expect(httpCalls).toBeGreaterThan(afterFirst);
+    } finally { done(); }
+  });
+
+  // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
+  // on devnet the interval is 15. A below-interval stock keeps the check
+  // idle, so the state's own interval is 15; the cadence is not due 14
+  // heights above its first check, and is due 15 above it.
+  it.fails('on devnet the cadence does not check 14 heights later, and does check 15 later', async () => {
+    const { file, done } = setupKey();
+    try {
+      const boxes = makeCaseBoxes(10, 1_000_000n);  // below devnet's 15
+      let httpCalls = 0;
+      const cadence = createCadence({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: async (url: string, init?: RequestInit) => {
+          httpCalls++;
+          return buildStub(newCaseState(1000, boxes, 'devnet'))(url, init);
+        },
+        logger: () => {},
+      });
+      // First tick: checks.
+      await cadence.tick(1);
+      const afterFirst = httpCalls;
+      expect(afterFirst).toBeGreaterThan(0);
+      // 14 heights above the first check: short of devnet's 15, no check.
+      await cadence.tick(1 + 14);
+      expect(httpCalls).toBe(afterFirst);
+      // 15 heights above the first check: at devnet's interval, checks.
+      await cadence.tick(1 + 15);
+      expect(httpCalls).toBeGreaterThan(afterFirst);
+    } finally { done(); }
+  });
+
+  // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
+  // a first check whose `/status` read is refused reads no interval, so the
+  // cadence keeps no state and the next height checks again.
+  it.fails('a first check whose /status read is refused leaves no interval; the next height checks again', async () => {
+    const { file, done } = setupKey();
+    try {
+      const state = newCaseState(1000, []);
+      state.refuseFirstStatus = true;  // only the first /status is refused
+      const stub = buildStub(state);
+      const cadence = createCadence({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: stub,
+        logger: () => {},
+      });
+      await cadence.tick(1);               // first tick: /status refused
+      const afterFirst = state.calls.length;
+      await cadence.tick(2);               // next height: cadence has no state, must check
+      expect(state.calls.length).toBeGreaterThan(afterFirst);
+    } finally { done(); }
+  });
+
+  // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
+  // on devnet the interval is 15; a check that reads it and fails
+  // afterwards (/credits malformed) keeps it, so the cadence's next due
+  // sits at `thatHeight + 15`.
+  it.fails('a later check that fails after reading the interval keeps the interval it read', async () => {
+    const { file, done } = setupKey();
+    try {
+      const state = newCaseState(1000, [], 'devnet');  // interval 15
+      const stub = buildStub(state);
+      const cadence = createCadence({
+        nodeUrl: 'http://stub',
+        key: readMinerKey(file, null),
+        httpFetch: stub,
+        logger: () => {},
+      });
+      // First tick: /status OK, /credits OK, 0 boxes → idle. State's
+      // interval is 15.
+      await cadence.tick(1);
+      const afterFirst = state.calls.length;
+
+      // Break /credits for the second tick at the next due (1 + 15 = 16).
+      // /status is still read (interval 15), /credits malformed → idle.
+      // State's height moves to 16 and keeps the interval 15.
+      state.listingMalformed = true;
+      await cadence.tick(1 + 15);
+      const afterSecond = state.calls.length;
+      expect(afterSecond).toBeGreaterThan(afterFirst);
+
+      // Restore /credits. A tick 14 above the second check is short of the
+      // next due (16 + 15 = 31), so the cadence must not check. A tick at
+      // 31 is at due, so it must check.
+      state.listingMalformed = false;
+      await cadence.tick(1 + 15 + 14);
+      expect(state.calls.length).toBe(afterSecond);
+      await cadence.tick(1 + 15 + 15);
+      expect(state.calls.length).toBeGreaterThan(afterSecond);
     } finally { done(); }
   });
 });
