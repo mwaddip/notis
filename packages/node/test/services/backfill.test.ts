@@ -461,7 +461,7 @@ describe('backfill driver', () => {
   // NODE_INTERFACE → "A serving reader is asked for what has been due": the
   // reader arm asks only for the eligible entries the node arm has not
   // already filled in the same pass.
-  it.fails('a pass asks readers only for what its node peers left unanswered', async () => {
+  it('a pass asks readers only for what its node peers left unanswered', async () => {
     connectedPeers = ['peer-a'];
     servingReaders = ['reader-a'];
     registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
