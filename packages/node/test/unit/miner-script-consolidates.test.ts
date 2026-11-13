@@ -51,6 +51,7 @@ interface Harness {
   state: StubState;
   shutdown: () => Promise<void>;
   waitForTemplate: (deadlineMs: number) => Promise<void>;
+  waitForNthTemplate: (n: number, deadlineMs: number) => Promise<void>;
   waitForPost: (deadlineMs: number) => Promise<void>;
 }
 
@@ -176,6 +177,8 @@ async function startStub(options: {
     state,
     waitForTemplate: (ms) =>
       waitFor(() => state.calls.some((c) => c.url.startsWith('/mining/template')), ms),
+    waitForNthTemplate: (n, ms) =>
+      waitFor(() => state.calls.filter((c) => c.url.startsWith('/mining/template')).length >= n, ms),
     waitForPost: (ms) =>
       waitFor(() => state.postedTxs.length > 0, ms),
     shutdown: () => new Promise<void>((resolveShut) => server.close(() => resolveShut())),
@@ -200,8 +203,9 @@ function makeBoxes(n: number, value: bigint): StubBox[] {
   return out;
 }
 
-/** A target that every digest meets, so the search ends at once at nonce 0. */
-const TRIVIAL_POW_TARGET_BITS = 65536;
+/** A target every digest meets — scaledBits 0 answers 2^256 − 1 (all bytes
+ *  0xFF), so the search ends at nonce 0. */
+const TRIVIAL_POW_TARGET_BITS = 0;
 
 interface ChildBag {
   readonly children: ChildProcess[];
@@ -397,16 +401,16 @@ describe('miner.mjs — consolidation', () => {
     }
   }, 30_000);
 
-  it('across templates at heights h, h (unmoved) and h+1, one check runs', async () => {
+  it('templates repeating one height run one check', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'miner-script-tick-'));
     bag.dirs.push(dir);
     const key = makeKey();
     const keyPath = join(dir, 'miner-key.json');
     writeFileSync(keyPath, JSON.stringify({ publicKey: key.publicKeyHex, secretKeyHex: key.secretKeyHex }));
 
-    // No spendable boxes — the check reads /status and the credits listing
-    // but posts nothing. Each check is one /status request; the case counts
-    // those.
+    // No spendable boxes — a check reads /status and the credits listing
+    // but posts nothing. Each check is one /status request; the case
+    // counts those.
     const harness = await startStub({
       boxes: [],
       templates: [
@@ -421,18 +425,11 @@ describe('miner.mjs — consolidation', () => {
         port: harness.port,
         env: { MINER_KEY_PATH: keyPath, MINER_PCT: '0' },
       });
-      // The stub holds height 2000 forever; the script re-polls `/mining/template`
-      // after every solve. Give it a tick to drive several template reads,
-      // then assert exactly one /status.
-      await harness.waitForTemplate(10_000);
-      // Wait for enough template reads that a repeat-height would have
-      // ticked a second check if the script did not guard on height.
-      const start = Date.now();
-      while (Date.now() - start < 3_000) {
-        const templateReads = harness.state.calls.filter((c) => c.url.startsWith('/mining/template')).length;
-        if (templateReads >= 3) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      // Wait on the stub's own events — at least three template reads
+      // (so a second tick at the same height would have run a second
+      // check if the cadence's due height did not refuse it). Then assert
+      // exactly one /status read landed.
+      await harness.waitForNthTemplate(3, 15_000);
       const statusReads = harness.state.calls.filter((c) => new URL(c.url, 'http://x').pathname === '/status').length;
       expect(statusReads).toBe(1);
     } finally {

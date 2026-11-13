@@ -299,11 +299,6 @@ async function main() {
   }
 
   let backoff = 5000;
-  // MINING_INTERFACE → Consolidation → "A check runs every
-  // `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." — the
-  // last template height the script ticked at, so a template whose height
-  // has not moved does not tick again.
-  let lastTickedHeight = null;
 
   while (true) {
     try {
@@ -319,11 +314,11 @@ async function main() {
       const powTargetBits = header.powTargetBits;
       const preimageBuf = Buffer.from(powPreimage, 'hex');
 
-      // The tick runs between work windows, before the search begins (at
-      // step 2's `throttledSolvePoW`, the loop's one place that opens a
-      // work window). A same-height template does not tick again.
-      if (cadence && header.height !== lastTickedHeight) {
-        lastTickedHeight = header.height;
+      // MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window."
+      // The tick runs at every template the script starts a search at,
+      // between work windows; the cadence's own due height decides a
+      // second tick at an unmoved height.
+      if (cadence) {
         await cadence.tick(header.height);
       }
 
