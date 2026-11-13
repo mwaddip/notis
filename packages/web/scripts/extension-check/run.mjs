@@ -52,16 +52,21 @@
 // drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
 // spawned on 19820.
 // The mesh block (M1 · M2 · M3 · M4 · M5) proves the mesh path in the built
-// extension — WEB_INTERFACE → The extension → "The mesh is the extension's
-// first path", → "Nothing retries a rejection"'s **A send that ends with no
-// answer is no rejection**, → "A serving read is answered from it";
+// extension — WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path",
+// → "Nothing retries a rejection"'s
+// "A send that ends with no answer is no rejection",
+// → "A serving read is answered from it";
 // WEB_INTERFACE → The settings window → "The serve row";
-// MESH_INTERFACE → The client's node list → "A routed read goes to a node
-// its need allows", → "The client's order for a need", → "A write goes to
-// one node at a time"; MESH_INTERFACE → Block gossip → "A client that
-// serves answers the nodes it reads"; NODE_INTERFACE → Posts DAG → "A
-// serving reader is asked for what has been due"; JOURNAL_EVENTS →
-// post_received. The block owns
+// MESH_INTERFACE → The client's node list →
+// "A routed read goes to a node its need allows",
+// → "The client's order for a need",
+// → "A write goes to one node at a time";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received. The block owns
 // two nodes A' and B' spawned from --node-dist with MESH_ROLE=public,
 // MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off
 // (two public nodes on one loopback cannot share STUN_PORT), both
@@ -177,11 +182,13 @@
 //   --mesh: M1·M2·M3·M4·M5. Reads over the mesh, reads at the API base when no
 //     mesh node serves, a write over the mesh, a write with no answer
 //     going to the next node, and a node filling a post's text from a
-//     serving extension (WEB_INTERFACE → The extension → "The mesh is
-//     the extension's first path", → The settings window → "The serve row";
-//     MESH_INTERFACE → The client's node list, → Block gossip → "A client
-//     that serves answers the nodes it reads"; NODE_INTERFACE → Posts DAG →
-//     "A serving reader is asked for what has been due").
+//     serving extension — WEB_INTERFACE → The extension →
+//     "The mesh is the extension's first path",
+//     WEB_INTERFACE → The settings window → "The serve row";
+//     MESH_INTERFACE → The client's node list, → Block gossip →
+//     "A client that serves answers the nodes it reads";
+//     NODE_INTERFACE → Posts DAG →
+//     "A serving reader is asked for what has been due".
 //     Requires --r-key, --node-dist, --miner, --scratch and --node-p2p (A'
 //     bootstraps from --node-p2p so A'/B' are peers on A's chain and R's
 //     karma reaches them; --miner mines M5's isolated D). Takes an extension
@@ -282,15 +289,21 @@ const VERIFIED_NAMES = args.get('verified-names') === true;
 // hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
 // Absent, every step reads NOT RUN by name.
 const LIGHT = args.get('light') === true;
-// The mesh block — WEB_INTERFACE → The extension → "The mesh is the
-// extension's first path", `→ "Nothing retries a rejection"`'s `**A send
-// that ends with no answer is no rejection**`, → "A serving read is
-// answered from it"; WEB_INTERFACE → The settings window → "The serve row";
-// MESH_INTERFACE → The client's node list → "A routed read goes to a node
-// its need allows", "The client's order for a need", "A write goes to one
-// node at a time"; MESH_INTERFACE → Block gossip → "A client that serves
-// answers the nodes it reads"; NODE_INTERFACE → Posts DAG → "A serving
-// reader is asked for what has been due"; JOURNAL_EVENTS → post_received.
+// The mesh block — WEB_INTERFACE → The extension →
+// "The mesh is the extension's first path",
+// → "Nothing retries a rejection"'s
+// "A send that ends with no answer is no rejection",
+// → "A serving read is answered from it";
+// WEB_INTERFACE → The settings window → "The serve row";
+// MESH_INTERFACE → The client's node list →
+// "A routed read goes to a node its need allows",
+// → "The client's order for a need",
+// → "A write goes to one node at a time";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received.
 // Steps M1 · M2 · M3 · M4 · M5: reads over the mesh with zero HTTP, reads at
 // the API base when no mesh node serves, a write over the mesh landing on
 // both nodes, a write with no answer going to the next node, and a node
@@ -425,13 +438,14 @@ const AP_ALT_HTTP_PORT = 19834;
 // M5's isolated node D — a miner with its own MINING_SECRET on a copy of
 // A''s store, BOOTSTRAP_PEERS empty so it peers with no node and no node
 // can give it M3's post's text, reached by the extension as a hand-added
-// node over the mesh (`NODE_INTERFACE → Posts DAG → "A serving reader is
-// asked for what has been due"`; `WEB_INTERFACE → The settings window →
-// "The serve row"`; `WEB_INTERFACE → The extension → "A serving read is
-// answered from it"`). Ports clear of every other harness child: B
-// (19770–72), the tip relays (19780–81), D for the verified-tip block
-// (19795–97), the light relays (19810/15), DL (19820–22), A' (19830–34)
-// and B' (19835–38).
+// node over the mesh:
+//   NODE_INTERFACE → Posts DAG →
+//     "A serving reader is asked for what has been due";
+//   WEB_INTERFACE → The settings window → "The serve row";
+//   WEB_INTERFACE → The extension → "A serving read is answered from it".
+// Ports clear of every other harness child: B (19770–72), the tip relays
+// (19780–81), D for the verified-tip block (19795–97), the light relays
+// (19810/15), DL (19820–22), A' (19830–34) and B' (19835–38).
 const DM5_HTTP_PORT = 19860;
 const DM5_ADMIN_PORT = 19861;
 const DM5_P2P_PORT = 19862;
@@ -8940,8 +8954,8 @@ const MESH_STEPS = ['M1', 'M2', 'M3', 'M4', 'M5'];
 
 // M3's post, read from a node's listing once both carry it. M5 copies A''s
 // store and nulls this id's text on the copy, then waits for the serving
-// extension to fill the text on D (`NODE_INTERFACE → Posts DAG → "A
-// serving reader is asked for what has been due"`). `null` until M3
+// extension to fill the text on D — NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due". `null` until M3
 // records a pass; M5 records `NOT RUN` naming that if it stays null.
 let m3Post = null;
 
@@ -9515,8 +9529,8 @@ async function runMeshStepM3(bcx) {
     // proxy's `sign` resolves without a prompt page for a rep write).
     // On a landing both nodes name the same row id; m3Post keeps that id
     // and CONTENT for M5, which takes a copy of A''s store and nulls this
-    // id's text on the copy (`NODE_INTERFACE → Posts DAG → "A serving
-    // reader is asked for what has been due"`).
+    // id's text on the copy — NODE_INTERFACE → Posts DAG →
+    // "A serving reader is asked for what has been due".
     const landed = await (async () => {
       const t0 = Date.now();
       // The operator's miner is paced (40 s stopped, 3 s running per
@@ -9728,56 +9742,59 @@ async function runMeshStepM4(bcx) {
 
 // --- M5
 // WEB_INTERFACE → The extension → "A serving read is answered from it";
-// WEB_INTERFACE → The settings window → "The serve row"; MESH_INTERFACE →
-// Block gossip → "A client that serves answers the nodes it reads";
-// NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has
-// been due"; JOURNAL_EVENTS → post_received. A node holding a post's
-// commit but not its text gets the text from an extension that serves,
-// over the mesh, on the connection the extension holds as a hand-added
-// node — and with serving off it gets nothing.
+// WEB_INTERFACE → The settings window → "The serve row";
+// MESH_INTERFACE → Block gossip →
+// "A client that serves answers the nodes it reads";
+// NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due";
+// JOURNAL_EVENTS → post_received. A node holding a post's commit but not
+// its text gets the text from an extension that serves, over the mesh, on
+// the connection the extension holds as a hand-added node — and with
+// serving off it gets nothing.
 //
 // The rig: node D's store is a consistent copy of A''s taken while A' runs
-// (`sqlite3 <db> ".backup <copy>"`, `NODE_INTERFACE → Posts DAG → "A
-// serving reader is asked for what has been due"`'s preconditions:
-// `dag_posts.content IS NULL AND withdrawn_at_height IS NULL` reads as a
-// placeholder from `getMissingBodies`); the copy has M3's post id and
-// every table D needs; an UPDATE nulls P's text on the copy alone. D spawns MESH_ROLE=public,
-// NODE_ROLE=miner with its own MINING_SECRET, BOOTSTRAP_PEERS empty — so
-// it peers with no node, no node gives it P's text, and its puller asks
-// the serving reader alone — and its own miner runs at MINER_PCT=10 so a
-// block lands every few seconds rather than as fast as the CPU allows.
-// The extension reaches D as the reader's own node by writing
-// `notis.node.hand` in the extension page's localStorage to D's
-// webrtc-direct multiaddr from its identity line (certhash and /p2p/
-// included), with `notis.node.hand.off` removed, before a fresh page
-// opens (`WEB_INTERFACE → The settings window → "In the extension the row
-// adds a node by hand"`; `MESH_INTERFACE → Discovery → "A node added by
-// hand"`). A hand-added node that disagrees raises the reader's
-// question; the question does not stop D's connection or its handshake,
-// and the serving handler answers it (`MESH_INTERFACE → Discovery → "A
-// disagreement is the reader's question, never the client's choice"`).
+// (`sqlite3 <db> ".backup <copy>"`), and NODE_INTERFACE → Posts DAG →
+// "A serving reader is asked for what has been due" lists the puller's
+// preconditions: `dag_posts.content IS NULL AND withdrawn_at_height IS
+// NULL` reads as a placeholder from `getMissingBodies`. The copy has M3's
+// post id and every table D needs; an UPDATE nulls P's text on the copy
+// alone. D spawns MESH_ROLE=public, NODE_ROLE=miner with its own
+// MINING_SECRET, BOOTSTRAP_PEERS empty — so it peers with no node, no
+// node gives it P's text, and its puller asks the serving reader alone —
+// and its own miner runs at MINER_PCT=10 so a block lands every few
+// seconds rather than as fast as the CPU allows. The extension reaches D
+// as the reader's own node by writing `notis.node.hand` in the extension
+// page's localStorage to D's webrtc-direct multiaddr from its identity
+// line (certhash and /p2p/ included), with `notis.node.hand.off` removed,
+// before a fresh page opens — WEB_INTERFACE → The settings window →
+// "In the extension the row adds a node by hand"; MESH_INTERFACE →
+// Discovery → "A node added by hand". A hand-added node that disagrees
+// raises the reader's question; the question does not stop D's connection
+// or its handshake, and the serving handler answers it — MESH_INTERFACE →
+// Discovery →
+// "A disagreement is the reader's question, never the client's choice".
 //
 // M5a — serving off (the default; `notis.serve` holds `'1'` while on):
 // after page5a opens, D's log carries a new `[net] inbound handshake from
 // <peerId> on id=<connId>: ok=true` line within 90 s — D peers with no
-// node, so every inbound handshake is a reader's and the extension having
-// reached D is a precondition of the "no text arrived" check. Across five
-// of D's blocks after that, D's `GET /posts/<P>` answers P with
+// node, so every inbound handshake is a reader, and page5a's connection
+// to D is a precondition of the no-text-arrived check. Across five of
+// D's blocks after that, D's `GET /posts/<P>` answers P with
 // `content: null`, and D's log holds no `post_received` line naming P.
-// M5b — serving on, pressed through Input.dispatchMouseEvent on the serve
-// row's `on` word (`WEB_INTERFACE → The settings window → "The serve row"`,
-// which redials every node at once); the hint stands beneath the row
-// (`nodes this page reads from may ask it for posts, and learn which ones
-// you hold and your address.`). The press redials, so D's log carries a
-// second new `ok=true` inbound handshake line past the offset captured
-// before the press within 90 s; `post_received`'s `source` for P equals
-// that redial's peer id. Within ten of D's blocks or 120 s, whichever is
-// later, and bounded at 300 s from the press whatever D's height so a D
-// that stops mining does not keep the wait running, D's `GET /posts/<P>`
-// answers P's text, and D's log holds a `post_received` line naming P with
-// `via` `pull`. D's heights at each read, and the seconds between the M5a
-// and M5b reads, land in the detail — the record shows the pace the run
-// had.
+// M5b — serving on, pressed through `btn.click()` inside `cx.eval(...,
+// true)` on the serve row's `on` word (the harness's settings-row press
+// pattern, from `setLinksPrefViaUi`), the hint standing beneath the row.
+// The seam reads the storage write and calls `client.setServing`, which
+// closes every connection the client holds and dials again; D's log
+// carries a second new `ok=true` inbound handshake line past the offset
+// captured before the press within 90 s, and `post_received`'s `source`
+// for P equals that redial's peer id. Within ten of D's blocks or 120 s,
+// whichever is later, and bounded at 300 s from the press whatever D's
+// height so a D that stops mining does not keep the wait running, D's
+// `GET /posts/<P>` answers P's text, and D's log holds a `post_received`
+// line naming P with `via` `pull`. D's heights at each read, and the
+// seconds between the M5a and M5b reads, land in the detail — the record
+// shows the pace the run had.
 async function runSqliteCmd(args) {
   await new Promise((resolve, reject) => {
     const child = spawn('sqlite3', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -9860,8 +9877,10 @@ async function runMeshStepM5(cx, bcx) {
     // line names a reader (`packages/net`'s node writer logs `[net] inbound
     // handshake from <peerId> on id=<connId>: ok=true height=<h>`). Capture
     // the offset before page5a opens; the first new `ok=true` line past the
-    // offset names the extension's redial — without it, no reader reached D
-    // and "content is null" would hold for a page that never connected.
+    // offset names page5a's first connection to D (not a redial — this is
+    // page5a's own first dial, as a fresh page with D in its node list) —
+    // without it, no reader reached D and "content is null" would hold for
+    // a page that never connected.
     const inHsOffsetBeforePage5a = logOffset(dLogPath);
     page5a = await openFreshExtensionPage(bcx);
     await page5a.cx.waitFor(`!!document.querySelector('.corner')`, 'corner m5a', 30000);
@@ -9909,26 +9928,24 @@ async function runMeshStepM5(cx, bcx) {
       const rows = [...document.querySelectorAll('.row')];
       return rows.some((r) => r.querySelector('label')?.textContent === 'serve posts');
     })()`, 'settings serve row', 15000);
-    const servePressBox = await page5b.cx.eval(`(() => {
+    // The press runs through `btn.click()` inside `cx.eval(..., true)`, as
+    // `setLinksPrefViaUi` presses its word (the extension's settings-row
+    // pattern): the seam reads `notis.serve`'s storage write and calls
+    // `client.setServing`, which closes every connection the client holds
+    // and dials again. `Input.dispatchMouseEvent` at measured coordinates
+    // misses whenever the settings window stands outside the viewport, and
+    // the row has no user-activation gate — click-through-eval is the way
+    // this harness presses rows with words. The redial's new `ok=true`
+    // inbound handshake arrives on D past the offset captured right before
+    // the press; its `peerId` is what D's `post_received` `source` reads
+    // for the pulled text.
+    const inHsOffsetBeforePress = logOffset(dLogPath);
+    await page5b.cx.eval(`(() => {
       const rows = [...document.querySelectorAll('.row')];
       const row = rows.find((r) => r.querySelector('label')?.textContent === 'serve posts');
-      if (!row) return null;
       const btn = [...row.querySelectorAll('button.word')].find((b) => b.textContent.trim() === 'on');
-      if (!btn) return null;
-      const r = btn.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return null;
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    })()`);
-    if (servePressBox === null) throw new Error(`M5b: serve row's "on" word has no measured box`);
-    // The press writes `notis.serve=1` and the seam calls `client.setServing`,
-    // which closes every connection the client holds and dials again — so a
-    // new `ok=true` inbound handshake arrives on D past the offset captured
-    // right before the press. That redial is the one that declared
-    // `ModifierRequest`, and its `peerId` is what D's `post_received`
-    // `source` reads for the pulled text.
-    const inHsOffsetBeforePress = logOffset(dLogPath);
-    await page5b.cx.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: servePressBox.x, y: servePressBox.y, button: 'left', buttons: 1, clickCount: 1 });
-    await page5b.cx.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: servePressBox.x, y: servePressBox.y, button: 'left', buttons: 0, clickCount: 1 });
+      btn.click();
+    })()`, true);
     const pressAt = Date.now();
     const serveApplied = await (async () => {
       const t0 = Date.now();
@@ -9974,10 +9991,10 @@ async function runMeshStepM5(cx, bcx) {
     })();
     // The landing wait ends on one of three outcomes: the text arrived (the
     // step passes on M5b's primary check), or D's height crossed the
-    // 10-block target AND 120 s have passed since the press ("ten of D's
-    // blocks or 120 s, whichever is later" — both must hold), or 300 s have
-    // passed from the press whatever D's height (the ceiling, so a D that
-    // stops mining does not keep the wait running). Each path sets
+    // 10-block target AND 120 s have passed since the press (both floors
+    // must hold, ten of D's blocks or 120 s whichever is later), or 300 s
+    // have passed from the press whatever D's height (the ceiling, so a D
+    // that stops mining does not keep the wait running). Each path sets
     // `landedResult` to one of three constants; the detail names which.
     const LANDING_WALL_MS = 300000;
     const LANDING_HEIGHT_FLOOR_MS = 120000;

@@ -846,28 +846,32 @@ restarted on an alternate HTTP port behind a tip relay in `hold-posts` mode at i
 before the press — the first `POST /posts` is held past `REQUEST_TIMEOUT_MS`, the card reads pending and not rejected,
 the same bytes go to the next node, and the post stands once on each node; **M5** an isolated node **D** on a
 consistent copy of A′'s store taken while A′ runs (`sqlite3 <db> ".backup <copy>"`) with M3's post id's `content`
-nulled on the copy — a placeholder `getMissingBodies` returns at D's start (`NODE_INTERFACE → Posts DAG → "A serving
-reader is asked for what has been due"`'s `content IS NULL AND withdrawn_at_height IS NULL`) — spawned
-`MESH_ROLE=public`, `NODE_ROLE=miner` with its own `MINING_SECRET`, `BOOTSTRAP_PEERS` empty, on ports 19860–63 clear
-of every other harness child, its own miner at `MINER_PCT=10` so a block lands every few seconds rather than as fast
-as the CPU allows (every block D mines is gossiped to the page which checks each one); the extension reaches D as
-the reader's own node by writing `notis.node.hand` in the extension page's `localStorage` to D's webrtc-direct
-multiaddr from its identity line and removing `notis.node.hand.off`, before a fresh page opens
-(`WEB_INTERFACE → The settings window → "In the extension the row adds a node by hand"`; `MESH_INTERFACE → Discovery
-→ "A node added by hand"`); a hand-added node that disagrees raises the reader's question which does not stop D's
-connection or its handshake, and M5 does not answer it. D peers with no node, so every `[net] inbound handshake from
-<peerId> on id=<connId>: ok=true` line in D's log is a reader; the step reads the log past an offset captured right
-before each page opens or redials. **M5a** serving off (the default), after page5a opens the step waits 90 s for a
-new `ok=true` inbound handshake line past the pre-open offset — without it no reader reached D and "no text arrived"
-holds for the wrong reason — records that reader's peer id, and across five of D's blocks D's `GET /posts/<P>`
-answers `content: null` with D's log holding no `post_received` line naming P; **M5b** serving on — the *on* word in
-the serve row pressed through `Input.dispatchMouseEvent` (`WEB_INTERFACE → The settings window → "The serve row"`,
-which redials every node at once), the hint standing beneath the row with the contract's words — the step waits 90 s
-for a second new `ok=true` inbound handshake line past the pre-press offset (the redial) and records its peer id;
-within ten of D's blocks or 120 s, whichever is later, and bounded at 300 s from the press so a D that stops mining
-does not keep the wait running, D's `GET /posts/<P>` answers P's text and D's log holds a `post_received` line
-naming P with `via` `pull` and `source` equal to the redial's peer id (`JOURNAL_EVENTS → post_received`); the weaker
-check that `source` is not D's own peer id lands in the detail. The step logs the corner's dot class and title once
+nulled on the copy — a placeholder `getMissingBodies` returns at D's start under
+`NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has been due"`'s
+`content IS NULL AND withdrawn_at_height IS NULL` — spawned `MESH_ROLE=public`, `NODE_ROLE=miner` with its own
+`MINING_SECRET`, `BOOTSTRAP_PEERS` empty, on ports 19860–63 clear of every other harness child, its own miner at
+`MINER_PCT=10` so a block lands every few seconds rather than as fast as the CPU allows (every block D mines is
+gossiped to the page which checks each one); the extension reaches D as the reader's own node by writing
+`notis.node.hand` in the extension page's `localStorage` to D's webrtc-direct multiaddr from its identity line and
+removing `notis.node.hand.off`, before a fresh page opens —
+`WEB_INTERFACE → The settings window → "In the extension the row adds a node by hand"`;
+`MESH_INTERFACE → Discovery → "A node added by hand"`; a hand-added node that disagrees raises the reader's question
+which does not stop D's connection or its handshake, and M5 does not answer it. D peers with no node, so every
+`[net] inbound handshake from <peerId> on id=<connId>: ok=true` line in D's log is a reader; the step reads the log
+past an offset captured right before each page opens or redials. **M5a** serving off (the default), after page5a
+opens the step waits 90 s for a new `ok=true` inbound handshake line past the pre-open offset — without it no reader
+reached D and "no text arrived" holds for the wrong reason — records page5a's peer id (its first connection to D,
+not a redial), and across five of D's blocks D's `GET /posts/<P>` answers `content: null` with D's log holding no
+`post_received` line naming P; **M5b** serving on — the *on* word in the serve row pressed through `btn.click()`
+inside `cx.eval(..., true)` (the settings-row press pattern `setLinksPrefViaUi` uses — `Input.dispatchMouseEvent` at
+measured coordinates misses when the window stands outside the viewport), under
+`WEB_INTERFACE → The settings window → "The serve row"`, which redials every node at once, the hint standing beneath
+the row with the contract's words — the step waits 90 s for a second new `ok=true` inbound handshake line past the
+pre-press offset (the redial) and records its peer id; within ten of D's blocks or 120 s, whichever is later, and
+bounded at 300 s from the press so a D that stops mining does not keep the wait running, D's `GET /posts/<P>`
+answers P's text and D's log holds a `post_received` line naming P with `via` `pull` and `source` equal to the
+redial's peer id (`JOURNAL_EVENTS → post_received`); the weaker check that `source` is not D's own peer id lands in
+the detail. The step logs the corner's dot class and title once
 a second from the press until the text lands, and puts D's heights at each read with the seconds between the M5a
 and M5b reads in the step's detail, so the record shows the pace the run had. The two-pass recipe for `VITE_NODES`
 of any block: start the nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the
