@@ -103,6 +103,25 @@ function pickPeer(entry: BackfillEntry, connectedPeers: string[]): string | null
   return connectedPeers[entry.attemptCount % connectedPeers.length] ?? null;
 }
 
+// NODE_INTERFACE → "Backfill after sync" and "A serving reader is asked
+// for what has been due": one ask to `peerId` for `wanted`, each stored
+// body leaving pending and emitting `post_received` with `via: 'pull'`.
+// A throw from `requestPostBodies` leaves the helper — callers hold the
+// catch and log line that keeps a failing peer from killing the pass.
+async function requestAndStore(
+  peerId: string,
+  wanted: Array<{ id: string; contentHash: string }>,
+): Promise<void> {
+  const bodies = await deps!.requestPostBodies(wanted, peerId);
+  for (const { id, content } of bodies) {
+    const stored = deps!.setPostBody(id, content);
+    if (stored) {
+      pending.delete(id);
+      emitPostReceived(id, peerId, 'pull');
+    }
+  }
+}
+
 async function runPass(height: number): Promise<void> {
   if (!deps) return;
 
@@ -159,14 +178,7 @@ async function runPass(height: number): Promise<void> {
   for (const [peerId, entries] of byPeer) {
     const wanted = entries.map((e) => ({ id: e.id, contentHash: e.contentHash }));
     try {
-      const bodies = await deps.requestPostBodies(wanted, peerId);
-      for (const { id, content } of bodies) {
-        const stored = deps.setPostBody(id, content);
-        if (stored) {
-          pending.delete(id);
-          emitPostReceived(id, peerId, 'pull');
-        }
-      }
+      await requestAndStore(peerId, wanted);
     } catch (err) {
       console.warn(`Backfill request to ${peerId} failed: ${String(err)}`);
     }
@@ -181,14 +193,7 @@ async function runPass(height: number): Promise<void> {
     const wanted = readerEligible.map((e) => ({ id: e.id, contentHash: e.contentHash }));
     for (const readerId of deps.getServingReaders()) {
       try {
-        const bodies = await deps.requestPostBodies(wanted, readerId);
-        for (const { id, content } of bodies) {
-          const stored = deps.setPostBody(id, content);
-          if (stored) {
-            pending.delete(id);
-            emitPostReceived(id, readerId, 'pull');
-          }
-        }
+        await requestAndStore(readerId, wanted);
       } catch (err) {
         console.warn(`Backfill request to ${readerId} failed: ${String(err)}`);
       }
@@ -221,14 +226,7 @@ async function askArrivedReader(peerId: string): Promise<void> {
 
   const wanted = entries.map((e) => ({ id: e.id, contentHash: e.contentHash }));
   try {
-    const bodies = await deps.requestPostBodies(wanted, peerId);
-    for (const { id, content } of bodies) {
-      const stored = deps.setPostBody(id, content);
-      if (stored) {
-        pending.delete(id);
-        emitPostReceived(id, peerId, 'pull');
-      }
-    }
+    await requestAndStore(peerId, wanted);
   } catch (err) {
     console.warn(`Backfill request to ${peerId} failed: ${String(err)}`);
   }
