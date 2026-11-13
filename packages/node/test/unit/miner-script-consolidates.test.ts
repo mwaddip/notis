@@ -274,7 +274,7 @@ describe('miner.mjs — consolidation', () => {
     expect(() => statSync(CONSOLIDATE_DIST), `${CONSOLIDATE_DIST} is missing — pnpm -r build first`).not.toThrow();
   });
 
-  it.fails('with a key file the script posts one consolidation the stub reads back as a transfer from the file to itself, and its template requests name the file\'s key in ?miner=', async () => {
+  it('with a key file the script posts one consolidation the stub reads back as a transfer from the file to itself, and its template requests name the file\'s key in ?miner=', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'miner-script-consolidates-'));
     bag.dirs.push(dir);
     const key = makeKey();
@@ -321,7 +321,7 @@ describe('miner.mjs — consolidation', () => {
     }
   }, 30_000);
 
-  it.fails('a bare copy of the script with MINER_KEY_PATH exits non-zero naming dist/miner-consolidate.js, and asks the stub nothing', async () => {
+  it('a bare copy of the script with MINER_KEY_PATH exits non-zero naming dist/miner-consolidate.js, and asks the stub nothing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'miner-script-bare-'));
     bag.dirs.push(dir);
     // Copy the script into a directory with no sibling `../dist/`.
@@ -352,7 +352,7 @@ describe('miner.mjs — consolidation', () => {
     }
   }, 30_000);
 
-  it.fails('MINER_KEY_PATH naming an encrypted envelope exits non-zero with the reader\'s message', async () => {
+  it('MINER_KEY_PATH naming an encrypted envelope exits non-zero with the reader\'s message', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'miner-script-encrypted-'));
     bag.dirs.push(dir);
     const envelope = {
@@ -397,7 +397,7 @@ describe('miner.mjs — consolidation', () => {
     }
   }, 30_000);
 
-  it.fails('across templates at heights h, h (unmoved) and h+1, one check runs', async () => {
+  it('across templates at heights h, h (unmoved) and h+1, one check runs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'miner-script-tick-'));
     bag.dirs.push(dir);
     const key = makeKey();
