@@ -606,7 +606,7 @@ describe('runConsolidateCheck', () => {
   // MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
   // devnet 15, testnet 100, mainnet 100 (`profileFor` over the stub's
   // `/status`). The outcome answers the interval the check read.
-  it.fails('the check reads the interval from the network /status names: devnet 15, testnet 100, mainnet 100', async () => {
+  it('the check reads the interval from the network /status names: devnet 15, testnet 100, mainnet 100', async () => {
     const { file, done } = setupKey();
     try {
       for (const [networkType, expected] of [
@@ -629,7 +629,7 @@ describe('runConsolidateCheck', () => {
   // MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
   // on devnet the interval is 15. One fewer than the interval sends nothing;
   // exactly the interval sends one transaction naming each spendable box.
-  it.fails('on devnet 14 spendable boxes send nothing and 15 send one transaction of 15 inputs', async () => {
+  it('on devnet 14 spendable boxes send nothing and 15 send one transaction of 15 inputs', async () => {
     const { file, done } = setupKey();
     try {
       const below = newCaseState(1000, makeCaseBoxes(14, 1_000_000n), 'devnet');
@@ -658,7 +658,7 @@ describe('runConsolidateCheck', () => {
   // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
   // a `/status` whose `networkType` the types do not name has no interval,
   // and the check answers idle with one log line.
-  it.fails('a /status whose networkType the types do not name logs one line and sends nothing', async () => {
+  it('a /status whose networkType the types do not name logs one line and sends nothing', async () => {
     const { file, done } = setupKey();
     try {
       // `profileFor` is only called when the stub builds its state, so the
@@ -772,7 +772,7 @@ describe('createCadence', () => {
   // on devnet the interval is 15. A below-interval stock keeps the check
   // idle, so the state's own interval is 15; the cadence is not due 14
   // heights above its first check, and is due 15 above it.
-  it.fails('on devnet the cadence does not check 14 heights later, and does check 15 later', async () => {
+  it('on devnet the cadence does not check 14 heights later, and does check 15 later', async () => {
     const { file, done } = setupKey();
     try {
       const boxes = makeCaseBoxes(10, 1_000_000n);  // below devnet's 15
@@ -802,7 +802,7 @@ describe('createCadence', () => {
   // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
   // a first check whose `/status` read is refused reads no interval, so the
   // cadence keeps no state and the next height checks again.
-  it.fails('a first check whose /status read is refused leaves no interval; the next height checks again', async () => {
+  it('a first check whose /status read is refused leaves no interval; the next height checks again', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, []);
@@ -825,7 +825,7 @@ describe('createCadence', () => {
   // on devnet the interval is 15; a check that reads it and fails
   // afterwards (/credits malformed) keeps it, so the cadence's next due
   // sits at `thatHeight + 15`.
-  it.fails('a later check that fails after reading the interval keeps the interval it read', async () => {
+  it('a later check that fails after reading the interval keeps the interval it read', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, [], 'devnet');  // interval 15
