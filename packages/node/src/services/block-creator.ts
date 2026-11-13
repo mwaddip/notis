@@ -797,10 +797,16 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 5b. Rent transactions — the producer selects eligible boxes and builds
     // unsigned credit spends (NODE_INTERFACE → "Storage rent is a transition
     // requiring no signature"). Selection is discretionary; a verifier checks
-    // eligibility and the charge and nothing else. A rent transaction has no
-    // row and so no estimate: each is costed alone, as a row without one is,
-    // and packed by that cost. A rent transaction spends a credit box — no
-    // karma inputs — so no owner's decay rides it.
+    // eligibility and the charge and nothing else. The offer takes its boxes
+    // from the eligible ones no pooled entry spends (NODE_INTERFACE → "This
+    // node's producer collects at its template, from the boxes no pooled
+    // transaction spends"; MEMPOOL_INTERFACE → Block Creator Integration),
+    // so no body carries one box in a pooled transaction and in a rent
+    // transaction; the exclusion lives in `getRentEligibleCreditBoxes`' SQL
+    // and the limit here counts boxes the offer can take. A rent transaction
+    // has no row and so no estimate: each is costed alone, as a row without
+    // one is, and packed by that cost. A rent transaction spends a credit
+    // box — no karma inputs — so no owner's decay rides it.
     const offerRent = (scale: number): void => {
       const eligible = getRentEligibleCreditBoxes(
         newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,

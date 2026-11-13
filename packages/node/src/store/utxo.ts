@@ -659,10 +659,17 @@ export function getCreditBoxesPage(
 }
 
 /**
- * Unspent credit boxes past the rent period, oldest first, bounded.
+ * Unspent credit boxes past the rent period and spent by no pooled entry,
+ * oldest first, bounded.
  *
  * Selection is discretionary — a producer includes what it chooses
  * (NODE_INTERFACE → "Storage rent is a transition requiring no signature").
+ * The exclusion of boxes a pooled entry spends is this node's producer, at
+ * the template (NODE_INTERFACE → "This node's producer collects at its
+ * template, from the boxes no pooled transaction spends"): the exclusion
+ * lives in the SQL so `LIMIT` counts boxes the offer can take, never boxes
+ * it would skip, and the pattern is the one `mempool.ts`'s pending views
+ * already read — a correlated `NOT EXISTS` on `mempool_inputs`' primary key.
  */
 export function getRentEligibleCreditBoxes(
   currentHeight: number,
@@ -674,6 +681,8 @@ export function getRentEligibleCreditBoxes(
   const rows = prepared(db, `SELECT * FROM utxo_boxes
        WHERE box_type = 'credit' AND spent_at_block IS NULL
          AND created_at_block < ?
+         AND NOT EXISTS (SELECT 1 FROM mempool_inputs
+                          WHERE mempool_inputs.box_id = utxo_boxes.id)
        ORDER BY created_at_block ASC
        LIMIT ?`, true)
     .all(cutoff, limit) as UtxoRow[];
