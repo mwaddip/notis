@@ -848,16 +848,26 @@ it names another key.
 built checkout. Where that file does not load, as beside a bare copy of the script or in a checkout not built, the
 script refuses to start, naming the file. Without `MINER_KEY_PATH` it imports `node:crypto` alone.
 
-**A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window.** The first runs at the script's
-first template; each next one at the first template height `CONSOLIDATE_MIN_BOXES` (100) above the last check's, or
-at the next height where the last check sent a full transaction. A check runs between work windows, and one that
-fails — a read refused or cut, a submit refused — logs one line, and the script mines on.
+**A check runs once an interval, never inside a work window.** The first runs at the script's first template; each
+next one at the first template height an interval above the last check's — the interval as that check read it, and
+the next height where no check has read one yet — or at the next height where the last check sent a full
+transaction. A check runs between work windows, and one that fails — a read refused or cut, a submit refused — logs
+one line, and the script mines on.
+
+**The interval follows the network's coinbase lock and rent period.** It is
+`min(CONSOLIDATE_MAX_INTERVAL, floor((storageRentPeriodBlocks − creditMinerRewardDelay) / CONSOLIDATE_RENT_DIVISOR))`
+— 100 and 6 (`CONSTANTS → Producer policy`) — over the profile of the network `/status` names (its `networkType`,
+read through `@dagsocial/types`' `profileFor`): 15 on devnet, 100 on testnet and mainnet. A key that mines every
+block gains one box a height, so a check finds about an interval's worth, and spends a box within
+`creditMinerRewardDelay` + one interval of its making — 25 blocks on devnet, inside its 100-block rent period. A check
+judges no box against storage rent: a key whose boxes age into the rent period between checks — one that mines
+seldom, or one whose miner stopped — is its miner's own to tend.
 
 **A check spends what the pending view leaves spendable.** It reads `/status` — the tip and the era
 (`NODE_INTERFACE → Status`) — and pages its key's credit listing under `pending=1` (NODE_INTERFACE → UTXO queries →
 "`pending=1` answers the pending view, as admission spends from it") until it holds as many spendable boxes as one
 transaction carries or the listing ends. A box is spendable where it carries no `lockedUntilBlock`, or one at most
-`tip + 1` (`NODE_INTERFACE → Spend timing`). With at least `CONSOLIDATE_MIN_BOXES` spendable, the check sends one
+`tip + 1` (`NODE_INTERFACE → Spend timing`). With at least an interval's count spendable, the check sends one
 transaction to `POST /credits/transfer`: as inputs, the spendable boxes in the listing's order, as many as an
 encoding within `MAX_TX_BYTES` carries — a transaction **full** where that bound, not the listing's end, stopped it;
 one credit output to the key, the inputs' sum, created at the tip; no fee output; the era `/status` reports; one
