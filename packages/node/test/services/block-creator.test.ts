@@ -1443,7 +1443,7 @@ describe('a stored tip whose body will not read', () => {
     // and the screen refused no pooled transaction; evicting all 1 mempool
     // entries the body carried` dropped the transfer, and the rebuild offered
     // rent over the box alone.)
-    it.fails(
+    it(
       'a pooled transfer of a box that falls due at the next template rides it, and no rent transaction spends the box',
       async () => {
         await configWith({ storageRentPeriodBlocks: 1 });
@@ -1511,7 +1511,7 @@ describe('a stored tip whose body will not read', () => {
     //   - false
     //   + true
     // (the offer took the box although the pool held a spender of it.)
-    it.fails(
+    it(
       'a pooled spend the fill leaves out keeps its box from the rent transactions',
       async () => {
         await configWith({
@@ -1575,7 +1575,7 @@ describe('a stored tip whose body will not read', () => {
     //     }
     // (the limit counted the pool-spent box, so the oldest 32 of the 33 rode
     // the body and the youngest stayed outside.)
-    it.fails(
+    it(
       'the rent transactions take up to their limit from the boxes no pooled entry spends',
       async () => {
         await configWith({
