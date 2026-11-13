@@ -63,7 +63,7 @@ async function startStub(options: {
   const state: StubState = {
     templates: [...options.templates],
     tip: options.tip ?? 1000,
-    protocolVersion: protocolVersionAt(profileFor('devnet').protocolVersionSchedule, (options.tip ?? 1000) + 1)!,
+    protocolVersion: protocolVersionAt(profileFor('testnet').protocolVersionSchedule, (options.tip ?? 1000) + 1)!,
     boxes: options.boxes ?? [],
     calls: [],
     postedTxs: [],
@@ -109,7 +109,7 @@ async function startStub(options: {
       if (u.pathname === '/status') {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
-          networkType: 'devnet',
+          networkType: 'testnet',
           blockHeight: state.tip,
           protocolVersion: state.protocolVersion,
         }));

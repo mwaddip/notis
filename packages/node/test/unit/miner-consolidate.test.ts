@@ -204,7 +204,7 @@ function buildStub(state: StubState): HttpFetch {
         return new Response('upstream', { status: 500 });
       }
       return json({
-        networkType: 'devnet',
+        networkType: 'testnet',
         blockHeight: state.tip,
         protocolVersion: state.protocolVersion,
       });
@@ -280,7 +280,7 @@ function makeCaseBoxes(n: number, value: bigint): StubBox[] {
 }
 
 function newCaseState(tip: number, boxes: readonly StubBox[]): StubState {
-  const profile = profileFor('devnet');
+  const profile = profileFor('testnet');
   const schedule = profile.protocolVersionSchedule;
   const protocolVersion = protocolVersionAt(schedule, tip + 1)!;
   return {
