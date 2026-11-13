@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -22,7 +23,6 @@ import {
   effectiveKarma,
   type IdentityRecord,
 } from '@dagsocial/types';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 13;
 
@@ -31,15 +31,6 @@ const CFG = decayCfgFor(devnet);
 const THRESHOLD = devnet.karmaStaleThresholdBlocks;   // 500
 const INTERVAL  = devnet.karmaDecayIntervalBlocks;     // 3
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 // The record the route serves, as `effectiveKarma` reads it (NODE_INTERFACE → UTXO queries).
 function recordOf(k: KarmaPage): IdentityRecord {
@@ -86,7 +77,7 @@ describe('decay', () => {
     const faucetKarma = (await getKarma(node, DEVNET_FAUCET.publicKeyHex))!;
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma),
+      karmaBoxRefs(faucetKarma),
       alice,
       bondAmount,
       faucetKarma.height,
@@ -137,7 +128,7 @@ describe('decay', () => {
     let aliceK = (await getKarma(node, alice.publicKeyHex))!;
     const threadTx = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'hello from the other side of staleness',
       aliceK.height,
       version,

@@ -4,7 +4,8 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
-import { signAndRender, type BoxRef } from '../src/tx/render.js';
+import { signAndRender } from '../src/tx/render.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -20,15 +21,6 @@ import { POST_PRICE_THREAD, computeContentHash } from '@dagsocial/types';
 
 const FILE_INDEX = 14;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('zero-change', () => {
   let mesh: Mesh;
@@ -55,7 +47,7 @@ describe('zero-change', () => {
     const faucetK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetK),
+      karmaBoxRefs(faucetK),
       alice,
       bondAmount,
       faucetK.height,
@@ -118,7 +110,7 @@ describe('zero-change', () => {
     // karma output, so the thread body is the karma_price alone.
     const thread = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'exact spend',
       aliceK.height,
       version,

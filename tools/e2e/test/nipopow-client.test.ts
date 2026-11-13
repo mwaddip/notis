@@ -6,8 +6,8 @@ import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '../src/dist-freshness.js'
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import { postInvite, getKarma, getStatus, hasKarma, getBlockCurrent } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 import type { NodeProcess } from '../src/node-process.js';
 
 const FILE_INDEX = 11;
@@ -24,15 +24,6 @@ const TOOL_ENTRY = resolve(
   'index.js',
 );
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 function runTool(
   args: string[],
@@ -97,7 +88,7 @@ describe('nipopow-client', () => {
     const faucetKarma = (await getKarma(node1, DEVNET_FAUCET.publicKeyHex))!;
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma),
+      karmaBoxRefs(faucetKarma),
       member,
       bondAmount,
       faucetKarma.height,

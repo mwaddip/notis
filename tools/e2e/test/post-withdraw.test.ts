@@ -7,6 +7,7 @@ import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
 import { buildPostWithdrawTx } from '../src/tx/post-withdraw.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -21,19 +22,9 @@ import {
   isPost,
   isWithdrawn,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 9;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('post-withdraw', () => {
   let mesh: Mesh;
@@ -58,7 +49,7 @@ describe('post-withdraw', () => {
     const bondAmount = 50n;
 
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK), alice, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
     const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
@@ -72,7 +63,7 @@ describe('post-withdraw', () => {
     // ---- A: propagation — withdrawal submitted to a NON-MINING node reaches consensus ----
 
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const propPost = buildThreadTx(alice, karmaBoxes(aliceK), 'propagation target', aliceK.height, version);
+    const propPost = buildThreadTx(alice, karmaBoxRefs(aliceK), 'propagation target', aliceK.height, version);
     const propPostRes = await postPost(miner, propPost.json, propPost.content);
 
     await confirm(
@@ -90,7 +81,7 @@ describe('post-withdraw', () => {
 
     // Submit the withdrawal to `peer`, which never mines.
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const withdrawTx = buildPostWithdrawTx(alice, karmaBoxes(aliceK2), propPostRes.postId, aliceK2.height, version);
+    const withdrawTx = buildPostWithdrawTx(alice, karmaBoxRefs(aliceK2), propPostRes.postId, aliceK2.height, version);
     await postPostWithdraw(peer, propPostRes.postId, withdrawTx.json);
 
     await confirm(
@@ -161,7 +152,7 @@ describe('post-withdraw', () => {
     // NODE_INTERFACE → "The JSON projection has two arms where the store has one shape"
     const bobKForReply = (await getKarma(miner, bob.publicKeyHex))!;
     const propReply = buildReplyTx(
-      bob, karmaBoxes(bobKForReply), 'reply to a withdrawn root',
+      bob, karmaBoxRefs(bobKForReply), 'reply to a withdrawn root',
       propPostRes.postId, alice.publicKeyHex, bobKForReply.height, version,
     );
     const propReplyRes = await postPost(miner, propReply.json, propReply.content);
@@ -187,7 +178,7 @@ describe('post-withdraw', () => {
     // (§5) makes this a valid block; without it the pair rejects.
 
     const aliceK3 = (await getKarma(miner, alice.publicKeyHex))!;
-    const coexPost = buildThreadTx(alice, karmaBoxes(aliceK3), 'coexistence target', aliceK3.height, version);
+    const coexPost = buildThreadTx(alice, karmaBoxRefs(aliceK3), 'coexistence target', aliceK3.height, version);
     const coexPostRes = await postPost(miner, coexPost.json, coexPost.content);
 
     await confirm(
@@ -204,11 +195,11 @@ describe('post-withdraw', () => {
 
     // Bob likes, alice withdraws — both submitted before mining.
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
-    const likeTx = buildLikeTx(bob, karmaBoxes(bobK), coexPostRes.postId, alice.publicKeyHex, bobK.height, version);
+    const likeTx = buildLikeTx(bob, karmaBoxRefs(bobK), coexPostRes.postId, alice.publicKeyHex, bobK.height, version);
     await postLike(miner, likeTx.json);
 
     const aliceK4 = (await getKarma(miner, alice.publicKeyHex))!;
-    const coexWithdraw = buildPostWithdrawTx(alice, karmaBoxes(aliceK4), coexPostRes.postId, aliceK4.height, version);
+    const coexWithdraw = buildPostWithdrawTx(alice, karmaBoxRefs(aliceK4), coexPostRes.postId, aliceK4.height, version);
     await postPostWithdraw(miner, coexPostRes.postId, coexWithdraw.json);
 
     await confirm(
@@ -237,7 +228,7 @@ describe('post-withdraw', () => {
     // on every block; §8's SQL guards stop it from selecting a withdrawn row.
 
     const aliceK5 = (await getKarma(miner, alice.publicKeyHex))!;
-    const guardPost = buildThreadTx(alice, karmaBoxes(aliceK5), 'resurrection guard target', aliceK5.height, version);
+    const guardPost = buildThreadTx(alice, karmaBoxRefs(aliceK5), 'resurrection guard target', aliceK5.height, version);
     const guardPostRes = await postPost(miner, guardPost.json, guardPost.content);
 
     await confirm(
@@ -263,7 +254,7 @@ describe('post-withdraw', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const aliceK6 = (await getKarma(miner, alice.publicKeyHex))!;
-    const guardWithdraw = buildPostWithdrawTx(alice, karmaBoxes(aliceK6), guardPostRes.postId, aliceK6.height, version);
+    const guardWithdraw = buildPostWithdrawTx(alice, karmaBoxRefs(aliceK6), guardPostRes.postId, aliceK6.height, version);
     await postPostWithdraw(miner, guardPostRes.postId, guardWithdraw.json);
 
     await confirm(
@@ -292,7 +283,7 @@ describe('post-withdraw', () => {
 
     // ---- non-author withdrawal → 400 ----
     const aliceK7 = (await getKarma(miner, alice.publicKeyHex))!;
-    const bobTarget = buildThreadTx(alice, karmaBoxes(aliceK7), 'bob target', aliceK7.height, version);
+    const bobTarget = buildThreadTx(alice, karmaBoxRefs(aliceK7), 'bob target', aliceK7.height, version);
     const bobTargetRes = await postPost(miner, bobTarget.json, bobTarget.content);
 
     await confirm(
@@ -308,7 +299,7 @@ describe('post-withdraw', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const bobK2 = (await getKarma(miner, bob.publicKeyHex))!;
-    const fakeWithdraw = buildPostWithdrawTx(bob, karmaBoxes(bobK2), bobTargetRes.postId, bobK2.height, version);
+    const fakeWithdraw = buildPostWithdrawTx(bob, karmaBoxRefs(bobK2), bobTargetRes.postId, bobK2.height, version);
     try {
       await postPostWithdraw(miner, bobTargetRes.postId, fakeWithdraw.json);
       expect.fail('non-author withdrawal should have been refused');
@@ -319,7 +310,7 @@ describe('post-withdraw', () => {
 
     // ---- maturity bind: withdrawal of an unconfirmed post → 400 ----
     const aliceK8 = (await getKarma(miner, alice.publicKeyHex))!;
-    const immPost = buildThreadTx(alice, karmaBoxes(aliceK8), 'immediate withdraw', aliceK8.height, version);
+    const immPost = buildThreadTx(alice, karmaBoxRefs(aliceK8), 'immediate withdraw', aliceK8.height, version);
     const immPostRes = await postPost(miner, immPost.json, immPost.content);
 
     const immWithdraw = buildPostWithdrawTx(alice, [immPost.outputs[0]!], immPostRes.postId, aliceK8.height, version);

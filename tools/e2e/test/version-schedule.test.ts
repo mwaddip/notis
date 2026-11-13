@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -13,19 +14,9 @@ import {
   getBlockCurrent,
   NodeError,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 18;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('version-schedule', () => {
   let mesh: Mesh;
@@ -88,7 +79,7 @@ describe('version-schedule', () => {
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
     const badEnvelope = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetK),
+      karmaBoxRefs(faucetK),
       fresh(),
       50n,
       faucetK.height,
@@ -108,7 +99,7 @@ describe('version-schedule', () => {
     const alice = fresh();
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetK),
+      karmaBoxRefs(faucetK),
       alice,
       50n,
       faucetK.height,
@@ -129,7 +120,7 @@ describe('version-schedule', () => {
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const badCommit = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'version probe',
       aliceK.height,
       version,

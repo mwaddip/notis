@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -15,19 +16,9 @@ import {
   NodeError,
   isPost,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 4;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('validation', () => {
   let mesh: Mesh;
@@ -48,7 +39,7 @@ describe('validation', () => {
     const version = (await getStatus(node1!)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(node1!, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(node1!, inv.json);
 
     await confirm(
@@ -59,7 +50,7 @@ describe('validation', () => {
 
     // ---- forged signature → 400 ----
     const aliceK = (await getKarma(node1!, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'forged', aliceK.height, version);
+    const thread = buildThreadTx(alice, karmaBoxRefs(aliceK), 'forged', aliceK.height, version);
     const forgedJson = { ...thread.json };
     const sigs = forgedJson['signatures'] as Record<string, string>;
     const sigKeys = Object.keys(sigs);
@@ -84,7 +75,7 @@ describe('validation', () => {
 
     // ---- double spend: same karma box on two nodes ----
     const aliceK2 = (await getKarma(node1!, alice.publicKeyHex))!;
-    const boxes = karmaBoxes(aliceK2);
+    const boxes = karmaBoxRefs(aliceK2);
 
     const tx1 = buildThreadTx(alice, boxes, 'double spend A', aliceK2.height, version);
     const tx2 = buildThreadTx(alice, boxes, 'double spend B', aliceK2.height, version);

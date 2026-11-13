@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -17,19 +18,9 @@ import {
   isPost,
 } from '../src/http.js';
 import type { NodeProcess } from '../src/node-process.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 25;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 // MEMPOOL_INTERFACE → getBoxWithPending → "A relayed transaction is judged
 // against the pending view, as a submitted one is": a child whose parent
@@ -102,7 +93,7 @@ describe('relay-chain', () => {
     const bondAmount = 50n;
     const faucetK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const invite = buildInviteTx(
-      DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version,
+      DEVNET_FAUCET, karmaBoxRefs(faucetK), alice, bondAmount, faucetK.height, version,
     );
     await postInvite(miner, invite.json);
     await confirm(
@@ -120,7 +111,7 @@ describe('relay-chain', () => {
     expect(alicePending1.boxes.length).toBe(1);
 
     const thread1 = buildThreadTx(
-      alice, karmaBoxes(alicePending1), 'first', alicePending1.height, version,
+      alice, karmaBoxRefs(alicePending1), 'first', alicePending1.height, version,
     );
     const thread1Res = await postPost(peer, thread1.json, thread1.content);
 
@@ -134,7 +125,7 @@ describe('relay-chain', () => {
     expect(alicePending2.boxes[0]!.boxId).toBe(thread1.outputs[0]!.boxId);
 
     const thread2 = buildThreadTx(
-      alice, karmaBoxes(alicePending2), 'second', alicePending2.height, version,
+      alice, karmaBoxRefs(alicePending2), 'second', alicePending2.height, version,
     );
     const thread2Res = await postPost(peer, thread2.json, thread2.content);
 

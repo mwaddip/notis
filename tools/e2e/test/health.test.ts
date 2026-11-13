@@ -4,6 +4,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -13,7 +14,6 @@ import {
   getBlockCurrent,
   adminGet,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 6;
 
@@ -41,15 +41,6 @@ const COUNTER_KEYS = [
   'relayed_txs_input_missing_total',
 ] as const;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 const CAUGHT_UP_WINDOW_MS = 5_000;
 
@@ -160,7 +151,7 @@ describe('health', () => {
     const faucetKarma = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      karmaBoxes(faucetKarma),
+      karmaBoxRefs(faucetKarma),
       alice,
       bondAmount,
       faucetKarma.height,
@@ -178,7 +169,7 @@ describe('health', () => {
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(
       alice,
-      karmaBoxes(aliceK),
+      karmaBoxRefs(aliceK),
       'health check post',
       aliceK.height,
       version,

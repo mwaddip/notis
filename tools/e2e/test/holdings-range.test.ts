@@ -6,6 +6,7 @@ import { DEVNET_BACKER_A, DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildUnstakeTx } from '../src/tx/unstake.js';
 import { buildCreditTransferTx } from '../src/tx/credit-transfer.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   getBacker,
   getBlockCurrent,
@@ -119,7 +120,7 @@ describe('holdings-range', () => {
     const faucetKarma = await getKarma(node1, DEVNET_FAUCET.publicKeyHex);
     const invite = buildInviteTx(
       DEVNET_FAUCET,
-      toBoxRefs(faucetKarma.boxes),
+      karmaBoxRefs(faucetKarma),
       member,
       bondAmount,
       faucetKarma.height,

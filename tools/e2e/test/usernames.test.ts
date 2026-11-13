@@ -6,6 +6,7 @@ import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx } from '../src/tx/post.js';
 import { buildClaimTx } from '../src/tx/claim.js';
 import { buildBurnTx } from '../src/tx/burn.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -23,19 +24,9 @@ import {
   isPost,
 } from '../src/http.js';
 import { USERNAME_BURN_PRICE } from '@dagsocial/types';
-import type { BoxRef } from '../src/tx/render.js';
 
 const FILE_INDEX = 19;
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 describe('usernames', () => {
   let mesh: Mesh;
@@ -78,7 +69,7 @@ describe('usernames', () => {
     const bondAmount = 50n;
 
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), A, bondAmount, faucetK.height, version);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK), A, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
     const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], B, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
@@ -94,7 +85,7 @@ describe('usernames', () => {
 
     // ---- A claims Alice_01 on node 1 ----
     const aK = (await getKarma(miner, A.publicKeyHex))!;
-    const claim1 = buildClaimTx(A, karmaBoxes(aK), 'Alice_01', aK.height, version);
+    const claim1 = buildClaimTx(A, karmaBoxRefs(aK), 'Alice_01', aK.height, version);
     await postClaim(miner, claim1.json);
 
     await confirm(
@@ -155,7 +146,7 @@ describe('usernames', () => {
 
     // ---- case-insensitive collision: B claims ALICE_01 → 400 ----
     const bK = (await getKarma(miner, B.publicKeyHex))!;
-    const collisionTx = buildClaimTx(B, karmaBoxes(bK), 'ALICE_01', bK.height, version);
+    const collisionTx = buildClaimTx(B, karmaBoxRefs(bK), 'ALICE_01', bK.height, version);
     try {
       await postClaim(miner, collisionTx.json);
       expect.unreachable('should have thrown');
@@ -166,7 +157,7 @@ describe('usernames', () => {
 
     // ---- lowercase collision too ----
     const bK2 = (await getKarma(miner, B.publicKeyHex))!;
-    const collisionTx2 = buildClaimTx(B, karmaBoxes(bK2), 'alice_01', bK2.height, version);
+    const collisionTx2 = buildClaimTx(B, karmaBoxRefs(bK2), 'alice_01', bK2.height, version);
     try {
       await postClaim(miner, collisionTx2.json);
       expect.unreachable('should have thrown');
@@ -177,7 +168,7 @@ describe('usernames', () => {
 
     // ---- one per identity: A claims another name → 400 ----
     const aK2 = (await getKarma(miner, A.publicKeyHex))!;
-    const secondClaim = buildClaimTx(A, karmaBoxes(aK2), 'AnotherName', aK2.height, version);
+    const secondClaim = buildClaimTx(A, karmaBoxRefs(aK2), 'AnotherName', aK2.height, version);
     try {
       await postClaim(miner, secondClaim.json);
       expect.unreachable('should have thrown');
@@ -189,11 +180,11 @@ describe('usernames', () => {
     // ---- authorName rides the post row ----
     // NODE_INTERFACE → Usernames
     const aK3 = (await getKarma(miner, A.publicKeyHex))!;
-    const postA = buildThreadTx(A, karmaBoxes(aK3), 'alice post', aK3.height, version);
+    const postA = buildThreadTx(A, karmaBoxRefs(aK3), 'alice post', aK3.height, version);
     const postARes = await postPost(miner, postA.json, postA.content);
 
     const bK3 = (await getKarma(miner, B.publicKeyHex))!;
-    const postB = buildThreadTx(B, karmaBoxes(bK3), 'bob post', bK3.height, version);
+    const postB = buildThreadTx(B, karmaBoxRefs(bK3), 'bob post', bK3.height, version);
     const postBRes = await postPost(miner, postB.json, postB.content);
 
     await confirm(
@@ -228,7 +219,7 @@ describe('usernames', () => {
     const usernameEntry = await getUsername(miner, 'alice_01');
     expect(usernameEntry).not.toBeNull();
 
-    const burnTx = buildBurnTx(A, karmaBoxes(aK4), usernameEntry!.boxId, aK4.height, version);
+    const burnTx = buildBurnTx(A, karmaBoxRefs(aK4), usernameEntry!.boxId, aK4.height, version);
     await postBurn(miner, 'alice_01', burnTx.json);
 
     await confirm(
@@ -258,7 +249,7 @@ describe('usernames', () => {
     // ---- the restored claim: B claims alice_01 ----
     // ARCHITECTURE → Usernames
     const bK4 = (await getKarma(miner, B.publicKeyHex))!;
-    const bClaim = buildClaimTx(B, karmaBoxes(bK4), 'alice_01', bK4.height, version);
+    const bClaim = buildClaimTx(B, karmaBoxRefs(bK4), 'alice_01', bK4.height, version);
     await postClaim(miner, bClaim.json);
 
     await confirm(
@@ -274,7 +265,7 @@ describe('usernames', () => {
 
     // ---- A's free claim is restored by the burn: A claims Alice_02 ----
     const aK5 = (await getKarma(miner, A.publicKeyHex))!;
-    const aClaim2 = buildClaimTx(A, karmaBoxes(aK5), 'Alice_02', aK5.height, version);
+    const aClaim2 = buildClaimTx(A, karmaBoxRefs(aK5), 'Alice_02', aK5.height, version);
     await postClaim(miner, aClaim2.json);
 
     await confirm(
@@ -292,7 +283,7 @@ describe('usernames', () => {
     const C = fresh();
     const D = fresh();
     const faucetK2 = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv3 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK2), C, bondAmount, faucetK2.height, version);
+    const inv3 = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK2), C, bondAmount, faucetK2.height, version);
     await postInvite(miner, inv3.json);
     const inv4 = buildInviteTx(DEVNET_FAUCET, [inv3.outputs[0]!], D, bondAmount, faucetK2.height, version);
     await postInvite(miner, inv4.json);
@@ -304,11 +295,11 @@ describe('usernames', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const cK = (await getKarma(miner, C.publicKeyHex))!;
-    const pendingClaim = buildClaimTx(C, karmaBoxes(cK), 'PendingName', cK.height, version);
+    const pendingClaim = buildClaimTx(C, karmaBoxRefs(cK), 'PendingName', cK.height, version);
     await postClaim(miner, pendingClaim.json);
 
     const dK = (await getKarma(miner, D.publicKeyHex))!;
-    const pendingDup = buildClaimTx(D, karmaBoxes(dK), 'pendingname', dK.height, version);
+    const pendingDup = buildClaimTx(D, karmaBoxRefs(dK), 'pendingname', dK.height, version);
     try {
       await postClaim(miner, pendingDup.json);
       expect.unreachable('should have thrown');

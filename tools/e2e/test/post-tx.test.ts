@@ -9,6 +9,7 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
+import { karmaBoxRefs } from '../src/tx/karma.js';
 import {
   postInvite,
   postPost,
@@ -21,7 +22,6 @@ import {
   getBlockCurrent,
   NodeError,
 } from '../src/http.js';
-import type { BoxRef } from '../src/tx/render.js';
 import type { NodeProcess } from '../src/node-process.js';
 
 const FILE_INDEX = 21;
@@ -35,15 +35,6 @@ const TOOL_ENTRY = resolve(
   'index.js',
 );
 
-function karmaBoxes(
-  karma: { boxes: { boxId: string; value: string; income?: true }[] },
-): BoxRef[] {
-  return karma.boxes.map((b) =>
-    b.income === true
-      ? { boxId: b.boxId, value: BigInt(b.value), income: true }
-      : { boxId: b.boxId, value: BigInt(b.value) },
-  );
-}
 
 // NODE_INTERFACE → Posts → "The creating transaction rides a post row" — the
 // routes answer the row's bytes; the test reads them without the typed getters,
@@ -215,7 +206,7 @@ describe('post-tx', () => {
     const version = (await getStatus(nodeA)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(nodeA, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxRefs(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(nodeA, inv.json);
     await confirm(
       async () => await hasKarma(nodeA, alice.publicKeyHex),
@@ -224,7 +215,7 @@ describe('post-tx', () => {
 
     // ---- alice submits a post to A (no mining — stays pending) ----
     const aliceK = (await getKarma(nodeA, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'post-tx subject', aliceK.height, version);
+    const thread = buildThreadTx(alice, karmaBoxRefs(aliceK), 'post-tx subject', aliceK.height, version);
     const threadRes = await postPost(nodeA, thread.json, thread.content);
     expect(threadRes.status).toBe('pending');
     expect(threadRes.txId).toBe(thread.txId);
@@ -448,7 +439,7 @@ describe('post-tx', () => {
     const aliceKReply = (await getKarma(nodeA, alice.publicKeyHex))!;
     const reply = buildReplyTx(
       alice,
-      karmaBoxes(aliceKReply),
+      karmaBoxRefs(aliceKReply),
       'post-tx reply',
       threadRes.postId,
       alice.publicKeyHex,
