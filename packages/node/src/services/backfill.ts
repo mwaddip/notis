@@ -236,8 +236,8 @@ async function askArrivedReader(peerId: string): Promise<void> {
 
 // The puller's one-at-a-time serializer: at most one pass or arrival ask
 // runs at a time (NODE_INTERFACE → "A serving reader is asked for what has
-// been due" → "never beside a pass, a pass never beside it"). Passes drain
-// first so an arrival registered during a pass waits for it.
+// been due"). Passes drain first so an arrival registered during a pass
+// waits for it.
 async function runLoop(): Promise<void> {
   if (running) return;
   running = true;
