@@ -65,9 +65,8 @@ describe('backfill driver', () => {
         }
       },
       getConnectedPeers: () => connectedPeers,
-      // A default of `[]` leaves the existing cases as they were — the puller
-      // asks node peers alone where no reader serves
-      // (NODE_INTERFACE → "A serving reader is asked for what has been due").
+      // A default of `[]`: the puller asks node peers alone where no reader
+      // serves (NODE_INTERFACE → "A serving reader is asked for what has been due").
       getServingReaders: () => servingReaders,
       setPostBody: (id: string, content: string) => {
         setPostBodyCalls.push({ id, content });
