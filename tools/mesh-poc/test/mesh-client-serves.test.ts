@@ -159,7 +159,7 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
   const POST_TEXT = 'hello from the serving reader';
   const POST_HASH = computeContentHash(POST_TEXT);
 
-  it.fails('a serving client is listed and answers the node\'s request', async () => {
+  it('a serving client is listed and answers the node\'s request', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'serve-ok-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
@@ -222,7 +222,7 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     expect(answers).toEqual([]);
   }, 90_000);
 
-  it.fails('setServing(true) on a running client is heard after the redial', async () => {
+  it('setServing(true) on a running client is heard after the redial', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'serve-toggle-on-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
@@ -264,7 +264,7 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     expect(answers).toEqual([{ id: POST_ID, content: POST_TEXT }]);
   }, 120_000);
 
-  it.fails('setServing(false) stops the serving after the redial', async () => {
+  it('setServing(false) stops the serving after the redial', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'serve-toggle-off-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
@@ -339,7 +339,7 @@ describe('mesh-client — serving posts\' text to the nodes it reads', () => {
     expect(client.libp2p.getProtocols()).not.toContain(SYNC_PROTOCOL);
   }, 120_000);
 
-  it.fails('a connection whose handshake declared no chain service is not answered', async () => {
+  it('a connection whose handshake declared no chain service is not answered', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'serve-no-chain-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
