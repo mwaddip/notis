@@ -861,6 +861,7 @@ transaction carries or the listing ends. A box is spendable where it carries no 
 transaction to `POST /credits/transfer`: as inputs, the spendable boxes in the listing's order, as many as an
 encoding within `MAX_TX_BYTES` carries — a transaction **full** where that bound, not the listing's end, stopped it;
 one credit output to the key, the inputs' sum, created at the tip; no fee output; the era `/status` reports; one
-signature, the key's, over the transaction id. With fewer it sends nothing. On the pending view a box a pooled
-transaction spends is never offered again, and a pooled consolidation's output is spendable as any box, so checks
-chain without a record of their own.
+signature, the key's, over the transaction id. With fewer it sends nothing. A consolidation the node answers
+`pending` logs one line naming its id and its input count. On the pending view a box a pooled transaction spends is
+never offered again, and a pooled consolidation's output is spendable as any box, so checks chain without a record of
+their own.
