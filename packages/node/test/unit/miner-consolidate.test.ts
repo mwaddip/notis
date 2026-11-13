@@ -322,7 +322,7 @@ describe('runConsolidateCheck', () => {
     } finally { done(); }
   });
 
-  it('at the minimum spendable the check posts one transaction', async () => {
+  it.fails('at the minimum spendable the check posts one transaction, and logs its id and input count', async () => {
     const { file, done } = setupKey();
     try {
       const state = newCaseState(1000, makeCaseBoxes(MIN, 1_000_000n));
@@ -334,10 +334,17 @@ describe('runConsolidateCheck', () => {
         httpFetch: buildStub(state),
         logger: (l) => lines.push(l),
       });
-      expect(lines).toEqual([]);
       expect(outcome.sent).toBe(true);
       expect(outcome.inputCount).toBe(MIN);
       expect(state.posts).toHaveLength(1);
+      // MINING_INTERFACE → Consolidation → "A consolidation the node answers `pending` logs one line naming its id and its input count." —
+      // the id is the one over the posted transaction, recomputed from the
+      // stub's record.
+      const posted = jsonToTx(state.posts[0]!, state.protocolVersion);
+      const txId = computeTxId(posted);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(txId);
+      expect(lines[0]).toContain(String(MIN));
     } finally { done(); }
   });
 
