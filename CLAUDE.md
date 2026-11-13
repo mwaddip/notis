@@ -78,9 +78,9 @@ Ten packages, in dependency order:
   client's NiPoPoW check and followed by gossip, the reader's figures judged against everything the key holds — each
   ledger's range, read whole under the state root — every name it shows or sends to proven against that chain, each
   post it shows bound to the transaction that created it, the posts it has checked kept in a local cache named for the
-  chain, and every list read as ids with the node's word — drawn from that cache at once, the posts it lacks read by id
-  from the nodes in the client's order (`WEB_INTERFACE → The extension`); each release carries its two zips beside the
-  web zip.
+  chain — which, where the reader turns serving on, answers the nodes it reads when they ask for a post's text — and
+  every list read as ids with the node's word — drawn from that cache at once, the posts it lacks read by id from the
+  nodes in the client's order (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
 Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
