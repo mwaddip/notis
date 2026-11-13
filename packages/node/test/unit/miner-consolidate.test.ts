@@ -867,9 +867,9 @@ describe('createCadence', () => {
       const afterSecond = state.calls.length;
       expect(afterSecond).toBeGreaterThan(afterFirst);
 
-      // Restore /credits. A tick 14 above the second check is short of the
-      // next due (16 + 15 = 31), so the cadence must not check. A tick at
-      // 31 is at due, so it must check.
+      // The stub serves /credits again. A tick 14 above the second check
+      // is short of the next due (16 + 15 = 31), so the cadence must not
+      // check. A tick at 31 is at due, so it must check.
       state.listingMalformed = false;
       await cadence.tick(1 + 15 + 14);
       expect(state.calls.length).toBe(afterSecond);

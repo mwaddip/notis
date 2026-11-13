@@ -216,8 +216,8 @@ const bag: ChildBag = { children: [], dirs: [] };
 afterEach(() => {
   for (const c of bag.children) {
     if (c.pid !== undefined && c.exitCode === null && c.signalCode === null) {
-      // The brief forbids a kill by anything but the captured PID. The
-      // child's `kill()` sends the signal to its captured PID.
+      // A child is signalled by its own PID alone — `kill()` on the child
+      // sends to the PID `spawn` captured.
       try { c.kill('SIGKILL'); } catch { /* already gone */ }
     }
   }
