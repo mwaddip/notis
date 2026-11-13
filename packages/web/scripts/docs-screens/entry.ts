@@ -5,3 +5,4 @@ export { fresh } from '../../../../tools/e2e/src/identities.ts';
 export { buildThreadTx, buildReplyTx } from '../../../../tools/e2e/src/tx/post.ts';
 export { buildLikeTx } from '../../../../tools/e2e/src/tx/like.ts';
 export { buildClaimTx } from '../../../../tools/e2e/src/tx/claim.ts';
+export { karmaBoxRefs } from '../../../../tools/e2e/src/tx/karma.ts';

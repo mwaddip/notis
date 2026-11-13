@@ -166,7 +166,6 @@ async function askKarma(faucetBase, pubkey) {
   if (!res.ok) throw new Error(`faucet /karma → ${res.status} ${JSON.stringify(data)}`);
   return data;
 }
-const karmaBoxes = (k) => k.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
 // A seeding wait: 6 minutes covers two or three slow pacer cycles plus a
 // pending-queue drain. The browser waits have their own, tighter, bounds.
 async function waitFor(what, pred, timeoutMs = 360_000) {
@@ -228,7 +227,7 @@ const WALKER_POST = 'Hello, board. Trying this out for the first time.';
 const WALKER_REPLY = "I'll bring the lamp. Is 11 too late?";
 
 async function seedChain(builders) {
-  const { fresh, buildThreadTx, buildReplyTx, buildLikeTx, buildClaimTx } = builders;
+  const { fresh, buildThreadTx, buildReplyTx, buildLikeTx, buildClaimTx, karmaBoxRefs } = builders;
 
   async function grant(label) {
     const key = fresh();
@@ -256,7 +255,7 @@ async function seedChain(builders) {
   // Claim names, serially, so each claim's pending view reads clean.
   for (const [id, key] of [[SAMPLE.marit, marit], [SAMPLE.jonas, jonas], [SAMPLE.kofi, kofi]]) {
     const k = await nodeGet(NODE_A, `/karma/${key.publicKeyHex}?pending=1`);
-    const tx = buildClaimTx(key, karmaBoxes(k), id, k.height, version);
+    const tx = buildClaimTx(key, karmaBoxRefs(k), id, k.height, version);
     await nodePost(NODE_A, '/usernames', { tx: tx.json });
     await waitFor(`@${id} to land`, async () => {
       const res = await fetch(NODE_A + `/usernames?owner=${key.publicKeyHex}`);
@@ -269,7 +268,7 @@ async function seedChain(builders) {
   // as roots once the walker's own root is added on top (step 10).
   async function post(key, content) {
     const k = await nodeGet(NODE_A, `/karma/${key.publicKeyHex}?pending=1`);
-    const tx = buildThreadTx(key, karmaBoxes(k), content, k.height, version);
+    const tx = buildThreadTx(key, karmaBoxRefs(k), content, k.height, version);
     const res = await nodePost(NODE_A, '/posts', { tx: tx.json, content: tx.content });
     await waitFor(`post ${content.slice(0, 24).replace(/\n/g, ' ')}…`, async () => {
       const p = await nodeGet(NODE_A, `/posts/${res.postId}`).catch(() => null);
@@ -279,7 +278,7 @@ async function seedChain(builders) {
   }
   async function reply(key, content, parentId, parentAuthorHex) {
     const k = await nodeGet(NODE_A, `/karma/${key.publicKeyHex}?pending=1`);
-    const tx = buildReplyTx(key, karmaBoxes(k), content, parentId, parentAuthorHex, k.height, version);
+    const tx = buildReplyTx(key, karmaBoxRefs(k), content, parentId, parentAuthorHex, k.height, version);
     const res = await nodePost(NODE_A, '/posts', { tx: tx.json, content: tx.content });
     await waitFor(`reply to ${parentId.slice(0, 10)}…`, async () => {
       const p = await nodeGet(NODE_A, `/posts/${res.postId}`).catch(() => null);
@@ -293,7 +292,7 @@ async function seedChain(builders) {
     // return before the second block takes it.
     const before = (await nodeGet(NODE_A, `/posts/${postId}`).catch(() => null))?.likeCount ?? 0;
     const k = await nodeGet(NODE_A, `/karma/${key.publicKeyHex}?pending=1`);
-    const tx = buildLikeTx(key, karmaBoxes(k), postId, authorHex, k.height, version);
+    const tx = buildLikeTx(key, karmaBoxRefs(k), postId, authorHex, k.height, version);
     await nodePost(NODE_A, '/likes', { tx: tx.json });
     await waitFor(`like on ${postId.slice(0, 10)}…`, async () => {
       const p = await nodeGet(NODE_A, `/posts/${postId}`).catch(() => null);

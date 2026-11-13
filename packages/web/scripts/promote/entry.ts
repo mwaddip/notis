@@ -5,3 +5,4 @@ export { DEVNET_FAUCET, fresh } from '../../../../tools/e2e/src/identities.ts';
 export { buildVouchTx } from '../../../../tools/e2e/src/tx/vouch.ts';
 export { buildLikeTx } from '../../../../tools/e2e/src/tx/like.ts';
 export { buildThreadTx } from '../../../../tools/e2e/src/tx/post.ts';
+export { karmaBoxRefs } from '../../../../tools/e2e/src/tx/karma.ts';
