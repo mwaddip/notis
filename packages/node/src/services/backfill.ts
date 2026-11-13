@@ -188,9 +188,13 @@ async function runPass(height: number): Promise<void> {
   // NODE_INTERFACE → "A serving reader is asked for what has been due": each
   // pass, after the node-peer asks, sends the reader-eligible set to every
   // serving reader, one call each, in the order `getServingReaders()`
-  // answers. A call that rejects leaves the pass asking the next reader.
-  if (readerEligible.length > 0) {
-    const wanted = readerEligible.map((e) => ({ id: e.id, contentHash: e.contentHash }));
+  // answers; an entry a node peer stored in the same pass has left
+  // `pending`, so the reader arm asks only for what remains, and sends
+  // nothing when nothing does. A call that rejects leaves the pass asking
+  // the next reader.
+  const stillEligible = readerEligible.filter((e) => pending.has(e.id));
+  if (stillEligible.length > 0) {
+    const wanted = stillEligible.map((e) => ({ id: e.id, contentHash: e.contentHash }));
     for (const readerId of deps.getServingReaders()) {
       try {
         await requestAndStore(readerId, wanted);
