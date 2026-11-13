@@ -17,10 +17,13 @@ import {
   encodeTx,
   isHex64,
   MAX_TX_BYTES,
+  NETWORK_PROFILES,
   PAGE_LIMIT_MAX,
+  profileFor,
   txToJson,
   type CandidateOf,
   type CreditBox,
+  type NetworkType,
   type UtxoTransaction,
 } from '@dagsocial/types';
 import {
@@ -35,11 +38,30 @@ import {
   type HttpFetch,
 } from '@dagsocial/node-reads';
 
-// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
-// the policy-tier figure as `CONSTANTS → Producer policy` holds it. A
-// `(literal)` row there and nowhere in `@dagsocial/types` because a client's
-// cadence reads it, not a block's apply.
-const CONSOLIDATE_MIN_BOXES = 100;
+// MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
+// the two policy-tier literals the interval reads, as `CONSTANTS → Producer
+// policy` holds them. `(literal)` rows there, so a client's cadence can read
+// them without a profile constant moving.
+const CONSOLIDATE_MAX_INTERVAL = 100;
+const CONSOLIDATE_RENT_DIVISOR = 6;
+
+/**
+ * MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period."
+ * The interval the check reads under `networkType`.
+ */
+function intervalFor(networkType: NetworkType): number {
+  const profile = profileFor(networkType);
+  return Math.min(
+    CONSOLIDATE_MAX_INTERVAL,
+    Math.floor((profile.storageRentPeriodBlocks - profile.creditMinerRewardDelay) / CONSOLIDATE_RENT_DIVISOR),
+  );
+}
+
+/** MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
+ *  a `/status`'s `networkType` the types name. */
+function isNetworkType(v: unknown): v is NetworkType {
+  return typeof v === 'string' && Object.hasOwn(NETWORK_PROFILES, v);
+}
 
 // ------------------------------------------------------------------------
 // The key file
@@ -154,12 +176,15 @@ function extractSecretDer(obj: Record<string, unknown>, filePath: string): Buffe
 // ------------------------------------------------------------------------
 
 /** The value a check returns to the caller: whether it posted a transaction,
- *  how many inputs it carried, and whether the byte bound stopped it (full)
- *  rather than the listing's end. */
+ *  how many inputs it carried, whether the byte bound stopped it (full)
+ *  rather than the listing's end, and the interval the check read from
+ *  `/status`'s `networkType` — `null` when the read never reached that
+ *  point (`/status` refused or named a networkType the types do not name). */
 export interface ConsolidateOutcome {
   readonly sent: boolean;
   readonly inputCount: number;
   readonly full: boolean;
+  readonly interval: number | null;
 }
 
 /** One log line, the only thing a failing check writes — the seam the caller
@@ -183,12 +208,12 @@ interface Spendable {
  * leaves spendable". Reads `/status`, pages `GET /credits/:userId?pending=1`
  * until `one transaction's worth` of spendable boxes is held or the listing
  * ends, and posts one transaction to `POST /credits/transfer` with at least
- * `CONSOLIDATE_MIN_BOXES` spendable; with fewer it sends nothing. A read
+ * an interval's count spendable; with fewer it sends nothing. A read
  * refused or cut, a submit refused or a malformed listing each log one line
  * and the check returns an idle outcome without throwing.
  */
 export async function runConsolidateCheck(opts: CheckOptions): Promise<ConsolidateOutcome> {
-  const idle: ConsolidateOutcome = { sent: false, inputCount: 0, full: false };
+  const idle: ConsolidateOutcome = { sent: false, inputCount: 0, full: false, interval: null };
   try {
     return await runCheckInner(opts);
   } catch (err) {
@@ -198,12 +223,14 @@ export async function runConsolidateCheck(opts: CheckOptions): Promise<Consolida
 }
 
 async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
-  const idle: ConsolidateOutcome = { sent: false, inputCount: 0, full: false };
+  const idle: ConsolidateOutcome = { sent: false, inputCount: 0, full: false, interval: null };
   const { nodeUrl, key, httpFetch, logger } = opts;
   const base = nodeUrl.replace(/\/+$/, '');
 
-  // /status: the tip and the era, read before every check — a client signs
-  // the era the node reports (NODE_INTERFACE → Status).
+  // /status: the tip, the era and the network — a client signs the era the
+  // node reports (NODE_INTERFACE → Status), and the interval reads
+  // `networkType` through the types' `profileFor`
+  // (MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period.").
   const statusUrl = `${base}/status`;
   const statusRead = await fetchJson<unknown>(httpFetch, statusUrl, STATUS_READ_BYTES);
   if (!statusRead.ok) {
@@ -212,11 +239,13 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
   }
   const status = readStatus(statusRead.data);
   if (status === null) {
-    logger('consolidation status answer missing blockHeight or protocolVersion');
+    logger('consolidation status answer missing blockHeight, protocolVersion or a known networkType');
     return idle;
   }
   const tip = status.blockHeight;
   const protocolVersion = status.protocolVersion;
+  const interval = intervalFor(status.networkType);
+  const idleWithInterval: ConsolidateOutcome = { sent: false, inputCount: 0, full: false, interval };
 
   // Page the credit listing under `pending=1` until one transaction's worth
   // is held or the listing ends. Each page reads at most PAGE_LIMIT_MAX rows.
@@ -235,12 +264,12 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
     const read = await fetchJson<unknown>(httpFetch, pageUrl, LISTING_PAGE_READ_BYTES);
     if (!read.ok) {
       logger(`consolidation listing refused (${read.status}): ${read.body}`);
-      return idle;
+      return idleWithInterval;
     }
     const page = parsePage<Record<string, unknown>>(read.data, 'boxes', PAGE_LIMIT_MAX);
     if (!page.ok) {
       logger(`consolidation listing malformed: ${page.reason}`);
-      return idle;
+      return idleWithInterval;
     }
 
     for (const row of page.rows) {
@@ -249,15 +278,15 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
       const lock = row['lockedUntilBlock'];
       if (!isHex64(boxId)) {
         logger('consolidation listing row carried no 64-hex box id');
-        return idle;
+        return idleWithInterval;
       }
       if (!isBoxValue(value)) {
         logger('consolidation listing row carried a bad value');
-        return idle;
+        return idleWithInterval;
       }
       if (lock !== undefined && !isNonNegSafeInt(lock)) {
         logger('consolidation listing row carried a bad lockedUntilBlock');
-        return idle;
+        return idleWithInterval;
       }
       if (lock !== undefined && lock > tip + 1) continue;
       const next: Spendable = { boxId, value: BigInt(value) };
@@ -278,8 +307,8 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
     after = page.next;
   }
 
-  if (spendable.length < CONSOLIDATE_MIN_BOXES) {
-    return idle;
+  if (spendable.length < interval) {
+    return idleWithInterval;
   }
 
   // Build, sign and post.
@@ -313,21 +342,21 @@ async function runCheckInner(opts: CheckOptions): Promise<ConsolidateOutcome> {
   const postRead = await fetchJson<unknown>(postFetch, transferUrl, WRITE_ANSWER_READ_BYTES);
   if (!postRead.ok) {
     logger(`consolidation submit refused (${postRead.status}): ${postRead.body}`);
-    return idle;
+    return idleWithInterval;
   }
   if (!isRecord(postRead.data)) {
     logger('consolidation submit answer is not an object');
-    return idle;
+    return idleWithInterval;
   }
   if (postRead.data['status'] !== 'pending') {
     logger(`consolidation submit answer has status=${String(postRead.data['status'])}`);
-    return idle;
+    return idleWithInterval;
   }
   // MINING_INTERFACE → Consolidation → "A check spends what the pending view leaves spendable." — the paragraph's
   // tail: "A consolidation the node answers `pending` logs one line
   // naming its id and its input count."
   logger(`consolidation sent: ${txId} (${spendable.length} inputs)`);
-  return { sent: true, inputCount: spendable.length, full: fullAtByteBound };
+  return { sent: true, inputCount: spendable.length, full: fullAtByteBound, interval };
 }
 
 function buildListingUrl(base: string, pubKeyHex: string, after: string | null): string {
@@ -358,12 +387,16 @@ function measureTxLen(
   return encodeTx(candidate).length;
 }
 
-function readStatus(data: unknown): { blockHeight: number; protocolVersion: number } | null {
+function readStatus(
+  data: unknown,
+): { blockHeight: number; protocolVersion: number; networkType: NetworkType } | null {
   if (!isRecord(data)) return null;
   const height = data['blockHeight'];
   const version = data['protocolVersion'];
+  const networkType = data['networkType'];
   if (!isNonNegSafeInt(height) || !isNonNegSafeInt(version)) return null;
-  return { blockHeight: height, protocolVersion: version };
+  if (!isNetworkType(networkType)) return null;
+  return { blockHeight: height, protocolVersion: version, networkType };
 }
 
 function errMsg(err: unknown): string {
@@ -374,7 +407,7 @@ function errMsg(err: unknown): string {
 // The cadence
 // ------------------------------------------------------------------------
 
-/** MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
+/** MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window." —
  *  the stateful cadence. */
 export interface Cadence {
   tick(templateHeight: number): Promise<void>;
@@ -383,15 +416,17 @@ export interface Cadence {
 interface CadenceState {
   readonly lastCheckHeight: number;
   readonly lastCheckFull: boolean;
+  readonly lastCheckInterval: number;
 }
 
 /**
- * MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window."
+ * MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window."
  * The cadence runs a check at the first template height it is called with,
- * then at the first template height `CONSOLIDATE_MIN_BOXES` above the last
- * check's, or at the next template height where the last check was full. A
- * failing check moves the cadence forward the same as a passing one; a
- * subsequent due height checks again.
+ * then at the first template height the last check's interval above the
+ * last check's height, or at the next template height after a full check.
+ * A check whose `/status` read never reaches `networkType` leaves no
+ * interval; the next height checks again. A check that reads the interval
+ * and fails afterwards keeps the interval it read.
  */
 export function createCadence(opts: CheckOptions): Cadence {
   let state: CadenceState | null = null;
@@ -400,11 +435,22 @@ export function createCadence(opts: CheckOptions): Cadence {
       if (state !== null) {
         const due = state.lastCheckFull
           ? state.lastCheckHeight + 1
-          : state.lastCheckHeight + CONSOLIDATE_MIN_BOXES;
+          : state.lastCheckHeight + state.lastCheckInterval;
         if (templateHeight < due) return;
       }
       const outcome = await runConsolidateCheck(opts);
-      state = { lastCheckHeight: templateHeight, lastCheckFull: outcome.full };
+      if (outcome.interval !== null) {
+        state = {
+          lastCheckHeight: templateHeight,
+          lastCheckFull: outcome.full,
+          lastCheckInterval: outcome.interval,
+        };
+      }
+      // outcome.interval === null: no interval was read (a first check whose
+      // `/status` refused, or whose `networkType` the types do not name).
+      // State stays as it was — null on a first failure, or the last
+      // successful reading on a later one — so the next tick runs a check
+      // either at the next height (state null) or at the kept due.
     },
   };
 }

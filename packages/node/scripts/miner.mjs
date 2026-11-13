@@ -314,7 +314,7 @@ async function main() {
       const powTargetBits = header.powTargetBits;
       const preimageBuf = Buffer.from(powPreimage, 'hex');
 
-      // MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window."
+      // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window."
       // The tick runs at every template the script starts a search at,
       // between work windows; the cadence's own due height decides a
       // second tick at an unmoved height.

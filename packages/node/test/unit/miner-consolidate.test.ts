@@ -30,9 +30,9 @@ import {
   createCadence,
 } from '../../src/miner-consolidate.js';
 
-// MINING_INTERFACE → Consolidation → "A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window." —
-// the value in `CONSTANTS → Producer policy` (100), restated in the file
-// for assertions that keyword it rather than the module.
+// MINING_INTERFACE → Consolidation → "The interval follows the network's coinbase lock and rent period." —
+// testnet's interval reads 100 (the default `newCaseState` names below),
+// restated in the file for assertions that keyword it.
 const MIN = 100;
 
 /** A pair of ed25519 keys for the case, both as the file reader expects them. */
