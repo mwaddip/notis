@@ -332,7 +332,11 @@ Iterate deliberately.
 faucet root, which neither vouches nor likes. The membership actions are proven on a local devnet stack:
 `node packages/web/scripts/promote.mjs` (devnet-only; it refuses any other network) has the public
 devnet faucet key promote a throwaway to member the earned way, and the client is then driven against
-that stack. On testnet the reader is a resident: the marks are absent and the author window and the
+that stack. Both `promote.mjs` and `scripts/docs-screens/run.mjs` read every karma listing through e2e's
+`karmaBoxRefs`, which keeps an income box's mark, so an identity holding its own box and its income
+box spends through them (`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`;
+`NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as admission spends from it"`).
+On testnet the reader is a resident: the marks are absent and the author window and the
 invites row say why.
 
 **A withdrawal is exercisable on testnet once the deployed node carries `parentRefs` on the withdrawn view**
@@ -727,8 +731,7 @@ heights, and `/blocks/current` — ten requests with the wallet open. ⚠ **The 
 not run steps 11–12**: on a key already granted `$NOTIS` the faucet step is not on screen and step 11 times out.
 **With `--verified-names` as well (it needs `--s-key` beside what the figures block needs) the verified-names block**
 runs on a B of its own, a second identity **S** holding a name — S promoted as R is and its name claimed by
-`scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` (⚠ a second `promote.mjs` is refused
-once by the faucet, whose in-memory chain names a change `promote.mjs` spent outside it — run it again) — and the
+`scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` — and the
 five **name modes** on both tip relays (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`,
 every proof passed through verbatim so the corner stays green), each arm on a fresh page read under routed reads — the
 client takes whichever relay its need allows, and the lie is on both: **26** R claims a name through the `username` row — the
@@ -889,8 +892,7 @@ response's `close` while it is not ended.
 by id through the pending record `notis.open.<id>` written from the background's context — the page has no post-id
 hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses the pane's
 `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
-⚠ **A second `promote.mjs` on one stack is refused once** (`No karma box input found in transaction`) and passes on
-the next try; each run of the block needs a member that has not run steps 11–12.
+⚠ **Each run of the block needs a member that has not run steps 11–12.**
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: a press that reads a node a block behind the other must
 read *verified across 2 nodes*, never the alarm; at about three blocks a second the two reads see different heights,
@@ -922,8 +924,7 @@ hardens); at `MINER_PCT=1` windows yield nothing and a grant's wait runs out. �
 `setsid`, from a script** (`bash stack-up.sh`): under `nohup … & disown` a stopped miner stays in the launching shell's
 process group, and when that shell exits the kernel's SIGCONT to the orphaned group runs the miner unpaced until the
 pacer's next stop; in a shell with job control on, `setsid` forks and `$!` names the exited parent. ⚠ **`promote.mjs`
-under the pacer needs retries** — its waits lose to windows that yield nothing, and the faucet refuses once after a
-promote spent its boxes outside the service (`No karma box input found in transaction`); run it again after a pacer
+under the pacer needs retries** — its waits lose to windows that yield nothing; run it again after a pacer
 cycle.
 
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
