@@ -193,14 +193,17 @@ export function seedGenesisState(): void {
   // runs a `performOneOperation` per leaf against the module-global prover's
   // **in-memory** tree, and SQLite's rollback reaches `utxo_boxes`,
   // `identity_records`, `avl_tree_versions` and `avl_tree_nodes` — every row —
-  // and reaches none of that memory.
+  // and reaches none of that memory. A prover holding the grown tree over a
+  // store that holds no genesis is the one combination no later run detects:
+  // the flag is unset, so the next seed runs against a tree that is not empty.
   //
   // The pre-seed root and tree height are held here by reference and put back
   // on any throw with `restoreRoot`, which reads no row — the library never
   // mutates a node, so the held root is the whole tree the seed opened on
   // (NODE_INTERFACE → "A refused seed puts the prover back by reference";
-  // → AVL+ State Root). `reorg` and the apply funnel carry the same snapshot;
-  // this path is the third that mutates the prover outside a block.
+  // NODE_INTERFACE → AVL+ State Root). `reorg` and the apply funnel carry the
+  // same snapshot; this path is the third that mutates the prover outside a
+  // block.
   const saved = {
     root: handle.prover.prover.root,
     height: handle.prover.prover.height,
