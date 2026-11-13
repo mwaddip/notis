@@ -334,8 +334,8 @@ faucet root, which neither vouches nor likes. The membership actions are proven 
 devnet faucet key promote a throwaway to member the earned way, and the client is then driven against
 that stack. Both `promote.mjs` and `scripts/docs-screens/run.mjs` read every karma listing through e2e's
 `karmaBoxRefs`, which keeps an income box's mark, so an identity holding its own box and its income
-box spends through them (`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`;
-`NODE_INTERFACE → UTXO queries → "`pending=1` answers the pending view, as admission spends from it"`).
+box spends through them (`NODE_INTERFACE → UTXO queries`;
+`NODE_INTERFACE → Karma transition rules → "An identity holds at most two karma boxes"`).
 On testnet the reader is a resident: the marks are absent and the author window and the
 invites row say why.
 
