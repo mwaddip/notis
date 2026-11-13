@@ -5162,9 +5162,6 @@ any throw, puts them back with `restoreRoot`, as the apply funnel does (→ AVL+
 so the held root is still the tree as it stood before the seed — and nothing in it can throw in place of the seed's own
 error, which is the one the three-step exit below prints.
 
-> ⚠ **AHEAD OF CODE (2026-11-13).** `seedGenesisState`'s catch calls `prover.rollback` with the pre-seed digest, which
-> resolves the tree from SQLite; a rollback that throws there replaces the seed's error.
-
 **The backer table is validated before the root is compared, inside the seeding transaction.** Keys unique
 and ascending byte-wise, every `weight ≥ 1n`, their sum at most `backerSupply`, and `backerSupply > 0n` when
 a row exists — each refusal names the row and the rule, so a bad module is refused as itself and never as a
