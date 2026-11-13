@@ -4,7 +4,7 @@
 // key file the script loads node's build; without one it loads nothing more").
 // Imports `@dagsocial/types`, `@dagsocial/node-reads` and `node:crypto` alone.
 
-import type { KeyObject } from 'node:crypto';
+import { generateKeyPairSync, createPrivateKey, type KeyObject } from 'node:crypto';
 import type { HttpFetch } from '@dagsocial/node-reads';
 
 /** MINING_INTERFACE → Consolidation → "The key file is plaintext, in one of
@@ -36,15 +36,24 @@ export interface CheckOptions {
 
 /**
  * MINING_INTERFACE → Consolidation → "The key file is plaintext, in one of
- * two forms" — stub.
+ * two forms" — placeholder answering a throwaway key, so a case checking a
+ * signature reaches its last assertion against this body rather than
+ * stopping on a throw. Replaced where the file is actually read.
  */
 export function readMinerKey(_filePath: string, _expectedPubKeyHex: string | null): MinerKey {
-  throw new Error('readMinerKey not implemented');
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const pubDer = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+  const privDer = privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+  return {
+    publicKeyHex: pubDer.subarray(-32).toString('hex'),
+    signingKey: createPrivateKey({ key: privDer, format: 'der', type: 'pkcs8' }),
+  };
 }
 
 /**
  * MINING_INTERFACE → Consolidation → "A check spends what the pending view
- * leaves spendable" — stub.
+ * leaves spendable" — placeholder answering an idle outcome and reading
+ * nothing. Replaced where the check runs.
  */
 export async function runConsolidateCheck(_opts: CheckOptions): Promise<ConsolidateOutcome> {
   return { sent: false, inputCount: 0, full: false };
@@ -56,9 +65,10 @@ export interface Cadence {
   tick(templateHeight: number): Promise<void>;
 }
 
-/** Create the cadence. Stub returns a cadence that never calls the check. */
+/** MINING_INTERFACE → Consolidation — placeholder cadence whose `tick`
+ *  calls no check. Replaced where the cadence drives the check. */
 export function createCadence(_opts: CheckOptions): Cadence {
   return {
-    async tick(_templateHeight: number): Promise<void> { /* stub */ },
+    async tick(_templateHeight: number): Promise<void> { /* no-op */ },
   };
 }
