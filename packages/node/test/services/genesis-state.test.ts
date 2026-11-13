@@ -622,6 +622,41 @@ describe('assertGenesisRoot', () => {
       vi.resetModules();
     }
   });
+
+  it('the kept roots are emptied after a refused seed', async () => {
+    // NODE_INTERFACE → "A refused seed puts the prover back by reference"
+    // ("the kept roots are emptied"). The ring tracks committed state and a
+    // refused seed commits none, so the entry `createAvlProver` records for
+    // the empty tree it loaded is dropped under the catch. No store damage —
+    // the mocked root is enough to reach `assertGenesisRoot`'s refusal.
+    vi.resetModules();
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: {
+          ...actual.config,
+          profile: { ...actual.config.profile, genesisStateRoot: 'ab'.repeat(33) },
+        },
+      };
+    });
+    try {
+      const s = await importFresh();
+      s.initDb(':memory:');
+      s.prover.createAvlProver();
+
+      expect(s.prover.getAvlProver().recentRoots.get(0)).not.toBeNull();
+      expect(() => s.genesis.seedGenesisState()).toThrow();
+
+      expect(s.prover.getAvlProver().recentRoots.get(0)).toBeNull();
+      s.closeDb();
+    } finally {
+      vi.doUnmock('../../src/config.js');
+      vi.resetModules();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
