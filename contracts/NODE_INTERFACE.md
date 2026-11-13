@@ -5801,9 +5801,12 @@ faucet beside it — and nothing else, and holds no private data.
 the build's default mode; it ships no `faucet.key`, and its postinst names 0600 for the one the operator copies in.
 It ships no node key either: the node writes its own on first start, the one file it writes with a mode of its own
 (`NET_INTERFACE → The node key`).
-The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, carries `MINING_SECRET` and
-`MINER_PUBKEY` as `Environment=` lines for the operator to fill, and `gen-miner-key.mjs` writes the miner key with
-the process's default mode.
+The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, runs the `.deb`'s
+`/opt/dagsocial/packages/node/scripts/miner.mjs` and carries `NODE_URL`, `MINING_SECRET` and `MINER_KEY_PATH` as
+`Environment=` lines for the operator to fill, each a placeholder — the unit names no one's key.
+`gen-miner-key.mjs` writes the miner key with the process's default mode; the tarball's `run-miner.sh` and the
+Windows installer's `launch-miner.cmd` pass the file it writes as `MINER_KEY_PATH`, so their miners consolidate
+(`MINING_INTERFACE → Consolidation`).
 
 **The packages carry the node and its tools, never the client, the mesh suite or the mesh stage.**
 `scripts/package-excludes.txt`, the one exclude list the `.deb`, the tarball and the Windows installer share, leaves

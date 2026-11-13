@@ -785,15 +785,16 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 `packages/node/scripts/miner.mjs` — standalone Node.js process (the only miner
 script; its reference systemd unit is `packages/node/scripts/dagsocial-miner.service`):
 
-1. `GET /mining/template` (Bearer `MINING_SECRET`; `?miner=MINER_PUBKEY` when
-   set) → reads `powPreimage`, `header.powTargetBits`, `header.height`.
+1. `GET /mining/template` (Bearer `MINING_SECRET`; `?miner=` naming the payout key when one is set — the
+   key file's (→ Consolidation) or `MINER_PUBKEY`) → reads `powPreimage`, `header.powTargetBits`, `header.height`.
    **A 404 logs `No template available, waiting 5s...` and retries, with no give-up
    count** — that unboundedness is what lets the node withhold for as long as *The
    peer-readiness gate* requires without any miner-side change
 2. Loop: `nonce++`, `hash = blake2b512(hex2buf(powPreimage) || encodeLE64(nonce))`,
    test with its **own mirrored copy** of `meetsPowTarget` against an `orderingPowTarget` hoisted
-   out of the loop. The script stays standalone — `node:crypto` only, no build step, because
-   the machine that mines is not required to build the workspace — so agreement with
+   out of the loop. The loop stays standalone — `node:crypto` only, no build step, because
+   the machine that mines is not required to build the workspace (a key file loads the workspace for
+   consolidation alone, → Consolidation) — so agreement with
    `@dagsocial/validation` is enforced by a mirror test that extracts both declarations by
    name, not by an import
 3. **At each duty-cycle yield, re-read the template and abandon the search if `header.height` has
@@ -816,5 +817,50 @@ does not pace the interval between blocks.** Where a solve finishes inside one w
 rebuilds a template. **`MINER_PCT` is not a cadence control.**
 
 Config via env: `NODE_URL` (default `http://localhost:3000`), `MINING_SECRET`
-(required — the node refuses unauthenticated mining), `MINER_PUBKEY` (optional
-coinbase payout override), `MINER_PCT` (duty-cycle CPU throttle, default 25).
+(required — the node refuses unauthenticated mining), `MINER_KEY_PATH` (optional — the payout key's file; with it
+the script consolidates, → Consolidation), `MINER_PUBKEY` (optional coinbase payout override; beside
+`MINER_KEY_PATH` it must name the file's key), `MINER_PCT` (duty-cycle CPU throttle, default 25).
+
+### Consolidation
+
+> ⚠ **AHEAD OF CODE (2026-11-13).** This section, `MINER_KEY_PATH` and the key file in the Config line and item 1
+> above, and `NODE_INTERFACE → The packaged node`'s miner lines: `miner.mjs`, `dagsocial-miner.service`,
+> `scripts/build-tarball.sh` and `scripts/windows/launch-miner.cmd` carry none of it yet.
+
+**With a key file, the script consolidates its payout key's credit boxes.** Every block it mines pays one coinbase
+credit box to the payout key, locked for `creditMinerRewardDelay` blocks (→ Coinbase Application), so a key that mines
+holds a box a block, and a light client reads a key's credit boxes whole only up to `LEDGER_READ_MAX`
+(`CONSTANTS → Client reads`). A consolidation is an ordinary credit transfer from the key to itself; nothing in the
+protocol is the miner's.
+
+**The key file is plaintext, in one of two forms.** `MINER_KEY_PATH` names a file holding an Ed25519 key: the JSON
+`gen-miner-key.mjs` writes — `publicKey`, and `secretKeyHex`, the PKCS8 DER secret in hex — or the web client's clear
+key file — `pubKeyHex`, and `privKeyBase64`, the same DER in base64 (`WEB_INTERFACE → The identity module`). The
+payout key is the file's: `?miner=` names it. The script refuses to start, with one line naming the file, where the
+file does not read or parse as either form, is the web client's encrypted envelope — no process can ask its
+passphrase — or holds a secret that does not derive the public key it names; and where a `MINER_PUBKEY` set beside
+it names another key.
+
+**With a key file the script loads node's build; without one it loads nothing more.** It imports the consolidation
+`@dagsocial/node` builds beside its entry — `src/miner-consolidate.ts`, built to `dist/miner-consolidate.js`, over
+`@dagsocial/types` (the transaction, its id, its JSON) and `@dagsocial/node-reads` (the `/status` and listing reads)
+— from the install it runs in: the `.deb`'s `/opt/dagsocial`, the tarball's and the Windows installer's `app`, a
+built checkout. Where that file does not load, as beside a bare copy of the script or in a checkout not built, the
+script refuses to start, naming the file. Without `MINER_KEY_PATH` it imports `node:crypto` alone.
+
+**A check runs every `CONSOLIDATE_MIN_BOXES` heights, never inside a work window.** The first runs at the script's
+first template; each next one at the first template height `CONSOLIDATE_MIN_BOXES` (100) above the last check's, or
+at the next height where the last check sent a full transaction. A check runs between work windows, and one that
+fails — a read refused or cut, a submit refused — logs one line, and the script mines on.
+
+**A check spends what the pending view leaves spendable.** It reads `/status` — the tip and the era
+(`NODE_INTERFACE → Status`) — and pages its key's credit listing under `pending=1` (NODE_INTERFACE → UTXO queries →
+"`pending=1` answers the pending view, as admission spends from it") until it holds as many spendable boxes as one
+transaction carries or the listing ends. A box is spendable where it carries no `lockedUntilBlock`, or one at most
+`tip + 1` (`NODE_INTERFACE → Spend timing`). With at least `CONSOLIDATE_MIN_BOXES` spendable, the check sends one
+transaction to `POST /credits/transfer`: as inputs, the spendable boxes in the listing's order, as many as an
+encoding within `MAX_TX_BYTES` carries — a transaction **full** where that bound, not the listing's end, stopped it;
+one credit output to the key, the inputs' sum, created at the tip; no fee output; the era `/status` reports; one
+signature, the key's, over the transaction id. With fewer it sends nothing. On the pending view a box a pooled
+transaction spends is never offered again, and a pooled consolidation's output is spendable as any box, so checks
+chain without a record of their own.

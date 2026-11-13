@@ -351,11 +351,12 @@ under → Size caps.
 
 ## Producer policy
 
-`packages/node` — a producer's choices on legs consensus does not check. Literals in the creator, so
-the drift test's converse does not reach them and the rows are marked.
+`packages/node` — a producer's choices on legs consensus does not check, its miner script's among them. Literals in
+the creator and the script, so the drift test's converse does not reach them and the rows are marked.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
+| `CONSOLIDATE_MIN_BOXES` (literal) | `100` | spendable credit boxes a miner's check needs before it consolidates, and the heights between its checks | policy | a key that mines every block gains one box a height, so a check every 100 heights finds about 100 unlocked since the last; decided 2026-11-13 with the consolidation (the user ruled that the miner consolidates). `node/scripts/miner.mjs` | DECIDED | `MINING_INTERFACE → Consolidation` |
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
 | `PACKING_COST_MARGIN` (literal) | `5` | percent of the budget the fill leaves unused against estimates that miss | policy | none stated; chosen so the speculation of the fill, and of the refill under the budget, typically fits. `node/src/services/block-creator.ts` | CHOSEN | `MINING_INTERFACE → Template and submit → "Packing to the budget"` |
 
