@@ -68,7 +68,7 @@ describe('mesh-client — serving: `SYNC_PROTOCOL` is registered while serving',
     }
   });
 
-  it.fails('serving on registers the sync handler; off or absent does not', async () => {
+  it('serving on registers the sync handler; off or absent does not', async () => {
     // Serving absent: libp2p does not list `SYNC_PROTOCOL`.
     const absent = await startMeshClient({
       firstContact: [],
@@ -108,7 +108,7 @@ describe('mesh-client — serving: `SYNC_PROTOCOL` is registered while serving',
     expect(on.libp2p.getProtocols()).toContain(SYNC_PROTOCOL);
   }, 60_000);
 
-  it.fails('setServing changes the handler, and does nothing without a way to serve', async () => {
+  it('setServing changes the handler, and does nothing without a way to serve', async () => {
     const started = await startMeshClient({
       firstContact: [],
       network: 'devnet',
