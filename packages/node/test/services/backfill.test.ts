@@ -407,14 +407,15 @@ describe('backfill driver', () => {
     // Hold the second pass's node call open.
     gate = new Promise((resolve) => { gateRelease = resolve; });
     const pass2 = onBlockApplied(11);
-    for (let i = 0; i < 8; i++) await Promise.resolve();
-    expect(requestLog).toHaveLength(2);
-    expect(openCount).toBe(1);
+    // Wait until the pass's node call is actually in flight.
+    await vi.waitFor(() => {
+      expect(openCount).toBe(1);
+      expect(requestLog).toHaveLength(2);
+    });
 
-    // readerArrived while a pass is open must wait.
+    // readerArrived while a pass is open joins the queue; the pass drains
+    // first. The claim rests on the final order and on nothing overlapping.
     const arrival = readerArrived('reader-a');
-    for (let i = 0; i < 8; i++) await Promise.resolve();
-    expect(requestLog.filter((c) => c.peerId === 'reader-a')).toHaveLength(0);
 
     gateRelease();
     await pass2;
@@ -422,6 +423,9 @@ describe('backfill driver', () => {
 
     expect(maxOpen).toBe(1);
     expect(requestLog.filter((c) => c.peerId === 'reader-a')).toHaveLength(2);
+    // The pass's reader ask comes before the arrival's: nothing from the
+    // arrival ran while the pass was in flight.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a', 'peer-a', 'reader-a', 'reader-a']);
   });
 
   // NODE_INTERFACE → "A serving reader is asked for what has been due":
