@@ -64,6 +64,7 @@ import {
   readerLibp2pOptions,
   readerHandshake,
   servesChain,
+  type PostTextProvider,
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
@@ -510,6 +511,16 @@ export interface MeshClient {
    */
   toRemember(): MemorySnapshot;
   /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the nodes
+   * it reads" — flip the client's serving setting. With no `serving`
+   * option: resolves and does nothing. An unchanged value does nothing.
+   * A change registers or unregisters `postTextsHandler` on
+   * `SYNC_PROTOCOL`, closes every connection the client holds and dials
+   * again, so each new handshake declares the new set. Calls are
+   * serialised; the last of several quick calls decides.
+   */
+  setServing(on: boolean): Promise<void>;
+  /**
    * Test seam: the libp2p node under the client. The suite dispatches a
    * `peer:discovery` event here so the "a discovered node is added before
    * any event names it" case can hold its guard without a three-node DHT
@@ -587,6 +598,15 @@ export interface StartMeshClientOptions {
    * caller's and propagates.
    */
   onChecked?: (s: MemorySnapshot) => void;
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the nodes
+   * it reads" — the setting the client starts under, and the way it answers
+   * `ModifierRequest`. Absent: the client never serves and never declares
+   * `ModifierRequest`. Present with `on: true`: the handshake declares
+   * `SERVING_READER_CAPABILITIES` and `postTextsHandler` is registered on
+   * `SYNC_PROTOCOL`. The setting is moved later through `setServing`.
+   */
+  serving?: { on: boolean; texts: PostTextProvider };
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -1586,6 +1606,15 @@ class MeshClientImpl implements MeshClient {
    */
   configuredAddrs(notisId: string): readonly string[] {
     return this.nodeList.configuredAddrs(notisId);
+  }
+
+  /**
+   * MESH_INTERFACE → Block gossip → "A client that serves answers the nodes
+   * it reads" — flip the client's serving setting.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async setServing(_on: boolean): Promise<void> {
+    return;
   }
 
   async stop(): Promise<void> {

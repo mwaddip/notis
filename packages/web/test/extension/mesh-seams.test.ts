@@ -65,6 +65,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     configuredAddrs: () => [],
     iceConfiguration: () => ({ iceServers: [] }),
     toRemember: () => ({ proof: null, nodes: [], dropped: [], answered: [], replace: false }),
+    setServing: () => Promise.resolve(),
     libp2p: {} as unknown as MeshClient['libp2p'],
   };
 }
