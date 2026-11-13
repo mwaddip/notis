@@ -1044,9 +1044,9 @@ class MeshClientImpl implements MeshClient {
     // topic's mesh.
     this.startGossip();
     // MESH_INTERFACE → Block gossip → "A client that serves answers the
-    // nodes it reads" — with `serving.on` true, the handler is
-    // registered before the first check so the first handshake's reader
-    // peer on the other side can open a stream right away.
+    // nodes it reads" — the handler stands before the first connection
+    // opens, so a node can ask on the first connection whose handshake
+    // has passed.
     if (this.servingOn && this.servingTexts !== null) {
       await this.libp2p.handle(SYNC_PROTOCOL, this.makeServingHandler(this.servingTexts));
     }
@@ -1695,6 +1695,15 @@ class MeshClientImpl implements MeshClient {
     } else {
       await this.libp2p.unhandle(SYNC_PROTOCOL);
     }
+    // A check in flight is reading over the connections this close is
+    // about to tear down, and `triggerImmediateCheck` is a no-op while
+    // one runs — so the next check is `CHECK_INTERVAL_MS` away. Wait
+    // for the in-flight check to end before the close, and the
+    // trigger below schedules at 0 as the rule asks.
+    if (this.checkInProgress !== null) {
+      try { await this.checkInProgress; } catch { /* already surfaced to its caller */ }
+    }
+    if (this.stopped) return;
     // Close every connection the client holds; a new one's handshake
     // declares the current `servingOn`'s set.
     const conns = this.libp2p.getConnections();
