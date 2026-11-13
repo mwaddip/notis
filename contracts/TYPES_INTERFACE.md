@@ -3282,8 +3282,8 @@ this does not.
 `MAX_BLOCK_BODY_BYTES` is 1.05 TB/yr of archival growth at 60 s blocks, or about 2,026 max-size post
 transactions per block. **A transaction costs `32 + vlqU(len) + len` in the body** — the fixed-width
 `utxoTxIds` entry plus the `lp` prefix `arr(utxoTxs, lp)` writes before each one, so 34 bytes of
-framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits roughly 148 credit inputs at the current encoding and
-288 under the positional one — far past a karma spend, which names two boxes at most
+framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits 307 credit inputs to one credit output under one
+signature (9 970–9 972 bytes, by the output value's width) — far past a karma spend, which names two boxes at most
 (`NODE_INTERFACE → Karma transition rules`). Its job is to keep
 a transaction from being valid, poolable and unminable at once: without it, one larger than the block
 budget occupies a mempool slot that no block can ever drain.

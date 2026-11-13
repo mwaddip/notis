@@ -320,10 +320,15 @@ NODE_URL=https://your-node.example.com/testnet/api MINER_PCT=25 MINING_SECRET=<s
 
 `MINER_PCT` throttles CPU within a solve (0–100, default 25); it does not
 pace the interval between blocks, since a solve that finishes inside one work
-window never reaches the sleep. `MINER_PUBKEY` names the key the coinbase pays;
-unset, the reward goes to the node's own validator key. The miner is a single zero-dependency
-script — no repo checkout needed, just Node.js ≥ 24. A reference systemd unit
-is at `packages/node/scripts/dagsocial-miner.service`.
+window never reaches the sleep.
+
+`MINER_KEY_PATH` names the payout key's file (`node packages/node/scripts/gen-miner-key.mjs <path>` writes one),
+and with it the miner keeps that key's coinbase boxes consolidated: every 100 blocks on testnet (15 on devnet) it
+sends the unlocked ones back to the key as one transaction, so the key holds a few boxes rather than one per block
+mined. With a key file the miner loads the consolidation from the node's build, so it runs from a built checkout or
+an installed package. Without one, `MINER_PUBKEY` names the key the coinbase pays — unset, the node's own
+validator key — and the miner is a single zero-dependency script: no repo checkout needed, just Node.js ≥ 24. A
+reference systemd unit is at `packages/node/scripts/dagsocial-miner.service`.
 
 It re-reads the template as it works and abandons a solve once the tip moves,
 so a lost race costs one work window rather than a whole block.

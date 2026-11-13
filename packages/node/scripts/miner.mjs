@@ -14,7 +14,12 @@ const NODE_URL = (process.env.NODE_URL ?? 'http://localhost:3000').replace(/\/+$
 const parsedMinerPct = parseInt(process.env.MINER_PCT ?? '25', 10);
 const MINER_PCT = Number.isFinite(parsedMinerPct) ? Math.max(0, Math.min(100, parsedMinerPct)) : 25;
 const MINING_SECRET = process.env.MINING_SECRET ?? '';
-const MINER_PUBKEY = (process.env.MINER_PUBKEY ?? '').trim();
+const MINER_PUBKEY_ENV = (process.env.MINER_PUBKEY ?? '').trim();
+const MINER_KEY_PATH = (process.env.MINER_KEY_PATH ?? '').trim();
+// MINING_INTERFACE → Consolidation → "The key file is plaintext, in one of
+// two forms." — the `miner` query parameter reads this; the key file, when
+// one is set, overrides `MINER_PUBKEY_ENV` to the file's public key.
+let activeMinerPubKey = MINER_PUBKEY_ENV;
 const DUTY_WINDOW_MS = 1000;
 // A node call that has not answered in this many ms is treated as unreachable,
 // so a hung node cannot stall the mining loop.
@@ -172,8 +177,8 @@ const headers = {
 };
 
 async function fetchTemplate() {
-  const url = MINER_PUBKEY
-    ? `${NODE_URL}/mining/template?miner=${MINER_PUBKEY}`
+  const url = activeMinerPubKey
+    ? `${NODE_URL}/mining/template?miner=${activeMinerPubKey}`
     : `${NODE_URL}/mining/template`;
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (res.status === 401) {
@@ -253,6 +258,46 @@ const log = (msg) => console.log(`[${new Date().toISOString()}] ${msg}`);
 async function main() {
   log(`Miner starting — node=${NODE_URL} cpu=${MINER_PCT}%`);
 
+  // MINING_INTERFACE → Consolidation → "With a key file the script loads
+  // node's build; without one it loads nothing more." The dynamic import
+  // resolves against the script's own install — `/opt/dagsocial/packages/node/dist/`
+  // in the `.deb` and `app/packages/node/dist/` in the tarball and the
+  // Windows bundle — so a bare copy of the script with `MINER_KEY_PATH` set
+  // refuses to start with one line naming the file.
+  let cadence = null;
+  if (MINER_KEY_PATH) {
+    const consolidateUrl = new URL('../dist/miner-consolidate.js', import.meta.url);
+    let mod;
+    try {
+      mod = await import(consolidateUrl.href);
+    } catch (err) {
+      log(`Miner refuses to start: cannot load ${consolidateUrl.pathname} — ${err.message}`);
+      process.exit(1);
+    }
+    let key;
+    try {
+      // MINING_INTERFACE → Consolidation → "The key file is plaintext, in
+      // one of two forms." The reader's refusal carries the file's path.
+      key = mod.readMinerKey(MINER_KEY_PATH, MINER_PUBKEY_ENV || null);
+    } catch (err) {
+      log(err.message);
+      process.exit(1);
+    }
+    activeMinerPubKey = key.publicKeyHex;
+    cadence = mod.createCadence({
+      nodeUrl: NODE_URL,
+      key,
+      // `node-reads`' `fetchJson` wraps every read with its own
+      // `AbortSignal.timeout(REQUEST_TIMEOUT_MS)` (10 000 ms) and overrides
+      // any signal a caller passes; the script's own `FETCH_TIMEOUT_MS`
+      // (10 000 ms) bounds its direct calls. Passing a bare `fetch` lets
+      // `node-reads`' deadline bound every consolidation read, which is the
+      // one the module reads against.
+      httpFetch: fetch,
+      logger: log,
+    });
+  }
+
   let backoff = 5000;
 
   while (true) {
@@ -268,6 +313,14 @@ async function main() {
       const { powPreimage, header } = tpl;
       const powTargetBits = header.powTargetBits;
       const preimageBuf = Buffer.from(powPreimage, 'hex');
+
+      // MINING_INTERFACE → Consolidation → "A check runs once an interval, never inside a work window."
+      // The tick runs at every template the script starts a search at,
+      // between work windows; the cadence's own due height decides a
+      // second tick at an unmoved height.
+      if (cadence) {
+        await cadence.tick(header.height);
+      }
 
       log(`Mining block ${header.height} at ${powTargetBits / 256} bits...`);
       const start = Date.now();

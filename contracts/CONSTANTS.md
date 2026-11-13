@@ -91,7 +91,7 @@ from the layout and the consensus bounds, and a peer's bytes are weighed against
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
-| `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
+| `MAX_TX_BYTES` | `10_000` | 307 credit inputs to one output under one signature | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs, ≈ 680 where each pays a distinct author who owes decay | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 17 395 bytes measured with the three capped legs at 64 and every paid owner a distinct identity holding an income box, 26 265 with every paid owner also owing decay, `consensus`' `settlement-bound.test.ts`); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
 | `MAX_HEADER_BYTES` | `233` | the longest encoded header; a realistic one is 208 | policy | 193 fixed bytes and five `vlqU` fields at 8 bytes, the longest a reader accepts — held by encoding the ceiling header | DERIVED | `TYPES_INTERFACE → Size caps` |
 | `MAX_ORDERING_BLOCK_BYTES` | `2_000_302` | the longest encoded block whose body is within `MAX_BLOCK_BODY_BYTES` | policy | `lp(header)` + `lp(body)` + the 64-byte signature, each at its ceiling — held by encoding that block | DERIVED | `TYPES_INTERFACE → Size caps` |
@@ -351,11 +351,13 @@ under → Size caps.
 
 ## Producer policy
 
-`packages/node` — a producer's choices on legs consensus does not check. Literals in the creator, so
-the drift test's converse does not reach them and the rows are marked.
+`packages/node` — a producer's choices on legs consensus does not check, its miner script's among them. Literals in
+the creator and the script, so the drift test's converse does not reach them and the rows are marked.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
+| `CONSOLIDATE_MAX_INTERVAL` (literal) | `100` | the most heights between a miner's checks, and the most spendable boxes a check waits for | policy | the cap where the rent period is long: testnet's and mainnet's `(2_102_400 − 1_440) / 6` is 350 160; at 100 a key that mines every block holds about 1 540 boxes, 1 440 of them locked. User ruling 2026-11-13 (the interval follows the network). `node/src/miner-consolidate.ts` | RULED | `MINING_INTERFACE → Consolidation` |
+| `CONSOLIDATE_RENT_DIVISOR` (literal) | `6` | the share of `storageRentPeriodBlocks − creditMinerRewardDelay` one interval takes | policy | devnet's `(100 − 10) / 6` is 15, so a box is spent within 25 blocks of its making, a quarter of devnet's rent period. User ruling 2026-11-13 (devnet's checks "every 15 blocks or so, well within the storage rent period"). `node/src/miner-consolidate.ts` | RULED | `MINING_INTERFACE → Consolidation` |
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
 | `PACKING_COST_MARGIN` (literal) | `5` | percent of the budget the fill leaves unused against estimates that miss | policy | none stated; chosen so the speculation of the fill, and of the refill under the budget, typically fits. `node/src/services/block-creator.ts` | CHOSEN | `MINING_INTERFACE → Template and submit → "Packing to the budget"` |
 
