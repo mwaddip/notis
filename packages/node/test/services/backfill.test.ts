@@ -1,4 +1,19 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// A spy on `emitPostReceived`: the driver imports the binding at module
+// load, so the observing wrapper replaces the module's export rather than
+// patching the reference after. `vi.hoisted` lifts the capture above
+// `vi.mock`'s hoisted factory so the spy fills the same array every case
+// reads (JOURNAL_EVENTS → post_received).
+const emitStore = vi.hoisted(() => ({
+  emitLog: [] as Array<{ postId: string; source: string; via: string }>,
+}));
+vi.mock('../../src/journal.js', () => ({
+  emitPostReceived: (postId: string, source: string, via = 'packet') => {
+    emitStore.emitLog.push({ postId, source, via });
+  },
+}));
+
 import {
   initBackfill,
   registerPlaceholder,
@@ -11,6 +26,10 @@ describe('backfill driver', () => {
   let requestLog: Array<{ wanted: Array<{ id: string; contentHash: string }>; peerId: string }>;
   let storedBodies: Map<string, string>;
   let connectedPeers: string[];
+  let servingReaders: string[];
+  let setPostBodyCalls: Array<{ id: string; content: string }>;
+  let openCount: number;
+  let maxOpen: number;
   let gateRelease: () => void;
   let gate: Promise<void>;
 
@@ -19,22 +38,40 @@ describe('backfill driver', () => {
     requestLog = [];
     storedBodies = new Map();
     connectedPeers = ['peer-a', 'peer-b'];
+    servingReaders = [];
+    setPostBodyCalls = [];
+    openCount = 0;
+    maxOpen = 0;
+    emitStore.emitLog.length = 0;
     gateRelease = () => {};
     gate = Promise.resolve();
 
     initBackfill({
       requestPostBodies: async (wanted, peerId) => {
+        openCount++;
+        if (openCount > maxOpen) maxOpen = openCount;
         requestLog.push({ wanted, peerId });
-        await gate;
-        const results: Array<{ id: string; content: string }> = [];
-        for (const w of wanted) {
-          const body = storedBodies.get(w.id);
-          if (body) results.push({ id: w.id, content: body });
+        try {
+          await gate;
+          const results: Array<{ id: string; content: string }> = [];
+          for (const w of wanted) {
+            const body = storedBodies.get(w.id);
+            if (body) results.push({ id: w.id, content: body });
+          }
+          return results;
+        } finally {
+          openCount--;
         }
-        return results;
       },
       getConnectedPeers: () => connectedPeers,
-      setPostBody: (_id: string, _content: string) => true,
+      // A default of `[]` leaves the existing cases as they were — the puller
+      // asks node peers alone where no reader serves
+      // (NODE_INTERFACE → "A serving reader is asked for what has been due").
+      getServingReaders: () => servingReaders,
+      setPostBody: (id: string, content: string) => {
+        setPostBodyCalls.push({ id, content });
+        return true;
+      },
       // The driver's two reads over the store. In this file every registered
       // id is a placeholder, and no stored row exists for the init-time scan.
       getMissingBodies: () => [],
@@ -136,6 +173,7 @@ describe('backfill driver', () => {
       initBackfill({
         requestPostBodies: async () => { throw new Error('network down'); },
         getConnectedPeers: () => ['peer-a'],
+        getServingReaders: () => [],
         setPostBody: () => true,
         getMissingBodies: () => [],
         getStillPlaceholderIds: (ids) => [...ids],
@@ -167,5 +205,100 @@ describe('backfill driver', () => {
 
     gateRelease();
     await first;
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": an
+  // entry's first due pass is a pass that advances its schedule, and the
+  // reader-eligible set is the due entries whose schedule a pass has
+  // advanced before.
+  it.fails('an entry is not asked of a reader at its first due pass, and is at its second', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    // The first due pass advances the schedule; no reader is asked.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a']);
+
+    await onBlockApplied(11);
+    // The second due pass asks the node peer, then the reader; the
+    // reader's call carries the entry.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a', 'peer-a', 'reader-a']);
+    expect(requestLog[2]!.wanted).toEqual([{ id: 'post-1', contentHash: 'hash-1' }]);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": the
+  // schedule advances even when no node peer is connected, so an entry's
+  // schedule a pass advanced is reader-eligible at its next due height.
+  it.fails('with no node peer, an entry due once reaches readers at its next due pass', async () => {
+    connectedPeers = [];
+    servingReaders = ['reader-a'];
+    storedBodies.set('post-1', 'the body');
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    // The first due pass advances the schedule; no call fires.
+    expect(requestLog).toHaveLength(0);
+
+    await onBlockApplied(11);
+    // The second due pass reaches the reader, which answers with the body.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['reader-a']);
+    expect(setPostBodyCalls).toEqual([{ id: 'post-1', content: 'the body' }]);
+    expect(emitStore.emitLog).toEqual([{ postId: 'post-1', source: 'reader-a', via: 'pull' }]);
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": each
+  // serving reader is asked once a pass, with the whole reader-eligible set.
+  it.fails('every serving reader is asked, one call each', async () => {
+    connectedPeers = ['peer-a'];
+    servingReaders = ['reader-a', 'reader-b', 'reader-c'];
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+    registerPlaceholder('post-2', 'hash-2', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    // The first due pass asks the node peer once, no reader.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a']);
+    expect([...requestLog[0]!.wanted.map((w) => w.id)].sort()).toEqual(['post-1', 'post-2']);
+
+    await onBlockApplied(11);
+    // The second due pass: one call to the node, one call per reader.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['peer-a', 'peer-a', 'reader-a', 'reader-b', 'reader-c']);
+    for (const call of requestLog.slice(2)) {
+      expect([...call.wanted.map((w) => w.id)].sort()).toEqual(['post-1', 'post-2']);
+    }
+  });
+
+  // NODE_INTERFACE → "A serving reader is asked for what has been due": a
+  // reader's call that rejects leaves the pass asking the next reader.
+  it.fails('a reader whose call rejects leaves the pass asking the next reader', async () => {
+    initBackfill({
+      requestPostBodies: async (wanted, peerId) => {
+        requestLog.push({ wanted, peerId });
+        if (peerId === 'reader-1') throw new Error('reader down');
+        const out: Array<{ id: string; content: string }> = [];
+        for (const w of wanted) {
+          const body = storedBodies.get(w.id);
+          if (body) out.push({ id: w.id, content: body });
+        }
+        return out;
+      },
+      getConnectedPeers: () => [],
+      getServingReaders: () => ['reader-1', 'reader-2'],
+      setPostBody: (id, content) => { setPostBodyCalls.push({ id, content }); return true; },
+      getMissingBodies: () => [],
+      getStillPlaceholderIds: (ids) => [...ids],
+    });
+    storedBodies.set('post-1', 'the body');
+    registerPlaceholder('post-1', 'hash-1', 10, 'peer-a');
+
+    await onBlockApplied(10);
+    // The first due pass advances the schedule; no asks (no node peer, no
+    // reader-eligible entry before the advance).
+    expect(requestLog).toHaveLength(0);
+
+    await onBlockApplied(11);
+    // reader-1's call rejects; reader-2 is asked and answers.
+    expect(requestLog.map((c) => c.peerId)).toEqual(['reader-1', 'reader-2']);
+    expect(setPostBodyCalls).toEqual([{ id: 'post-1', content: 'the body' }]);
   });
 });

@@ -237,6 +237,10 @@ net.setPostBodyProvider((id: string) => {
 initBackfill({
   requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
   getConnectedPeers: () => net.getConnectedPeers(),
+  // NET_INTERFACE → "A reader is never asked for chain data" — the serving
+  // readers the puller asks for the entries a pass has made due before
+  // (NODE_INTERFACE → "A serving reader is asked for what has been due").
+  getServingReaders: () => net.getServingReaders(),
   setPostBody,
   getMissingBodies,
   getStillPlaceholderIds,

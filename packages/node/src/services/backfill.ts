@@ -25,6 +25,11 @@ export interface BackfillDeps {
     peerId: string,
   ) => Promise<Array<{ id: string; content: string }>>;
   getConnectedPeers: () => string[];
+  // NET_INTERFACE → "A reader is never asked for chain data" — the Active
+  // readers whose handshake declared `ModifierRequest`; the puller asks them
+  // for the entries a pass has made due before
+  // (NODE_INTERFACE → "A serving reader is asked for what has been due").
+  getServingReaders: () => string[];
   setPostBody: (postId: string, content: string) => boolean;
   // NODE_INTERFACE → Store Interface → Posts DAG: at init, every row this
   // answers joins the schedule, due at the next applied block.
