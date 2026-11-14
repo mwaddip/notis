@@ -921,6 +921,12 @@ export class NetNode {
     };
     const connectionCeiling = this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK;
     const connectionManager = {
+      // NET_INTERFACE → Readers → "Readers have a budget of their own":
+      // libp2p's connection ceiling is `maxPeers + maxReaders +
+      // HANDSHAKE_SLACK`, so a connection is counted by the kind its
+      // handshake declares and libp2p refuses an inbound past the
+      // ceiling at the upgrade before any handler runs.
+      maxConnections: connectionCeiling,
       // NET_INTERFACE → Readers → "An address upgrades at most four
       // inbound connections at once, each within five seconds": the
       // node's upgrade slots are its connection ceiling (`maxPeers +
@@ -928,7 +934,6 @@ export class NetNode {
       // `PENDING_UPGRADES_PER_ADDRESS` (an IPv6 address counted by its
       // /64; the option a local patch to `libp2p` adds), and each
       // upgrade ends by `INBOUND_UPGRADE_TIMEOUT_MS`.
-      maxConnections: connectionCeiling,
       maxIncomingPendingConnections: connectionCeiling,
       inboundUpgradeTimeout: INBOUND_UPGRADE_TIMEOUT_MS,
       maxIncomingPendingConnectionsPerHost: PENDING_UPGRADES_PER_ADDRESS,
