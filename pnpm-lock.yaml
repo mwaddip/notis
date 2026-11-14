@@ -22,6 +22,9 @@ patchedDependencies:
   '@libp2p/webrtc@7.0.2':
     hash: 2e460317fdbb3f4ab16eff3517d754b68fdca66e86b7734f425ef539c5d81e24
     path: patches/@libp2p__webrtc@7.0.2.patch
+  libp2p@3.5.1:
+    hash: e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320
+    path: patches/libp2p@3.5.1.patch
 
 importers:
 
@@ -159,7 +162,7 @@ importers:
         version: 10.0.1
       libp2p:
         specifier: 3.5.1
-        version: 3.5.1
+        version: 3.5.1(patch_hash=e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320)
     devDependencies:
       '@noble/curves':
         specifier: 2.2.0
@@ -270,7 +273,7 @@ importers:
         version: 7.2.1
       libp2p:
         specifier: 3.5.1
-        version: 3.5.1
+        version: 3.5.1(patch_hash=e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320)
       supertest:
         specifier: ^7.2.2
         version: 7.2.2
@@ -399,7 +402,7 @@ importers:
         version: 2.2.0
       libp2p:
         specifier: 3.5.1
-        version: 3.5.1
+        version: 3.5.1(patch_hash=e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320)
     devDependencies:
       fake-indexeddb:
         specifier: ^6.2.5
@@ -564,7 +567,7 @@ importers:
         version: 2.2.0
       libp2p:
         specifier: 3.5.1
-        version: 3.5.1
+        version: 3.5.1(patch_hash=e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320)
     devDependencies:
       '@peculiar/x509':
         specifier: ^2.2.0
@@ -6261,7 +6264,7 @@ snapshots:
       prelude-ls: 1.2.1
       type-check: 0.4.0
 
-  libp2p@3.5.1:
+  libp2p@3.5.1(patch_hash=e0f885f3c64bb5caf67795e221909e3e90cce5ce84edc1b7e751eaafc2fc6320):
     dependencies:
       '@chainsafe/is-ip': 2.1.0
       '@chainsafe/netmask': 2.0.0

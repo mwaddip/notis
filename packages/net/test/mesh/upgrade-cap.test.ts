@@ -137,7 +137,7 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
   // Per address: from one loopback address, four silent connections are
   // held, the fifth is closed by the node at once, and meanwhile a libp2p
   // dial from another address is admitted (reaches net's handshake).
-  it.fails('four silent connections from one address are held; a fifth is closed at once, and another address is admitted', async () => {
+  it('four silent connections from one address are held; a fifth is closed at once, and another address is admitted', async () => {
     const state = await startA();
     nodes.push(state);
 
@@ -186,7 +186,7 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
   // With maxPeers 2 and maxReaders 2 the ceiling is 20; silent connections
   // from five addresses (four each) fill it. More than ten are held, which
   // libp2p's default would refuse.
-  it.fails('silent connections from several addresses fill the node ceiling of 20; more than ten are held at once', async () => {
+  it('silent connections from several addresses fill the node ceiling of 20; more than ten are held at once', async () => {
     const state = await startA(2, 2);
     nodes.push(state);
     const sources = ['127.0.0.2', '127.0.0.3', '127.0.0.4', '127.0.0.5', '127.0.0.6'];
@@ -212,7 +212,7 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
 
   // In time: a silent connection is closed at `INBOUND_UPGRADE_TIMEOUT_MS`
   // (5 000 ms), well before libp2p's default of 10 000 ms.
-  it.fails('a silent connection is closed at the 5 000 ms upgrade timeout', async () => {
+  it('a silent connection is closed at the 5 000 ms upgrade timeout', async () => {
     const state = await startA();
     nodes.push(state);
     const silent = openSilentTcp(state.port, '127.0.0.2');
@@ -231,7 +231,7 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
   // Release: a slot frees on every exit. After an address's four silent
   // connections time out, four fresh silent connections from that
   // address are admitted again, and a fifth is refused.
-  it.fails('four silent connections release their slots at the upgrade timeout; four fresh from the same address are admitted and a fifth is refused', async () => {
+  it('four silent connections release their slots at the upgrade timeout; four fresh from the same address are admitted and a fifth is refused', async () => {
     const state = await startA();
     nodes.push(state);
     for (let i = 0; i < 4; i++) {
@@ -277,7 +277,7 @@ describe('the per-host cap counts an IPv6 address by its /64', () => {
     nodes.length = 0;
   });
 
-  it.fails('four /ip6/2001:db8:…/… from one /64 are accepted, the fifth is refused, one from another /64 is accepted', async () => {
+  it('four /ip6/2001:db8:…/… from one /64 are accepted, the fifth is refused, one from another /64 is accepted', async () => {
     const state = await startA();
     nodes.push(state);
     const libp2p = state.node.libp2pNode!;

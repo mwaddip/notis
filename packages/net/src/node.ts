@@ -53,6 +53,7 @@ import { readStreamBounded, sinkWithDeadline, addressWithoutPeerId, peerIdOfAddr
 import {
   HANDSHAKE_DEADLINE_FACTOR,
   HANDSHAKE_SLACK,
+  INBOUND_UPGRADE_TIMEOUT_MS,
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_HANDSHAKE_FRAME_BYTES,
   MAX_INBOUND_HANDSHAKE_STREAMS,
@@ -60,6 +61,7 @@ import {
   MAX_INV_IDS,
   MAX_SERVE_BODY_BYTES,
   MAX_STREAM_BYTES,
+  PENDING_UPGRADES_PER_ADDRESS,
   YAMUX_STREAM_WINDOW_BYTES,
 } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
@@ -917,16 +919,22 @@ export class NetNode {
       denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
         this.peerMgr.isBanned(peerId.toString()),
     };
+    const connectionCeiling = this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK;
     const connectionManager = {
       // NET_INTERFACE → Readers → "Readers have a budget of their own":
       // libp2p's connection ceiling is `maxPeers + maxReaders +
       // HANDSHAKE_SLACK`, so a connection is counted by the kind its
       // handshake declares and libp2p refuses an inbound past the
-      // ceiling at the upgrade before any handler runs (verified in
-      // `libp2p@3.5.1`, `src/connection-manager/index.ts:688` —
-      // `getConnections().length < maxConnections` admits, otherwise the
-      // inbound is refused at `maConnection()`).
-      maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
+      // ceiling at the upgrade before any handler runs.
+      maxConnections: connectionCeiling,
+      // NET_INTERFACE → Readers → "An address upgrades at most four
+      // inbound connections at once, each within five seconds". The
+      // pending-upgrade ceiling matches the connection ceiling, so no
+      // honest inbound is refused on pending alone before the slack
+      // closes it.
+      maxIncomingPendingConnections: connectionCeiling,
+      inboundUpgradeTimeout: INBOUND_UPGRADE_TIMEOUT_MS,
+      maxIncomingPendingConnectionsPerHost: PENDING_UPGRADES_PER_ADDRESS,
     };
     // Disable the built-in connection monitor heartbeat.  When enabled it
     // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection

@@ -81,6 +81,8 @@ export {
   SYNC_INFO_MIN_INTERVAL_MS,
   STALL_MARK_EXPIRY_MS,
   MAX_STALL_MARKS,
+  INBOUND_UPGRADE_TIMEOUT_MS,
+  PENDING_UPGRADES_PER_ADDRESS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb, MAX_BANNED_ADDRS } from './peerdb.js';

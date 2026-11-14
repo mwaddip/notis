@@ -1,0 +1,299 @@
+diff --git a/dist/src/connection-manager/index.d.ts b/dist/src/connection-manager/index.d.ts
+index b15001298f61d14337a44f8344240a803990fb85..1a7747b29b8ae2edcf5b2bc61640f65b5f32ed73 100644
+--- a/dist/src/connection-manager/index.d.ts
++++ b/dist/src/connection-manager/index.d.ts
+@@ -117,6 +117,15 @@ export interface ConnectionManagerInit {
+      * @default 10
+      */
+     maxIncomingPendingConnections?: number;
++    /**
++     * The maximum number of parallel incoming connections allowed PER HOST that
++     * have yet to complete the connection upgrade. A host is the remote IP for
++     * IPv4, and the /64 network of the remote address for IPv6. Connections on
++     * the allow list are not charged against a host.
++     *
++     * @default Infinity
++     */
++    maxIncomingPendingConnectionsPerHost?: number;
+     /**
+      * When a peer tagged with `KEEP_ALIVE` disconnects, attempt to redial them
+      * this many times.
+@@ -206,7 +215,7 @@ export declare class DefaultConnectionManager implements ConnectionManager, Star
+     openStream(peerIdOrMultiaddr: DialTarget, protocol: string | string[], options?: OpenConnectionOptions & NewStreamOptions): Promise<Stream>;
+     closeConnections(peerId: PeerId, options?: AbortOptions): Promise<void>;
+     acceptIncomingConnection(maConn: MultiaddrConnection): boolean;
+-    afterUpgradeInbound(): void;
++    afterUpgradeInbound(maConn?: MultiaddrConnection): void;
+     getDialQueue(): PendingDial[];
+     isDialable(multiaddr: Multiaddr | Multiaddr[], options?: IsDialableOptions): Promise<boolean>;
+ }
+diff --git a/dist/src/connection-manager/index.js b/dist/src/connection-manager/index.js
+index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f8acb1539 100644
+--- a/dist/src/connection-manager/index.js
++++ b/dist/src/connection-manager/index.js
+@@ -15,8 +15,32 @@ export const DEFAULT_DIAL_PRIORITY = 50;
+ const defaultOptions = {
+     maxConnections: MAX_CONNECTIONS,
+     inboundConnectionThreshold: INBOUND_CONNECTION_THRESHOLD,
+-    maxIncomingPendingConnections: MAX_INCOMING_PENDING_CONNECTIONS
++    maxIncomingPendingConnections: MAX_INCOMING_PENDING_CONNECTIONS,
++    maxIncomingPendingConnectionsPerHost: Infinity
+ };
++// The /64 network of an IPv6 address — the first four 16-bit hextets,
++// each zero-padded, joined by `:`. Expand `::` first.
++function ipv6To64Prefix(ip) {
++    const lo = ip.toLowerCase();
++    const parts = lo.split('::');
++    const head = parts[0] !== undefined && parts[0] !== '' ? parts[0].split(':') : [];
++    const tail = parts.length > 1 && parts[1] !== undefined && parts[1] !== '' ? parts[1].split(':') : [];
++    const missing = 8 - head.length - tail.length;
++    const all = [...head, ...new Array(Math.max(0, missing)).fill('0'), ...tail];
++    return all.slice(0, 4).map((s) => s.padStart(4, '0')).join(':');
++}
++// The per-host key for a maConn's remote address: the remote IP for
++// IPv4, the /64 network for IPv6, otherwise `null`.
++function hostKeyOf(ma) {
++    if (!isNetworkAddress(ma))
++        return null;
++    const config = getNetConfig(ma);
++    if (config.type === 'ip4')
++        return config.host;
++    if (config.type === 'ip6')
++        return ipv6To64Prefix(config.host);
++    return config.host;
++}
+ /**
+  * Responsible for managing known connections.
+  */
+@@ -26,7 +50,10 @@ export class DefaultConnectionManager {
+     allow;
+     deny;
+     maxIncomingPendingConnections;
++    maxIncomingPendingConnectionsPerHost;
+     incomingPendingConnections;
++    hostPendingConnections = new Map();
++    maConnHostKey = new WeakMap();
+     outboundPendingConnections;
+     maxConnections;
+     dialQueue;
+@@ -60,6 +87,7 @@ export class DefaultConnectionManager {
+         this.deny = (init.deny ?? []).map(str => multiaddrToIpNet(multiaddr(str)));
+         this.incomingPendingConnections = 0;
+         this.maxIncomingPendingConnections = init.maxIncomingPendingConnections ?? defaultOptions.maxIncomingPendingConnections;
++        this.maxIncomingPendingConnectionsPerHost = init.maxIncomingPendingConnectionsPerHost ?? defaultOptions.maxIncomingPendingConnectionsPerHost;
+         this.outboundPendingConnections = 0;
+         // controls individual peers trying to dial us too quickly
+         this.inboundConnectionRateLimiter = new RateLimiter({
+@@ -386,10 +414,19 @@ export class DefaultConnectionManager {
+             return true;
+         }
+         // check pending connections
+-        if (this.incomingPendingConnections === this.maxIncomingPendingConnections) {
++        if (this.incomingPendingConnections >= this.maxIncomingPendingConnections) {
+             this.log('connection from %a refused - incomingPendingConnections exceeded by host', maConn.remoteAddr);
+             return false;
+         }
++        // check per-host pending connections
++        const hostKey = hostKeyOf(maConn.remoteAddr);
++        if (hostKey !== null) {
++            const held = this.hostPendingConnections.get(hostKey) ?? 0;
++            if (held >= this.maxIncomingPendingConnectionsPerHost) {
++                this.log('connection from %a refused - maxIncomingPendingConnectionsPerHost exceeded by host %s', maConn.remoteAddr, hostKey);
++                return false;
++            }
++        }
+         if (isNetworkAddress(maConn.remoteAddr)) {
+             const config = getNetConfig(maConn.remoteAddr);
+             try {
+@@ -402,13 +439,30 @@ export class DefaultConnectionManager {
+         }
+         if (this.getConnections().length < this.maxConnections) {
+             this.incomingPendingConnections++;
++            if (hostKey !== null) {
++                this.hostPendingConnections.set(hostKey, (this.hostPendingConnections.get(hostKey) ?? 0) + 1);
++                this.maConnHostKey.set(maConn, hostKey);
++            }
+             return true;
+         }
+         this.log('connection from %a refused - maxConnections exceeded', maConn.remoteAddr);
+         return false;
+     }
+-    afterUpgradeInbound() {
++    afterUpgradeInbound(maConn) {
+         this.incomingPendingConnections--;
++        if (maConn !== undefined) {
++            const hostKey = this.maConnHostKey.get(maConn);
++            if (hostKey !== undefined) {
++                this.maConnHostKey.delete(maConn);
++                const held = this.hostPendingConnections.get(hostKey) ?? 0;
++                if (held <= 1) {
++                    this.hostPendingConnections.delete(hostKey);
++                }
++                else {
++                    this.hostPendingConnections.set(hostKey, held - 1);
++                }
++            }
++        }
+     }
+     getDialQueue() {
+         const statusMap = {
+diff --git a/dist/src/upgrader.js b/dist/src/upgrader.js
+index 11aad1f8919c35e3bb5327107a21dfa280f2aded..0d54ebd424825494e4c3cb182094d0067c1d2476 100644
+--- a/dist/src/upgrader.js
++++ b/dist/src/upgrader.js
+@@ -97,7 +97,8 @@ export class Upgrader {
+         finally {
+             signal.clear();
+             if (accepted) {
+-                this.components.connectionManager.afterUpgradeInbound();
++                // The patched connection manager reads the host from the maConn.
++                this.components.connectionManager.afterUpgradeInbound(maConn);
+             }
+         }
+     }
+diff --git a/src/connection-manager/index.ts b/src/connection-manager/index.ts
+index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3c031198a 100644
+--- a/src/connection-manager/index.ts
++++ b/src/connection-manager/index.ts
+@@ -146,6 +146,16 @@ export interface ConnectionManagerInit {
+    */
+   maxIncomingPendingConnections?: number
+ 
++  /**
++   * The maximum number of parallel incoming connections allowed PER HOST that
++   * have yet to complete the connection upgrade. A host is the remote IP for
++   * IPv4, and the /64 network of the remote address for IPv6. Connections on
++   * the allow list are not charged against a host.
++   *
++   * @default Infinity
++   */
++  maxIncomingPendingConnectionsPerHost?: number
++
+   /**
+    * When a peer tagged with `KEEP_ALIVE` disconnects, attempt to redial them
+    * this many times.
+@@ -183,7 +193,31 @@ export interface ConnectionManagerInit {
+ const defaultOptions = {
+   maxConnections: MAX_CONNECTIONS,
+   inboundConnectionThreshold: INBOUND_CONNECTION_THRESHOLD,
+-  maxIncomingPendingConnections: MAX_INCOMING_PENDING_CONNECTIONS
++  maxIncomingPendingConnections: MAX_INCOMING_PENDING_CONNECTIONS,
++  maxIncomingPendingConnectionsPerHost: Infinity
++}
++
++// The /64 network of an IPv6 address — the first four 16-bit hextets,
++// each zero-padded, joined by `:`. Expand `::` first.
++function ipv6To64Prefix (ip: string): string {
++  const lo = ip.toLowerCase()
++  const parts = lo.split('::')
++  const head = parts[0] !== undefined && parts[0] !== '' ? parts[0].split(':') : []
++  const tail = parts.length > 1 && parts[1] !== undefined && parts[1] !== '' ? parts[1].split(':') : []
++  const missing = 8 - head.length - tail.length
++  const all = [...head, ...new Array(Math.max(0, missing)).fill('0'), ...tail]
++  return all.slice(0, 4).map((s) => s.padStart(4, '0')).join(':')
++}
++
++// The per-host key for a maConn: the remote IP for IPv4, and the /64
++// network for IPv6. Returns null when the address is not a network
++// address (`isNetworkAddress` is false).
++function hostKeyOf (ma: Multiaddr): string | null {
++  if (!isNetworkAddress(ma)) return null
++  const config = getNetConfig(ma)
++  if (config.type === 'ip4') return config.host
++  if (config.type === 'ip6') return ipv6To64Prefix(config.host)
++  return config.host
+ }
+ 
+ export interface DefaultConnectionManagerComponents {
+@@ -206,7 +240,13 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+   private readonly allow: IpNet[]
+   private readonly deny: IpNet[]
+   private readonly maxIncomingPendingConnections: number
++  private readonly maxIncomingPendingConnectionsPerHost: number
+   private incomingPendingConnections: number
++  // Per-host pending counts and the key each admitted maConn was
++  // charged under. Allow-list admissions charge no host, so the WeakMap
++  // misses them in `afterUpgradeInbound` and nothing is decremented.
++  private readonly hostPendingConnections: Map<string, number> = new Map()
++  private readonly maConnHostKey: WeakMap<MultiaddrConnection, string> = new WeakMap()
+   private outboundPendingConnections: number
+   private maxConnections: number
+ 
+@@ -248,6 +288,7 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+ 
+     this.incomingPendingConnections = 0
+     this.maxIncomingPendingConnections = init.maxIncomingPendingConnections ?? defaultOptions.maxIncomingPendingConnections
++    this.maxIncomingPendingConnectionsPerHost = init.maxIncomingPendingConnectionsPerHost ?? defaultOptions.maxIncomingPendingConnectionsPerHost
+     this.outboundPendingConnections = 0
+ 
+     // controls individual peers trying to dial us too quickly
+@@ -669,11 +710,21 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+     }
+ 
+     // check pending connections
+-    if (this.incomingPendingConnections === this.maxIncomingPendingConnections) {
++    if (this.incomingPendingConnections >= this.maxIncomingPendingConnections) {
+       this.log('connection from %a refused - incomingPendingConnections exceeded by host', maConn.remoteAddr)
+       return false
+     }
+ 
++    // check per-host pending connections
++    const hostKey = hostKeyOf(maConn.remoteAddr)
++    if (hostKey !== null) {
++      const held = this.hostPendingConnections.get(hostKey) ?? 0
++      if (held >= this.maxIncomingPendingConnectionsPerHost) {
++        this.log('connection from %a refused - maxIncomingPendingConnectionsPerHost exceeded by host %s', maConn.remoteAddr, hostKey)
++        return false
++      }
++    }
++
+     if (isNetworkAddress(maConn.remoteAddr)) {
+       const config = getNetConfig(maConn.remoteAddr)
+ 
+@@ -687,6 +738,10 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+ 
+     if (this.getConnections().length < this.maxConnections) {
+       this.incomingPendingConnections++
++      if (hostKey !== null) {
++        this.hostPendingConnections.set(hostKey, (this.hostPendingConnections.get(hostKey) ?? 0) + 1)
++        this.maConnHostKey.set(maConn, hostKey)
++      }
+ 
+       return true
+     }
+@@ -695,8 +750,20 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+     return false
+   }
+ 
+-  afterUpgradeInbound (): void {
++  afterUpgradeInbound (maConn?: MultiaddrConnection): void {
+     this.incomingPendingConnections--
++    if (maConn !== undefined) {
++      const hostKey = this.maConnHostKey.get(maConn)
++      if (hostKey !== undefined) {
++        this.maConnHostKey.delete(maConn)
++        const held = this.hostPendingConnections.get(hostKey) ?? 0
++        if (held <= 1) {
++          this.hostPendingConnections.delete(hostKey)
++        } else {
++          this.hostPendingConnections.set(hostKey, held - 1)
++        }
++      }
++    }
+   }
+ 
+   getDialQueue (): PendingDial[] {
+diff --git a/src/upgrader.ts b/src/upgrader.ts
+index 0fcbb76d648550f66e189868b01cd590b1c02fda..6ce65857f1d8efaf8130dcb3e50d2e439d2fa514 100644
+--- a/src/upgrader.ts
++++ b/src/upgrader.ts
+@@ -207,7 +207,8 @@ export class Upgrader implements UpgraderInterface {
+       signal.clear()
+ 
+       if (accepted) {
+-        this.components.connectionManager.afterUpgradeInbound()
++        // The patched connection manager reads the host from the maConn.
++        (this.components.connectionManager as unknown as { afterUpgradeInbound: (maConn?: MultiaddrConnection) => void }).afterUpgradeInbound(maConn)
+       }
+     }
+   }
