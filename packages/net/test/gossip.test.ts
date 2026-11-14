@@ -888,26 +888,58 @@ describe('gossip dispatch listener', () => {
     errSpy.mockRestore();
   });
 
-  it('logs a post-validator decode failure as the validator bug it is', () => {
-    // The listener is handed a message object no validator saw — the one way
-    // to reach the branch that logs when an accepted message has no value
-    // kept against it (NET_INTERFACE → Inbound Processing → "A gossiped
-    // message is decoded once"). The topic validator would refuse these
-    // bytes as malformed, so this case uses the harness path that hands them
-    // straight to the listener.
+  it.fails('an accepted block message with no value kept is logged as a bug, reaches no handler, records no penalty', () => {
+    // The listener is handed a message object no validator saw, so no value
+    // has been kept against it (NET_INTERFACE → Inbound Processing → "A
+    // gossiped message is decoded once"). The bytes would decode: the
+    // differentiator is the WeakMap lookup, not a decode failure.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     let handlerCalls = 0;
-    const { handWithoutValidator } = makeDispatchHarness({
+    const { handWithoutValidator, peerMgr } = makeDispatchHarness({
       onOrderingBlock: () => { handlerCalls++; },
     });
+    const penaltySpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
 
-    expect(() => handWithoutValidator(topics.orderingBlock, new Uint8Array([0xff, 0xff, 0xff]))).not.toThrow();
+    expect(() => handWithoutValidator(topics.orderingBlock, encodeOrderingBlock(dispatchBlock))).not.toThrow();
 
     expect(handlerCalls).toBe(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining('passed its topic validator and then failed to decode'),
-    );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('no value kept'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it.fails('an accepted transaction message with no value kept is logged as a bug, reaches no handler, records no penalty, reports Ignore', () => {
+    // The transaction form of the no-value branch. The bytes decode as a
+    // well-formed `plainTx` packet; the differentiator is the WeakMap lookup.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let handlerCalls = 0;
+    const reports: Array<{ msgId: string; propagationSource: string; acceptance: TopicValidatorResult }> = [];
+    const noValueTx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const { handWithoutValidator, peerMgr } = makeDispatchHarness({
+      onTx: () => { handlerCalls++; return true; },
+      reportMessageValidationResult: (msgId, propagationSource, acceptance) => {
+        reports.push({ msgId, propagationSource, acceptance });
+      },
+    });
+    const penaltySpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    expect(() => handWithoutValidator(topics.tx, encodeTxPacket(noValueTx))).not.toThrow();
+
+    expect(handlerCalls).toBe(0);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('no value kept'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(reports).toContainEqual({
+      msgId: expect.stringMatching(/^harness-msg-/),
+      propagationSource: RELAY_PEER,
+      acceptance: TopicValidatorResult.Ignore,
+    });
     errSpy.mockRestore();
   });
 
