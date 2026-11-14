@@ -198,28 +198,67 @@ function readerPubsub(host: Libp2p): GossipSubInternal {
 }
 
 /**
- * Dial `addrA` with `n` fresh readers, pacing dials under
- * `READER_DIAL_GAP_MS` and running the handshake on each. Each reader is
- * subscribed to the ordering-block topic.
+ * Dial `nodeA` with `n` fresh readers, pacing dials under
+ * `READER_DIAL_GAP_MS`, running the handshake on each, and subscribing
+ * each to the ordering-block topic. Each reader's router dispatches
+ * `gossipsub:graft` with `direction: 'outbound'` once `sendRpc` carries
+ * its GRAFT to A on that topic; the listener is attached before
+ * `subscribe` so a GRAFT the heartbeat sends between does not slip past.
+ * `awaitAllGraftedToA` resolves once every reader has sent one.
  */
 async function dialNReaders(
   n: number,
-  addrA: string,
+  nodeA: NetNode,
   hosts: Libp2p[],
-): Promise<Libp2p[]> {
-  const readers: Libp2p[] = [];
+): Promise<{ readers: Libp2p[]; awaitAllGraftedToA: () => Promise<void> }> {
+  const addrA = nodeTcpAddress(nodeA);
+  const nodeAId = nodeA.peerId();
   const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+  const readers: Libp2p[] = [];
+  const graftedToA = new Map<string, boolean>();
+
   let lastDialAt = 0;
   for (let i = 0; i < n; i++) {
     await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
     const r = await makeReaderLibp2p(MAGIC_TESTNET);
     hosts.push(r);
     readers.push(r);
+    const readerId = r.peerId.toString();
+    graftedToA.set(readerId, false);
+    readerPubsub(r).addEventListener('gossipsub:graft', (evt) => {
+      const d = evt.detail as {
+        peerId: { toString(): string };
+        topic: string;
+        direction: string;
+      };
+      if (
+        d.direction === 'outbound'
+        && d.topic === topic
+        && d.peerId.toString() === nodeAId
+      ) {
+        graftedToA.set(readerId, true);
+      }
+    });
     lastDialAt = Date.now();
     await runReaderHandshake(r, addrA, MAGIC_TESTNET);
     readerPubsub(r).subscribe(topic);
   }
-  return readers;
+
+  const awaitAllGraftedToA = async (): Promise<void> => {
+    await vi.waitFor(
+      () => {
+        const missing: string[] = [];
+        for (const [id, ok] of graftedToA) if (!ok) missing.push(id);
+        expect(
+          missing,
+          `readers that have not sent a GRAFT to A on the ordering-block topic: ${missing.join(', ')}`,
+        ).toEqual([]);
+      },
+      { timeout: 30_000, interval: 250 },
+    );
+  };
+
+  return { readers, awaitAllGraftedToA };
 }
 
 describe('NET_INTERFACE → Readers', () => {
@@ -942,7 +981,7 @@ describe('NET_INTERFACE → Readers', () => {
       await nodeA.start();
       const addrA = nodeTcpAddress(nodeA);
 
-      const readers = await dialNReaders(13, addrA, hosts);
+      const { readers, awaitAllGraftedToA } = await dialNReaders(13, nodeA, hosts);
       await vi.waitFor(
         () => {
           expect(nodeA.getConnectedReaders()).toHaveLength(13);
@@ -950,9 +989,9 @@ describe('NET_INTERFACE → Readers', () => {
         { timeout: 20_000, interval: 200 },
       );
 
-      // Give gossipsub's heartbeat (1 s) enough ticks to fill A's mesh
-      // with the readers' subscriptions before B dials. Dhi is 12.
-      await sleep(4_000);
+      // Wait on every reader's own router having sent a GRAFT to A on
+      // the ordering-block topic — the arrangement B dials into.
+      await awaitAllGraftedToA();
 
       const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
       nodes.push(nodeB);
@@ -995,9 +1034,8 @@ describe('NET_INTERFACE → Readers', () => {
       const nodeA = new NetNode(makeConfig(), validators);
       nodes.push(nodeA);
       await nodeA.start();
-      const addrA = nodeTcpAddress(nodeA);
 
-      const readers = await dialNReaders(13, addrA, hosts);
+      const { readers, awaitAllGraftedToA } = await dialNReaders(13, nodeA, hosts);
       await vi.waitFor(
         () => {
           expect(nodeA.getConnectedReaders()).toHaveLength(13);
@@ -1005,8 +1043,9 @@ describe('NET_INTERFACE → Readers', () => {
         { timeout: 20_000, interval: 200 },
       );
 
-      // Four heartbeats are enough for a mesh graft to settle either way.
-      await sleep(4_000);
+      // Wait on every reader having sent its GRAFT to A — the mesh the
+      // last assertion reads has settled from one side either way.
+      await awaitAllGraftedToA();
 
       // control: every reader is a topic peer of A (A has heard each
       // reader's subscription).
@@ -1073,7 +1112,7 @@ describe('NET_INTERFACE → Readers', () => {
         { timeout: 30_000, interval: 300 },
       );
 
-      const readers = await dialNReaders(30, addrA, hosts);
+      const { readers } = await dialNReaders(30, nodeA, hosts);
       await vi.waitFor(
         () => {
           expect(nodeA.getConnectedReaders()).toHaveLength(30);
