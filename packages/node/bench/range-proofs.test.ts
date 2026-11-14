@@ -91,6 +91,26 @@ const SEED_LEAVES = envOrDefault('BENCH_SEED_LEAVES', 1_000_000);
 const BLOCK_COUNT = envOrDefault('BENCH_BLOCK_COUNT', 70);
 const BLOCK_SENDS = envOrDefault('BENCH_BLOCK_SENDS', 3156);
 const SMALL_SENDS = envOrDefault('BENCH_SMALL_SENDS', 32);
+
+/**
+ * `BENCH_PROOF_WINDOW_NODES` is a node's `PROOF_WINDOW_NODES` (NODE_INTERFACE → Configuration) for the prover's kept
+ * roots. Unset or blank: no node bound. A whole number ≥ 0 in decimal digits: that bound, `0` included. Anything else
+ * is refused, naming the setting and its value.
+ */
+function proofWindowNodesFromEnv(): number {
+  const raw = process.env['BENCH_PROOF_WINDOW_NODES'];
+  if (raw === undefined || raw.trim() === '') return Number.MAX_SAFE_INTEGER;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new Error(`BENCH_PROOF_WINDOW_NODES must be a whole number of nodes in decimal digits, or empty; got ${JSON.stringify(raw)}`);
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error(`BENCH_PROOF_WINDOW_NODES must be a whole number of nodes in decimal digits, or empty; got ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+const PROOF_WINDOW_NODES = proofWindowNodesFromEnv();
 const RANGE_PAGE_COUNT = Math.ceil(LARGE_OWNER_BOXES / RANGE_PAGE_MAX);
 
 function nowMs(): number {
@@ -234,9 +254,10 @@ function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: U
 
 /**
  * The handle the bench owns: a `PersistentBatchAVLProver` over a `SqliteAvlStorage` on a `mkdtemp` SQLite file and a
- * `RecentRoots(capacity, Number.MAX_SAFE_INTEGER)` — the capacity bound alone, so the measuring ring tracks every
- * block's root. A second `RecentRoots(capacity, maxNodes)` the caller keeps separately tracks the same roots under
- * the default count bound (NODE_INTERFACE → Configuration).
+ * `RecentRoots(capacity, maxNodes)` — the prover's ring, bounded by `maxNodes` (a node's `PROOF_WINDOW_NODES`,
+ * NODE_INTERFACE → Configuration) and by capacity alone when `maxNodes` is `Number.MAX_SAFE_INTEGER`. A second
+ * `RecentRoots(64, 250_000)` the caller keeps separately tracks the same roots under a node's default bound — `250_000`,
+ * `PROOF_WINDOW_NODES`' default.
  */
 /**
  * Observations over the alive-at-height row read — the one SQL
@@ -286,8 +307,11 @@ function installAliveRowHooks(db: Database.Database): BenchHooks {
  * the same clock `performance.now()` reads, so overlap with a timed call is
  * `max(0, min(callEnd, startMs + durationMs) - max(callStart, startMs))`.
  * The kind names V8's class — minor (scavenge), major (mark-sweep),
- * incremental (idle incremental), weakcb (weak-callbacks). A pause of class
- * `major` is the one that lands on the thread.
+ * incremental (idle incremental), weakcb (weak-callbacks). A pause of any
+ * class lands on the thread, and `perf_hooks` does not report every pause: the
+ * GC share the bench prints is what the observer was told, not all the
+ * collector's time (NODE_INTERFACE → "It is the first scavenge after a full
+ * collection, and a node's default bound does not spare it").
  */
 interface GcEntry { startMs: number; durationMs: number; kind: string }
 
@@ -341,7 +365,7 @@ function startGcObserver(): GcObserver {
   };
 }
 
-/** Record of a timed proof call, enough to split a slow one into store / GC / rest. */
+/** Record of a timed proof call, enough to split a slow one into store time, the GC pauses `perf_hooks` reported inside it, and the rest. */
 interface CallSample {
   index: number;
   totalMs: number;
@@ -352,7 +376,7 @@ interface CallSample {
   proofBytes: number;
 }
 
-function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle; hooks: BenchHooks } {
+function makeHandle(dbPath: string, capacity: number, maxNodes: number): { handle: AvlProverHandle; hooks: BenchHooks } {
   const db = new Database(dbPath);
   db.exec(AVL_SCHEMA);
   const hooks = installAliveRowHooks(db);
@@ -361,7 +385,7 @@ function makeHandle(dbPath: string, capacity: number): { handle: AvlProverHandle
   const prover = new PersistentBatchAVLProver(inner, storage as VersionedAVLStorage, [
     [HEIGHT_SENTINEL, encodeHeight(0)],
   ]) as AvlProver;
-  const recentRoots = new RecentRoots(capacity, Number.MAX_SAFE_INTEGER);
+  const recentRoots = new RecentRoots(capacity, maxNodes);
   return { handle: { prover, storage, recentRoots }, hooks };
 }
 
@@ -648,13 +672,19 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // -----------------------------------------------------------------
       // Seed the tree.
       // -----------------------------------------------------------------
+      console.log(
+        PROOF_WINDOW_NODES === Number.MAX_SAFE_INTEGER
+          ? `prover ring: capacity 64, no node bound (BENCH_PROOF_WINDOW_NODES blank)`
+          : `prover ring: capacity 64, node bound ${PROOF_WINDOW_NODES} (BENCH_PROOF_WINDOW_NODES)`,
+      );
       console.log(`\n==== seed: a tree of ${SEED_LEAVES} leaves — the large owner holds ${LARGE_OWNER_BOXES} credit boxes ====`);
       const beforeSeed = memNow();
       console.log(`memory before seed: heapUsed=${mb(beforeSeed.heapUsed)} MB, arrayBuffers=${mb(beforeSeed.arrayBuffers)} MB, rss=${mb(beforeSeed.rss)} MB`);
-      const { handle, hooks } = makeHandle(dbPath, 64);
-      // The measuring ring is bounded by count alone (`capacity = 64`, `maxNodes = MAX_SAFE_INTEGER`). The default
-      // bound is also tracked, as a second ring with `maxNodes = 250_000` — references only, no second tree. The two
-      // record the same roots and counts; the default bound evicts earlier when the sum of counts rises.
+      const { handle, hooks } = makeHandle(dbPath, 64, PROOF_WINDOW_NODES);
+      // The prover's ring is bounded by `BENCH_PROOF_WINDOW_NODES` (NODE_INTERFACE → Configuration), by capacity
+      // alone (`capacity = 64`) when it is blank. The default bound is also tracked, as a second ring with
+      // `maxNodes = 250_000` — references only, no second tree. The two record the same roots and counts; the
+      // default bound evicts earlier when the sum of counts rises.
       const boundedRing = new RecentRoots(64, 250_000);
       const pool = new BoxPool();
       const seedT0 = nowMs();
@@ -711,6 +741,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
         }
       }
       const tipHeight = BLOCK_COUNT;
+      const tipLabel = (h: number): string => `tip-${tipHeight - h}`;
       console.log(`\nFull-block memory table (each kept root replaced an average of ${Math.round(totalReplacedFull / BLOCK_COUNT)} nodes):`);
       console.log(`  blocks | measuring | nodes beyond | bounded | nodes beyond | heapUsed MB | arrBuf MB | rss MB`);
       for (const s of fullSnaps) {
@@ -748,7 +779,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
         const sProof = singleResults.map((r) => r.proofBytes);
         const sBytes = singleResults.map((r) => r.bytes);
         const row1 = {
-          heightLabel: h === 'tip' ? 'tip' : String(h),
+          heightLabel: h === 'tip' ? 'tip' : tipLabel(h),
           kind: 'single-key',
           medianMs: median(sMs),
           worstMs: Math.max(...sMs),
@@ -769,7 +800,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
         const rProof = rangeResults.map((r) => r.proofBytes);
         const rBytes = rangeResults.map((r) => r.bytes);
         const row2 = {
-          heightLabel: h === 'tip' ? 'tip' : String(h),
+          heightLabel: h === 'tip' ? 'tip' : tipLabel(h),
           kind: '256-page',
           medianMs: median(rMs),
           worstMs: Math.max(...rMs),
@@ -800,7 +831,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // "A height of the proof window with no kept root is served from the
       // store"). The ring entry is restored after each probe.
       const correctnessHeight = ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20;
-      console.log(`\n==== store-served correctness vs kept root at ${correctnessHeight} ====`);
+      console.log(`\n==== store-served correctness vs kept root at ${tipLabel(correctnessHeight)} ====`);
       {
         const kept = handle.recentRoots.get(correctnessHeight)!;
         const key = probeKeys[0]!;
@@ -838,13 +869,14 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // `performance.now()` reads, so overlap with a timed call is a
       // measurable sum. Each call also records its time inside the
       // alive-row statement (`hooks.storeMs()`), so a slow call splits
-      // into store, GC and the rest.
+      // into store time, the GC pauses `perf_hooks` reported inside it,
+      // and the rest — which can hold collector time it did not report.
       const gc = startGcObserver();
 
       const servedProbeHeights: Array<{ h: number; label: string; reps: { singleKey: number; page: number } }> = [
-        { h: ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20, label: 'tip-19', reps: { singleKey: 30, page: 30 } },
-        { h: ringHeights.includes(tipHeight - 60) ? tipHeight - 60 : (ringHeights[1] ?? back60), label: 'tip-60', reps: { singleKey: 30, page: 200 } },
-      ];
+        { h: ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20, reps: { singleKey: 30, page: 30 } },
+        { h: ringHeights.includes(tipHeight - 60) ? tipHeight - 60 : (ringHeights[1] ?? back60), reps: { singleKey: 30, page: 200 } },
+      ].map(({ h, reps }) => ({ h, label: tipLabel(h), reps }));
 
       /**
        * One in-process timed call under `hooks` and `gc`. `PerformanceObserver`
@@ -1012,7 +1044,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // 256-page series above.
       // -----------------------------------------------------------------
       const keptHeight = servedProbeHeights[1]!.h;
-      console.log(`\n==== kept-root 256-page at ${keptHeight} (= ${servedProbeHeights[1]!.label}), 200 reps ====`);
+      console.log(`\n==== kept-root 256-page at ${tipLabel(keptHeight)}, 200 reps ====`);
       console.log(`  height | kind       | path       | reps | first ms  | median ms | max ms    | first rows | median rows | max rows | proof B median`);
       const keptSamplesInProc: CallSample[] = [];
       {
@@ -1041,8 +1073,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
 
       // -----------------------------------------------------------------
       // Slow-call breakdown — each series above, every call above 5×
-      // median, with its total split into store ms, GC overlap ms and
-      // the rest, and its GC kind(s).
+      // median, with its total split into store ms, the GC overlap ms
+      // `perf_hooks` reported and the rest — which can hold collector
+      // time it did not report — and its GC kind(s).
       // -----------------------------------------------------------------
       console.log(`\n==== slow-call breakdown (any call > 5× its series median) ====`);
       for (const [k, s] of Object.entries(inProcSeries)) reportSlow(`store-served ${k} in-process`, s);
@@ -1053,7 +1086,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // The large owner's whole 85-page walk through store-served calls —
       // a fresh lazy root per page.
       const walkHeight = ringHeights.includes(tipHeight - 19) ? tipHeight - 19 : back20;
-      console.log(`\n==== store-served whole-range walk at ${walkHeight} — fresh lazy per page ====`);
+      console.log(`\n==== store-served whole-range walk at ${tipLabel(walkHeight)} — fresh lazy per page ====`);
       {
         let from: Uint8Array | null = null;
         let pages = 0;
@@ -1082,7 +1115,7 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // Heap and array buffers before and after a burst of 100 store-served
       // range-page calls, each a fresh lazy root — the memory check that
       // nothing of a store-served tree outlives a call.
-      console.log(`\n==== heap/arrbuf: burst of 100 store-served 256-page calls at ${walkHeight} ====`);
+      console.log(`\n==== heap/arrbuf: burst of 100 store-served 256-page calls at ${tipLabel(walkHeight)} ====`);
       {
         const before = memNow();
         for (let i = 0; i < 100; i++) {

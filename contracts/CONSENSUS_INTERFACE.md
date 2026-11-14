@@ -554,11 +554,34 @@ outputs, and fits at most about 0.4% more entries.
 | the packed body, one signature corrupted — refused | 19.9–20.1 s → 4.3 s | 52.2–52.8 s → 12.4–13.5 s |
 | 20 598 entries no input requires — refused | 0.09 s → 0.09 s | 0.25–0.37 s → 0.28–0.36 s |
 
+**`applyBlock` over the budget's bodies**, measured 2026-11-14 with the same script on Node 24 — a testnet box with its
+own node stopped (ten runs a body) and the i9 core with its sibling hardware thread idle (five runs):
+
+| Body | a testnet box's Cascade Lake core | i9-14900HX core |
+|---|---|---|
+| one-signer: 3 156 credit sends | 3.08–3.63 s | 1.13–1.20 s |
+| packed: 6 000 signers in 78 transactions — over the budget | 4.16–4.69 s | 1.58–1.63 s |
+| the packed body, one signature corrupted — refused | 4.00–4.44 s | 1.53–1.56 s |
+
+The signature batch is 4.1 s of the box's packed body and 1.3 s of the i9's (`bench-leaf-replay.mjs`, which runs the
+batch alone), so `applyBlock` over it is about nine tenths signature batch on both. V8 sizes the box's heap to its 961
+MiB — a 529 MiB limit — and collects the young generation about 85 times over the packed body where the i9 does 21:
+0.3–0.5 s of the box's time against 0.07 s, and `--max-semi-space-size=16` changes neither. With the box's own node
+running beside it the packed body took 4.66–5.60 s. A replay from the proof (the table below) takes the box 6.7–9.1 s a
+body against the i9's 1.9–2.3 s: the batch 3.0–3.1 times the i9's, the tree's work 3.5–4.5 times. On one thread the box
+stands about where a Raspberry Pi 5 does — 2 902 MIPS on 7-Zip's single-thread benchmark (p7zip 16.02, built as
+sbc-bench builds it) against the Pi 5's published 3 136–3 305.
+
 **The protocol hash over `@noble/hashes`** (`TYPES_INTERFACE → The protocol hash`) costs, measured 2026-09-26 on the
 same i9 core against the tree before it, interleaved (medians of nine runs each; both ran 10–25% above the table's
 times on a busier machine): the ordinary body **+0.46 s (+12%)** — the most hashing, 56 221 digests over 6.2 MB —
 the packed body +0.33 s (+6%), the corrupted packed body +0.28 s, the refused one +0.01 s. Of the packed body's, the
-hashing itself is about 0.05 s (1 014 digests); the rest is unattributed. The testnet box is not measured.
+hashing itself is about 0.05 s (1 014 digests).
+
+**Where `applyBlock`'s time goes**, profiled 2026-11-14 over the budget's packed body (6 000 signers, five calls, Node
+24) on the i9 core and on a testnet box: noble's curve arithmetic 81% and 77% — 38–39% of the whole the square root
+that decodes each signature's `R` and its key; the collector 4% and 7%; `types`' hex conversions 2.4% and 2.3%; SHA-512
+and BLAKE2b 2.3% on both; `consensus`, `validation`, `types` and `wire` 9.5% and 11%.
 
 **A replay of a block from its proof**, measured 2026-10-27 with `packages/consensus/scripts/bench-leaf-replay.mjs`
 (the verifier built over the parent's digest and the proof, `applyBlock` over `verifierSession`, the writes and the
@@ -572,6 +595,13 @@ in seconds — the bodies at the budget but the last:
 | wide consolidations: 64 signers, each spending 307 of its own credit boxes | 4.34 MB | 59 155 | 64 | 3.12 | 2.45 | 3.26 | 3.68 |
 | rent collections: 76 transactions of 131 boxes, each box another owner's | 2.27 MB | 59 832 | 0 | 2.97 | 2.36 | 3.20 | 3.49 |
 | 6 000 signers packed — over the budget | 1.32 MB | 18 253 | 6 000 | 3.29 | 1.62 | 2.77 | 7.24 |
+
+**The table's times are those of a core whose sibling hardware thread is busy.** On the same i9 core with its sibling
+idle, measured 2026-11-14 (medians of five or nine runs, interleaved), Node 22.19 replays the one-signer body in 1.84–2.04 s
+and the packed body in 2.13–2.28 s, Firefox 157 in 1.70–1.80 s and 1.84–1.97 s; a busy loop on the sibling takes
+Node's to 2.91–2.95 s and 3.36–3.44 s. The trees of 2026-09-30 and 2026-10-27 replay the same bodies within about 5% of
+each other, interleaved on one core. **A replay is timed on a core whose sibling thread is idle, and two runs are
+compared only interleaved in one session.**
 
 **Of the bodies measured, the wide consolidations make the largest proof at the budget.** A transaction holds about 307
 inputs under one signature, a rent collection about 131 under none — each of its inputs takes an output of its own —

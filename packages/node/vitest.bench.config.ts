@@ -34,6 +34,7 @@ export default mergeConfig(
         BENCH_BLOCK_COUNT: process.env['BENCH_BLOCK_COUNT'] ?? '',
         BENCH_BLOCK_SENDS: process.env['BENCH_BLOCK_SENDS'] ?? '',
         BENCH_SMALL_SENDS: process.env['BENCH_SMALL_SENDS'] ?? '',
+        BENCH_PROOF_WINDOW_NODES: process.env['BENCH_PROOF_WINDOW_NODES'] ?? '',
       },
     },
   }),
