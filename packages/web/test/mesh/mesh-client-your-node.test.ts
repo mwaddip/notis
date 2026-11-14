@@ -463,9 +463,9 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     const tipBefore = sBefore.tip!.height;
 
     // A mined, signed block the client's validator accepts, gossiped
-    // while a disagreement stands. MESH_INTERFACE → Discovery → "while
-    // a question stands, a gossiped block runs no check: the chain is
-    // held".
+    // while a disagreement stands
+    // (MESH_INTERFACE → Discovery → "A disagreement is the reader's
+    // question, never the client's choice").
     const extraBlock = makeBlockAt(tipBefore + 1, 1, {
       prevBlockHash: '00'.repeat(32),
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
