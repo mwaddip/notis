@@ -7,10 +7,20 @@ import { multiaddr } from '@multiformats/multiaddr';
 import type { Libp2p } from '@libp2p/interface';
 import { RETRY_BASE_MS, RETRY_CAP_MS, RELAY_LISTEN_TIMEOUT_MS } from './constants.js';
 
-export function retryIntervalMs(failures: number, base?: number, cap?: number): number {
+export function retryIntervalMs(
+  failures: number,
+  base?: number,
+  cap?: number,
+  // MESH_INTERFACE → The client's node list → "Retry" — the random source
+  // whose draw spreads the retry. Required in the module's final shape;
+  // the parameter rides here to let a case pass it ahead of the draw
+  // landing in the file.
+  random?: () => number,
+): number {
   if (!Number.isFinite(failures) || failures <= 0) return 0;
   const b = typeof base === 'number' && base > 0 ? base : RETRY_BASE_MS;
   const c = typeof cap === 'number' && cap > 0 ? cap : RETRY_CAP_MS;
+  void random;
   return Math.min(c, b * Math.pow(2, failures - 1));
 }
 
@@ -35,8 +45,12 @@ export interface RelayRetry {
 export function startRelayRetry(
   node: Libp2p,
   addrString: string,
-  opts: { baseMs: number; capMs: number; listenTimeoutMs?: number },
+  opts: { baseMs: number; capMs: number; listenTimeoutMs?: number; random?: () => number },
 ): RelayRetry {
+  // MESH_INTERFACE → The client's node list → "Retry" — the random source
+  // whose draw spreads the retry. The parameter rides here to let a
+  // case pass it ahead of the draw landing in the file.
+  const random = opts.random;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let failures = 0;
@@ -102,10 +116,10 @@ export function startRelayRetry(
         return;
       }
       failures += 1;
-      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs));
+      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs, random));
     } catch {
       failures += 1;
-      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs));
+      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs, random));
     }
   };
 
