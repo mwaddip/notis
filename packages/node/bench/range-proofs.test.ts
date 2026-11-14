@@ -307,8 +307,11 @@ function installAliveRowHooks(db: Database.Database): BenchHooks {
  * the same clock `performance.now()` reads, so overlap with a timed call is
  * `max(0, min(callEnd, startMs + durationMs) - max(callStart, startMs))`.
  * The kind names V8's class — minor (scavenge), major (mark-sweep),
- * incremental (idle incremental), weakcb (weak-callbacks). A pause of class
- * `major` is the one that lands on the thread.
+ * incremental (idle incremental), weakcb (weak-callbacks). A pause of any
+ * class lands on the thread, and `perf_hooks` does not report every pause: the
+ * GC share the bench prints is what the observer was told, not all the
+ * collector's time (NODE_INTERFACE → "It is the first scavenge after a full
+ * collection, and a node's default bound does not spare it").
  */
 interface GcEntry { startMs: number; durationMs: number; kind: string }
 
@@ -362,7 +365,7 @@ function startGcObserver(): GcObserver {
   };
 }
 
-/** Record of a timed proof call, enough to split a slow one into store / GC / rest. */
+/** Record of a timed proof call, enough to split a slow one into store time, the GC pauses `perf_hooks` reported inside it, and the rest. */
 interface CallSample {
   index: number;
   totalMs: number;
@@ -866,7 +869,8 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
       // `performance.now()` reads, so overlap with a timed call is a
       // measurable sum. Each call also records its time inside the
       // alive-row statement (`hooks.storeMs()`), so a slow call splits
-      // into store, GC and the rest.
+      // into store time, the GC pauses `perf_hooks` reported inside it,
+      // and the rest — which can hold collector time it did not report.
       const gc = startGcObserver();
 
       const servedProbeHeights: Array<{ h: number; label: string; reps: { singleKey: number; page: number } }> = [
@@ -1069,8 +1073,9 @@ describe('range-proofs bench — a 10^6-leaf tree with full-block kept roots', (
 
       // -----------------------------------------------------------------
       // Slow-call breakdown — each series above, every call above 5×
-      // median, with its total split into store ms, GC overlap ms and
-      // the rest, and its GC kind(s).
+      // median, with its total split into store ms, the GC overlap ms
+      // `perf_hooks` reported and the rest — which can hold collector
+      // time it did not report — and its GC kind(s).
       // -----------------------------------------------------------------
       console.log(`\n==== slow-call breakdown (any call > 5× its series median) ====`);
       for (const [k, s] of Object.entries(inProcSeries)) reportSlow(`store-served ${k} in-process`, s);
