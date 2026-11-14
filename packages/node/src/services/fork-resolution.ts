@@ -355,13 +355,17 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
   // post's pending row and every pooled entry spending one of its outputs
   // or replying to its post, and so on down (MEMPOOL_INTERFACE →
   // removeUnreturned). `getBlockJournal` answers the journal the current
-  // transaction has written for each applied height.
+  // transaction has written for each applied height — the switch's own
+  // apply wrote it in the same transaction, so a null at one of these
+  // heights is corrupt state, and reading a carried transaction as
+  // unreturned would take its pooled dependents.
   const appliedTxIds = new Set<string>();
   for (let h = forkHeight + 1; h <= forkHeight + newHashes.length; h++) {
     const appliedJournal = getBlockJournal(h);
-    if (appliedJournal) {
-      for (const rec of appliedJournal.appliedUtxoTxs) appliedTxIds.add(rec.txId);
+    if (!appliedJournal) {
+      throw new MissingJournalError('reorg', h);
     }
+    for (const rec of appliedJournal.appliedUtxoTxs) appliedTxIds.add(rec.txId);
   }
   const reverted: Array<{ txId: string; tx: UtxoTransaction }> = [];
   for (const rj of revertedJournals) {
