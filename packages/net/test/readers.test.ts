@@ -1261,4 +1261,77 @@ describe('NET_INTERFACE → Readers', () => {
     },
     TIMEOUT,
   );
+
+  // MESH_INTERFACE → Block gossip → "A node's readers are its router's
+  // direct peers": a reader the mesh holds when its handshake completes
+  // leaves the mesh with a PRUNE. The reader dials A and subscribes to
+  // the ordering-block topic; the handshake is held back until A's
+  // heartbeat has grafted the reader into A's ordering-block mesh and
+  // the reader's own router has grafted A into its mesh. Then the
+  // handshake runs, inside the handshake deadline
+  // (NET_INTERFACE → Handshake → "A connection handshakes within its
+  // deadline, or is closed"; the deadline is
+  // `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs` = 30 s).
+  it(
+    'a reader the mesh holds when its handshake completes leaves the mesh with a PRUNE',
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+      hosts.push(reader);
+      const readerId = reader.peerId.toString();
+      const aId = nodeA.peerId();
+      const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+
+      // Open the connection ahead of the handshake: libp2p's upgrade
+      // runs noise, identify and yamux, and gossipsub's registrar
+      // topology fires `onPeerConnected` on both sides.
+      await reader.dial(multiaddr(addrA));
+      readerPubsub(reader).subscribe(topic);
+
+      // control: both routers have grafted. A's heartbeat (1 s) grafts
+      // the reader as a topic subscriber once A has heard the reader's
+      // subscription; the reader's `handleGraft` adds A to its mesh on
+      // the inbound GRAFT (or its own `join` sends outbound first,
+      // whichever side wins the race — either path leaves both meshes
+      // naming the other).
+      await vi.waitFor(
+        () => {
+          expect(pubsubOf(nodeA).getMeshPeers(topic)).toContain(readerId);
+          expect(readerPubsub(reader).getMeshPeers(topic)).toContain(aId);
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+
+      // The handshake runs. A's inbound-handshake handler calls
+      // `readerActiveHandlers` and the net call before them,
+      // `addDirectPeer(reader)`: A removes the reader from the
+      // ordering-block mesh with `handlePrune`'s accounting and sends
+      // a PRUNE for that topic with no PX.
+      await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+
+      // control: the reader is held as a reader on A.
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toContain(readerId);
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+
+      // last: A's ordering-block mesh does not list the reader, and
+      // the reader's own router has taken the PRUNE and holds A in no
+      // mesh for the topic.
+      await vi.waitFor(
+        () => {
+          expect(pubsubOf(nodeA).getMeshPeers(topic)).not.toContain(readerId);
+          expect(readerPubsub(reader).getMeshPeers(topic)).not.toContain(aId);
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+    },
+    TIMEOUT,
+  );
 });
