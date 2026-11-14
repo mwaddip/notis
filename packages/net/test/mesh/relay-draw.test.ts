@@ -109,14 +109,7 @@ describe('startRelayRetry schedules the drawn wait', () => {
     dirs.length = 0;
   });
 
-  // The wait is drawn through the required `random` option. With a source
-  // pinned to 0, the wait reads half the schedule; two attempts measured
-  // on a never-answering relay confirm it.
-  it('the wait a failing listen schedules is drawn through the required random source', async () => {
-    // A bare libp2p host that speaks TCP + Noise but has no circuit relay —
-    // every listen attempt completes `transportManager.listen` without a
-    // reservation (`hasReservation` reads false), so it counts as a
-    // failure and the next retry is scheduled.
+  async function startBareLibp2p(): Promise<Libp2p> {
     const relayKey = await libp2pGenerate('Ed25519');
     const relay = await createLibp2p({
       privateKey: relayKey,
@@ -127,43 +120,100 @@ describe('startRelayRetry schedules the drawn wait', () => {
       services: { identify: identify() },
     });
     toStop.push(relay);
-    const relayLibp2p = relay;
-    const relayAddr = await (async () => {
-      for (let i = 0; i < 50; i++) {
-        const a = relayLibp2p.getMultiaddrs().map((m) => m.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s));
-        if (a) return a;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      throw new Error('no relay tcp addr');
-    })();
+    return relay;
+  }
 
+  async function newPrivateNodeOn(bootstrapAddr: string, baseMs: number): Promise<NetNode> {
     const dir = mkdtempSync(join(tmpdir(), 'net-relay-draw-'));
     dirs.push(dir);
     const priv = new NetNode(
       makeConfig({
         nodeKey: generateKeyPair(),
         listenAddrs: '/ip4/127.0.0.1/tcp/0',
-        bootstrapPeers: [relayAddr],
-        mesh: privateMeshOn(dir),
+        bootstrapPeers: [bootstrapAddr],
+        mesh: { ...privateMeshOn(dir), relayRetryBaseMs: baseMs, relayRetryCapMs: 100_000 } as MeshConfig,
       }),
       validators,
     );
-    await priv.start();
     nodes.push(priv);
+    return priv;
+  }
 
-    // Open a fresh RelayRetry on an unreachable address with a counting
-    // random source: the draw must call `random` on every retry, so a
-    // run that fails a few attempts invokes it. (`/ip4/127.0.0.1/tcp/1`
-    // reads ECONNREFUSED at once.)
-    let randomCalls = 0;
-    const retry = startRelayRetry(
-      priv.libp2pNode!,
-      '/ip4/127.0.0.1/tcp/1/p2p/12D3KooWRAoWaa9kgbsEiFzBkoxtZJktTAwzUZmRWDxv3vmzR5Q5/p2p-circuit',
-      { baseMs: 50, capMs: 500, random: () => { randomCalls += 1; return 0; } },
-    );
-    await new Promise((r) => setTimeout(r, 400));
-    retry.stop();
+  function addrOfTcpPeer(lp: Libp2p): string {
+    const a = lp.getMultiaddrs().map((m) => m.toString()).find((s) => /\/tcp\/\d+\/p2p\//.test(s));
+    if (a === undefined) throw new Error('no tcp/p2p addr');
+    return a;
+  }
+
+  async function waitForTcpPeer(lp: Libp2p): Promise<string> {
+    for (let i = 0; i < 50; i++) {
+      try { return addrOfTcpPeer(lp); } catch { /* retry */ }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('no relay tcp addr');
+  }
+
+  // (a) A `startRelayRetry` call with `baseMs: 1_000`, `capMs: 100_000`
+  // and a source answering 0.25 schedules its first retry at 625 ms —
+  // `(0.5 + 0.25 · 0.5) · 1 000`. A spy on `setTimeout`'s second
+  // argument matched to the distinctive 625 holds the draw.
+  it('startRelayRetry schedules a 625 ms wait from a 0.25 source and 1 000 ms base', async () => {
+    // The scenario a case of its own: a bare libp2p relay (no circuit
+    // relay server), so each listen attempt fails and schedules a
+    // retry.
+    const relay = await startBareLibp2p();
+    const relayAddr = await waitForTcpPeer(relay);
+    const priv = await newPrivateNodeOn(relayAddr, 50_000);
+    await priv.start();
+
+    const scheduled: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    const spy = ((fn: (...args: unknown[]) => void, ms: number) => {
+      scheduled.push(ms);
+      return origSetTimeout(fn, ms);
+    }) as unknown as typeof globalThis.setTimeout;
+    globalThis.setTimeout = spy;
+    try {
+      const retry = startRelayRetry(
+        priv.libp2pNode!,
+        '/ip4/127.0.0.1/tcp/1/p2p/12D3KooWRAoWaa9kgbsEiFzBkoxtZJktTAwzUZmRWDxv3vmzR5Q5/p2p-circuit',
+        { baseMs: 1_000, capMs: 100_000, random: () => 0.25 },
+      );
+      await new Promise((r) => origSetTimeout(r, 300));
+      retry.stop();
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
+    // -- LAST ASSERTION -- the distinctive drawn wait landed on the
+    // timer, not the undrawn 1 000.
+    expect(scheduled.filter((ms) => ms === 625), `scheduled waits: ${scheduled.join(',')}`).not.toEqual([]);
+  }, 30_000);
+
+  // (b) The shipped `node.ts` call site is held: a private-role NetNode
+  // whose bootstrap never reserves draws its own retry through
+  // `Math.random`. With `Math.random` spied to answer 0.25 and
+  // `relayRetryBaseMs: 1_000`, the retry schedules 625 ms.
+  it('a private NetNode draws its relay retry through Math.random — spied 0.25 schedules 625 ms', async () => {
+    const relay = await startBareLibp2p();
+    const relayAddr = await waitForTcpPeer(relay);
+    const scheduled: number[] = [];
+    const origSetTimeout = globalThis.setTimeout;
+    const spy = ((fn: (...args: unknown[]) => void, ms: number) => {
+      scheduled.push(ms);
+      return origSetTimeout(fn, ms);
+    }) as unknown as typeof globalThis.setTimeout;
+    const origRandom = Math.random;
+    Math.random = () => 0.25;
+    globalThis.setTimeout = spy;
+    try {
+      const priv = await newPrivateNodeOn(relayAddr, 1_000);
+      await priv.start();
+      await new Promise((r) => origSetTimeout(r, 1_200));
+    } finally {
+      Math.random = origRandom;
+      globalThis.setTimeout = origSetTimeout;
+    }
     // -- LAST ASSERTION --
-    expect(randomCalls, 'random invoked by the draw').toBeGreaterThan(0);
+    expect(scheduled.filter((ms) => ms === 625), `scheduled waits: ${scheduled.join(',')}`).not.toEqual([]);
   }, 30_000);
 });
