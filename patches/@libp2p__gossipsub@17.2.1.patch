@@ -1,5 +1,5 @@
 diff --git a/dist/src/gossipsub.js b/dist/src/gossipsub.js
-index a341a31acbd8bee8fa49754d4e08c186578d4deb..885198faf7b3cf4cfadd0d8d2f6d9e3973eb6e45 100644
+index a341a31acbd8bee8fa49754d4e08c186578d4deb..b040ecd0376cf663feabeb4fb383cb2cb196a451 100644
 --- a/dist/src/gossipsub.js
 +++ b/dist/src/gossipsub.js
 @@ -41,6 +41,14 @@ export class GossipSub extends TypedEventEmitter {
@@ -187,8 +187,50 @@ index a341a31acbd8bee8fa49754d4e08c186578d4deb..885198faf7b3cf4cfadd0d8d2f6d9e39
          this.onPeerDisconnected(peerId);
      }
      /**
+@@ -1043,6 +1105,41 @@ export class GossipSub extends TypedEventEmitter {
+             }
+         }
+     }
++    /**
++     * Add `id` to the direct-peer set after construction. For every topic
++     * whose mesh holds `id`, remove it from the mesh — with the same
++     * accounting `handlePrune` keeps on an inbound PRUNE — and send a
++     * PRUNE to `id` for that topic with no PX. Idempotent: `id` already
++     * in the direct-peer set returns at once.
++     */
++    addDirectPeer(id) {
++        if (this.direct.has(id)) {
++            return;
++        }
++        this.direct.add(id);
++        for (const [topic, peers] of this.mesh) {
++            if (!peers.has(id)) {
++                continue;
++            }
++            peers.delete(id);
++            this.score.prune(id, topic);
++            this.metrics?.onRemoveFromMesh(topic, ChurnReason.Prune, 1);
++            this.safeDispatchEvent('gossipsub:prune', {
++                detail: { peerId: id, topic, direction: 'outbound' }
++            });
++            this.makePrune(id, topic, false, false)
++                .then((prune) => {
++                this.sendRpc(id, createGossipRpc([], { prune: [prune] }));
++            })
++                .catch((err) => { this.log.error('addDirectPeer prune error', err); });
++        }
++    }
++    /**
++     * Remove `id` from the direct-peer set. Idempotent.
++     */
++    removeDirectPeer(id) {
++        this.direct.delete(id);
++    }
+     /**
+      * Whether to accept a message from a peer
+      */
 diff --git a/src/gossipsub.ts b/src/gossipsub.ts
-index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..6cea54bff389c3ad37ee61bad2bf785dbe308e2d 100644
+index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..4b7e034db49287b52ad88615047d387b1a3ed9b4 100644
 --- a/src/gossipsub.ts
 +++ b/src/gossipsub.ts
 @@ -119,8 +119,17 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
@@ -383,3 +425,47 @@ index fb9055078deaae4a77d6bfbeebeeb4bd77fa7cf1..6cea54bff389c3ad37ee61bad2bf785d
      this.onPeerDisconnected(peerId)
    }
  
+@@ -1311,6 +1376,43 @@ export class GossipSub extends TypedEventEmitter<GossipSubEvents> implements Typ
+     }
+   }
+ 
++  /**
++   * Add `id` to the direct-peer set after construction. For every topic
++   * whose mesh holds `id`, remove it from the mesh — with the same
++   * accounting `handlePrune` keeps on an inbound PRUNE — and send a
++   * PRUNE to `id` for that topic with no PX. Idempotent: `id` already
++   * in the direct-peer set returns at once.
++   */
++  public addDirectPeer (id: PeerIdStr): void {
++    if (this.direct.has(id)) {
++      return
++    }
++    this.direct.add(id)
++    for (const [topic, peers] of this.mesh) {
++      if (!peers.has(id)) {
++        continue
++      }
++      peers.delete(id)
++      this.score.prune(id, topic)
++      this.metrics?.onRemoveFromMesh(topic, ChurnReason.Prune, 1)
++      this.safeDispatchEvent<MeshPeer>('gossipsub:prune', {
++        detail: { peerId: id, topic, direction: 'outbound' }
++      })
++      this.makePrune(id, topic, false, false)
++        .then((prune) => {
++          this.sendRpc(id, createGossipRpc([], { prune: [prune] }))
++        })
++        .catch((err) => { this.log.error('addDirectPeer prune error', err) })
++    }
++  }
++
++  /**
++   * Remove `id` from the direct-peer set. Idempotent.
++   */
++  public removeDirectPeer (id: PeerIdStr): void {
++    this.direct.delete(id)
++  }
++
+   /**
+    * Whether to accept a message from a peer
+    */
