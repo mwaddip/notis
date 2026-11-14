@@ -4931,6 +4931,11 @@ of it the 63 full-block roots the bench keeps with no node bound, where the defa
 minor collection of about 1.75 s was observed inside two of the calls, and no collection inside the others. What
 stalls the rest is not established, nor whether a node under the default bound sees it.
 
+> ⚠ **AHEAD OF CODE (2026-11-14).** `packages/node/bench/range-proofs.test.ts` bounds its prover's kept roots by
+`BENCH_PROOF_WINDOW_NODES` when it is set — a node's `PROOF_WINDOW_NODES`, `250000` its default — and by the ring's
+capacity alone when it is empty, as in the run above; every height a series measures at is printed as its distance
+from the tip.
+
 **What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
 limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
 carry. A block of 3 156 credit sends over that tree replaces about 114 000 nodes, 71 MiB a kept root: 64 such roots
