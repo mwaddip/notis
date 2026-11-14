@@ -12,8 +12,15 @@
 // tip falls to phase 4.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { encodeOrderingBlock, generateKeyPair, profileFor } from '@dagsocial/types';
-import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
+import type { PeerId } from '@libp2p/interface';
+import {
+  encodeOrderingBlock,
+  generateKeyPair,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
+  profileFor,
+} from '@dagsocial/types';
+import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
   encodeNipopowProof,
   verifyProof,
@@ -23,7 +30,7 @@ import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
 import { DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { NodeTipResult, TipResult, resolveTip } from '@dagsocial/nipopow-client';
 import { blockHash } from '@dagsocial/validation';
-import { gossipTopics, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
+import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import type { HttpFetch } from '@dagsocial/node-reads';
 
 import {
@@ -31,6 +38,7 @@ import {
   makeReader,
 } from '../../../nipopow/test/helpers.js';
 import { buildMinedBranch } from './helpers/mined-branch.js';
+import { makeBlockAt } from '../../../net/test/helpers/devnet-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 import { forkKey } from '../../src/mesh/memory.js';
@@ -370,29 +378,34 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
     expect(client.state().disagreement).not.toBeNull();
     const checksBefore = client.state().checks;
 
-    // Mine a block with an unknown parent and gossip it — under the
-    // old rule this ran a check at once. Under the new rule nothing
-    // is checked while the question stands.
-    const extendedChain = buildMinedChain({ count: 150 });
-    const unknownParentHeader = extendedChain.headers[149]!;
-    const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
-    const gapBlock: OrderingBlock = {
-      header: unknownParentHeader,
-      utxoTxTree: emptyTree,
-      validatorSignature: new Uint8Array(64),
-    };
+    // A gossiped block whose parent the client does not hold: the
+    // client's validator accepts it, the router delivers it, and the
+    // handler sees a standing question and runs no check.
+    // MESH_INTERFACE → Block gossip → "A block is checked before it
+    // is forwarded, and never applied".
+    const gapBlock = makeBlockAt(150, 1, {
+      prevBlockHash: '00'.repeat(32),
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    });
     interface PubsubStub {
+      topicValidators: Map<
+        string,
+        (peer: PeerId, msg: { topic: string; data: Uint8Array }) => Promise<number> | number
+      >;
       reportMessageValidationResult: (a: string, b: string, c: number) => void;
       dispatchEvent: (ev: Event) => void;
     }
     const pubsub = (client.libp2p as unknown as { services: { pubsub: PubsubStub } }).services.pubsub;
     pubsub.reportMessageValidationResult = () => { /* stub */ };
+    const topic = gossipTopics(PROFILE.magic).orderingBlock;
+    const msg = { topic, data: encodeOrderingBlock(gapBlock) };
+    const validator = pubsub.topicValidators.get(topic)!;
+    const relayPeer = peerIdFromNotisId(keyPair().notisId);
+    const verdict = await validator(relayPeer, msg);
+    expect(verdict).toBe(TopicValidatorResult.Accept);
     pubsub.dispatchEvent(new CustomEvent('gossipsub:message', {
       detail: {
-        msg: {
-          topic: gossipTopics(PROFILE.magic).orderingBlock,
-          data: encodeOrderingBlock(gapBlock),
-        },
+        msg,
         msgId: 'gap-msg-id',
         propagationSource: { toString: () => 'fake-peer' },
       },

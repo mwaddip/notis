@@ -13,8 +13,16 @@
 // tip falls to phase 4.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { bytesToHex, encodeOrderingBlock, generateKeyPair, profileFor } from '@dagsocial/types';
-import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
+import type { PeerId } from '@libp2p/interface';
+import {
+  bytesToHex,
+  encodeOrderingBlock,
+  generateKeyPair,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
+  profileFor,
+} from '@dagsocial/types';
+import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
   encodeNipopowProof,
   verifyProof,
@@ -32,6 +40,7 @@ import {
   makeReader,
 } from '../../../nipopow/test/helpers.js';
 import { buildMinedBranch } from './helpers/mined-branch.js';
+import { makeBlockAt } from '../../../net/test/helpers/devnet-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 
@@ -453,27 +462,33 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(sBefore.disagreement).not.toBeNull();
     const tipBefore = sBefore.tip!.height;
 
-    // Mine one more block on top of the kept chain and gossip it.
-    const extended = buildMinedChain({ count: 101 });
-    const nextHeader = extended.headers[100]!;
-    const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
-    const extraBlock: OrderingBlock = {
-      header: nextHeader,
-      utxoTxTree: emptyTree,
-      validatorSignature: new Uint8Array(64),
-    };
+    // A mined, signed block the client's validator accepts, gossiped
+    // while a disagreement stands. MESH_INTERFACE → Discovery → "while
+    // a question stands, a gossiped block runs no check: the chain is
+    // held".
+    const extraBlock = makeBlockAt(tipBefore + 1, 1, {
+      prevBlockHash: '00'.repeat(32),
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    });
     interface PubsubStub {
+      topicValidators: Map<
+        string,
+        (peer: PeerId, msg: { topic: string; data: Uint8Array }) => Promise<number> | number
+      >;
       reportMessageValidationResult: (a: string, b: string, c: number) => void;
       dispatchEvent: (ev: Event) => void;
     }
     const pubsub = (client.libp2p as unknown as { services: { pubsub: PubsubStub } }).services.pubsub;
     pubsub.reportMessageValidationResult = () => { /* stub */ };
+    const topic = gossipTopics(PROFILE.magic).orderingBlock;
+    const msg = { topic, data: encodeOrderingBlock(extraBlock) };
+    const validator = pubsub.topicValidators.get(topic)!;
+    const relayPeer = peerIdFromNotisId(keyPair().notisId);
+    const verdict = await validator(relayPeer, msg);
+    expect(verdict).toBe(TopicValidatorResult.Accept);
     pubsub.dispatchEvent(new CustomEvent('gossipsub:message', {
       detail: {
-        msg: {
-          topic: gossipTopics(PROFILE.magic).orderingBlock,
-          data: encodeOrderingBlock(extraBlock),
-        },
+        msg,
         msgId: 'fake-msg-id',
         propagationSource: { toString: () => 'fake-peer' },
       },
