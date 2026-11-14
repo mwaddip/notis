@@ -1,6 +1,5 @@
 import {
   bytesToHex,
-  decodeOrderingBlock,
   decodeTxPacket,
   encodeOrderingBlock,
   encodeTxPacket,
@@ -133,6 +132,14 @@ export function subscribeTopics(
 ): void {
   const gs = libp2p.services.pubsub;
 
+  // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"
+  // — each validator keeps its accepted value against the message object the
+  // router hands it, and the listener reads that value for the handlers.
+  // `WeakMap` lets the entry fall when the message object does, so nothing a
+  // delivery drops survives.
+  const acceptedBlocks = new WeakMap<object, OrderingBlock>();
+  const acceptedTxPackets = new WeakMap<object, { tx: UtxoTransaction; content?: string }>();
+
   // -------------------------------------------------------------------------
   // Topic validators — run BEFORE forwarding to mesh peers.  Invalid
   // messages are rejected at this layer and never propagated further.
@@ -163,6 +170,10 @@ export function subscribeTopics(
     const raw = new Uint8Array(msg.data);
     const verdict = blockCheck.check(raw);
     if (verdict.result === 'accept') {
+      // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded
+      // once" — the block the validator read is kept against the message
+      // object for the listener.
+      acceptedBlocks.set(msg, verdict.block);
       return TopicValidatorResult.Accept;
     }
     if (verdict.result === 'ignore') {
@@ -263,6 +274,10 @@ export function subscribeTopics(
         peerMgr.recordPenaltyKind(PenaltyKind.Misbehavior, peerId, 'tx signature invalid');
         return TopicValidatorResult.Reject;
       }
+      // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded
+      // once" — the packet the validator read is kept against the message
+      // object for the listener.
+      acceptedTxPackets.set(msg, packet);
       return TopicValidatorResult.Accept;
     } catch (err) {
       console.error(`[net] tx validator fault (ignored): ${String(err)}`);
@@ -283,8 +298,8 @@ export function subscribeTopics(
     const { detail } = evt;
     if (!detail?.msg) return;
 
-    const { topic } = detail.msg;
-    const raw = new Uint8Array(detail.msg.data);
+    const { msg } = detail;
+    const { topic } = msg;
 
     // The peer that sent this message to *us* — the carrier — is handed on as
     // the relay source (NET_INTERFACE → Pull Requests): `propagationSource` is by
@@ -311,16 +326,15 @@ export function subscribeTopics(
       // NET_INTERFACE → Inbound Processing → "A transaction is forwarded when
       // a handler admits it": the block's report runs before its handlers.
       report(TopicValidatorResult.Accept);
-      let block: OrderingBlock;
-      try {
-        block = decodeOrderingBlock(raw);
-      } catch (err) {
-        // Unreachable unless the topic validator is wrong: every message that
-        // gets here was already decoded once, by the validator that accepted
-        // it. So this is our bug and not the sender's — no penalty is
-        // recorded, and it is logged loudly rather than absorbed.
+      // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded
+      // once" — the validator keeps the block against the message object,
+      // and the listener reads it here. An accepted message with no value
+      // kept against it is this node's bug: logged as one, delivered to no
+      // handler, and it penalises no peer.
+      const block = acceptedBlocks.get(msg);
+      if (block === undefined) {
         console.error(
-          `[net] BUG: '${topic}' message passed its topic validator and then failed to decode: ${String(err)}`,
+          `[net] BUG: '${topic}' message accepted but no value kept against it`,
         );
         return;
       }
@@ -330,12 +344,15 @@ export function subscribeTopics(
         console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
       }
     } else if (topic === topics.tx) {
-      let packet: ReturnType<typeof decodeTxPacket>;
-      try {
-        packet = decodeTxPacket(raw);
-      } catch (err) {
+      // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded
+      // once" — the validator keeps the packet against the message object,
+      // and the listener reads it here. An accepted message with no value
+      // kept against it is this node's bug: logged as one, delivered to no
+      // handler, reported Ignore, and it penalises no peer.
+      const packet = acceptedTxPackets.get(msg);
+      if (packet === undefined) {
         console.error(
-          `[net] BUG: '${topic}' message passed its topic validator and then failed to decode: ${String(err)}`,
+          `[net] BUG: '${topic}' message accepted but no value kept against it`,
         );
         report(TopicValidatorResult.Ignore);
         return;
