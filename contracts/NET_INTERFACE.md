@@ -626,6 +626,14 @@ connection like any other (the `retry` row of `MESH_INTERFACE → The client's n
 carries an API base there until its retry (`MESH_INTERFACE → The client's node list → "An entry may carry an API
 base"`).
 
+**A reader is its node's gossip direct peer.** A reader the node holds is sent every block the node's router forwards or
+publishes, outside every topic's mesh, and leaves the router's direct peers when the node holds no connection to it; a
+topic's mesh holds chain-serving peers alone (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct
+peers"`).
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** Net marks no reader as a direct peer; a reader grafts into the node's mesh as a
+> node peer does.
+
 **A peer dialled for chain service that declares none is closed.** An outbound connection whose handshake declares no
 chain service — a reader, or a node whose build declares nothing — is closed after its handshake and counted toward
 nothing; the next tick dials another.
@@ -1363,7 +1371,7 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 | Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well (→ The mesh) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`); a peer's gossip runs on its newest connection, and a replaced stream's failure keeps the peer (`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`) |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`); a peer's gossip runs on its newest connection, and a replaced stream's failure keeps the peer (`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`); a reader is a direct peer, outside every topic's mesh (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct peers"`) |
 | Peer identity | the node key's libp2p peer id — Ed25519 alone (→ The node key) |
 
 ### The node key
@@ -1586,7 +1594,7 @@ Two-stage validation, modeled after Ergo's modifier processing:
 ### Stage 1 (net package, stateless)
 
 Runs inside the gossipsub topic validators — i.e. **before** a message is
-forwarded to mesh peers. A message that fails Stage 1 is Rejected (never
+forwarded to any peer. A message that fails Stage 1 is Rejected (never
 forwarded) and penalized: over its bound or undecodable → `ProtocolViolation` (permanent
 ban — → Validation (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded"); well-formed but invalid → misbehavior penalty (100), except a block's version mismatch, which is
 `Transient` (→ Peer Penalty System), and a refusal that rests on this node's state, which records
