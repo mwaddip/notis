@@ -134,7 +134,7 @@ describe('mesh-client — a gossiped message is decoded once', () => {
     vi.mocked(decodeOrderingBlock).mockClear();
   });
 
-  it.fails('an accepted block moves the client\'s chain decoded once', async () => {
+  it('an accepted block moves the client\'s chain decoded once', async () => {
     // Memory seats the chain at MK. A mined, signed block extending
     // the seated tip is handed to the client's own registered topic
     // validator and then to the `gossipsub:message` event with the
@@ -197,7 +197,7 @@ describe('mesh-client — a gossiped message is decoded once', () => {
     expect(vi.mocked(decodeOrderingBlock).mock.calls.length).toBe(0);
   }, 30_000);
 
-  it.fails('an accepted message with no value kept moves nothing and is logged', async () => {
+  it('an accepted message with no value kept moves nothing and is logged', async () => {
     // A `gossipsub:message` is fired with a message object the client's
     // validator never saw, carrying a block that would pass
     // `BlockCheck`. The listener reads no value against the object,
