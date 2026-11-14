@@ -256,7 +256,8 @@ function buildSeedWrites(pool: BoxPool): { writes: Array<{ tag: 'Insert'; key: U
  * The handle the bench owns: a `PersistentBatchAVLProver` over a `SqliteAvlStorage` on a `mkdtemp` SQLite file and a
  * `RecentRoots(capacity, maxNodes)` — the prover's ring, bounded by `maxNodes` (a node's `PROOF_WINDOW_NODES`,
  * NODE_INTERFACE → Configuration) and by capacity alone when `maxNodes` is `Number.MAX_SAFE_INTEGER`. A second
- * `RecentRoots(capacity, maxNodes)` the caller keeps separately tracks the same roots under the default count bound.
+ * `RecentRoots(64, 250_000)` the caller keeps separately tracks the same roots under a node's default bound — `250_000`,
+ * `PROOF_WINDOW_NODES`' default.
  */
 /**
  * Observations over the alive-at-height row read — the one SQL
