@@ -676,11 +676,19 @@ describe("tx topic validator — a fault of this node's is no peer's", () => {
 type GossipListener = (evt: {
   detail: {
     propagationSource?: { toString(): string };
+    msgId?: string;
     msg: { topic: string; data: Uint8Array; from?: { toString(): string } };
   };
 }) => void;
 
+type HarnessTopicValidator = (
+  peer: { toString(): string },
+  msg: { topic: string; data: Uint8Array },
+) => TopicValidatorResult | Promise<TopicValidatorResult>;
+
 const RELAY_PEER = 'peer-that-relayed-it';
+
+let harnessMsgSeq = 0;
 
 function makeDispatchHarness(handlers: {
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
@@ -688,14 +696,21 @@ function makeDispatchHarness(handlers: {
   reportMessageValidationResult?: (msgId: string, propagationSource: string, acceptance: TopicValidatorResult) => void;
 } = {}) {
   let listener: GossipListener | null = null;
+  const topicValidators = new Map<string, HarnessTopicValidator>();
+  // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"
+  // — the stub pubsub holds the method gossip.ts calls to report each accepted
+  // message's handler verdict. The default is a no-op so a case that does not
+  // care never has to pass one.
+  const reportMessageValidationResult = handlers.reportMessageValidationResult ?? (() => {});
   const stub = {
     services: {
       pubsub: {
-        topicValidators: new Map(),
+        topicValidators,
         subscribe: () => {},
         addEventListener: (_name: string, fn: GossipListener) => {
           listener = fn;
         },
+        reportMessageValidationResult,
       },
     },
   } as unknown as Libp2pGossip;
@@ -722,39 +737,92 @@ function makeDispatchHarness(handlers: {
   // Processing). The gossip event names the carrier and no publisher.
   // `null` is how a caller asks for an event with no source at all — an explicit
   // `undefined` would take the default, which is the opposite of the request.
+  //
+  // The topic validator runs first on the same message object the listener then
+  // receives (NET_INTERFACE → Inbound Processing → "A gossiped message is
+  // decoded once"): on Accept the listener fires, on any other verdict it
+  // does not — gossipsub's order. A topic with no validator registered passes
+  // through, as gossipsub does when a topic has none.
   const deliver = (
     topic: string,
     data: Uint8Array,
     propagationSource: { toString(): string } | null = { toString: () => RELAY_PEER },
   ): void => {
     if (!listener) throw new Error('subscribeTopics registered no message listener');
+    const msg = { topic, data };
+    const peerId = propagationSource?.toString() ?? '';
+    const validator = topicValidators.get(topic);
+    if (validator !== undefined) {
+      const verdict = validator({ toString: () => peerId }, msg);
+      if (verdict !== TopicValidatorResult.Accept) return;
+    }
+    const msgId = `harness-msg-${harnessMsgSeq++}`;
     listener({
-      detail: { propagationSource: propagationSource ?? undefined, msg: { topic, data } },
+      detail: { propagationSource: propagationSource ?? undefined, msgId, msg },
     });
   };
 
-  return { deliver, peerMgr };
+  // A delivery that skips the topic validator — the one path that reaches the
+  // listener with a message object no validator saw. Used by the case that
+  // pins how the listener behaves when a message passes it with no value
+  // kept against it.
+  const handWithoutValidator = (
+    topic: string,
+    data: Uint8Array,
+    propagationSource: { toString(): string } | null = { toString: () => RELAY_PEER },
+  ): void => {
+    if (!listener) throw new Error('subscribeTopics registered no message listener');
+    const msgId = `harness-msg-${harnessMsgSeq++}`;
+    listener({
+      detail: {
+        propagationSource: propagationSource ?? undefined,
+        msgId,
+        msg: { topic, data },
+      },
+    });
+  };
+
+  return { deliver, handWithoutValidator, peerMgr };
 }
 
 describe('gossip dispatch listener', () => {
-  const dispatchHeader: BlockHeader = {
+  // A block the real topic validator accepts, so every delivery through this
+  // describe's harness mirrors gossipsub's order: the topic validator decodes
+  // the bytes and accepts, and the listener then runs over the same message
+  // object (NET_INTERFACE → Inbound Processing → "A gossiped message is
+  // decoded once"). The header is signed by `MODULE_VALIDATOR_KP` and its
+  // nonce is mined against the floor target, under `verifyOrderingBlockPoW`.
+  const dispatchBaseHeader: BlockHeader = {
     protocolVersion: 1,
     height: 3,
     prevBlockHash: '44'.repeat(32),
     utxoTxRoot: SETTLEMENT_ROOT,
     stateRoot: EMPTY_STATE_ROOT,
-    validatorId: new Uint8Array(32).fill(1),
+    validatorId: MODULE_VALIDATOR_KP.publicKey,
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_722_470_400_000,
     interlinkRoot: '00'.repeat(32),
     adProofsRoot: '00'.repeat(32),
   };
-  const dispatchBlock: OrderingBlock = {
-    header: dispatchHeader,
-    utxoTxTree: settlementBody(),
-    validatorSignature: new Uint8Array(64),
-  };
+  let dispatchHeader: BlockHeader;
+  let dispatchBlock: OrderingBlock;
+
+  beforeAll(() => {
+    let minedNonce = -1;
+    for (let n = 0; minedNonce < 0; n++) {
+      if (n > 1_000_000) throw new Error('ordering-block PoW search exhausted');
+      if (verifyOrderingBlockPoW({ ...dispatchBaseHeader, powNonce: n })) {
+        minedNonce = n;
+      }
+    }
+    dispatchHeader = { ...dispatchBaseHeader, powNonce: minedNonce };
+    dispatchBlock = {
+      header: dispatchHeader,
+      utxoTxTree: settlementBody(),
+      validatorSignature: signHeader(dispatchHeader),
+    };
+  });
 
   it('delivers a decoded ordering block to the handler', () => {
     // Positive control: the routing still works after the restructure. Without
@@ -820,22 +888,58 @@ describe('gossip dispatch listener', () => {
     errSpy.mockRestore();
   });
 
-  it('logs a post-validator decode failure as the validator bug it is', () => {
-    // Reaching the decode catch means a topic validator accepted bytes it could
-    // not itself decode. The comment always said so; now the code says it too,
-    // and says it loudly, because silence is the worst possible response to
-    // "one of our own gates is wrong".
+  it('an accepted block message with no value kept is logged as a bug, reaches no handler, records no penalty', () => {
+    // The listener is handed a message object no validator saw, so no value
+    // has been kept against it (NET_INTERFACE → Inbound Processing → "A
+    // gossiped message is decoded once"). The bytes would decode: the
+    // differentiator is the WeakMap lookup, not a decode failure.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     let handlerCalls = 0;
-    const { deliver } = makeDispatchHarness({ onOrderingBlock: () => { handlerCalls++; } });
+    const { handWithoutValidator, peerMgr } = makeDispatchHarness({
+      onOrderingBlock: () => { handlerCalls++; },
+    });
+    const penaltySpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
 
-    expect(() => deliver(topics.orderingBlock, new Uint8Array([0xff, 0xff, 0xff]))).not.toThrow();
+    expect(() => handWithoutValidator(topics.orderingBlock, encodeOrderingBlock(dispatchBlock))).not.toThrow();
 
     expect(handlerCalls).toBe(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining('passed its topic validator and then failed to decode'),
-    );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('no value kept'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it('an accepted transaction message with no value kept is logged as a bug, reaches no handler, records no penalty, reports Ignore', () => {
+    // The transaction form of the no-value branch. The bytes decode as a
+    // well-formed `plainTx` packet; the differentiator is the WeakMap lookup.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let handlerCalls = 0;
+    const reports: Array<{ msgId: string; propagationSource: string; acceptance: TopicValidatorResult }> = [];
+    const noValueTx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const { handWithoutValidator, peerMgr } = makeDispatchHarness({
+      onTx: () => { handlerCalls++; return true; },
+      reportMessageValidationResult: (msgId, propagationSource, acceptance) => {
+        reports.push({ msgId, propagationSource, acceptance });
+      },
+    });
+    const penaltySpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    expect(() => handWithoutValidator(topics.tx, encodeTxPacket(noValueTx))).not.toThrow();
+
+    expect(handlerCalls).toBe(0);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('no value kept'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(reports).toContainEqual({
+      msgId: expect.stringMatching(/^harness-msg-/),
+      propagationSource: RELAY_PEER,
+      acceptance: TopicValidatorResult.Ignore,
+    });
     errSpy.mockRestore();
   });
 

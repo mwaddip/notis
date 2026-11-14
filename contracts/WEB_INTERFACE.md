@@ -427,6 +427,11 @@ safe because a node answers a transaction its pool already holds as held (`NODE_
 second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
 and is reached at its base alone (→ The faucet step).
 
+**The mesh client's faults reach the page's console.** The extension hands its mesh client a log that writes each line
+to the page's console as an error: a check that threw, a state listener that threw, an accepted gossiped block with no
+value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
+log logs nothing, so the extension never starts one without it.
+
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read, over the
 mesh or over HTTPS (`MESH_INTERFACE → The node endpoint`), as every client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through

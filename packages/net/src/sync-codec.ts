@@ -10,11 +10,12 @@ import type {
   GetHeadersMsg, GetBlocksMsg,
 } from './types.js';
 import {
+  ByteReader,
+  ByteWriter,
   ReaderError,
   decodeHeader,
   decodeOrderingBlock,
   encodeHeader,
-  encodeOrderingBlock,
   encodeStruct,
   readHexN,
   readVlqU,
@@ -253,8 +254,11 @@ export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
 // Headers (15) / Blocks (17) responses
 //
 // Both responses are `arr(item, lp)` over the same positional codec the rest of
-// this package speaks, and every element runs the four-part boundary check
-// (TYPES_INTERFACE → The boundary check) on its own byte span.
+// this package speaks. Each item runs the four-part boundary check
+// (TYPES_INTERFACE → The boundary check) on its own byte span, through
+// `decodeHeader` / `decodeOrderingBlock`; the response's own level checks its
+// count, each length prefix and its end, and re-encodes nothing
+// (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses).
 //
 // Why a positional codec and not a shape check over `cbor-x`: a `decode(raw) as
 // T` cast is not a check, and the gap it leaves is measured rather than
@@ -280,95 +284,90 @@ export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
 // ---------------------------------------------------------------------------
 
 /**
- * `arr(items, lp)` — `vlqU(count) ‖ (vlqU(len) ‖ itemBytes)…`.
- *
- * The `lp` per element is not decoration. It gives each item its own byte span,
- * so `decodeItem` can run the whole boundary check over exactly that span —
- * exhaustion and the re-encode compare included — and a malformed block is
- * rejected at its own offset instead of as an outer mismatch somewhere in a
- * multi-kilobyte blob.
- *
- * `maxItems` is checked **before the first element is read**, and that is what
- * `readArr` cannot express here: its bounds are `MAX_ARRAY_LENGTH` and the bytes
- * remaining, neither of which is the number of items *this* response may carry.
- * That number is the caller's own request size clamped to
- * `MAX_CHAIN_RESPONSE_ITEMS` (`responseCap`) — a peer answering a 40-header
- * request with 18,900 headers is not answering the question, and the caller is
- * the only party that knows the question. The byte layout is identical to
- * `arr`'s, so the re-encode compare below still uses `writeArr`.
+ * `arr(items, lp)` write side — `vlqU(count) ‖ (vlqU(len) ‖ itemBytes)…`. The
+ * response's read side is `decodeLpItemsResponse` below (NET_INTERFACE →
+ * `GetHeaders` / `GetBlocks` responses).
  */
-function lpItemsCodec<T>(
-  name: string,
+function writeLpItems<T>(
+  w: ByteWriter,
+  items: T[],
   encodeItem: (item: T) => Uint8Array,
+): void {
+  writeArr(w, items, (itemWriter, item) => writeLp(itemWriter, encodeItem(item)));
+}
+
+/**
+ * The response's own level checks its count, each length prefix and its end,
+ * and re-encodes nothing (NET_INTERFACE → `GetHeaders` / `GetBlocks`
+ * responses). The count's `vlqU` and each item's `vlqU` length prefix are the
+ * two prefixes the response adds around the items, and this reader refuses a
+ * non-minimal one — the width `writeVlqU` writes for the same value compared
+ * with the bytes `readVlqU` consumed. Each item's canonicity is its own
+ * decoder's — `decodeHeader`, `decodeOrderingBlock` — run over the item's own
+ * byte span, exhaustion and re-encode compare included
+ * (TYPES_INTERFACE → The boundary check).
+ *
+ * `maxItems` is the caller's own request size clamped to
+ * `MAX_CHAIN_RESPONSE_ITEMS` (`responseCap`) — a peer answering a 40-header
+ * request with 18,900 headers is not answering the question. The count is
+ * refused before the first element is read.
+ *
+ * Each item length is refused against `maxItemBytes` before the item's bytes
+ * are consumed (NET_INTERFACE → Validation (and untrusted-input safety) →
+ * "A peer's bytes are weighed before they are decoded").
+ */
+function decodeLpItemsResponse<T>(
+  body: Uint8Array,
   decodeItem: (bytes: Uint8Array) => T,
   maxItems: number,
   maxItemBytes: number,
-): StructCodec<T[]> {
-  return {
-    name,
-    write(w, items) {
-      writeArr(w, items, (itemWriter, item) => writeLp(itemWriter, encodeItem(item)));
-    },
-    read(r) {
-      const count = readVlqU(r);
-      if (count > maxItems) {
-        throw new ReaderError(
-          `${name}: response declares ${count} items, at most ${maxItems} accepted`,
-          'array-too-large',
-        );
-      }
-      const items: T[] = [];
-      for (let i = 0; i < count; i++) {
-        // NET_INTERFACE → Validation (and untrusted-input safety) →
-        // "A peer's bytes are weighed before they are decoded"
-        const itemLen = readVlqU(r);
-        if (itemLen > maxItemBytes) {
-          throw new ReaderError(
-            `${name}: item ${itemLen} bytes exceeds ${maxItemBytes}`,
-            'out-of-domain',
-          );
-        }
-        items.push(decodeItem(new Uint8Array(r.readBytes(itemLen))));
-      }
-      return items;
-    },
-  };
+): T[] | null {
+  try {
+    const r = new ByteReader(body);
+    const countStart = r.position;
+    const count = readVlqU(r);
+    if (r.position - countStart !== minimalVlqULength(count)) return null;
+    if (count > maxItems) return null;
+    const items: T[] = [];
+    for (let i = 0; i < count; i++) {
+      const lenStart = r.position;
+      const itemLen = readVlqU(r);
+      if (r.position - lenStart !== minimalVlqULength(itemLen)) return null;
+      if (itemLen > maxItemBytes) return null;
+      const span = r.readBytes(itemLen);
+      items.push(decodeItem(new Uint8Array(span)));
+    }
+    if (!r.isExhausted) return null;
+    return items;
+  } catch {
+    return null;
+  }
 }
-
-function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {
-  return lpItemsCodec(
-    'blocksResponse',
-    encodeOrderingBlock,
-    decodeOrderingBlock,
-    maxBlocks,
-    MAX_ORDERING_BLOCK_BYTES,
-  );
-}
-
-function headersResponseCodec(maxHeaders: number): StructCodec<BlockHeader[]> {
-  return lpItemsCodec(
-    'headersResponse',
-    encodeHeader,
-    decodeHeader,
-    maxHeaders,
-    MAX_HEADER_BYTES,
-  );
-}
-
-/** An already-encoded item is its own encoding: `lpItemsCodec`'s identity pairing. */
-const identityBytes = (bytes: Uint8Array): Uint8Array => bytes;
 
 /**
- * `blocksResponseCodec`'s wire form over items the caller has already encoded.
- *
- * The same `lpItemsCodec` with the per-item encode spent, so it writes the byte
- * sequence `blocksResponseCodec` writes and `decodeBlocks` reads — `arr(blocks,
- * lp)`, one length-prefixed span per block. Identity is a codec here rather than
- * a write-only special case: `arr(bytes, lp)` reads back as the same
- * `Uint8Array[]` it wrote.
+ * The byte width `writeVlqU` writes for `value` — a `vlqU` the reader
+ * consumed is minimal exactly when the bytes it consumed match this width.
+ * `types` keeps `vlqUByteLength` out of its barrel, so this helper takes the
+ * answer from the writer that produces the canonical bytes.
  */
-function encodedBlocksResponseCodec(maxBlocks: number): StructCodec<Uint8Array[]> {
-  return lpItemsCodec('blocksResponse', identityBytes, identityBytes, maxBlocks, MAX_ORDERING_BLOCK_BYTES);
+function minimalVlqULength(value: number): number {
+  const w = new ByteWriter();
+  writeVlqU(w, value);
+  return w.toBytes().length;
+}
+
+/** The `Headers` response's write side — `encodeHeaders`' body. */
+function writeHeadersResponse(w: ByteWriter, headers: BlockHeader[]): void {
+  writeLpItems(w, headers, encodeHeader);
+}
+
+/**
+ * The `Blocks` response's write side over items the caller has already
+ * encoded — `encodeBlocks`' body. An already-encoded item is its own encoding
+ * on the wire.
+ */
+function writeEncodedBlocksResponse(w: ByteWriter, blocks: Uint8Array[]): void {
+  writeLpItems(w, blocks, (bytes) => bytes);
 }
 
 /**
@@ -382,11 +381,9 @@ function encodedBlocksResponseCodec(maxBlocks: number): StructCodec<Uint8Array[]
  * local row produces; this function frames what it is given.
  */
 export function encodeBlocks(magic: number, blocks: Uint8Array[]): Uint8Array {
-  return encodeFrame(
-    magic,
-    MSG_BLOCKS,
-    encodeStruct(encodedBlocksResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), blocks),
-  );
+  const w = new ByteWriter();
+  writeEncodedBlocksResponse(w, blocks);
+  return encodeFrame(magic, MSG_BLOCKS, w.toBytes());
 }
 
 /**
@@ -400,23 +397,31 @@ export function decodeBlocks(
   body: Uint8Array,
   maxBlocks: number,
 ): OrderingBlock[] | null {
-  return tryDecodeStruct(blocksResponseCodec(responseCap(maxBlocks)), body);
+  return decodeLpItemsResponse(
+    body,
+    decodeOrderingBlock,
+    responseCap(maxBlocks),
+    MAX_ORDERING_BLOCK_BYTES,
+  );
 }
 
 /** Frame a `Headers` (15) response. See `encodeBlocks`. */
 export function encodeHeaders(magic: number, headers: BlockHeader[]): Uint8Array {
-  return encodeFrame(
-    magic,
-    MSG_HEADERS,
-    encodeStruct(headersResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), headers),
-  );
+  const w = new ByteWriter();
+  writeHeadersResponse(w, headers);
+  return encodeFrame(magic, MSG_HEADERS, w.toBytes());
 }
 
 /** Parse a `Headers` response body. Cap: `MAX_CHAIN_RESPONSE_ITEMS` (400),
  *  the one shape and bound a `Headers` page has (NET_INTERFACE →
  *  `GetHeaders` / `GetBlocks` responses). */
 export function decodeHeaders(body: Uint8Array): BlockHeader[] | null {
-  return tryDecodeStruct(headersResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), body);
+  return decodeLpItemsResponse(
+    body,
+    decodeHeader,
+    MAX_CHAIN_RESPONSE_ITEMS,
+    MAX_HEADER_BYTES,
+  );
 }
 
 /**

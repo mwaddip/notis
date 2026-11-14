@@ -179,6 +179,29 @@ function asGossip(libp2p: Libp2p): Libp2pGossip {
   return libp2p as unknown as Libp2pGossip;
 }
 
+/**
+ * The two methods net's local gossipsub patch adds to `GossipSub` after
+ * construction (MESH_INTERFACE → Place in the workspace → "libp2p is
+ * pinned"). Not published on `@libp2p/gossipsub`'s `GossipSub`
+ * interface, so the pubsub service is read through this local
+ * intersection type at the call sites — the shape `gossip.ts`'
+ * `Libp2pGossip` uses for `reportMessageValidationResult`
+ * (NET_INTERFACE → Readers → "A reader is its node's gossip direct peer";
+ * MESH_INTERFACE → Block gossip → "A node's readers are its router's
+ * direct peers").
+ */
+interface DirectPeerRouter {
+  services: {
+    pubsub: {
+      addDirectPeer(id: string): void;
+      removeDirectPeer(id: string): void;
+    };
+  };
+}
+function asDirectPeerRouter(libp2p: Libp2p): DirectPeerRouter {
+  return libp2p as unknown as DirectPeerRouter;
+}
+
 /** First 4 bytes as a big-endian u32 (unsigned — see decodeFrame), or null if shorter. */
 function leadingMagic(data: Uint8Array): number | null {
   if (data.length < 4) return null;
@@ -1192,6 +1215,11 @@ export class NetNode {
       libp2p.addEventListener('peer:disconnect', (evt: any) => {
         const peerId = evt.detail?.toString() ?? 'unknown';
         console.log(`[net] peer:disconnect ${peerId} (total=${Math.max(0, this.peerMgr.getPeerCount() - 1)})`);
+        // NET_INTERFACE → Readers → "A reader is its node's gossip direct
+        // peer": the router lets the peer go when the node holds no
+        // connection to it. The call is idempotent, so a chain-serving
+        // peer or any peer the router never held as direct is a no-op.
+        asDirectPeerRouter(libp2p).services.pubsub.removeDirectPeer(peerId);
         // NET_INTERFACE → Readers → "The peer hooks see chain-serving peers
         // alone": read the peer's declared capabilities from the metadata
         // before `removePeer` drops it so the chain-serving check still has
@@ -2033,6 +2061,11 @@ export class NetNode {
               }
             }
           } else {
+            // NET_INTERFACE → Readers → "A reader is its node's gossip
+            // direct peer": the router takes the reader as a direct
+            // peer when the handshake completes. The call is
+            // idempotent.
+            asDirectPeerRouter(libp2p).services.pubsub.addDirectPeer(peerId);
             for (const cb of this.readerActiveHandlers) {
               try { cb(peerId); } catch (err) {
                 console.warn(`[net] readerActive handler error: ${String(err)}`);

@@ -308,7 +308,9 @@ holds byte-identical across the whole domain.
 
 Relay and codec bounds a peer's messages must respect; a body over one is refused before its first
 element is read. `MAX_SERVE_BODY_BYTES` and `MAX_STREAM_BYTES` are the upper two of the size-cap order
-under → Size caps.
+under → Size caps. A row marked `(libp2p default)` or `(gossipsub default)` is that library's own default, which net
+leaves unset; the gossip frame's cap is held by net's case (`NET_INTERFACE → Validation → "A gossip frame is bounded
+by gossipsub's own cap, which holds two blocks at the bound"`), and the inbound rate by none.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
@@ -337,6 +339,8 @@ under → Size caps.
 | `MAX_BANNED_ADDRS` | `10_000` | banned addresses kept | policy | none stated for the number; the address surface of the same bounded hint | CHOSEN | `NET_INTERFACE → Ban surfaces are unified` |
 | `GOSSIP_SEEN_WINDOW_MS` | `120_000` | two minutes a gossip message's id stays seen | policy | gossipsub's default, kept; above the five heartbeats — five seconds — a message stays in a peer's gossip cache; none stated for the number | CHOSEN | `NET_INTERFACE → Gossip Topics` |
 | `GOSSIP_IP_COLOCATION_WEIGHT` | `0` | the weight of gossipsub's penalty on peers sharing an IP address: none | policy | user ruling, 2026-11-12 — a reader's libp2p key is new at every page load and readers behind one NAT share an address, so a count of peers per address says nothing of the parties behind it; gossipsub's default, −5, leaves the twelfth such peer without forwarded blocks | RULED | `MESH_INTERFACE → Block gossip` |
+| `maxInboundDataLength` (gossipsub default) | `4_194_304` | 4 MiB per gossip frame | format | user ruling, 2026-11-14 — gossipsub's default, kept: an `IWANT` answer carries every message asked for in one frame, and two blocks at `MAX_ORDERING_BLOCK_BYTES` with the RPC's framing fit, so a cap at one block's length would refuse an honest frame | RULED | `NET_INTERFACE → Validation` |
+| `inboundConnectionThreshold` (libp2p default) | `5` | inbound connections one IP address opens in a second | policy | user ruling, 2026-11-14 — libp2p's default, kept: a per-address flood bound at every transport's upgrade; the readers behind one shared address share it, and one it refuses reads at its node's API base until its retry | RULED | `NET_INTERFACE → Readers` |
 | `MISBEHAVIOR_SCORE` | `100` | the score one `Misbehavior` penalty accrues — five at one instant ban, one more for each decay interval they spread across | policy | one fifth of the ban threshold, and the decay a peer sheds per `PENALTY_DECAY_INTERVAL_MS`, pro rata, so the break-even is one invalid message per interval; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 | `TRANSIENT_SCORE` | `50` | the score one `Transient` penalty accrues — half a misbehavior | policy | a compatibility mismatch or a refuted claim weighs half an invalid message; none stated for the number | CHOSEN | `NET_INTERFACE → Peer Penalty System` |
 

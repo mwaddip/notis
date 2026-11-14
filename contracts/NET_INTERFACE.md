@@ -436,6 +436,17 @@ the bound whose body is 60 605 aligned minimal elements decodes in about 0.2 s, 
 such blocks, 7.63 MiB, in about 1 s. Stage 1 decodes a gossiped block's body before it checks the header's work
 (→ Stage 1), so that 0.2 s is what a block no one worked costs its first hop.
 
+**A gossip frame is bounded by gossipsub's own cap, which holds two blocks at the bound.** The router reads a peer's
+frames under `maxInboundDataLength`, which net leaves at its default, 4 MiB (`CONSTANTS → net`): a frame declaring more
+is refused at its length prefix, before a byte of it is buffered, and the router ends that stream and forgets the peer;
+the router writes no frame longer, and an answer that would be one is logged and not sent. A frame is not a message.
+Gossipsub's answer to an `IWANT` carries every message asked for in one frame, so two ordering blocks at
+`MAX_ORDERING_BLOCK_BYTES` with the RPC's framing around them are a frame an honest peer sends, and a cap at one
+block's length would refuse it. Inside a frame each message is weighed before it is decoded (above), and gossipsub's
+decode limits bound the count of each list a frame carries — 5 000 messages among them. ⚠ **A block bound above half
+the cap makes a two-block answer unsendable, and one above the cap makes a block no peer can gossip** — net's case holds
+two blocks at the bound, framed as gossipsub frames them, within the cap.
+
 **A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
 deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
 is larger) — because the byte cap bounds a read's *volume*, not its *duration*: a peer that opens the
@@ -603,6 +614,20 @@ maxReaders + HANDSHAKE_SLACK`, so a connection is counted by the kind its handsh
 `maxPeers` is closed after its handshake as well. `HANDSHAKE_SLACK` is 16: the connections libp2p admits above both
 budgets while their handshakes run, each held at most `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs`. libp2p
 refuses an inbound connection past its ceiling at the upgrade, before any handler runs.
+
+**An address opens at most five inbound connections a second.** libp2p refuses an inbound connection at its upgrade
+when its remote IP address has already opened five within the current second — `inboundConnectionThreshold`, libp2p's
+default, which net leaves standing (`CONSTANTS → net`). The check runs for every transport — TCP, WebRTC-direct and the
+secure WebSocket — ahead of the connection ceiling above, and it counts by address, not by key or kind: the readers and
+nodes behind one shared address — a carrier's NAT, an office — share the five. A reader it refuses holds a refused
+connection like any other (the `retry` row of `MESH_INTERFACE → The client's node list`), and reads a node whose entry
+carries an API base there until its retry (`MESH_INTERFACE → The client's node list → "An entry may carry an API
+base"`).
+
+**A reader is its node's gossip direct peer.** A reader the node holds is sent every block the node's router forwards or
+publishes, outside every topic's mesh, and leaves the router's direct peers when the node holds no connection to it; a
+topic's mesh holds chain-serving peers alone (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct
+peers"`).
 
 **A peer dialled for chain service that declares none is closed.** An outbound connection whose handshake declares no
 chain service — a reader, or a node whose build declares nothing — is closed after its handshake and counted toward
@@ -1341,7 +1366,7 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 | Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well (→ The mesh) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
-| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`); a peer's gossip runs on its newest connection, and a replaced stream's failure keeps the peer (`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`) |
+| PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`); a peer's gossip runs on its newest connection, and a replaced stream's failure keeps the peer (`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`); a reader is a direct peer, outside every topic's mesh (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct peers"`) |
 | Peer identity | the node key's libp2p peer id — Ed25519 alone (→ The node key) |
 
 ### The node key
@@ -1456,6 +1481,11 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
 - **The per-element `lp` is load-bearing**: it gives each item its own byte span, so the four-part
   boundary check (TYPES_INTERFACE → The boundary check) runs over exactly that span — exhaustion and re-encode compare included —
   and a malformed block is rejected at its own offset rather than as an outer mismatch.
+- **The response's own level checks its count, each length prefix and its end, and re-encodes nothing.** Each item's
+  canonicity is its own decoder's — `decodeOrderingBlock`, `decodeHeader`. What the response adds around the items is
+  its count and one length prefix per item, so it is refused when either is a non-minimal `vlqU` or a byte follows the
+  last item, and a re-encode of the whole response would refuse nothing more — as the ordering block's own frame
+  (`TYPES_INTERFACE → Layout — Block`). A block in a response costs its decode and nothing after it.
 - **The requests are positional too**, and carry no `mode` field — the code pair is the
   discriminator:
 
@@ -1556,7 +1586,7 @@ Two-stage validation, modeled after Ergo's modifier processing:
 ### Stage 1 (net package, stateless)
 
 Runs inside the gossipsub topic validators — i.e. **before** a message is
-forwarded to mesh peers. A message that fails Stage 1 is Rejected (never
+forwarded to any peer. A message that fails Stage 1 is Rejected (never
 forwarded) and penalized: over its bound or undecodable → `ProtocolViolation` (permanent
 ban — → Validation (and untrusted-input safety) → "A peer's bytes are weighed before they are decoded"); well-formed but invalid → misbehavior penalty (100), except a block's version mismatch, which is
 `Transient` (→ Peer Penalty System), and a refusal that rests on this node's state, which records
@@ -1744,6 +1774,13 @@ its first carrier's sake — a peer whose handshake has not completed, or one wh
 its connection — would be a valid block or transaction this node does not hear for the window, however
 many `Active` peers send it after. The carrier reaches the handler as `fromPeerId`, a hint and nothing
 more, and it need not be `Active`.
+
+**A gossiped message is decoded once.** The topic validator's decode is the delivery's: the validator keeps the value
+it decoded — the ordering block its `BlockCheck` verdict carries, the transaction packet it read — against the message
+object, and the listener hands that value to the handlers. Gossipsub passes the one message object to the topic
+validator and, once it is accepted, to the `gossipsub:message` event; net's case holds that over the router as built.
+An accepted message with no value kept against it is this node's bug, logged as one and delivered to no handler, and it
+penalises no peer.
 
 **A transaction is forwarded when a handler admits it.** Net reports the router's verdict on a
 transaction message once its handlers have answered: Accept — the message is forwarded — when any

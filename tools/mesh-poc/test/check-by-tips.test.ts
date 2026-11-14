@@ -22,6 +22,7 @@ import { verifierProfile } from '@dagsocial/nipopow-client';
 import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
+import { waitReaderHeldAsDirect } from './helpers/direct-peer.js';
 import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeBlockAt, makeLinkedChain } from './helpers/devnet-block.js';
@@ -67,14 +68,13 @@ function makeChildBlock(parent: BlockHeader, t_a: number, profile: NetworkProfil
   });
 }
 
-interface MeshPeerQuery {
-  getMeshPeers(topic: string): string[];
+interface Router {
   publish(topic: string, data?: Uint8Array): Promise<unknown>;
 }
 
-function pubsubOf(libp2p: unknown): MeshPeerQuery {
+function pubsubOf(libp2p: unknown): Router {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (libp2p as any).services.pubsub as MeshPeerQuery;
+  return (libp2p as any).services.pubsub as Router;
 }
 
 describe('mesh-client — a check reads tips, places them, and proves the rest', () => {
@@ -1587,14 +1587,9 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
     await client.check(); // settle at chainBase (K+1); A `ok`, X `behind`.
     expect(client.state().tip?.height).toBe(K + 1);
 
-    // Gossipsub mesh with A so the inside-resolve publish propagates.
+    // A's router holds the client as a direct peer and lists it among the topic's subscribers so the inside-resolve publish propagates to it.
     const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
-    await vi.waitFor(() => {
-      expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
-        .toContain(a.libp2p.peerId.toString());
-      expect(pubsubOf(a.libp2p).getMeshPeers(TOPIC))
-        .toContain(client.libp2p.peerId.toString());
-    }, { timeout: 60_000, interval: 300 });
+    await waitReaderHeldAsDirect(a.libp2p, client.libp2p, TOPIC);
 
     // Second check: inject the gossiped extension inside the Phase-4
     // resolve so the chain gains K+2 before the winner's tip (K+1) is
@@ -1677,12 +1672,7 @@ describe('mesh-client — a check reads tips, places them, and proves the rest',
       PROFILE,
     );
     const TOPIC = gossipTopics(MAGIC_DEVNET).orderingBlock;
-    await vi.waitFor(() => {
-      expect(pubsubOf(client.libp2p).getMeshPeers(TOPIC))
-        .toContain(a.libp2p.peerId.toString());
-      expect(pubsubOf(a.libp2p).getMeshPeers(TOPIC))
-        .toContain(client.libp2p.peerId.toString());
-    }, { timeout: 60_000, interval: 300 });
+    await waitReaderHeldAsDirect(a.libp2p, client.libp2p, TOPIC);
     await pubsubOf(a.libp2p).publish(TOPIC, encodeOrderingBlock(extraBlock));
     await vi.waitFor(() => {
       expect(client.state().tip?.height).toBe(K_DEFAULT + 2);

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
@@ -7,6 +7,7 @@ import {
   writeLp,
   writeVlqU,
   computeUtxoTxRoot,
+  encodeHeader,
   encodeOrderingBlock,
   generateKeyPair,
   ByteReader,
@@ -14,6 +15,18 @@ import {
   ReaderError,
   CodecError,
 } from '@dagsocial/types';
+
+// NET_INTERFACE → `GetHeaders` / `GetBlocks` responses — the response's own
+// level re-encodes nothing. The two item encoders are wrapped so a case can
+// assert how many times the decoder reached for them.
+vi.mock('@dagsocial/types', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dagsocial/types')>();
+  return {
+    ...actual,
+    encodeOrderingBlock: vi.fn(actual.encodeOrderingBlock),
+    encodeHeader: vi.fn(actual.encodeHeader),
+  };
+});
 import {
   blockHash,
   verifyOrderingBlockPoW,
@@ -66,6 +79,33 @@ const blocksFrame = (blocks: OrderingBlock[]): Uint8Array =>
   encodeBlocks(MAGIC, blocks.map(encodeOrderingBlock));
 const blocksBody = (blocks: OrderingBlock[]): Uint8Array =>
   bodyOf(blocksFrame(blocks), MSG_BLOCKS);
+
+/**
+ * `arr(item, lp)` body with the first item's length prefix re-emitted as a
+ * non-minimal VLQ of the same value: the minimal bytes have their last byte's
+ * continuation bit flipped on and a zero continuation byte appended, which
+ * preserves the decoded value and widens the prefix by one byte.
+ */
+function withNonMinimalFirstItemPrefix(canonical: Uint8Array): Uint8Array {
+  const r = new ByteReader(canonical);
+  r.readVlqU();
+  const prefixStart = r.position;
+  const itemLen = r.readVlqU();
+  const prefixEnd = r.position;
+  const w = new ByteWriter();
+  writeVlqU(w, itemLen);
+  const minimal = w.toBytes();
+  expect(prefixEnd - prefixStart).toBe(minimal.length);
+  const nonMinimal = new Uint8Array(minimal.length + 1);
+  nonMinimal.set(minimal);
+  nonMinimal[minimal.length - 1]! |= 0x80;
+  nonMinimal[minimal.length] = 0x00;
+  return mergeUint8Arrays([
+    canonical.subarray(0, prefixStart),
+    nonMinimal,
+    canonical.subarray(prefixEnd),
+  ]);
+}
 
 // ---------------------------------------------------------------------------
 // Mock data helpers
@@ -425,6 +465,73 @@ describe('chain response framing', () => {
       canonical.subarray(1),
     ]);
     expect(decodeHeaders(padded)).toBeNull();
+  });
+
+  // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses — a Blocks response's
+  // count is a `vlqU` the peer chooses, and the response's own level refuses a
+  // non-minimal one.
+  it('rejects a non-minimal VLQ count on a Blocks response', () => {
+    const canonical = blocksBody([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    expect(canonical[0]).toBe(0x01);
+
+    const padded = mergeUint8Arrays([
+      new Uint8Array([0x81, 0x00]),
+      canonical.subarray(1),
+    ]);
+    expect(decodeBlocks(padded, 1)).toBeNull();
+  });
+
+  // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses — the response adds one
+  // length prefix per item around the items, and a non-minimal prefix is
+  // refused at the response's own level.
+  it('rejects a non-minimal VLQ length prefix on one Blocks item', () => {
+    const store = makeChain(2);
+    const canonical = blocksBody([store.get(1)!, store.get(2)!]);
+    const padded = withNonMinimalFirstItemPrefix(canonical);
+
+    expect(decodeBlocks(padded, 2)).toBeNull();
+  });
+
+  it('rejects a non-minimal VLQ length prefix on one Headers item', () => {
+    const canonical = headersBody([
+      makeMockHeader(1, '00'.repeat(32)),
+      makeMockHeader(2, 'aa'.repeat(32)),
+    ]);
+    const padded = withNonMinimalFirstItemPrefix(canonical);
+
+    expect(decodeHeaders(padded)).toBeNull();
+  });
+
+  // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses — each item's
+  // canonicity is its own decoder's, and the response's own level re-encodes
+  // nothing.
+  it('decodeBlocks re-encodes no block', () => {
+    const store = makeChain(3);
+    const blocks = [store.get(1)!, store.get(2)!, store.get(3)!];
+    const body = blocksBody(blocks);
+    vi.mocked(encodeOrderingBlock).mockClear();
+
+    const decoded = decodeBlocks(body, 3);
+
+    expect(decoded).not.toBeNull();
+    expect(decoded!.map((b) => b.header.height)).toEqual([1, 2, 3]);
+    expect(vi.mocked(encodeOrderingBlock)).toHaveBeenCalledTimes(0);
+  });
+
+  it('decodeHeaders re-encodes no header', () => {
+    const headers = [
+      makeMockHeader(1, '00'.repeat(32)),
+      makeMockHeader(2, 'aa'.repeat(32)),
+      makeMockHeader(3, 'bb'.repeat(32)),
+    ];
+    const body = headersBody(headers);
+    vi.mocked(encodeHeader).mockClear();
+
+    const decoded = decodeHeaders(body);
+
+    expect(decoded).not.toBeNull();
+    expect(decoded!.map((h) => h.height)).toEqual([1, 2, 3]);
+    expect(vi.mocked(encodeHeader)).toHaveBeenCalledTimes(0);
   });
 
   it('rejects a truncated response', () => {

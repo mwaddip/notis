@@ -40,7 +40,8 @@ request line carries the URL's query, whose string and bytes bodies keep the `co
 string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
 JSON body, as over HTTP (→ The node endpoint); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
 the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
-"A peer's gossip follows its newest connection"). A pin that moves carries its patch to the new version, the cases
+"A peer's gossip follows its newest connection"), and which takes and lets go of a direct peer while it runs (→ Block
+gossip → "A node's readers are its router's direct peers"). A pin that moves carries its patch to the new version, the cases
 deciding that it still applies and still holds.
 
 ## Identity
@@ -162,13 +163,16 @@ last change made is the one that stands. A client handed no way to serve never d
 **One router, `net`'s rules.** A node and a client each run gossipsub with `net`'s options (`gossipsubOptions`), a client
 on the ordering-block topic alone, with `net`'s envelope, message id and seen window (`NET_INTERFACE → Gossip Topics`):
 unsigned, named by `hash32(lpUtf8(topic) ‖ data)`, heard once in `GOSSIP_SEEN_WINDOW_MS`. The code the extension's page
-and the stage's page run is `net/browser`'s, the one copy. A node's router holds its node peers and its readers; a client's, every node it holds a
-connection to; nothing dials for gossip's sake.
+and the stage's page run is `net/browser`'s, the one copy. A node's router holds its node peers in its topics' meshes and its readers as direct
+peers (→ "A node's readers are its router's direct peers"); a client's, every node it holds a connection to; nothing
+dials for gossip's sake.
 
 **A block is checked before it is forwarded, and never applied.** A receiver runs the ordering-block topic's checks of
 `NET_INTERFACE → Stage 1`, in their order, through `net`'s `BlockCheck`, and forwards a block that passes them
 (`NET_INTERFACE → Forwarding Rule`). The client checks the schedule where its chain holds the parent (→ The client's
-node list → "The client's chain"). A client applies no block and forwards no transaction.
+node list → "The client's chain"). A client applies no block and forwards no transaction. A receiver decodes a block
+once: what its delivery reads is the block the check's verdict carries (`NET_INTERFACE → Inbound Processing → "A
+gossiped message is decoded once"`).
 
 **A refused block is evidence as `net` weighs it.** A block over its bound or undecodable, or well-formed and failing
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
@@ -200,6 +204,22 @@ stands. So a reader whose connection was cut and restored is forwarded blocks on
 gossipsub 17.2.1 keeps its stream on the first connection and takes a replaced stream's failure for the peer leaving —
 a WebRTC stream's close over a silent connection fails at its 10 s FIN_ACK wait — so that reader would follow the
 chain by checks alone until it held no connection to the router (→ Place in the workspace → "libp2p is pinned").
+
+**A node's readers are its router's direct peers.** When a reader's handshake completes and the node holds it
+(`NET_INTERFACE → Readers → "Readers have a budget of their own"`), the node's router takes it as a direct peer, and lets
+it go when the node holds no connection to it. The router forwards and publishes every message on a topic the reader
+subscribes to straight to it, holds it in no topic's mesh — a reader the mesh holds when its handshake completes leaves
+the mesh with a `PRUNE` — and answers its `GRAFT` with a `PRUNE`. A topic's mesh holds chain-serving peers alone, so its
+degree bounds a node's node peers, not its readers, and a node that dials another after that one's readers arrive is
+grafted as gossipsub's rules grant. A reader receives each block a node forwards from every node it is connected to; it
+subscribes to the ordering-block topic alone, so it is sent no transaction. Gossipsub's mesh shared with readers fills
+with whichever peers graft first, and from `Dhi` (12) on it answers a `GRAFT` from any peer that dialled the router —
+node or reader — with a `PRUNE`: measured 2026-11-14 over gossipsub 17.2.1, a node that dialled another after 13, 24
+or 40 readers was in neither router's mesh for 30 blocks of 30 and took each block the other relayed by `IHAVE` in
+0.18–0.37 s, against 4–28 ms through the mesh; the readers left outside it missed 11% of those blocks at 24 readers and
+42% at 40. A router never graylists a direct peer by its score, so a reader's misbehaviour is weighed by `net`'s ban
+policy, whose ban ends the connection (`NET_INTERFACE → Handshake → "Ban policy"`). Unpatched, gossipsub 17.2.1 reads
+its direct peers at construction alone (→ Place in the workspace → "libp2p is pinned").
 
 ## Discovery
 

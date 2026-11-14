@@ -10,8 +10,14 @@
 // `/blocks/:h` answers 404), so an `above` tip falls to phase 4.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { encodeOrderingBlock, generateKeyPair, profileFor } from '@dagsocial/types';
-import type { BlockHeader, NetworkProfile, NetworkType, OrderingBlock, UtxoTxTree } from '@dagsocial/types';
+import { TopicValidatorResult } from '@libp2p/gossipsub';
+import type { PeerId } from '@libp2p/interface';
+import {
+  encodeOrderingBlock,
+  generateKeyPair,
+  profileFor,
+} from '@dagsocial/types';
+import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
   encodeNipopowProof,
   verifyProof,
@@ -21,13 +27,14 @@ import type { NipopowProof, VerifyResult } from '@dagsocial/nipopow';
 import { DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { NodeTipResult, TipResult, resolveTip } from '@dagsocial/nipopow-client';
 import { blockHash } from '@dagsocial/validation';
-import { gossipTopics, nodeKeyFromKeyPair } from '@dagsocial/net/browser';
+import { gossipTopics, nodeKeyFromKeyPair, peerIdFromNotisId } from '@dagsocial/net/browser';
 import type { HttpFetch } from '@dagsocial/node-reads';
 
 import {
   buildMinedChain,
   makeReader,
 } from '../../../nipopow/test/helpers.js';
+import { signedExtendingBlock } from './helpers/signed-extending-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 import type { MemorySnapshot } from '../../src/mesh/memory-store.js';
@@ -627,20 +634,16 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     // proof. A gossiped block extending the chain to MK+1 fires
     // inside the `resolve` wrapper — the chain extends while the
     // proof read is in flight — so when the settle weighs the
-    // winner's tip it finds it byHash-held and skips the switch. The
+    // winner's tip it finds it held by hash and skips the switch. The
     // kept proof must still move forward to the winner's, under the
     // rule "the last proof the client verified of the chain it holds"
     // (`MESH_INTERFACE → What the client remembers`).
     const keptProof = proofOf(MK);
-    const extendedProof = proofOf(MK + 1);
-    const extendedChain = buildMinedChain({ count: MK + 1 });
-    const nextHeader = extendedChain.headers[MK]!;
-    const emptyTree: UtxoTxTree = { utxoTxIds: [], utxoTxs: [] };
-    const extraBlock: OrderingBlock = {
-      header: nextHeader,
-      utxoTxTree: emptyTree,
-      validatorSignature: new Uint8Array(64),
-    };
+    const { block: extraBlock, proof: extendedProof } = signedExtendingBlock({
+      base: MK,
+      m: M,
+      k: K,
+    });
 
     const a = keyPair();
     const h = harness();
@@ -649,23 +652,30 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     h.proofs.set(base, extendedProof);
 
     interface PubsubStub {
+      topicValidators: Map<
+        string,
+        (peer: PeerId, msg: { topic: string; data: Uint8Array }) => Promise<number> | number
+      >;
       reportMessageValidationResult: (a: string, b: string, c: number) => void;
       dispatchEvent: (ev: Event) => void;
     }
     let pubsub: PubsubStub | null = null;
     let injected = false;
     const underlying = h.resolve;
+    const topic = gossipTopics(PROFILE.magic).orderingBlock;
     const wrappedResolve: ResolveFn = async (urls, m, k, profile, now, fetch) => {
       const r = await underlying(urls, m, k, profile, now, fetch);
       if (!injected && pubsub !== null) {
         injected = true;
         pubsub.reportMessageValidationResult = () => { /* fake msgId */ };
+        const msg = { topic, data: encodeOrderingBlock(extraBlock) };
+        const validator = pubsub.topicValidators.get(topic)!;
+        const relayPeer = peerIdFromNotisId(keyPair().notisId);
+        const verdict = await validator(relayPeer, msg);
+        expect(verdict).toBe(TopicValidatorResult.Accept);
         pubsub.dispatchEvent(new CustomEvent('gossipsub:message', {
           detail: {
-            msg: {
-              topic: gossipTopics(PROFILE.magic).orderingBlock,
-              data: encodeOrderingBlock(extraBlock),
-            },
+            msg,
             msgId: 'fake-msg-id',
             propagationSource: { toString: () => 'fake-peer' },
           },
@@ -690,7 +700,7 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     await client.check();
 
     // The chain extended during the proof read: the winner's tip is
-    // byHash-held, the settle branch is skipped, and the kept proof
+    // held by hash, the settle branch is skipped, and the kept proof
     // moves forward to the winner's.
     expect(client.state().tip?.height).toBe(MK + 1);
     expect(client.toRemember().proof).toEqual(encodeNipopowProof(extendedProof));
