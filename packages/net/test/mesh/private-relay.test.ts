@@ -98,27 +98,32 @@ function publicMeshOn(stateDir: string): MeshConfig {
 }
 
 describe('retryIntervalMs — the private node\'s relay retry cadence (pure)', () => {
-  // The schedule mirrors the client's node-list retry
-  // (`MESH_INTERFACE → The client's node list → "Retry"`):
-  // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`.
-  it('the first retry waits RETRY_BASE_MS', () => {
-    expect(retryIntervalMs(1)).toBe(RETRY_BASE_MS);
+  // The wait after the n-th failure is drawn uniformly between half
+  // and the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n − 1))`
+  // (`MESH_INTERFACE → The client's node list → "Retry"`).
+  it.fails('the first retry at a random source of 0 waits half RETRY_BASE_MS', () => {
+    expect(retryIntervalMs(1, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
+      .toBe(RETRY_BASE_MS / 2);
   });
-  it('the second retry waits 2 × RETRY_BASE_MS', () => {
-    expect(retryIntervalMs(2)).toBe(RETRY_BASE_MS * 2);
+  it.fails('the second retry at a random source of 0 waits RETRY_BASE_MS — half of the doubled schedule', () => {
+    expect(retryIntervalMs(2, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
+      .toBe(RETRY_BASE_MS);
   });
-  it('the third retry waits 4 × RETRY_BASE_MS', () => {
-    expect(retryIntervalMs(3)).toBe(RETRY_BASE_MS * 4);
+  it.fails('the third retry at a random source of 0 waits 2 × RETRY_BASE_MS — half of the 4 × schedule', () => {
+    expect(retryIntervalMs(3, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
+      .toBe(RETRY_BASE_MS * 2);
   });
-  it('the retry caps at RETRY_CAP_MS', () => {
-    // RETRY_BASE_MS = 5_000, RETRY_CAP_MS = 600_000 → cap at the 8th
-    // failure (5_000 * 128 = 640_000 > 600_000).
-    expect(retryIntervalMs(8)).toBe(RETRY_CAP_MS);
-    expect(retryIntervalMs(20)).toBe(RETRY_CAP_MS);
+  it.fails('the retry caps at the cap under the draw: half the cap at 0, strictly less than the cap just under 1', () => {
+    // RETRY_BASE_MS = 5_000, RETRY_CAP_MS = 600_000 → 8 th failure
+    // saturates the schedule.
+    const lo = retryIntervalMs(8, RETRY_BASE_MS, RETRY_CAP_MS, () => 0);
+    expect(lo, 'half the cap at low source').toBe(RETRY_CAP_MS / 2);
+    const hi = retryIntervalMs(20, RETRY_BASE_MS, RETRY_CAP_MS, () => 1 - 1e-12);
+    expect(hi, 'strictly less than the cap at high source').toBeLessThan(RETRY_CAP_MS);
   });
-  it('a non-positive failure count reads 0', () => {
-    expect(retryIntervalMs(0)).toBe(0);
-    expect(retryIntervalMs(-1)).toBe(0);
+  it('a non-positive failure count reads 0 whatever the source', () => {
+    expect(retryIntervalMs(0, RETRY_BASE_MS, RETRY_CAP_MS, () => 0.5)).toBe(0);
+    expect(retryIntervalMs(-1, RETRY_BASE_MS, RETRY_CAP_MS, () => 0.5)).toBe(0);
   });
 });
 

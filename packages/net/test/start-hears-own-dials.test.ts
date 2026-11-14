@@ -338,11 +338,12 @@ describe('NET_INTERFACE → Node Lifecycle — every connection libp2p opens rea
     // `/dagsocial/handshake/1`, so the deadline runs out and F closes the
     // connection.
     //
-    // The close is read from the dialler's `connection:close` event, waited
-    // on with an 8 000 ms bound: above F's 6 000 ms deadline and below
-    // libp2p 3.5.1's `INBOUND_UPGRADE_TIMEOUT`
-    // (`connection-manager/constants.defaults.ts`, 10 000 ms), so nothing
-    // but net's deadline can satisfy it.
+    // The close is read from the dialler's `connection:close` event,
+    // waited on with an 8 000 ms bound: above F's 6 000 ms deadline, so
+    // net's deadline is what satisfies it. The dialler completes the
+    // libp2p upgrade on F in milliseconds (Noise, yamux, identify over
+    // loopback), so F's `INBOUND_UPGRADE_TIMEOUT_MS` (5 000 ms) never
+    // runs — the upgrade is done before it would arm.
     const fPeerId = f!.peerId();
     const fAddr = tcpMultiaddr(f!);
 
