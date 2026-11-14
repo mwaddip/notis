@@ -27,9 +27,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Socket } from 'node:net';
-import type { Libp2p } from 'libp2p';
+import { createLibp2p, type Libp2p } from 'libp2p';
+import { tcp } from '@libp2p/tcp';
+import { noise } from '@libp2p/noise';
+import { yamux } from '@libp2p/yamux';
+import { identify } from '@libp2p/identify';
 import { peerIdFromString } from '@libp2p/peer-id';
+import { multiaddr } from '@multiformats/multiaddr';
 import { generateKeyPair, type KeyPair } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -116,12 +120,6 @@ function tcpMultiaddrNoPeer(node: NetNode): string {
   // Strip any trailing `/p2p/...` component so the dial resolves to an
   // address, not to a peer id — the stage's own seed shape.
   return match.replace(/\/p2p\/.*$/, '');
-}
-
-function tcpHostPort(addr: string): { host: string; port: number } {
-  const m = /\/ip4\/([^/]+)\/tcp\/(\d+)/.exec(addr);
-  if (!m) throw new Error(`cannot parse ip4/tcp from ${addr}`);
-  return { host: m[1]!, port: Number(m[2]) };
 }
 
 async function waitFor<T>(
@@ -328,36 +326,73 @@ describe('NET_INTERFACE → Node Lifecycle — every connection libp2p opens rea
   }, 30_000);
 
   it('a connection that never handshakes is still closed at its deadline', async () => {
-    // A raw TCP socket to F that never writes a handshake — not a libp2p
-    // dial; F's open hook starts the deadline, and no handshake completes it.
-    // F closes the connection at `HANDSHAKE_DEADLINE_FACTOR × syncRequestTimeoutMs`
-    // (= 6 000 ms). Use raw node:net so the control is independent of the
-    // code under test on the dialler's side.
-    const fTcp = tcpMultiaddr(f!);
-    const { host, port } = tcpHostPort(fTcp);
+    // NET_INTERFACE → Handshake →
+    // "A connection handshakes within its deadline, or is closed":
+    // `HANDSHAKE_DEADLINE_FACTOR` (3) × `syncRequestTimeoutMs` (2 000 ms) =
+    // 6 000 ms after a connection opens on F, F closes it when no handshake
+    // has completed.
+    //
+    // A bare libp2p host — TCP, Noise, yamux, identify — dials F and
+    // completes the libp2p upgrade, so F's `connection:open` hook arms the
+    // deadline on a real connection. The host never opens
+    // `/dagsocial/handshake/1`, so the deadline runs out and F closes the
+    // connection.
+    //
+    // The close is read from the dialler's `connection:close` event, waited
+    // on with an 8 000 ms bound: above F's 6 000 ms deadline and below
+    // libp2p 3.5.1's `INBOUND_UPGRADE_TIMEOUT`
+    // (`connection-manager/constants.defaults.ts`, 10 000 ms), so nothing
+    // but net's deadline can satisfy it.
+    const fPeerId = f!.peerId();
+    const fAddr = tcpMultiaddr(f!);
 
-    const sock: Socket = await new Promise((resolve, reject) => {
-      const s = new Socket();
-      s.once('error', reject);
-      s.connect(port, host, () => {
-        s.removeListener('error', reject);
-        resolve(s);
-      });
+    const dialler: Libp2p = await createLibp2p({
+      addresses: { listen: [] },
+      transports: [tcp()],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
+      services: { identify: identify() },
     });
 
-    let closed = false;
-    sock.on('close', () => { closed = true; });
-    sock.on('error', () => { /* a reset reads as close too */ });
+    try {
+      const dialStart = Date.now();
+      await dialler.dial(multiaddr(fAddr));
 
-    // F's deadline is 3 × 2 000 ms = 6 000 ms. A plain TCP socket does not
-    // upgrade to a libp2p connection — it sits as an unencrypted socket on
-    // F's TCP listener until noise or F closes it. F closes the connection
-    // at the deadline; the socket's `close` fires shortly after.
-    const giveUpAt = Date.now() + 10_000;
-    while (!closed && Date.now() < giveUpAt) {
-      await new Promise((r) => setTimeout(r, 50));
+      // Control: F lists the dialler's connection — the libp2p upgrade
+      // completed on F's side and F armed the deadline.
+      const fLibp2p = libp2pOf(f!);
+      await waitFor(
+        () => {
+          const conns = fLibp2p.getConnections().filter(
+            (c) => c.remotePeer.toString() === dialler.peerId.toString(),
+          );
+          return conns.length > 0 ? true : null;
+        },
+        2_000,
+        "F's libp2p lists the dialler's connection",
+      );
+
+      const closeMs = await new Promise<number>((resolve) => {
+        const onClose = (evt: { detail: { remotePeer: { toString(): string } } }): void => {
+          if (evt.detail.remotePeer.toString() === fPeerId) {
+            dialler.removeEventListener('connection:close', onClose);
+            resolve(Date.now() - dialStart);
+          }
+        };
+        dialler.addEventListener('connection:close', onClose);
+        setTimeout(() => {
+          dialler.removeEventListener('connection:close', onClose);
+          resolve(-1);
+        }, 8_000);
+      });
+
+      expect(closeMs, `F did not close the connection within 8 000 ms (measured ${closeMs} ms)`).toBeGreaterThan(0);
+      expect(closeMs).toBeLessThan(8_000);
+      expect(dialler.getConnections().filter(
+        (c) => c.remotePeer.toString() === fPeerId,
+      )).toHaveLength(0);
+    } finally {
+      try { await dialler.stop(); } catch { /* already stopped */ }
     }
-    try { sock.destroy(); } catch { /* already gone */ }
-    expect(closed).toBe(true);
   }, 30_000);
 });
