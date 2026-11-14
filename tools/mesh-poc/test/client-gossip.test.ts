@@ -38,6 +38,7 @@ import {
 import { verifierProfile } from '@dagsocial/nipopow-client';
 import { gossipTopics } from '@dagsocial/net/browser';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
+import { waitReaderHeldAsDirect } from './helpers/direct-peer.js';
 import { lieTarget, startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
 import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
@@ -47,7 +48,6 @@ const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const K = 5;
 const MAGIC = MAGIC_DEVNET;
 const TOPIC = gossipTopics(MAGIC).orderingBlock;
-const MESH_WAIT_MS = 60_000;
 
 interface Started { mesh: NetMeshNode; id: string; webrtcAddr: string; up: ChainUpstream; dir: string; }
 
@@ -58,23 +58,16 @@ async function startNode(chain: OrderingBlock[]): Promise<Started> {
   return { mesh, id: mesh.id, webrtcAddr: mesh.webrtcAddr, up, dir };
 }
 
-// The GossipSub implementation exposes `getMeshPeers`; the exported
-// `GossipSub` interface does not. Cast to a narrow query interface.
-interface MeshPeerQuery {
-  getMeshPeers(topic: string): string[];
+// The GossipSub implementation exposes `publish` and `seenCache`; the
+// exported `GossipSub` interface does not. Cast to a narrow query
+// interface.
+interface Router {
   publish(topic: string, data?: Uint8Array): Promise<unknown>;
 }
 
-function pubsubOf(libp2p: unknown): MeshPeerQuery {
+function pubsubOf(libp2p: unknown): Router {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (libp2p as any).services.pubsub as MeshPeerQuery;
-}
-
-async function waitMesh(a: MeshPeerQuery, aId: string, b: MeshPeerQuery, bId: string): Promise<void> {
-  await vi.waitFor(() => {
-    expect(a.getMeshPeers(TOPIC)).toContain(bId);
-    expect(b.getMeshPeers(TOPIC)).toContain(aId);
-  }, { timeout: MESH_WAIT_MS, interval: 300 });
+  return (libp2p as any).services.pubsub as Router;
 }
 
 /**
@@ -196,9 +189,10 @@ describe('mesh-client in block gossip', () => {
     await client.check(); // settle
     expect(client.state().tip?.height).toBe(K + 1);
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     const forwardedBefore = client.state().traffic.forwarded;
@@ -245,9 +239,10 @@ describe('mesh-client in block gossip', () => {
     const callsAfterSettle = resolveUrls.length;
     const checksAfterSettle = client.state().checks;
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     // A competing block at height K+1 with prev = block K's hash.
@@ -298,9 +293,10 @@ describe('mesh-client in block gossip', () => {
     await client.check();
     const checksAfterSettle = client.state().checks;
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     // A block whose prev is a random hash the client's window does not hold.
@@ -333,9 +329,10 @@ describe('mesh-client in block gossip', () => {
     openClients.push(client);
     await client.check();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
     const forwardedBefore = client.state().traffic.forwarded;
 
@@ -383,9 +380,10 @@ describe('mesh-client in block gossip', () => {
 
     // Wait until gossip mesh forms (the first check started but is blocked
     // on `gate`; the libp2p side is up and running).
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
     // State should still be unsettled.
     expect(client.state().tip).toBeNull();
@@ -427,9 +425,10 @@ describe('mesh-client in block gossip', () => {
     openClients.push(client);
     await client.check();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
     const forwardedBefore = client.state().traffic.forwarded;
 
@@ -463,9 +462,10 @@ describe('mesh-client in block gossip', () => {
     openClients.push(client);
     await client.check();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
     const bytesBefore = client.state().traffic.gossipBytes;
 
@@ -502,9 +502,10 @@ describe('mesh-client in block gossip', () => {
     openClients.push(client);
     await client.check();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
@@ -579,13 +580,15 @@ describe('mesh-client in block gossip', () => {
     openClients.push(client);
     await client.check();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(a.mesh.libp2p), a.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      a.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(b.mesh.libp2p), b.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      b.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     // Guard: A and B are not directly connected.
@@ -656,9 +659,10 @@ describe('mesh-client in block gossip', () => {
     await client.check();
     expect(client.state().tip).toBeNull();
 
-    await waitMesh(
-      pubsubOf(client.libp2p), client.libp2p.peerId.toString(),
-      pubsubOf(started.mesh.libp2p), started.mesh.libp2p.peerId.toString(),
+    await waitReaderHeldAsDirect(
+      started.mesh.libp2p,
+      client.libp2p,
+      TOPIC,
     );
 
     const checksBefore = client.state().checks;
