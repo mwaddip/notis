@@ -4928,15 +4928,25 @@ the run's timed page series, some 900 calls. It is not the store: the rows read 
 It struck wherever the call allocated — through the route over kept roots and store-served ones alike, and
 store-served in process — and never the kept root in process, in 200 calls. The process held 6.4 GiB of heap, 2.3
 of it the 63 full-block roots the bench keeps with no node bound, where the default bound keeps about 155 MiB; a
-minor collection of about 1.75 s was observed inside two of the calls, and no collection inside the others. What
-stalls the rest is not established, nor whether a node under the default bound sees it.
+minor collection of about 1.75 s was observed inside two of the calls, and no collection inside the others.
 
-> ⚠ **AHEAD OF CODE (2026-11-14).** `packages/node/bench/range-proofs.test.ts` bounds its prover's kept roots by
-`BENCH_PROOF_WINDOW_NODES` when it is set — a node's `PROOF_WINDOW_NODES`, `250000` its default — and by the ring's
-capacity alone when it is empty, as in the run above; every height a series measures at is printed as its distance
-from the tip.
+**It is the first scavenge after a full collection, and a node's default bound does not spare it.** The bench keeps
+its prover's roots under `BENCH_PROOF_WINDOW_NODES` when it is set and under the ring's capacity alone when it is
+blank, as in the 2026-10-07 run, and prints every height it measures at as its distance from the tip. Measured
+2026-11-14 with `BENCH_PROOF_WINDOW_NODES=250000` — the default `PROOF_WINDOW_NODES`, so three full-block roots, 15
+MiB beside a 2.9 GiB heap — pinned to performance cores whose sibling threads were idle: in one run with the store on
+disk and one with it on tmpfs, about 1% of the pages served from the store or through Express took 0.3–1.5 s, in
+clusters of two or three adjacent calls, and none of the 400 in-process pages over a kept root, the call that
+allocates least. The disk is not it — tmpfs changed nothing — nor the kernel's reclaim or compaction, whose counters
+barely moved. In two further runs, profiled from inside the bench's process, each stall is one unbroken stretch of the
+collector, and V8's own trace in the second matches each with a scavenge that paused 1.1–2.1 s, 1.4–2.3 s after a full
+collection whose marking ran in the background and whose own pause was 22–170 ms; V8's traced phases account for
+0.25–0.54 s of each such pause, and the scavenges after it took their usual 20–70 ms. What the untraced time waits on
+is not established. The bench's GC observer reports some of these pauses as a minor collection and misses others, so a
+slow call's `gc=0` there is no evidence that no collection ran. The old generation held about 3 GiB, nearly all of it
+the 10⁶-leaf tree, so a node holding such a tree meets the same pause whatever its bound.
 
-**What the kept roots hold, in bytes** — the same run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
+**What the kept roots hold, in bytes** — the 2026-10-07 run. A node counted costs about 650 bytes — 570 of heap and 85 of array buffers, which V8's heap
 limit does not count — so the default `PROOF_WINDOW_NODES` bounds the kept roots near 155 MiB, whatever the blocks
 carry. A block of 3 156 credit sends over that tree replaces about 114 000 nodes, 71 MiB a kept root: 64 such roots
 hold 4.4 GiB, and the default keeps 3 of them; under blocks a hundredth that size — 2 300 nodes, 1.4 MiB a root — it
