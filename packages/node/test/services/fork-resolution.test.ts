@@ -99,12 +99,6 @@ async function importCorruptState() {
   };
 }
 
-/**
- * A pool entry any template can carry: a karma box spent back to its owner,
- * signed. The box is committed now, so a test calls this before its first block
- * — the fork point a reorg returns to then holds the box, and the template the
- * reorg rebuilds keeps the entry rather than evicting it.
- */
 /** The 33-byte digest of a kept root — the root's label and the tree height, hex. */
 function keptDigest(kept: { root: AvlNode; treeHeight: number }): string {
   const out = new Uint8Array(33);
@@ -114,8 +108,12 @@ function keptDigest(kept: { root: AvlNode; treeHeight: number }): string {
 }
 
 /**
- * `seededSelfSpend`'s transaction beside its owner and the karma box it spends:
- * what a case that itself writes a second spend of the same owner's box needs.
+ * A pool entry any template can carry: a karma box spent back to its owner,
+ * signed, beside the owner and the box the transaction spends. The box is
+ * committed now, so a test calls this before its first block — the fork point
+ * a reorg returns to then holds the box, and the template the reorg rebuilds
+ * keeps the entry rather than evicting it. A case that writes a second spend
+ * of the same owner's box reads the owner and the box from here.
  */
 async function seededSelfSpendWithOwner(): Promise<{
   tx: UtxoTransaction;
@@ -135,6 +133,7 @@ async function seededSelfSpendWithOwner(): Promise<{
   return { tx, owner, box };
 }
 
+/** `seededSelfSpendWithOwner`'s transaction alone. */
 async function seededSelfSpend(): Promise<UtxoTransaction> {
   return (await seededSelfSpendWithOwner()).tx;
 }
