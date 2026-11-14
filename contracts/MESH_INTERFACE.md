@@ -125,8 +125,12 @@ read or forge it. Limits against abuse of a relay wait for an abuse that is meas
 
 **A relay that does not answer never stops a private node.** The node starts on its own addresses alone and asks each
 relay for its reservation afterwards, every attempt under `RELAY_LISTEN_TIMEOUT_MS`. A relay that is down, that goes
-away, or that never completes a reservation is tried again on the node list's retry cadence (`RETRY_BASE_MS` doubling
-to `RETRY_CAP_MS`), and the node reserves on it once it answers; meanwhile it serves through whichever relays it holds.
+away, or that never completes a reservation is tried again on the node list's retry cadence, each wait drawn as a
+node's is (→ The client's node list → "Retry"), and the node reserves on it once it answers; meanwhile it serves through
+whichever relays it holds.
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** net's relay retry waits the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`,
+> with no draw.
 
 **A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
 until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
