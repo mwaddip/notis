@@ -303,6 +303,8 @@ export async function startExtensionMesh(
     profile,
     agentName: opts.agentName,
     httpFetch: opts.httpFetch,
+    // WEB_INTERFACE → The extension → "The mesh client's faults reach the page's console"
+    log: (line) => { console.error(line); },
     onChecked: (snapshot: MemorySnapshot) => {
       const chain = seatedClient !== null ? seatedClient.state().chain : null;
       const genesis = profile.genesisId !== '' ? profile.genesisId : chain;
