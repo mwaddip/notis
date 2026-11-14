@@ -28,10 +28,10 @@ index b15001298f61d14337a44f8344240a803990fb85..1a7747b29b8ae2edcf5b2bc61640f65b
      isDialable(multiaddr: Multiaddr | Multiaddr[], options?: IsDialableOptions): Promise<boolean>;
  }
 diff --git a/dist/src/connection-manager/index.js b/dist/src/connection-manager/index.js
-index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f8acb1539 100644
+index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..e424ab1021a373b12ea54d8135d4483902c3a847 100644
 --- a/dist/src/connection-manager/index.js
 +++ b/dist/src/connection-manager/index.js
-@@ -15,8 +15,32 @@ export const DEFAULT_DIAL_PRIORITY = 50;
+@@ -15,8 +15,92 @@ export const DEFAULT_DIAL_PRIORITY = 50;
  const defaultOptions = {
      maxConnections: MAX_CONNECTIONS,
      inboundConnectionThreshold: INBOUND_CONNECTION_THRESHOLD,
@@ -39,33 +39,93 @@ index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f
 +    maxIncomingPendingConnections: MAX_INCOMING_PENDING_CONNECTIONS,
 +    maxIncomingPendingConnectionsPerHost: Infinity
  };
-+// The /64 network of an IPv6 address — the first four 16-bit hextets,
-+// each zero-padded, joined by `:`. Expand `::` first.
-+function ipv6To64Prefix(ip) {
++// Expand an IPv6 string into 8 hextets, with the last pair of hextets
++// optionally spelled as a dotted IPv4 tail (`::ffff:10.0.0.1`). Returns
++// null if the address does not parse to 8 hextets.
++function expandIpv6Hextets(ip) {
 +    const lo = ip.toLowerCase();
-+    const parts = lo.split('::');
-+    const head = parts[0] !== undefined && parts[0] !== '' ? parts[0].split(':') : [];
-+    const tail = parts.length > 1 && parts[1] !== undefined && parts[1] !== '' ? parts[1].split(':') : [];
-+    const missing = 8 - head.length - tail.length;
-+    const all = [...head, ...new Array(Math.max(0, missing)).fill('0'), ...tail];
-+    return all.slice(0, 4).map((s) => s.padStart(4, '0')).join(':');
++    const dc = lo.split('::');
++    if (dc.length > 2)
++        return null;
++    const rawHead = dc[0] !== undefined && dc[0] !== '' ? dc[0].split(':') : [];
++    const rawTail = dc.length > 1 && dc[1] !== undefined && dc[1] !== '' ? dc[1].split(':') : [];
++    const expandTail = (parts) => {
++        if (parts.length === 0)
++            return parts;
++        const last = parts[parts.length - 1];
++        if (!last.includes('.'))
++            return parts;
++        const octs = last.split('.');
++        if (octs.length !== 4)
++            return null;
++        const nums = octs.map((o) => Number(o));
++        if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255))
++            return null;
++        const h1 = (((nums[0] << 8) | nums[1]) >>> 0).toString(16);
++        const h2 = (((nums[2] << 8) | nums[3]) >>> 0).toString(16);
++        return [...parts.slice(0, -1), h1, h2];
++    };
++    const head = expandTail(rawHead);
++    const tail = expandTail(rawTail);
++    if (head === null || tail === null)
++        return null;
++    const total = head.length + tail.length;
++    if (dc.length === 1) {
++        if (total !== 8)
++            return null;
++        return head;
++    }
++    const missing = 8 - total;
++    if (missing < 0)
++        return null;
++    return [...head, ...new Array(missing).fill('0'), ...tail];
++}
++// The /64 network of an IPv6 address — the first four 16-bit hextets,
++// each zero-padded, joined by `:`.
++function ipv6To64Prefix(ip) {
++    const hextets = expandIpv6Hextets(ip);
++    if (hextets === null)
++        return ip.toLowerCase();
++    return hextets.slice(0, 4).map((s) => s.padStart(4, '0')).join(':');
++}
++// The embedded IPv4 of an IPv4-mapped IPv6 address `::ffff:a.b.c.d` (or
++// its hex equivalent `::ffff:XXXX:YYYY`) in dotted form; null otherwise.
++function ipv4MappedDotted(ip) {
++    const hextets = expandIpv6Hextets(ip);
++    if (hextets === null)
++        return null;
++    for (let i = 0; i < 5; i++) {
++        if (parseInt(hextets[i], 16) !== 0)
++            return null;
++    }
++    if (parseInt(hextets[5], 16) !== 0xffff)
++        return null;
++    const a = parseInt(hextets[6], 16);
++    const b = parseInt(hextets[7], 16);
++    return `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
 +}
 +// The per-host key for a maConn's remote address: the remote IP for
-+// IPv4, the /64 network for IPv6, otherwise `null`.
++// IPv4, the embedded IPv4 in dotted form for an IPv4-mapped IPv6
++// address, the /64 network for IPv6 otherwise, `null` when not a
++// network address.
 +function hostKeyOf(ma) {
 +    if (!isNetworkAddress(ma))
 +        return null;
 +    const config = getNetConfig(ma);
 +    if (config.type === 'ip4')
 +        return config.host;
-+    if (config.type === 'ip6')
++    if (config.type === 'ip6') {
++        const mapped = ipv4MappedDotted(config.host);
++        if (mapped !== null)
++            return mapped;
 +        return ipv6To64Prefix(config.host);
++    }
 +    return config.host;
 +}
  /**
   * Responsible for managing known connections.
   */
-@@ -26,7 +50,10 @@ export class DefaultConnectionManager {
+@@ -26,7 +110,10 @@ export class DefaultConnectionManager {
      allow;
      deny;
      maxIncomingPendingConnections;
@@ -76,7 +136,7 @@ index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f
      outboundPendingConnections;
      maxConnections;
      dialQueue;
-@@ -60,6 +87,7 @@ export class DefaultConnectionManager {
+@@ -60,6 +147,7 @@ export class DefaultConnectionManager {
          this.deny = (init.deny ?? []).map(str => multiaddrToIpNet(multiaddr(str)));
          this.incomingPendingConnections = 0;
          this.maxIncomingPendingConnections = init.maxIncomingPendingConnections ?? defaultOptions.maxIncomingPendingConnections;
@@ -84,7 +144,7 @@ index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f
          this.outboundPendingConnections = 0;
          // controls individual peers trying to dial us too quickly
          this.inboundConnectionRateLimiter = new RateLimiter({
-@@ -386,10 +414,19 @@ export class DefaultConnectionManager {
+@@ -386,10 +474,19 @@ export class DefaultConnectionManager {
              return true;
          }
          // check pending connections
@@ -105,7 +165,7 @@ index 0ef3ba064e901cf5a639bb52523e5cfbc9bada04..ad8d3146890854570a250bb28021ab0f
          if (isNetworkAddress(maConn.remoteAddr)) {
              const config = getNetConfig(maConn.remoteAddr);
              try {
-@@ -402,13 +439,30 @@ export class DefaultConnectionManager {
+@@ -402,13 +499,30 @@ export class DefaultConnectionManager {
          }
          if (this.getConnections().length < this.maxConnections) {
              this.incomingPendingConnections++;
@@ -152,7 +212,7 @@ index 11aad1f8919c35e3bb5327107a21dfa280f2aded..0d54ebd424825494e4c3cb182094d006
          }
      }
 diff --git a/src/connection-manager/index.ts b/src/connection-manager/index.ts
-index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3c031198a 100644
+index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..d1f53c1af12dee679fbbad4af92b2042186f8308 100644
 --- a/src/connection-manager/index.ts
 +++ b/src/connection-manager/index.ts
 @@ -146,6 +146,16 @@ export interface ConnectionManagerInit {
@@ -172,7 +232,7 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
    /**
     * When a peer tagged with `KEEP_ALIVE` disconnects, attempt to redial them
     * this many times.
-@@ -183,7 +193,31 @@ export interface ConnectionManagerInit {
+@@ -183,7 +193,81 @@ export interface ConnectionManagerInit {
  const defaultOptions = {
    maxConnections: MAX_CONNECTIONS,
    inboundConnectionThreshold: INBOUND_CONNECTION_THRESHOLD,
@@ -181,31 +241,81 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
 +  maxIncomingPendingConnectionsPerHost: Infinity
 +}
 +
-+// The /64 network of an IPv6 address — the first four 16-bit hextets,
-+// each zero-padded, joined by `:`. Expand `::` first.
-+function ipv6To64Prefix (ip: string): string {
++// Expand an IPv6 string into 8 hextets, with the last pair of hextets
++// optionally spelled as a dotted IPv4 tail (`::ffff:10.0.0.1`). Returns
++// null if the address does not parse to 8 hextets.
++function expandIpv6Hextets (ip: string): string[] | null {
 +  const lo = ip.toLowerCase()
-+  const parts = lo.split('::')
-+  const head = parts[0] !== undefined && parts[0] !== '' ? parts[0].split(':') : []
-+  const tail = parts.length > 1 && parts[1] !== undefined && parts[1] !== '' ? parts[1].split(':') : []
-+  const missing = 8 - head.length - tail.length
-+  const all = [...head, ...new Array(Math.max(0, missing)).fill('0'), ...tail]
-+  return all.slice(0, 4).map((s) => s.padStart(4, '0')).join(':')
++  const dc = lo.split('::')
++  if (dc.length > 2) return null
++  const rawHead = dc[0] !== undefined && dc[0] !== '' ? dc[0].split(':') : []
++  const rawTail = dc.length > 1 && dc[1] !== undefined && dc[1] !== '' ? dc[1].split(':') : []
++  // A dotted IPv4 tail is always the last part; expand it into two hextets.
++  const expandTail = (parts: string[]): string[] | null => {
++    if (parts.length === 0) return parts
++    const last = parts[parts.length - 1]!
++    if (!last.includes('.')) return parts
++    const octs = last.split('.')
++    if (octs.length !== 4) return null
++    const nums = octs.map((o) => Number(o))
++    if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null
++    const h1 = (((nums[0]! << 8) | nums[1]!) >>> 0).toString(16)
++    const h2 = (((nums[2]! << 8) | nums[3]!) >>> 0).toString(16)
++    return [...parts.slice(0, -1), h1, h2]
++  }
++  const head = expandTail(rawHead)
++  const tail = expandTail(rawTail)
++  if (head === null || tail === null) return null
++  const total = head.length + tail.length
++  if (dc.length === 1) {
++    if (total !== 8) return null
++    return head
++  }
++  const missing = 8 - total
++  if (missing < 0) return null
++  return [...head, ...new Array(missing).fill('0'), ...tail]
 +}
 +
-+// The per-host key for a maConn: the remote IP for IPv4, and the /64
-+// network for IPv6. Returns null when the address is not a network
++// The /64 network of an IPv6 address — the first four 16-bit hextets,
++// each zero-padded, joined by `:`.
++function ipv6To64Prefix (ip: string): string {
++  const hextets = expandIpv6Hextets(ip)
++  if (hextets === null) return ip.toLowerCase()
++  return hextets.slice(0, 4).map((s) => s.padStart(4, '0')).join(':')
++}
++
++// The embedded IPv4 of an IPv4-mapped IPv6 address `::ffff:a.b.c.d` (or
++// its hex equivalent `::ffff:XXXX:YYYY`) in dotted form; null otherwise.
++function ipv4MappedDotted (ip: string): string | null {
++  const hextets = expandIpv6Hextets(ip)
++  if (hextets === null) return null
++  for (let i = 0; i < 5; i++) {
++    if (parseInt(hextets[i]!, 16) !== 0) return null
++  }
++  if (parseInt(hextets[5]!, 16) !== 0xffff) return null
++  const a = parseInt(hextets[6]!, 16)
++  const b = parseInt(hextets[7]!, 16)
++  return `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`
++}
++
++// The per-host key for a maConn: the remote IP for IPv4, the embedded
++// IPv4 in dotted form for an IPv4-mapped IPv6 address, the /64 network
++// for IPv6 otherwise. Returns null when the address is not a network
 +// address (`isNetworkAddress` is false).
 +function hostKeyOf (ma: Multiaddr): string | null {
 +  if (!isNetworkAddress(ma)) return null
 +  const config = getNetConfig(ma)
 +  if (config.type === 'ip4') return config.host
-+  if (config.type === 'ip6') return ipv6To64Prefix(config.host)
++  if (config.type === 'ip6') {
++    const mapped = ipv4MappedDotted(config.host)
++    if (mapped !== null) return mapped
++    return ipv6To64Prefix(config.host)
++  }
 +  return config.host
  }
  
  export interface DefaultConnectionManagerComponents {
-@@ -206,7 +240,13 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+@@ -206,7 +290,13 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
    private readonly allow: IpNet[]
    private readonly deny: IpNet[]
    private readonly maxIncomingPendingConnections: number
@@ -219,7 +329,7 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
    private outboundPendingConnections: number
    private maxConnections: number
  
-@@ -248,6 +288,7 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+@@ -248,6 +338,7 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
  
      this.incomingPendingConnections = 0
      this.maxIncomingPendingConnections = init.maxIncomingPendingConnections ?? defaultOptions.maxIncomingPendingConnections
@@ -227,7 +337,7 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
      this.outboundPendingConnections = 0
  
      // controls individual peers trying to dial us too quickly
-@@ -669,11 +710,21 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+@@ -669,11 +760,21 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
      }
  
      // check pending connections
@@ -250,7 +360,7 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
      if (isNetworkAddress(maConn.remoteAddr)) {
        const config = getNetConfig(maConn.remoteAddr)
  
-@@ -687,6 +738,10 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+@@ -687,6 +788,10 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
  
      if (this.getConnections().length < this.maxConnections) {
        this.incomingPendingConnections++
@@ -261,7 +371,7 @@ index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..23b9d14bbae0db08129e63852c24cfd3
  
        return true
      }
-@@ -695,8 +750,20 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
+@@ -695,8 +800,20 @@ export class DefaultConnectionManager implements ConnectionManager, Startable {
      return false
    }
  

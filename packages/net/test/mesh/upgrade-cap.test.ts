@@ -183,31 +183,40 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
   }, 30_000);
 
   // Node-wide: the ceiling is `maxPeers + maxReaders + HANDSHAKE_SLACK`.
-  // With maxPeers 2 and maxReaders 2 the ceiling is 20; silent connections
-  // from five addresses (four each) fill it. More than ten are held, which
-  // libp2p's default would refuse.
-  it('silent connections from several addresses fill the node ceiling of 20; more than ten are held at once', async () => {
+  // With maxPeers 2 and maxReaders 2 the ceiling is 20; silent
+  // connections from five addresses (four each) fill it inside the
+  // 5 000 ms upgrade timeout, and the 21st from a sixth address is
+  // closed by the node at once — libp2p's default of ten would refuse
+  // the eleventh.
+  it('the twentieth silent connection from five addresses is held, the 21st from a sixth address is closed at once', async () => {
     const state = await startA(2, 2);
     nodes.push(state);
     const sources = ['127.0.0.2', '127.0.0.3', '127.0.0.4', '127.0.0.5', '127.0.0.6'];
     const silent: { socket: NetSocket; closedIn: Promise<number> }[] = [];
-    for (const src of sources) {
-      for (let i = 0; i < 4; i++) {
+    // Open the twenty inside ~1.5 s, interleaving the five addresses so
+    // no address opens more than four in any second — 75 ms per open
+    // cycles the five addresses and finishes four rounds in 1.5 s.
+    for (let i = 0; i < 4; i++) {
+      for (const src of sources) {
         silent.push(openSilentTcp(state.port, src));
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, 75));
       }
     }
-    // Wait a beat for openings to register.
-    await new Promise((r) => setTimeout(r, 500));
-    // Count silent still-open: the ceiling holds twenty — libp2p's
-    // default of ten would refuse the eleventh.
+    // Wait a beat for the opens to register.
+    await new Promise((r) => setTimeout(r, 300));
     let held = 0;
     for (const s of silent) {
       const closedIn = await raceTimeout(s.closedIn, 10);
       if (closedIn === null) held += 1;
     }
-    // -- LAST ASSERTION --
     expect(held, 'more than ten silent connections held').toBeGreaterThan(10);
+    expect(held, 'the ceiling holds all twenty').toBe(20);
+    // A 21st from a sixth address finds the ceiling full and is closed
+    // at once — well under the 5 000 ms upgrade timeout.
+    const twentyFirst = openSilentTcp(state.port, '127.0.0.7');
+    const closedIn = await raceTimeout(twentyFirst.closedIn, 2_000);
+    // -- LAST ASSERTION --
+    expect(closedIn, 'the 21st connection closed at once').not.toBeNull();
   }, 30_000);
 
   // In time: a silent connection is closed at `INBOUND_UPGRADE_TIMEOUT_MS`
@@ -322,5 +331,42 @@ describe('the per-host cap counts an IPv6 address by its /64', () => {
     }
     // -- LAST ASSERTION -- the fifth from the same /64 is refused.
     expect(cm.acceptIncomingConnection(ma('/ip6/2001:db8::15/tcp/40015')), 'fifth from the /64 refused').toBe(false);
+  }, 15_000);
+
+  // An IPv4-mapped IPv6 address `::ffff:a.b.c.d` keys by its embedded
+  // IPv4: four mapped from one IPv4 refuse a fifth, a mapped from
+  // another IPv4 is accepted, and `::ffff:10.0.0.1` and
+  // `::ffff:10.0.0.2` count separately as their own IPv4 hosts.
+  it('an IPv4-mapped IPv6 address counts by its embedded IPv4', async () => {
+    const state = await startA();
+    nodes.push(state);
+    const libp2p = state.node.libp2pNode!;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cm = (libp2p as any).components.connectionManager as {
+      acceptIncomingConnection: (maConn: unknown) => boolean;
+      afterUpgradeInbound: (maConn?: unknown) => void;
+    };
+    const ma = (s: string): { remoteAddr: ReturnType<typeof multiaddr> } => ({ remoteAddr: multiaddr(s) });
+    // Four mapped addresses from 10.0.0.1 are accepted and a fifth
+    // from 10.0.0.1 is refused.
+    for (let i = 1; i <= 4; i++) {
+      expect(
+        cm.acceptIncomingConnection(ma(`/ip6/::ffff:10.0.0.1/tcp/5000${i}`)),
+        `10.0.0.1 accept ${i}`,
+      ).toBe(true);
+    }
+    expect(cm.acceptIncomingConnection(ma('/ip6/::ffff:10.0.0.1/tcp/50005')), 'fifth from 10.0.0.1 refused').toBe(false);
+    // A mapped address from another IPv4 (10.0.0.2) is accepted even
+    // while 10.0.0.1 is full — the two count separately. Four from
+    // 10.0.0.2 all accepted.
+    for (let i = 1; i <= 4; i++) {
+      expect(
+        cm.acceptIncomingConnection(ma(`/ip6/::ffff:10.0.0.2/tcp/5001${i}`)),
+        `10.0.0.2 accept ${i} — a distinct IPv4 host`,
+      ).toBe(true);
+    }
+    // -- LAST ASSERTION -- a fifth from 10.0.0.2 is refused on its own
+    // count, not on 10.0.0.1's — the two are separate hosts.
+    expect(cm.acceptIncomingConnection(ma('/ip6/::ffff:10.0.0.2/tcp/50015')), 'fifth from 10.0.0.2 refused').toBe(false);
   }, 15_000);
 });
