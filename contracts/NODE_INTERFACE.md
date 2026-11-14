@@ -1972,7 +1972,9 @@ There is **no other legal bond or invite shape**. In particular:
   eviction, a block's spends, an entry it depends on leaving (`MEMPOOL_INTERFACE → removeUnconfirmed`);
   `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
   a reverted block's re-inserted transactions find their rows returned to pending by
-  `unconfirmPost`, body intact.
+  `unconfirmPost`, body intact, and a reverted post the switch neither returns to the pool nor applies again loses its
+  row at the switch, its pooled dependents with it (MEMPOOL_INTERFACE → What takes an entry out of the pool → "A
+  reverted transaction that does not return leaves as an unconfirmed entry does").
 - **A post applied without its packet is a placeholder.** Block application inserts a row from
   the commit with `content = NULL` when none exists, confirms it, and the body is backfilled by
   id (Store Interface → Posts DAG, "Backfill after sync"). The placeholder rules: a like on it
@@ -1980,6 +1982,9 @@ There is **no other legal bond or invite shape**. In particular:
   withdrawal needs topology, not a body. `isLivePost` is the guard at every site that asks whether
   a post is live ("Resolution order for a post id"); an unknown parent is `Parent post not found`;
   a reply to a withdrawn post stays valid (ARCHITECTURE → Post structure).
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** A reverted post whose re-insertion the pool refuses or the ceiling screens, and
+> which the new chain does not carry, keeps a pending row with no pool entry after the switch, and answers `tx: null`.
 
 ### Withdrawal transactions
 
@@ -4149,6 +4154,7 @@ one write feeds both, so the two cannot disagree.
 | `followAppliedBlock(height, appliedTxIds, spentBoxIds)` | `(number, readonly string[], readonly string[]) => number` | The pool's part of every applied block, inside its write: the confirmed entries by `tx_id`, then every entry the block's spends, its expiry or its ceiling leave no place for, with their dependents (MEMPOOL_INTERFACE → followAppliedBlock) |
 | `purgeExpired(currentHeight)` | `(number) => number` | `followAppliedBlock`'s expiry half — the entries past their expiry or their ceiling, with their dependents (MEMPOOL_INTERFACE → purgeExpired) |
 | `removeUnconfirmed(rowids)` | `(readonly number[]) => number` | Every unconfirmed exit: the entries, their dependents down the chain, each post entry's pending row (MEMPOOL_INTERFACE → removeUnconfirmed) |
+| `removeUnreturned(reverted)` | `(readonly { txId: string, tx: UtxoTransaction }[]) => number` | A switch's leftovers: each reverted transaction neither pooled nor applied again takes its post's pending row and every pooled entry spending its outputs or replying to its post, down the chain (MEMPOOL_INTERFACE → removeUnreturned) |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
 | `hasPendingInvitee(inviteeId)` | `(string) => boolean` | SQL EXISTS over `invite_invitee` — one pending bond per invitee |
@@ -4474,7 +4480,11 @@ re-insertion reads `appliedUtxoTxs` (txBytes) alone, **lowest reverted height fi
 block's transactions in their applied order** — the order that re-pools a dependent chain
 predecessor first, which the fill preserves and the ordering rule at apply requires (→ Block
 finalization) — and **a withdrawal is one of those
-transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
+transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key. Once the new chain is
+applied, the switch tells a reverted transaction the new chain carries from one it leaves behind by the `txId`s of the
+`appliedUtxoTxs` its own applies journalled (MEMPOOL_INTERFACE → removeUnreturned).
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** `reorg` reads no journal of the heights it applies.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse

@@ -446,8 +446,27 @@ output of one of them or replying to its post — a pending row whose parent ref
 entry's pending row (NODE_INTERFACE → Post transactions). The dependents are read before any row leaves, since the
 output rows they are found through leave with their entry. One SQLite transaction — inside a caller's, a savepoint of
 that one. Its callers: `followAppliedBlock`, the credit class's eviction at the cap
-(→ Eviction, inside the credit class only), the creator's eviction of the rows a refused body's screen refuses, and the
-sweep of a mined block the intake refused (→ Block Creator Integration). Returns the number of entries removed.
+(→ Eviction, inside the credit class only), the creator's eviction of the rows a refused body's screen refuses, the
+sweep of a mined block the intake refused (→ Block Creator Integration), and a switch's leftovers (→ removeUnreturned).
+Returns the number of entries removed.
+
+### removeUnreturned
+
+```
+removeUnreturned(reverted: readonly { txId: string; tx: UtxoTransaction }[]): number
+```
+
+A switch's leftovers, and `reorg`'s call alone (→ What takes an entry out of the pool → "A reverted transaction that
+does not return leaves as an unconfirmed entry does"). `reverted` is every transaction the reverted blocks carried that
+the pool does not hold once the new chain is applied (→ getHeldEntry) and no block the switch applied carried — the
+`txId`s of the `appliedUtxoTxs` those applies journalled (`NODE_INTERFACE → Block Journal`). Each post transaction's
+pending row leaves (`deletePendingPost`); then every pooled entry spending one of their outputs — the box ids
+`insertUtxoTx` materialises for an entry's output rows — or replying to one of their posts leaves through
+`removeUnconfirmed`, its dependents and their rows with it. The spender read is the statement `followAppliedBlock`
+finds a block's spenders by, and the reply read the one `removeUnconfirmed` walks replies by — one statement each,
+shared, never a copy. One SQLite transaction — a savepoint of the switch's. Returns the number of entries removed.
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** `store/mempool.ts` has no `removeUnreturned`.
 
 ### removeEntry
 
@@ -531,7 +550,7 @@ leaves the bound unchanged.
 | **Evicted** | A body this node built was rejected — at speculation, the rows its screen refuses (every row, where it refuses no pooled one); at finalize, every row it carried — or the credit class's cap displaced it | Gone from mempool; state never applied |
 | **Expired** | The applied block that passes its expiry or its ceiling (`followAppliedBlock`) | Gone from mempool; state never applied |
 | **Spent elsewhere** | An applied block spent one of its inputs (`followAppliedBlock`) | Gone from mempool; state never applied |
-| **Orphaned** | An entry whose output it spends left unconfirmed (`removeUnconfirmed`) | Gone from mempool; state never applied |
+| **Orphaned** | An entry whose output it spends left unconfirmed (`removeUnconfirmed`), or a reverted transaction it depends on did not return (`removeUnreturned`) | Gone from mempool; state never applied |
 
 ### Expiry
 
@@ -805,6 +824,17 @@ its pending row (`NODE_INTERFACE → Post transactions`).
 **A reorg returns what it reverts and nothing else.** The transactions of the blocks a reorg reverts go back to the
 pool (`NODE_INTERFACE → Block Journal`); an entry that a reverted block's spends or its
 expiry removed stays gone, and its submitter sends it again (→ Expiry).
+
+**A reverted transaction that does not return leaves as an unconfirmed entry does.** A transaction a reverted block
+carried that the switch neither returns to the pool — a re-insertion the pool refuses (→ Size cap), or one screened at
+its ceiling (→ Validity ceiling) — nor applies again in the new chain takes its post's pending row with it, and every
+pooled entry spending one of its outputs or replying to its post, and so on down (→ removeUnreturned): the dependents an
+entry leaving unconfirmed takes, for the same reason. `reorg` runs it once the new chain is applied, inside the
+switch's transaction, so a post the new chain carries is confirmed on the row it has, body intact, and an entry that
+depends on a transaction the new chain carries stays.
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** `reorg` leaves such a transaction's post row pending with no pool entry, for good,
+> and its pooled dependents wait for their expiry.
 
 ---
 
