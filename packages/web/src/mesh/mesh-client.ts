@@ -25,7 +25,7 @@ import {
   circuitRelayAddressesLast,
 } from '@libp2p/utils';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { decodeOrderingBlock, generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
+import { generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { NetworkProfile, OrderingBlock } from '@dagsocial/types';
 import { resolveTip, DEFAULT_M, DEFAULT_K, verifierProfile } from '@dagsocial/nipopow-client';
 import type { Anchor } from '@dagsocial/nipopow-client';
@@ -817,6 +817,14 @@ class MeshClientImpl implements MeshClient {
    * clock for that memory.
    */
   private readonly blockCheck: BlockCheck;
+  /**
+   * NET_INTERFACE → Inbound Processing → "A gossiped message is decoded
+   * once" — the validator writes the accepted block here keyed by the
+   * router's message object, and the delivery listener reads that one
+   * value. Gossipsub passes the same message object to the topic
+   * validator and to the `gossipsub:message` event.
+   */
+  private readonly decodedByMessage: WeakMap<object, OrderingBlock> = new WeakMap();
   private checkInProgress: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
@@ -1153,6 +1161,8 @@ class MeshClientImpl implements MeshClient {
       }
       return TopicValidatorResult.Reject;
     }
+    // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"
+    this.decodedByMessage.set(msg, verdict.block);
     return TopicValidatorResult.Accept;
   }
 
@@ -1187,16 +1197,18 @@ class MeshClientImpl implements MeshClient {
     );
 
     this.state_.traffic.forwarded += 1;
-    // The validator already decoded this block; a re-decode is cheap
-    // and keeps no map parallel to the router's own cache. A throw
-    // here is defensive — a bug upstream, since the validator accepted
-    // these bytes.
-    let block: OrderingBlock | null = null;
-    try {
-      block = decodeOrderingBlock(new Uint8Array(msg.data));
-    } catch { /* already validated — defensive */ }
+    // NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"
+    const block = this.decodedByMessage.get(msg);
+    if (block === undefined) {
+      // An accepted message with no value kept against it is this
+      // node's bug, logged as one and delivered to no handler, and it
+      // penalises no peer.
+      this.log?.('[mesh-client] accepted gossip delivery without a kept value — this node\'s bug');
+      this.emitStateChange();
+      return;
+    }
 
-    if (!this.chain.settled() || block === null) {
+    if (!this.chain.settled()) {
       this.emitStateChange();
       return;
     }
