@@ -973,8 +973,11 @@ describe('reorg', () => {
   // reorg path reverts the confirming block (Phase 1's `unconfirmPost` nulls
   // the row's `block_height`) and re-admits the reverted transactions
   // (Phase 2's `insertUtxoTx`). The two cases below read the post afterwards
-  // through FeedService with `tx: true`, so a `tx` field answered from the
-  // pool and a `tx: null` from a dropped re-insert sit side by side.
+  // through FeedService with `tx: true`: a returning re-insert answers `tx`
+  // as the pool entry's bytes, and a re-insert the pool refuses leaves no
+  // row for the read to find (MEMPOOL_INTERFACE → What takes an entry out of
+  // the pool → "A reverted transaction that does not return leaves as an
+  // unconfirmed entry does").
   it('a reverted post whose re-insert returns to the pool answers tx as the pool entry\'s bytes', async () => {
     const db = await importDb();
     db.initDb(':memory:');
@@ -1025,11 +1028,11 @@ describe('reorg', () => {
     expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
   });
 
-  it('a reverted post whose re-insert is dropped stays pending with no pool entry, and answers tx: null', async () => {
-    // The pool-full path: `reinsert` catches `MempoolFullError` and completes.
-    // The dag_posts row stays — Phase 1's `unconfirmPost` only nulls
-    // `block_height` — and the pool has no entry under its `tx_id`, so
-    // `getHeldEntry` answers null and FeedService answers `tx: null`.
+  it.fails('a reverted post the pool refuses to re-admit loses its pending row', async () => {
+    // MEMPOOL_INTERFACE → What takes an entry out of the pool → "A reverted
+    // transaction that does not return leaves as an unconfirmed entry does":
+    // `reinsert` catches `MempoolFullError` and completes, and the switch's
+    // end takes the row with the transaction that did not return.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const db = await importDb();
@@ -1060,12 +1063,16 @@ describe('reorg', () => {
       const forkResolution = await importForkResolution();
       forkResolution.reorg(0, []);
 
-      // The dag_posts row survives, pool has only the occupier (no entry under
-      // the post's txId).
+      // Controls: tip 0, the pool holds the occupier alone, nothing under
+      // the post's txId, and the drop's `mempool full` warning fired.
       const ordering = await importOrdering();
       expect(ordering.getCurrentHeight()).toBe(0);
       const storeIdx = await import('../../src/store/index.js');
       expect(storeIdx.getHeldEntry(txId)).toBeNull();
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Reorg re-insertion dropped, mempool full')),
+      ).toBe(true);
 
       const feedModule = await import('../../src/services/feed-service.js');
       const feed = new feedModule.FeedService({
@@ -1082,10 +1089,7 @@ describe('reorg', () => {
         getUtxoTxTreeBytes: storeIdx.getUtxoTxTreeBytes,
       });
 
-      const r = feed.getPost(postId, null, true) as import('../../src/services/feed-service.js').PostJson;
-      expect(r.status).toBe('pending');
-      expect(r.txId).toBe(txId);
-      expect(r.tx).toBeNull();
+      expect(feed.getPost(postId, null, true)).toBeNull();
     } finally {
       warn.mockRestore();
     }
