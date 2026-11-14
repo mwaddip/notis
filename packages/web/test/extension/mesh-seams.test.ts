@@ -445,4 +445,30 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(storage.map.has(SERVE_KEY)).toBe(false);
     expect(servingCalls).toEqual([true, false]);
   });
+
+  // WEB_INTERFACE → The extension → "The mesh client's faults reach the
+  // page's console" — the extension hands its mesh client a log that
+  // writes each line to the page's console as an error.
+  it.fails('the mesh client is handed a log that writes each line to console.error', async () => {
+    let startOpts: StartMeshClientOptions | null = null;
+    const client = fakeClient();
+    const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => {
+      startOpts = opts;
+      return client;
+    });
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await startExtensionMesh({
+        firstContact: [], network: 'devnet', agentName: 'notis-extension',
+        httpFetch: fetch.bind(globalThis),
+        check, storage: fakeStorage(), locks: fakeLocks(),
+        window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
+      });
+      expect(typeof startOpts!.log).toBe('function');
+      startOpts!.log!('[mesh-client] fault line');
+      expect(consoleSpy).toHaveBeenCalledWith('[mesh-client] fault line');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
 });
