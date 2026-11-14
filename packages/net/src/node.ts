@@ -180,10 +180,11 @@ function asGossip(libp2p: Libp2p): Libp2pGossip {
 }
 
 /**
- * The two methods `patches/@libp2p__gossipsub@17.2.1.patch` adds to
- * `GossipSub` after construction. Not published on `@libp2p/gossipsub`'s
- * `GossipSub` interface, so the pubsub service is read through this
- * local intersection type at the call sites — the shape `gossip.ts`'
+ * The two methods net's local gossipsub patch adds to `GossipSub` after
+ * construction (MESH_INTERFACE → Place in the workspace → "libp2p is
+ * pinned"). Not published on `@libp2p/gossipsub`'s `GossipSub`
+ * interface, so the pubsub service is read through this local
+ * intersection type at the call sites — the shape `gossip.ts`'
  * `Libp2pGossip` uses for `reportMessageValidationResult`
  * (NET_INTERFACE → Readers → "A reader is its node's gossip direct peer";
  * MESH_INTERFACE → Block gossip → "A node's readers are its router's
