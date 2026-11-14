@@ -432,9 +432,6 @@ to the page's console as an error: a check that threw, a state listener that thr
 value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
 log logs nothing, so the extension never starts one without it.
 
-> ⚠ **AHEAD OF CODE (2026-11-14).** The extension starts its mesh client with no log, so each of those lines goes
-> nowhere.
-
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read, over the
 mesh or over HTTPS (`MESH_INTERFACE → The node endpoint`), as every client's read is (→ Reading a node's answer): under its route's cap and the one deadline, through

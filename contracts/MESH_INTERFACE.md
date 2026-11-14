@@ -174,9 +174,6 @@ node list → "The client's chain"). A client applies no block and forwards no t
 once: what its delivery reads is the block the check's verdict carries (`NET_INTERFACE → Inbound Processing → "A
 gossiped message is decoded once"`).
 
-> ⚠ **AHEAD OF CODE (2026-11-14).** The client's `gossipsub:message` listener decodes each accepted block a second
-> time, whole, for its header, and discards a failure of that decode unlogged.
-
 **A refused block is evidence as `net` weighs it.** A block over its bound or undecodable, or well-formed and failing
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
 the key that sent it: the client blacklists that key, the evidence kept. A version mismatch, a scheduled-target mismatch
@@ -223,9 +220,6 @@ or 40 readers was in neither router's mesh for 30 blocks of 30 and took each blo
 42% at 40. A router never graylists a direct peer by its score, so a reader's misbehaviour is weighed by `net`'s ban
 policy, whose ban ends the connection (`NET_INTERFACE → Handshake → "Ban policy"`). Unpatched, gossipsub 17.2.1 reads
 its direct peers at construction alone (→ Place in the workspace → "libp2p is pinned").
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** A node's router takes no direct peer: net passes gossipsub none, and gossipsub
-> 17.2.1 has no way to add or remove one while it runs.
 
 ## Discovery
 

@@ -447,8 +447,6 @@ decode limits bound the count of each list a frame carries — 5 000 messages am
 the cap makes a two-block answer unsendable, and one above the cap makes a block no peer can gossip** — net's case holds
 two blocks at the bound, framed as gossipsub frames them, within the cap.
 
-> ⚠ **AHEAD OF CODE (2026-11-14).** No case holds the two-block frame against the cap.
-
 **A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
 deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
 is larger) — because the byte cap bounds a read's *volume*, not its *duration*: a peer that opens the
@@ -630,9 +628,6 @@ base"`).
 publishes, outside every topic's mesh, and leaves the router's direct peers when the node holds no connection to it; a
 topic's mesh holds chain-serving peers alone (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct
 peers"`).
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** Net marks no reader as a direct peer; a reader grafts into the node's mesh as a
-> node peer does.
 
 **A peer dialled for chain service that declares none is closed.** An outbound connection whose handshake declares no
 chain service — a reader, or a node whose build declares nothing — is closed after its handshake and counted toward
@@ -1491,9 +1486,6 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
   its count and one length prefix per item, so it is refused when either is a non-minimal `vlqU` or a byte follows the
   last item, and a re-encode of the whole response would refuse nothing more — as the ordering block's own frame
   (`TYPES_INTERFACE → Layout — Block`). A block in a response costs its decode and nothing after it.
-
-  > ⚠ **AHEAD OF CODE (2026-11-14).** `decodeBlocks` and `decodeHeaders` run `decodeStruct` over the whole
-  > response, whose re-encode compare encodes every item a second time.
 - **The requests are positional too**, and carry no `mode` field — the code pair is the
   discriminator:
 
@@ -1789,9 +1781,6 @@ object, and the listener hands that value to the handlers. Gossipsub passes the 
 validator and, once it is accepted, to the `gossipsub:message` event; net's case holds that over the router as built.
 An accepted message with no value kept against it is this node's bug, logged as one and delivered to no handler, and it
 penalises no peer.
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** The `gossipsub:message` listener decodes each accepted ordering block and
-> transaction packet a second time.
 
 **A transaction is forwarded when a handler admits it.** Net reports the router's verdict on a
 transaction message once its handlers have answered: Accept — the message is forwarded — when any
