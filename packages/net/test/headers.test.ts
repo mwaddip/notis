@@ -505,7 +505,7 @@ describe('chain response framing', () => {
   // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses — each item's
   // canonicity is its own decoder's, and the response's own level re-encodes
   // nothing.
-  it.fails('decodeBlocks re-encodes no block', () => {
+  it('decodeBlocks re-encodes no block', () => {
     const store = makeChain(3);
     const blocks = [store.get(1)!, store.get(2)!, store.get(3)!];
     const body = blocksBody(blocks);
@@ -518,7 +518,7 @@ describe('chain response framing', () => {
     expect(vi.mocked(encodeOrderingBlock)).toHaveBeenCalledTimes(0);
   });
 
-  it.fails('decodeHeaders re-encodes no header', () => {
+  it('decodeHeaders re-encodes no header', () => {
     const headers = [
       makeMockHeader(1, '00'.repeat(32)),
       makeMockHeader(2, 'aa'.repeat(32)),
