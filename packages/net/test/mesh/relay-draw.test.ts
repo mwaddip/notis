@@ -64,19 +64,19 @@ function privateMeshOn(stateDir: string): MeshConfig {
 describe('retryIntervalMs draws the wait between half and the whole of the schedule', () => {
   // base = 100, cap = 1_000; schedule at n = 1 is 100, so half is 50, whole
   // is 100 (strictly less than).
-  it.fails('a random source at 0 answers half the schedule', () => {
+  it('a random source at 0 answers half the schedule', () => {
     // -- LAST ASSERTION --
     expect(retryIntervalMs(1, 100, 1_000, () => 0)).toBe(50);
   });
 
-  it.fails('a random source just under 1 answers just under the whole schedule', () => {
+  it('a random source just under 1 answers just under the whole schedule', () => {
     const v = retryIntervalMs(1, 100, 1_000, () => 1 - 1e-12);
     expect(v, 'at least half').toBeGreaterThanOrEqual(50);
     // -- LAST ASSERTION --
     expect(v, 'strictly less than the whole').toBeLessThan(100);
   });
 
-  it.fails('the cap holds under the draw — at the cap, the draw lies between half the cap and the cap', () => {
+  it('the cap holds under the draw — at the cap, the draw lies between half the cap and the cap', () => {
     // RETRY_CAP_MS = 600_000; schedule at a large n saturates to the cap.
     // Half is 300_000, whole is 600_000 (strictly less than).
     const lo = retryIntervalMs(30, 5_000, RETRY_CAP_MS, () => 0);
@@ -112,7 +112,7 @@ describe('startRelayRetry schedules the drawn wait', () => {
   // The wait is drawn through the required `random` option. With a source
   // pinned to 0, the wait reads half the schedule; two attempts measured
   // on a never-answering relay confirm it.
-  it.fails('the wait a failing listen schedules is drawn through the required random source', async () => {
+  it('the wait a failing listen schedules is drawn through the required random source', async () => {
     // A bare libp2p host that speaks TCP + Noise but has no circuit relay —
     // every listen attempt completes `transportManager.listen` without a
     // reservation (`hasReservation` reads false), so it counts as a

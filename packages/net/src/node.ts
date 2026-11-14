@@ -1365,7 +1365,7 @@ export class NetNode {
         const listenTimeoutMs = mesh.relayListenTimeoutMs;
         for (const addr of this.config.bootstrapPeers) {
           this.relayRetries.push(startRelayRetry(libp2p, `${addr}/p2p-circuit`, {
-            baseMs, capMs, listenTimeoutMs,
+            baseMs, capMs, listenTimeoutMs, random: Math.random,
           }));
         }
       }

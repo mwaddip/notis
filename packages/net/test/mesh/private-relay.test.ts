@@ -101,19 +101,19 @@ describe('retryIntervalMs — the private node\'s relay retry cadence (pure)', (
   // The wait after the n-th failure is drawn uniformly between half
   // and the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n − 1))`
   // (`MESH_INTERFACE → The client's node list → "Retry"`).
-  it.fails('the first retry at a random source of 0 waits half RETRY_BASE_MS', () => {
+  it('the first retry at a random source of 0 waits half RETRY_BASE_MS', () => {
     expect(retryIntervalMs(1, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
       .toBe(RETRY_BASE_MS / 2);
   });
-  it.fails('the second retry at a random source of 0 waits RETRY_BASE_MS — half of the doubled schedule', () => {
+  it('the second retry at a random source of 0 waits RETRY_BASE_MS — half of the doubled schedule', () => {
     expect(retryIntervalMs(2, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
       .toBe(RETRY_BASE_MS);
   });
-  it.fails('the third retry at a random source of 0 waits 2 × RETRY_BASE_MS — half of the 4 × schedule', () => {
+  it('the third retry at a random source of 0 waits 2 × RETRY_BASE_MS — half of the 4 × schedule', () => {
     expect(retryIntervalMs(3, RETRY_BASE_MS, RETRY_CAP_MS, () => 0))
       .toBe(RETRY_BASE_MS * 2);
   });
-  it.fails('the retry caps at the cap under the draw: half the cap at 0, strictly less than the cap just under 1', () => {
+  it('the retry caps at the cap under the draw: half the cap at 0, strictly less than the cap just under 1', () => {
     // RETRY_BASE_MS = 5_000, RETRY_CAP_MS = 600_000 → 8 th failure
     // saturates the schedule.
     const lo = retryIntervalMs(8, RETRY_BASE_MS, RETRY_CAP_MS, () => 0);
