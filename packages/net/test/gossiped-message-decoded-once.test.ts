@@ -222,7 +222,7 @@ describe('a gossiped message reaches the handler decoded once', () => {
     }
   });
 
-  it.fails(
+  it(
     'a gossiped ordering block reaches onOrderingBlock with no call to decodeOrderingBlock',
     async () => {
       const { nodeA, nodeB } = await startAB();
@@ -274,7 +274,7 @@ describe('a gossiped message reaches the handler decoded once', () => {
     60_000,
   );
 
-  it.fails(
+  it(
     'a gossiped transaction packet reaches onTx with one decodeTxPacket call',
     async () => {
       const kp = generateKeyPair();

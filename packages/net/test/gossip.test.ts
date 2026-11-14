@@ -888,7 +888,7 @@ describe('gossip dispatch listener', () => {
     errSpy.mockRestore();
   });
 
-  it.fails('an accepted block message with no value kept is logged as a bug, reaches no handler, records no penalty', () => {
+  it('an accepted block message with no value kept is logged as a bug, reaches no handler, records no penalty', () => {
     // The listener is handed a message object no validator saw, so no value
     // has been kept against it (NET_INTERFACE → Inbound Processing → "A
     // gossiped message is decoded once"). The bytes would decode: the
@@ -909,7 +909,7 @@ describe('gossip dispatch listener', () => {
     errSpy.mockRestore();
   });
 
-  it.fails('an accepted transaction message with no value kept is logged as a bug, reaches no handler, records no penalty, reports Ignore', () => {
+  it('an accepted transaction message with no value kept is logged as a bug, reaches no handler, records no penalty, reports Ignore', () => {
     // The transaction form of the no-value branch. The bytes decode as a
     // well-formed `plainTx` packet; the differentiator is the WeakMap lookup.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
