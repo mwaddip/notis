@@ -356,14 +356,15 @@ function minimalVlqULength(value: number): number {
   return w.toBytes().length;
 }
 
-/** The write side alone — `headersResponseCodec` as `encodeHeaders` uses it. */
+/** The `Headers` response's write side — `encodeHeaders`' body. */
 function writeHeadersResponse(w: ByteWriter, headers: BlockHeader[]): void {
   writeLpItems(w, headers, encodeHeader);
 }
 
 /**
- * The write side alone — `encodedBlocksResponseCodec` as `encodeBlocks` uses
- * it. An already-encoded item is its own encoding on the wire.
+ * The `Blocks` response's write side over items the caller has already
+ * encoded — `encodeBlocks`' body. An already-encoded item is its own encoding
+ * on the wire.
  */
 function writeEncodedBlocksResponse(w: ByteWriter, blocks: Uint8Array[]): void {
   writeLpItems(w, blocks, (bytes) => bytes);
