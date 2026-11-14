@@ -1,9 +1,12 @@
 // NET_INTERFACE → The mesh — a private `NetNode`'s relay reservations
-// follow the retry cadence `MESH_INTERFACE → NAT` names:
-// `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`. A relay that answers
-// with ECONNREFUSED at first is reserved on once it comes up; a second
-// configured relay that refuses HOP never stops the node — the working
-// one's reservation still lands and `start` returns at once.
+// draw their retry wait the way the node list does
+// (MESH_INTERFACE → The client's node list → "Retry"): after the n-th
+// failure in a row, the wait is drawn uniformly between half and the
+// whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`. A relay that
+// answers with ECONNREFUSED at first is reserved on once it comes up;
+// a second configured relay that refuses HOP never stops the node —
+// the working one's reservation still lands and `start` returns at
+// once.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';

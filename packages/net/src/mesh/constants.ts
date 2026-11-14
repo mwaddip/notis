@@ -23,9 +23,12 @@ export const WEBRTC_CERT_LIFESPAN_MS = 3_155_760_000_000;
 export const STUN_PORT: 3478 = 3478;
 
 /**
- * MESH_INTERFACE → NAT — "A relay that does not answer never stops a
- * private node ... is tried again on the node list's retry cadence
- * (`RETRY_BASE_MS` doubling to `RETRY_CAP_MS`)".
+ * MESH_INTERFACE → The client's node list → "Retry" — after the n-th
+ * failure in a row the wait is drawn uniformly between half and the
+ * whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`. A private
+ * node's relay retry draws its wait the same way
+ * (MESH_INTERFACE → NAT → "A relay that does not answer never stops a
+ * private node").
  */
 export const RETRY_BASE_MS: 5000 = 5000;
 export const RETRY_CAP_MS: 600000 = 600000;
