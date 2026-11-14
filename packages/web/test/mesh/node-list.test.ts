@@ -38,7 +38,7 @@ describe('node-list', () => {
     expect(e!.failures).toBe(400);
   });
 
-  it.fails('retry intervals double to the cap', () => {
+  it('retry intervals double to the cap', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
@@ -55,7 +55,7 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_CAP_MS / 2);
   });
 
-  it.fails('a success clears the count', () => {
+  it('a success clears the count', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
@@ -238,7 +238,7 @@ describe('node-list', () => {
     expect(e.droppedAddrs).toEqual([a1, a2]);
   });
 
-  it.fails('a clock that steps back does not hold a node out', () => {
+  it('a clock that steps back does not hold a node out', () => {
     let t = 1_000_000;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
@@ -407,7 +407,7 @@ describe('node-list', () => {
   // spreads the clients that failed at one instant. The random source
   // is a required argument on the list's constructor.
 
-  it.fails('a random source at 0 answers half the schedule at n = 1, n = 2, and past the cap', () => {
+  it('a random source at 0 answers half the schedule at n = 1, n = 2, and past the cap', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
@@ -422,7 +422,7 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: half of RETRY_CAP_MS').toBe(RETRY_CAP_MS / 2);
   });
 
-  it.fails('a random source near 1 answers just under the whole schedule at n = 1, n = 2, and past the cap', () => {
+  it('a random source near 1 answers just under the whole schedule at n = 1, n = 2, and past the cap', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
     list.failure(idA, 'timeout');
@@ -436,7 +436,7 @@ describe('node-list', () => {
     expect(wCap, 'past the cap: strictly less than the cap').toBeLessThan(RETRY_CAP_MS);
   });
 
-  it.fails('a random source at 0.5 answers three quarters of the schedule at n = 1, n = 2, and past the cap', () => {
+  it('a random source at 0.5 answers three quarters of the schedule at n = 1, n = 2, and past the cap', () => {
     let t = 0;
     const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0.5);
     list.failure(idA, 'timeout');
@@ -449,7 +449,7 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: three quarters of RETRY_CAP_MS').toBe((RETRY_CAP_MS * 3) / 4);
   });
 
-  it.fails('the clamp caps the exposed wait at RETRY_CAP_MS from the current clock when the clock steps back below the failure, with a drawn wait', () => {
+  it('the clamp caps the exposed wait at RETRY_CAP_MS from the current clock when the clock steps back below the failure, with a drawn wait', () => {
     // The clamp (`clampedRetryAt`) reads `min(stored, now + RETRY_CAP_MS)`
     // when the clock has stepped back below the failure — a draw does
     // not change that. A big step-back lands below the clamp and the
@@ -471,7 +471,7 @@ describe('node-list', () => {
     expect(wSmall, 'tiny step back: the drawn wait reaches the exposed view').toBe(RETRY_BASE_MS / 2 + 10);
   });
 
-  it.fails('two lists failed at one clock reading, each with its own random source, expose different retry times — the draw is per failure', () => {
+  it('two lists failed at one clock reading, each with its own random source, expose different retry times — the draw is per failure', () => {
     // The draw lands on the moment of the failure through the list's
     // random source, so two lists with different sources, failed at
     // one clock reading, hold two different stored waits.

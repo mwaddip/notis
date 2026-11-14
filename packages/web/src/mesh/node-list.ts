@@ -154,10 +154,11 @@ function assertNotisId(id: string): void {
 
 /**
  * Each entry's writable form. `clockAtFailure` is the clock reading at the
- * latest failure; `storedRetryAtMs` is that reading plus the capped wait. The
- * exposed `retryAtMs` is the stored value except when the current clock sits
- * behind `clockAtFailure` — the stepped-back case, where the clamp caps the
- * exposed wait (MESH_INTERFACE → The client's node list, Retry).
+ * latest failure; `storedRetryAtMs` is that reading plus the drawn, capped
+ * wait. The exposed `retryAtMs` is the stored value except when the current
+ * clock sits behind `clockAtFailure` — the stepped-back case, where the
+ * clamp caps the exposed wait (MESH_INTERFACE → The client's node list,
+ * Retry).
  */
 interface InternalEntry {
   notisId: string;
@@ -205,21 +206,22 @@ interface InternalEntry {
 export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
+  private readonly random: () => number;
 
   constructor(
     firstContact: MeshContact[],
     ownId: string,
     clock: () => number,
-    // MESH_INTERFACE → The client's node list → "Retry" — the random source
-    // whose draw spreads the retry between half and the whole of the
-    // schedule. Required in the module's final shape; the parameter
-    // rides here as optional to let a case pass it ahead of the draw
-    // landing in the file.
-    random?: () => number,
+    // MESH_INTERFACE → The client's node list → "Retry" — the random
+    // source whose draw spreads the retry between half and the whole
+    // of the schedule. Required; every caller passes one, no default
+    // inside the module (a seam with a default lets every case take
+    // the test path while the shipped path goes unheld).
+    random: () => number,
   ) {
     assertNotisId(ownId);
     this.clock = clock;
-    void random;
+    this.random = random;
     for (const a of firstContact) {
       assertNotisId(a.notisId);
       // "the client's own key is none" (MESH_INTERFACE → Discovery).
@@ -407,9 +409,14 @@ export class NodeList {
     const e = this.unknown('failure', id);
     if (e.status === 'blacklisted') return;
     e.failures += 1;
-    // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures − 1))` on a monotonic
-    // clock (MESH_INTERFACE → The client's node list, Retry).
-    const wait = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * Math.pow(2, e.failures - 1));
+    // MESH_INTERFACE → The client's node list → "Retry" — drawn
+    // uniformly between half and the whole of
+    // `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures − 1))`, on a
+    // monotonic clock. The draw spreads clients that failed at one
+    // instant across half the wait.
+    const whole = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * Math.pow(2, e.failures - 1));
+    const half = whole / 2;
+    const wait = half + this.random() * half;
     const now = this.clock();
     e.clockAtFailure = now;
     e.storedRetryAtMs = now + wait;
