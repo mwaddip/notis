@@ -65,14 +65,12 @@ describe('retryIntervalMs draws the wait between half and the whole of the sched
   // base = 100, cap = 1_000; schedule at n = 1 is 100, so half is 50, whole
   // is 100 (strictly less than).
   it('a random source at 0 answers half the schedule', () => {
-    // -- LAST ASSERTION --
     expect(retryIntervalMs(1, 100, 1_000, () => 0)).toBe(50);
   });
 
   it('a random source just under 1 answers just under the whole schedule', () => {
     const v = retryIntervalMs(1, 100, 1_000, () => 1 - 1e-12);
     expect(v, 'at least half').toBeGreaterThanOrEqual(50);
-    // -- LAST ASSERTION --
     expect(v, 'strictly less than the whole').toBeLessThan(100);
   });
 
@@ -83,14 +81,12 @@ describe('retryIntervalMs draws the wait between half and the whole of the sched
     const hi = retryIntervalMs(30, 5_000, RETRY_CAP_MS, () => 1 - 1e-12);
     expect(lo, 'half the cap at low source').toBe(RETRY_CAP_MS / 2);
     expect(hi, 'strictly less than the cap at high source').toBeLessThan(RETRY_CAP_MS);
-    // -- LAST ASSERTION --
     expect(hi, 'at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
   });
 
   it('zero or negative failures answer 0 whatever the source', () => {
     expect(retryIntervalMs(0, 100, 1_000, () => 0.5), 'zero failures').toBe(0);
     expect(retryIntervalMs(-1, 100, 1_000, () => 0.5), 'negative failures').toBe(0);
-    // -- LAST ASSERTION --
     expect(retryIntervalMs(-5, 100, 1_000, () => 0.9), 'deeply negative').toBe(0);
   });
 });
@@ -184,8 +180,8 @@ describe('startRelayRetry schedules the drawn wait', () => {
     } finally {
       globalThis.setTimeout = origSetTimeout;
     }
-    // -- LAST ASSERTION -- the distinctive drawn wait landed on the
-    // timer, not the undrawn 1 000.
+    // The distinctive drawn wait landed on the
+    // timer, not the whole schedule's 1 000.
     expect(scheduled.filter((ms) => ms === 625), `scheduled waits: ${scheduled.join(',')}`).not.toEqual([]);
   }, 30_000);
 
@@ -213,7 +209,6 @@ describe('startRelayRetry schedules the drawn wait', () => {
       Math.random = origRandom;
       globalThis.setTimeout = origSetTimeout;
     }
-    // -- LAST ASSERTION --
     expect(scheduled.filter((ms) => ms === 625), `scheduled waits: ${scheduled.join(',')}`).not.toEqual([]);
   }, 30_000);
 });

@@ -65,7 +65,6 @@ describe('mesh-client — the shipped call site hands the client\'s random sourc
     expect(eA.failures, 'one failure').toBe(1);
     // At source 0.25 and n = 1: `half + 0.25·half = 0.625·whole =
     // 0.625·RETRY_BASE_MS`.
-    // -- LAST ASSERTION --
     expect(eA.retryAtMs - CLOCK_AT_FAILURE, 'drawn wait at source 0.25 and n = 1').toBe(0.625 * RETRY_BASE_MS);
   }, 60_000);
 });

@@ -178,7 +178,6 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
     // released at the per-host cap closes within tens of ms.
     const fifth = openSilentTcp(state.port, '127.0.0.2');
     const fifthClosedIn = await raceTimeout(fifth.closedIn, 2_000);
-    // -- LAST ASSERTION --
     expect(fifthClosedIn, 'fifth closed within 2 s').not.toBeNull();
   }, 30_000);
 
@@ -215,7 +214,6 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
     // at once — well under the 5 000 ms upgrade timeout.
     const twentyFirst = openSilentTcp(state.port, '127.0.0.7');
     const closedIn = await raceTimeout(twentyFirst.closedIn, 2_000);
-    // -- LAST ASSERTION --
     expect(closedIn, 'the 21st connection closed at once').not.toBeNull();
   }, 30_000);
 
@@ -233,7 +231,6 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
     // at 5 000 ms. The dialer sees its socket closed in both cases.
     const closedIn = await raceTimeout(silent.closedIn, 6_600);
     expect(closedIn, 'closed by 11 100 ms').not.toBeNull();
-    // -- LAST ASSERTION --
     expect(closedIn!, 'closed well before 10 000 ms').toBeLessThan(7_500);
   }, 15_000);
 
@@ -265,7 +262,6 @@ describe('a public mesh NetNode A holds at most four pending upgrades per addres
     // holds after the release.
     const fifth = openSilentTcp(state.port, '127.0.0.2');
     const fifthClosedIn = await raceTimeout(fifth.closedIn, 2_000);
-    // -- LAST ASSERTION --
     expect(fifthClosedIn, 'fifth after release closed at once').not.toBeNull();
   }, 30_000);
 });
@@ -329,7 +325,7 @@ describe('the per-host cap counts an IPv6 address by its /64', () => {
     for (let i = 0; i < 4; i++) {
       expect(cm.acceptIncomingConnection(four[i]!), `/64 refill ${i + 1}`).toBe(true);
     }
-    // -- LAST ASSERTION -- the fifth from the same /64 is refused.
+    // The fifth from the same /64 is refused.
     expect(cm.acceptIncomingConnection(ma('/ip6/2001:db8::15/tcp/40015')), 'fifth from the /64 refused').toBe(false);
   }, 15_000);
 
@@ -365,7 +361,7 @@ describe('the per-host cap counts an IPv6 address by its /64', () => {
         `10.0.0.2 accept ${i} — a distinct IPv4 host`,
       ).toBe(true);
     }
-    // -- LAST ASSERTION -- a fifth from 10.0.0.2 is refused on its own
+    // A fifth from 10.0.0.2 is refused on its own
     // count, not on 10.0.0.1's — the two are separate hosts.
     expect(cm.acceptIncomingConnection(ma('/ip6/::ffff:10.0.0.2/tcp/50015')), 'fifth from 10.0.0.2 refused').toBe(false);
   }, 15_000);

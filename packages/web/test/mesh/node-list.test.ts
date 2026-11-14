@@ -418,7 +418,6 @@ describe('node-list', () => {
     // to RETRY_CAP_MS, half of which is RETRY_CAP_MS / 2.
     for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
-    // -- LAST ASSERTION --
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: half of RETRY_CAP_MS').toBe(RETRY_CAP_MS / 2);
   });
 
@@ -432,7 +431,6 @@ describe('node-list', () => {
     for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
     const wCap = list.entry(idA)!.retryAtMs - t;
     expect(wCap, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
-    // -- LAST ASSERTION --
     expect(wCap, 'past the cap: strictly less than the cap').toBeLessThan(RETRY_CAP_MS);
   });
 
@@ -445,7 +443,6 @@ describe('node-list', () => {
     expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS);
     for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
-    // -- LAST ASSERTION --
     expect(list.entry(idA)!.retryAtMs - t, 'past the cap: three quarters of RETRY_CAP_MS').toBe((RETRY_CAP_MS * 3) / 4);
   });
 
@@ -467,7 +464,6 @@ describe('node-list', () => {
     t = 1_000_000 - 10; // tiny step back; `stored` sits under the clamp
     const wSmall = list.entry(idA)!.retryAtMs - t;
     expect(wSmall, 'tiny step back: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
-    // -- LAST ASSERTION --
     expect(wSmall, 'tiny step back: the drawn wait reaches the exposed view').toBe(RETRY_BASE_MS / 2 + 10);
   });
 
@@ -484,7 +480,6 @@ describe('node-list', () => {
     const wHi = listHi.entry(idA)!.retryAtMs - t;
     expect(wLo, 'low source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
     expect(wHi, 'high source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
-    // -- LAST ASSERTION --
     expect(wHi, 'the draw is per failure: the two lists differ').not.toBe(wLo);
   });
 });
