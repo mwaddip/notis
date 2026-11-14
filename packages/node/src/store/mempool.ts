@@ -1146,6 +1146,46 @@ export function removeUtxoTxEntry(txId: string): number {
 }
 
 /**
+ * Rowids of pool entries whose input is one of `boxIds`
+ * (MEMPOOL_INTERFACE → followAppliedBlock; MEMPOOL_INTERFACE →
+ * removeUnreturned). One statement, one bound value through `json_each`,
+ * `DISTINCT` so an entry spending two of the boxes shows once.
+ */
+function rowidsSpending(
+  db: ReturnType<typeof getDb>,
+  boxIds: readonly string[],
+): number[] {
+  const rows = prepared(
+    db,
+    `SELECT DISTINCT entry_rowid FROM mempool_inputs
+       WHERE box_id IN (SELECT value FROM json_each(?))`,
+  ).all(JSON.stringify(boxIds)) as Array<{ entry_rowid: number }>;
+  return rows.map((r) => r.entry_rowid);
+}
+
+/**
+ * Rowids of pending-post pool entries whose `dag_parent_refs` name one of
+ * `parentPostIds` (MEMPOOL_INTERFACE → removeUnconfirmed; MEMPOOL_INTERFACE
+ * → removeUnreturned). One statement, one bound value through `json_each`,
+ * `idx_dag_parent_refs_parent` forced because the store keeps no
+ * statistics.
+ */
+function rowidsReplyingTo(
+  db: ReturnType<typeof getDb>,
+  parentPostIds: readonly string[],
+): number[] {
+  const rows = prepared(
+    db,
+    `SELECT m.rowid AS rowid
+       FROM dag_parent_refs dpr INDEXED BY idx_dag_parent_refs_parent
+       JOIN dag_posts dp ON dp.id = dpr.post_id AND dp.status = 'pending'
+       JOIN mempool m ON m.tx_id = dp.tx_id
+      WHERE dpr.parent_id IN (SELECT value FROM json_each(?))`,
+  ).all(JSON.stringify(parentPostIds)) as Array<{ rowid: number }>;
+  return rows.map((r) => r.rowid);
+}
+
+/**
  * The closure of an unconfirmed set — the entries named, every pooled entry
  * spending an output of one of them or replying to its post, and so on down
  * (MEMPOOL_INTERFACE → removeUnconfirmed). Each read is on an index: SCAN
@@ -1208,23 +1248,12 @@ function readClosureInner(
         parentIds.push(computePostId(tx, 0));
       }
     }
-    let refRows: Array<{ rowid: number }> = [];
-    if (parentIds.length > 0) {
-      // INDEXED BY idx_dag_parent_refs_parent: the store keeps no statistics,
-      // so the planner walks the pending-post leg first and leaves
-      // idx_dag_parent_refs_parent on an empty join.
-      refRows = prepared(
-        db,
-        `SELECT m.rowid AS rowid
-           FROM dag_parent_refs dpr INDEXED BY idx_dag_parent_refs_parent
-           JOIN dag_posts dp ON dp.id = dpr.post_id AND dp.status = 'pending'
-           JOIN mempool m ON m.tx_id = dp.tx_id
-          WHERE dpr.parent_id IN (SELECT value FROM json_each(?))`,
-      ).all(JSON.stringify(parentIds)) as Array<{ rowid: number }>;
-    }
+    const refRowids: readonly number[] = parentIds.length > 0
+      ? rowidsReplyingTo(db, parentIds)
+      : [];
     const nextFrontier: number[] = [];
     for (const r of outRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
-    for (const r of refRows) if (!closure.has(r.rowid)) nextFrontier.push(r.rowid);
+    for (const r of refRowids) if (!closure.has(r)) nextFrontier.push(r);
     frontier = nextFrontier;
   }
   return { rowids: closure, txIdOf, outputBoxIds };
@@ -1280,12 +1309,7 @@ export function followAppliedBlock(
     for (const txId of appliedTxIds) removeUtxoTxEntry(txId);
     let unconfirmed = 0;
     if (spentBoxIds.length > 0) {
-      const rows = prepared(
-        db,
-        `SELECT DISTINCT entry_rowid FROM mempool_inputs
-           WHERE box_id IN (SELECT value FROM json_each(?))`,
-      ).all(JSON.stringify(spentBoxIds)) as Array<{ entry_rowid: number }>;
-      unconfirmed += removeUnconfirmed(rows.map((r) => r.entry_rowid));
+      unconfirmed += removeUnconfirmed(rowidsSpending(db, spentBoxIds));
     }
     unconfirmed += purgeExpired(height);
     return unconfirmed;
@@ -1315,6 +1339,38 @@ export function purgeExpired(currentHeight: number): number {
   for (const r of expired) rowids.add(r.rowid);
   for (const r of overCeiling) rowids.add(r.rowid);
   return removeUnconfirmed(Array.from(rowids));
+}
+
+// MEMPOOL_INTERFACE → removeUnreturned. The spender read and the reply
+// read are the ones `followAppliedBlock` and `readClosureInner` use
+// (`rowidsSpending`, `rowidsReplyingTo`).
+export function removeUnreturned(
+  reverted: readonly { txId: string; tx: UtxoTransaction }[],
+): number {
+  if (reverted.length === 0) return 0;
+  const db = getDb();
+  return db.transaction(() => {
+    const outputBoxIds: string[] = [];
+    const parentPostIds: string[] = [];
+    for (const { txId, tx } of reverted) {
+      for (const box of materializedOutputs(tx, txId)) {
+        outputBoxIds.push(box.id!);
+      }
+      if (tx.post !== undefined) {
+        const postId = computePostId(txId, 0);
+        parentPostIds.push(postId);
+        deletePendingPost(postId);
+      }
+    }
+    const toRemove = new Set<number>();
+    if (outputBoxIds.length > 0) {
+      for (const r of rowidsSpending(db, outputBoxIds)) toRemove.add(r);
+    }
+    if (parentPostIds.length > 0) {
+      for (const r of rowidsReplyingTo(db, parentPostIds)) toRemove.add(r);
+    }
+    return removeUnconfirmed(Array.from(toRemove));
+  })();
 }
 
 export function removeEntry(rowid: number): void {

@@ -1457,7 +1457,7 @@ tree collapse into clean rejections:
 > | `UnreadableStoredBlockError` | a stored block's bytes, its interlinks vector or its journal will not decode — or a header-tree row's header or interlinks, or a staged block's bytes | `store/ordering.ts` → `rowToOrderingBlock`, `getInterlinks`; `store/journal.ts` → `getBlockJournal`; `store/header-tree.ts` → `getHeaderRow`, `getStagedBlock` |
 > | `DivergedStateTreeError` | the AVL+ tree refuses one of a block's writes or of genesis's — writes derived from the tree's own state, so the tree contradicts itself | `state/avl-prover.ts` |
 > | `InconsistentStateTreeError` | a read of this node's own tree contradicts itself — `consensus`'s `TreeInconsistencyError` over the node's prover session (`CONSENSUS_INTERFACE → The tree view`), in block application, the speculative run or the settlement's build | `services/block-apply.ts`, `services/block-creator.ts` |
-> | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the reach floor admits no fork point below `lowestJournal − 1`, the revert starts one above it, and a fork at the root is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point") | `services/fork-resolution.ts` → `revertBlock` |
+> | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the reach floor admits no fork point below `lowestJournal − 1`, the revert starts one above it, and a fork at the root is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point"). So does every height a switch applies, whose journal its own apply wrote in the same transaction (Block Journal) | `services/fork-resolution.ts` → `revertBlock`, `reorg` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the reach floor admits. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 > | `MissingStagedBlockError` | a switch reads a staged block its own synchronous item found staged a moment before — the row is gone, so the store lost it (Fork choice decides on verified headers → "The switch") | `services/fork-resolution.ts` → `reorg` |
@@ -1972,7 +1972,9 @@ There is **no other legal bond or invite shape**. In particular:
   eviction, a block's spends, an entry it depends on leaving (`MEMPOOL_INTERFACE → removeUnconfirmed`);
   `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
   a reverted block's re-inserted transactions find their rows returned to pending by
-  `unconfirmPost`, body intact.
+  `unconfirmPost`, body intact, and a reverted post the switch neither returns to the pool nor applies again loses its
+  row at the switch, its pooled dependents with it (MEMPOOL_INTERFACE → What takes an entry out of the pool → "A
+  reverted transaction that does not return leaves as an unconfirmed entry does").
 - **A post applied without its packet is a placeholder.** Block application inserts a row from
   the commit with `content = NULL` when none exists, confirms it, and the body is backfilled by
   id (Store Interface → Posts DAG, "Backfill after sync"). The placeholder rules: a like on it
@@ -4149,6 +4151,7 @@ one write feeds both, so the two cannot disagree.
 | `followAppliedBlock(height, appliedTxIds, spentBoxIds)` | `(number, readonly string[], readonly string[]) => number` | The pool's part of every applied block, inside its write: the confirmed entries by `tx_id`, then every entry the block's spends, its expiry or its ceiling leave no place for, with their dependents (MEMPOOL_INTERFACE → followAppliedBlock) |
 | `purgeExpired(currentHeight)` | `(number) => number` | `followAppliedBlock`'s expiry half — the entries past their expiry or their ceiling, with their dependents (MEMPOOL_INTERFACE → purgeExpired) |
 | `removeUnconfirmed(rowids)` | `(readonly number[]) => number` | Every unconfirmed exit: the entries, their dependents down the chain, each post entry's pending row (MEMPOOL_INTERFACE → removeUnconfirmed) |
+| `removeUnreturned(reverted)` | `(readonly { txId: string, tx: UtxoTransaction }[]) => number` | A switch's leftovers: each reverted transaction neither pooled nor applied again takes its post's pending row and every pooled entry spending its outputs or replying to its post, down the chain (MEMPOOL_INTERFACE → removeUnreturned) |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — the count admission holds a member's bonds to (MEMPOOL_INTERFACE → Correctness gates) |
 | `hasPendingInvitee(inviteeId)` | `(string) => boolean` | SQL EXISTS over `invite_invitee` — one pending bond per invitee |
@@ -4474,7 +4477,11 @@ re-insertion reads `appliedUtxoTxs` (txBytes) alone, **lowest reverted height fi
 block's transactions in their applied order** — the order that re-pools a dependent chain
 predecessor first, which the fill preserves and the ordering rule at apply requires (→ Block
 finalization) — and **a withdrawal is one of those
-transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
+transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key. Once the new chain is
+applied, the switch tells a reverted transaction the new chain carries from one it leaves behind by the `txId`s of the
+`appliedUtxoTxs` its own applies journalled (MEMPOOL_INTERFACE → removeUnreturned); a height among them with no
+journal is `MissingJournalError`, fail-stop as a reverted height's is — the switch's own apply wrote it in the same
+transaction.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse

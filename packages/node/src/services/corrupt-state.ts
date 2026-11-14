@@ -300,6 +300,12 @@ export class InconsistentStateTreeError extends CorruptChainStateError {
  * stands at or below the horizon, and one that dropped below the horizon
  * leaves the reach bounded by the journals and `MissingJournalError` out of
  * reach.
+ *
+ * The same error fires at every height a switch applies whose journal
+ * `getBlockJournal` answers null for (NODE_INTERFACE → Block Journal). The
+ * switch's own apply wrote that journal in the same SQLite transaction, so a
+ * null there is corrupt state rather than a retention gap, and reading a
+ * carried transaction as unreturned would take its pooled dependents.
  */
 export class MissingJournalError extends CorruptChainStateError {
   constructor(site: string, height: number) {

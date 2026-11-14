@@ -1,4 +1,4 @@
-import type { OrderingBlock } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import {
   decodeTx,
   MEMPOOL_EXPIRY_BLOCKS,
@@ -22,6 +22,8 @@ import {
   getKarmaOwners,
   getStagedBlock,
   unstageBlock,
+  getHeldEntry,
+  removeUnreturned,
 } from '../store/index.js';
 import { ceilingOf } from '@dagsocial/consensus';
 import { getDb } from '../store/db.js';
@@ -174,6 +176,12 @@ export function revertBlock(height: number): void {
  * the pool holding two spends of one box, which is the composition a block is
  * refused for carrying — the node would then be unable to produce a block at
  * all until one of them expired. Dropping one entry costs strictly less.
+ *
+ * What a drop leaves — the dropped post transaction's pending row and any
+ * pooled entry spending one of its outputs or replying to its post — the
+ * switch's end takes through `removeUnreturned` (MEMPOOL_INTERFACE → What
+ * takes an entry out of the pool → "A reverted transaction that does not
+ * return leaves as an unconfirmed entry does").
  */
 function reinsert(insert: () => void, label: string): void {
   try {
@@ -338,6 +346,36 @@ export function reorg(forkHeight: number, newHashes: readonly string[]): void {
     unstageBlock(hash);
     appliedWithIndexed.push({ block, indexed: verdict.indexed });
   }
+
+  // Phase 4: the switch's leftovers (MEMPOOL_INTERFACE → What takes an entry
+  // out of the pool → "A reverted transaction that does not return leaves as
+  // an unconfirmed entry does"). A reverted transaction whose entry the pool
+  // does not hold once the new chain is applied and whose `txId` is not
+  // among the `appliedUtxoTxs` of any journal the switch wrote takes its
+  // post's pending row and every pooled entry spending one of its outputs
+  // or replying to its post, and so on down (MEMPOOL_INTERFACE →
+  // removeUnreturned). `getBlockJournal` answers the journal the current
+  // transaction has written for each applied height — the switch's own
+  // apply wrote it in the same transaction, so a null at one of these
+  // heights is corrupt state, and reading a carried transaction as
+  // unreturned would take its pooled dependents.
+  const appliedTxIds = new Set<string>();
+  for (let h = forkHeight + 1; h <= forkHeight + newHashes.length; h++) {
+    const appliedJournal = getBlockJournal(h);
+    if (!appliedJournal) {
+      throw new MissingJournalError('reorg', h);
+    }
+    for (const rec of appliedJournal.appliedUtxoTxs) appliedTxIds.add(rec.txId);
+  }
+  const reverted: Array<{ txId: string; tx: UtxoTransaction }> = [];
+  for (const rj of revertedJournals) {
+    for (const rec of rj.appliedUtxoTxs) {
+      if (appliedTxIds.has(rec.txId)) continue;
+      if (getHeldEntry(rec.txId) !== null) continue;
+      reverted.push({ txId: rec.txId, tx: decodeTx(rec.txBytes) });
+    }
+  }
+  removeUnreturned(reverted);
     })();
   } catch (err) {
     // better-sqlite3 has already rolled the transaction back (chain, boxes,
