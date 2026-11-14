@@ -934,7 +934,7 @@ describe('NET_INTERFACE → Readers', () => {
   // chain-serving peers alone, so its degree bounds a node's node peers,
   // not its readers, and a node that dials another after that one's
   // readers arrive is grafted as gossipsub's rules grant.
-  it.fails(
+  it(
     "a node that dials another after that one's readers arrive is in its mesh",
     async () => {
       const nodeA = new NetNode(makeConfig(), validators);
@@ -989,7 +989,7 @@ describe('NET_INTERFACE → Readers', () => {
   // MESH_INTERFACE → Block gossip → "A node's readers are its router's
   // direct peers": the router holds a reader as a direct peer, in no
   // topic's mesh, and answers its `GRAFT` with a `PRUNE`.
-  it.fails(
+  it(
     "a node's mesh holds no reader, and no reader's router holds the node in its mesh",
     async () => {
       const nodeA = new NetNode(makeConfig(), validators);
@@ -1043,7 +1043,7 @@ describe('NET_INTERFACE → Readers', () => {
   // direct peers": the router forwards every message on a topic the
   // reader subscribes to straight to it. The block enters at C so A
   // forwards it rather than publishes it.
-  it.fails(
+  it(
     'every reader receives a block the node forwards',
     async () => {
       const nodeA = new NetNode(makeConfig(), validators);
@@ -1125,7 +1125,7 @@ describe('NET_INTERFACE → Readers', () => {
   // class owns; net's patch adds and removes entries after construction
   // and is the only mutator of the set outside `opts.directPeers` (net
   // passes none), so what the case reads is the state the patch keeps.
-  it.fails(
+  it(
     "a reader leaves the router's direct peers when the node holds no connection to it",
     async () => {
       const nodeA = new NetNode(makeConfig(), validators);
