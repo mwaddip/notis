@@ -117,6 +117,7 @@ export {
   purgeExpired,
   removeEntry,
   removeUnconfirmed,
+  removeUnreturned,
   removeUtxoTxEntry,
   hasPendingLike,
   countPendingInvites,

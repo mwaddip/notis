@@ -1051,7 +1051,7 @@ describe('reorg', () => {
     expect(computePostId(computeTxId(decoded), 0)).toBe(postId);
   });
 
-  it.fails('a reverted post the pool refuses to re-admit loses its pending row', async () => {
+  it('a reverted post the pool refuses to re-admit loses its pending row', async () => {
     // MEMPOOL_INTERFACE → What takes an entry out of the pool → "A reverted
     // transaction that does not return leaves as an unconfirmed entry does":
     // `reinsert` catches `MempoolFullError` and completes, and the switch's
@@ -1506,7 +1506,7 @@ describe('reorg', () => {
   // MEMPOOL_INTERFACE → removeUnreturned).
   // -------------------------------------------------------------------------
 
-  it.fails('a pooled spend of an input drops the re-insert, and the row leaves', async () => {
+  it('a pooled spend of an input drops the re-insert, and the row leaves', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const db = await importDb();
@@ -1558,7 +1558,7 @@ describe('reorg', () => {
     }
   });
 
-  it.fails("a pooled spend of a dropped transaction's output leaves with it", async () => {
+  it("a pooled spend of a dropped transaction's output leaves with it", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const db = await importDb();
@@ -1610,7 +1610,7 @@ describe('reorg', () => {
     }
   });
 
-  it.fails('a pooled reply to a dropped post leaves with its pending row', async () => {
+  it('a pooled reply to a dropped post leaves with its pending row', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const db = await importDb();
