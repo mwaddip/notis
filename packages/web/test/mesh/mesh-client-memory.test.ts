@@ -15,7 +15,6 @@ import type { PeerId } from '@libp2p/interface';
 import {
   encodeOrderingBlock,
   generateKeyPair,
-  ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
 import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
@@ -35,7 +34,7 @@ import {
   buildMinedChain,
   makeReader,
 } from '../../../nipopow/test/helpers.js';
-import { makeBlockAt } from '../../../net/test/helpers/devnet-block.js';
+import { signedExtendingBlock } from './helpers/signed-extending-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 import type { MemorySnapshot } from '../../src/mesh/memory-store.js';
@@ -632,17 +631,18 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
     // Memory seats the chain at MK. The node serves the extended
     // chain's tip (MK+1); phase 3a's fill is refused (`/blocks/:h`
     // answers 404), so the tip stays unplaced and phase 4 reads the
-    // proof. A gossiped block the client's validator accepts fires
-    // inside the `resolve` wrapper while the proof read is in flight;
-    // phase 4's settle moves the chain to MK+1, and the kept proof
-    // moves forward to the winner's under the rule "the last proof the
-    // client verified of the chain it holds"
+    // proof. A gossiped block extending the chain to MK+1 fires
+    // inside the `resolve` wrapper — the chain extends while the
+    // proof read is in flight — so when the settle weighs the
+    // winner's tip it finds it held by hash and skips the switch. The
+    // kept proof must still move forward to the winner's, under the
+    // rule "the last proof the client verified of the chain it holds"
     // (`MESH_INTERFACE → What the client remembers`).
     const keptProof = proofOf(MK);
-    const extendedProof = proofOf(MK + 1);
-    const extraBlock = makeBlockAt(MK + 1, 1, {
-      prevBlockHash: '00'.repeat(32),
-      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    const { block: extraBlock, proof: extendedProof } = signedExtendingBlock({
+      base: MK,
+      m: M,
+      k: K,
     });
 
     const a = keyPair();
@@ -699,9 +699,9 @@ describe('mesh-client — memory: the kept proof and known nodes', () => {
 
     await client.check();
 
-    // Phase 4 settles the chain to the winner's proof and moves the
-    // kept proof forward to it
-    // (`MESH_INTERFACE → What the client remembers`).
+    // The chain extended during the proof read: the winner's tip is
+    // held by hash, the settle branch is skipped, and the kept proof
+    // moves forward to the winner's.
     expect(client.state().tip?.height).toBe(MK + 1);
     expect(client.toRemember().proof).toEqual(encodeNipopowProof(extendedProof));
   }, 90_000);

@@ -19,7 +19,6 @@ import {
   bytesToHex,
   encodeOrderingBlock,
   generateKeyPair,
-  ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
 import type { BlockHeader, NetworkProfile, NetworkType } from '@dagsocial/types';
@@ -40,7 +39,7 @@ import {
   makeReader,
 } from '../../../nipopow/test/helpers.js';
 import { buildMinedBranch } from './helpers/mined-branch.js';
-import { makeBlockAt } from '../../../net/test/helpers/devnet-block.js';
+import { signedExtendingBlock } from './helpers/signed-extending-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
 import type { MeshClient } from '../../src/mesh/mesh-client.js';
 
@@ -462,13 +461,14 @@ describe('mesh-client — your node: disagreement, precedence and the reader\'s 
     expect(sBefore.disagreement).not.toBeNull();
     const tipBefore = sBefore.tip!.height;
 
-    // A mined, signed block the client's validator accepts, gossiped
-    // while a disagreement stands
-    // (MESH_INTERFACE → Discovery → "A disagreement is the reader's
-    // question, never the client's choice").
-    const extraBlock = makeBlockAt(tipBefore + 1, 1, {
-      prevBlockHash: '00'.repeat(32),
-      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    // Mine one more block on top of the kept chain and gossip it; the
+    // handler's guard holds the chain (MESH_INTERFACE → Discovery →
+    // "A disagreement is the reader's question, never the client's
+    // choice").
+    const { block: extraBlock } = signedExtendingBlock({
+      base: tipBefore,
+      m: M,
+      k: K,
     });
     interface PubsubStub {
       topicValidators: Map<
