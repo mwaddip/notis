@@ -66,9 +66,7 @@ export const HANDSHAKE_DEADLINE_FACTOR = 3;
  * inbound that has not sent its frame, an outbound whose answer has not
  * come back, both counting toward libp2p's `maxConnections` before either
  * budget is charged. 16 matches `MAX_INBOUND_SYNC_STREAMS`' shape (one
- * waiting stream's worth per concurrent handshake); net passes libp2p the
- * same number as its `maxIncomingPendingConnections`, so the pending
- * ceiling is the connection ceiling and nothing outgrows the slack.
+ * waiting stream's worth per concurrent handshake).
  * Unexported — the ceiling is an internal argument, not a protocol number.
  */
 export const HANDSHAKE_SLACK = 16;

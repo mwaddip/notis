@@ -343,7 +343,8 @@ describe('NET_INTERFACE → Node Lifecycle — every connection libp2p opens rea
     // net's deadline is what satisfies it. The dialler completes the
     // libp2p upgrade on F in milliseconds (Noise, yamux, identify over
     // loopback), so F's `INBOUND_UPGRADE_TIMEOUT_MS` (5 000 ms) never
-    // runs — the upgrade is done before it would arm.
+    // fires — the upgrade is done before the timer would have, and
+    // `finally` clears it.
     const fPeerId = f!.peerId();
     const fAddr = tcpMultiaddr(f!);
 
