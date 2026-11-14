@@ -113,20 +113,6 @@ function keptDigest(kept: { root: AvlNode; treeHeight: number }): string {
   return bytesToHex(out);
 }
 
-async function seededSelfSpend(): Promise<UtxoTransaction> {
-  const owner = makeTestIdentity();
-  const box = makeKarmaBox(10n, owner.userId, 0);
-  await seedBoxes([box]);
-  const tx: UtxoTransaction = {
-    inputs: [box.id!],
-    outputs: [{ boxType: 'karma', value: box.value, createdAtBlock: 0, owner: owner.userId }],
-    signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
-  };
-  signTransaction(tx, owner.privateKey, hex(owner.userId));
-  return tx;
-}
-
 /**
  * `seededSelfSpend`'s transaction beside its owner and the karma box it spends:
  * what a case that itself writes a second spend of the same owner's box needs.
@@ -147,6 +133,10 @@ async function seededSelfSpendWithOwner(): Promise<{
   };
   signTransaction(tx, owner.privateKey, hex(owner.userId));
   return { tx, owner, box };
+}
+
+async function seededSelfSpend(): Promise<UtxoTransaction> {
+  return (await seededSelfSpendWithOwner()).tx;
 }
 
 // ---------------------------------------------------------------------------

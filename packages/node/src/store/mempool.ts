@@ -1341,22 +1341,9 @@ export function purgeExpired(currentHeight: number): number {
   return removeUnconfirmed(Array.from(rowids));
 }
 
-/**
- * MEMPOOL_INTERFACE → removeUnreturned. The switch's leftovers, run after
- * Phase 3 of `reorg` and inside its SQLite transaction. For each entry,
- * `materializedOutputs` answers the box ids `insertUtxoTx` would write;
- * where `tx.post` is set, `deletePendingPost(computePostId(txId, 0))`
- * takes the post's pending row with the transaction that did not return
- * (MEMPOOL_INTERFACE → What takes an entry out of the pool → "A reverted
- * transaction that does not return leaves as an unconfirmed entry does";
- * NODE_INTERFACE → Post transactions → "The pending row is the mempool
- * entry's DAG shadow"). Then, through `removeUnconfirmed`, every pooled
- * entry spending one of their outputs or replying to one of their posts
- * leaves, its dependents and their rows with it. The spender read and the
- * reply read are the ones `followAppliedBlock` and `readClosureInner` use
- * (`rowidsSpending`, `rowidsReplyingTo`) — one statement each, the whole
- * set bound as one value through `json_each`.
- */
+// MEMPOOL_INTERFACE → removeUnreturned. The spender read and the reply
+// read are the ones `followAppliedBlock` and `readClosureInner` use
+// (`rowidsSpending`, `rowidsReplyingTo`).
 export function removeUnreturned(
   reverted: readonly { txId: string; tx: UtxoTransaction }[],
 ): number {
