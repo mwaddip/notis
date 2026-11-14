@@ -36,6 +36,7 @@ import {
   solveHeaderPow, seedPostTx, activateProverOverStore, insertPoisonedBlock,
   changeBoxOf, revertChainTo, ringHeights, seedBoxes,
   TEST_GENESIS_PROOF_PAYLOAD} from '../helpers.js';
+import type { TestIdentity } from '../helpers.js';
 import {
   testConfig,
   importDb,
@@ -124,6 +125,28 @@ async function seededSelfSpend(): Promise<UtxoTransaction> {
   };
   signTransaction(tx, owner.privateKey, hex(owner.userId));
   return tx;
+}
+
+/**
+ * `seededSelfSpend`'s transaction beside its owner and the karma box it spends:
+ * what a case that itself writes a second spend of the same owner's box needs.
+ */
+async function seededSelfSpendWithOwner(): Promise<{
+  tx: UtxoTransaction;
+  owner: TestIdentity;
+  box: KarmaBox;
+}> {
+  const owner = makeTestIdentity();
+  const box = makeKarmaBox(10n, owner.userId, 0);
+  await seedBoxes([box]);
+  const tx: UtxoTransaction = {
+    inputs: [box.id!],
+    outputs: [{ boxType: 'karma', value: box.value, createdAtBlock: 0, owner: owner.userId }],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, owner.privateKey, hex(owner.userId));
+  return { tx, owner, box };
 }
 
 // ---------------------------------------------------------------------------
@@ -1473,6 +1496,278 @@ describe('reorg', () => {
     forkResolution.reorg(0, await stagePrefix(chain));
     expect(ordering.getCurrentHeight()).toBe(3);
     for (const h of [1, 2, 3]) expect(ordering.getOrderingBlock(h)).not.toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // What the switch leaves when a reverted transaction neither returns to the
+  // pool nor is applied again on the new chain
+  // (MEMPOOL_INTERFACE → What takes an entry out of the pool → "A reverted
+  // transaction that does not return leaves as an unconfirmed entry does";
+  // MEMPOOL_INTERFACE → removeUnreturned).
+  // -------------------------------------------------------------------------
+
+  it.fails('a pooled spend of an input drops the re-insert, and the row leaves', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+      const author = makeTestIdentity();
+
+      const { commit, tx: postTx, postId, content, karmaBox } =
+        await seedPostTx(author, 'reorg drop input conflict');
+      const postTxId = computeTxId(postTx);
+      posts.insertPost(postId, postTxId, commit, content);
+      mempool.insertUtxoTx(postTx, postTxId, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      // An entry admitted since, spending the box the post tx spent — valid
+      // now that the block is reverted and only one can be.
+      const incumbent: UtxoTransaction = {
+        inputs: [karmaBox.id!],
+        outputs: [{ boxType: 'karma', value: karmaBox.value, createdAtBlock: 0, owner: author.userId }],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(incumbent, author.privateKey, hex(author.userId));
+      const incumbentId = computeTxId(incumbent);
+      mempool.insertUtxoTx(incumbent, incumbentId, 1000);
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, []);
+
+      // Controls: the incumbent kept its place, the post's transaction did
+      // not join it, and the `input spent by a pending entry` warning fired.
+      const storeIdx = await import('../../src/store/index.js');
+      expect(storeIdx.getHeldEntry(incumbentId)).not.toBeNull();
+      expect(storeIdx.getHeldEntry(postTxId)).toBeNull();
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('input spent by a pending entry')),
+      ).toBe(true);
+
+      // Last: the post's pending row is gone.
+      expect(posts.getPost(postId)).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.fails("a pooled spend of a dropped transaction's output leaves with it", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
+      const bc = await importBlockCreator();
+
+      // A karma self-spend mined at height 1 — no post commit on it.
+      const { tx: carrier, owner } = await seededSelfSpendWithOwner();
+      const carrierId = computeTxId(carrier);
+      mempool.insertUtxoTx(carrier, carrierId, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      // A second karma self-spend by the same owner of `carrier`'s output —
+      // pooled after the block, filling the pool at cap 1.
+      const carrierOutput = changeBoxOf(carrier);
+      const spend: UtxoTransaction = {
+        inputs: [carrierOutput.id!],
+        outputs: [{ boxType: 'karma', value: carrierOutput.value, createdAtBlock: 0, owner: owner.userId }],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(spend, owner.privateKey, hex(owner.userId));
+      const spendId = computeTxId(spend);
+      mempool.insertUtxoTx(spend, spendId, 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const storeIdx = await import('../../src/store/index.js');
+      // Control: the spend held before the reorg.
+      expect(storeIdx.getHeldEntry(spendId)).not.toBeNull();
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, []);
+
+      // Control: the drop's `mempool full` warning fired.
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Reorg re-insertion dropped, mempool full')),
+      ).toBe(true);
+
+      // Last: the spend is not held.
+      expect(storeIdx.getHeldEntry(spendId)).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.fails('a pooled reply to a dropped post leaves with its pending row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
+      const bc = await importBlockCreator();
+
+      // Parent post mined at height 1.
+      const parentAuthor = makeTestIdentity();
+      const { commit: parentCommit, tx: parentTx, postId: parentId, content: parentContent } =
+        await seedPostTx(parentAuthor, 'reorg drop parent');
+      const parentTxId = computeTxId(parentTx);
+      posts.insertPost(parentId, parentTxId, parentCommit, parentContent);
+      mempool.insertUtxoTx(parentTx, parentTxId, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      // A reply to the parent, pooled after the block and filling the pool.
+      const replyAuthor = makeTestIdentity();
+      const { commit: replyCommit, tx: replyTx, postId: replyId, content: replyContent } =
+        await seedPostTx(replyAuthor, 'reorg drop parent reply', { parentRefs: [parentId] }, parentAuthor.userId);
+      const replyTxId = computeTxId(replyTx);
+      posts.insertPost(replyId, replyTxId, replyCommit, replyContent);
+      mempool.insertUtxoTx(replyTx, replyTxId, 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const storeIdx = await import('../../src/store/index.js');
+      // Control: the reply held before the reorg.
+      expect(storeIdx.getHeldEntry(replyTxId)).not.toBeNull();
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, []);
+
+      // Control: the parent's re-insert dropped with the `mempool full` warning.
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Reorg re-insertion dropped, mempool full')),
+      ).toBe(true);
+
+      // Last: the reply's pending row is gone.
+      expect(posts.getPost(replyId)).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a dropped post the new chain carries is confirmed on its own row, body intact', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
+      const bc = await importBlockCreator();
+
+      const author = makeTestIdentity();
+      const { commit, tx: postTx, postId, content } =
+        await seedPostTx(author, 'reorg drop new-chain carry');
+      const postTxId = computeTxId(postTx);
+      posts.insertPost(postId, postTxId, commit, content);
+      mempool.insertUtxoTx(postTx, postTxId, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      const ordering = await importOrdering();
+      const block1 = ordering.getOrderingBlock(1);
+      expect(block1).not.toBeNull();
+
+      // Fill the pool so the reorg's re-insertion of the post is dropped.
+      const occupier = await seededSelfSpend();
+      mempool.insertUtxoTx(occupier, computeTxId(occupier), 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, await stagePrefix([block1!]));
+
+      // Controls: tip 1 and the post's `mempool full` warning fired.
+      expect(ordering.getCurrentHeight()).toBe(1);
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Reorg re-insertion dropped, mempool full')),
+      ).toBe(true);
+
+      // Last: the post's row is confirmed with its content.
+      const row = posts.getPost(postId);
+      expect(row).not.toBeNull();
+      expect(row!.status).toBe('confirmed');
+      expect(row!.content).toBe(content);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a pooled reply to a dropped post the new chain carries stays pooled', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+
+      // Both karma boxes seeded before block 1, so the prover's bootstrap at
+      // height 0 carries the reply's input into the tree the switch returns
+      // to — rebuildTemplate at the new tip reaches it.
+      const parentAuthor = makeTestIdentity();
+      const { commit: parentCommit, tx: parentTx, postId: parentId, content: parentContent } =
+        await seedPostTx(parentAuthor, 'reorg carry parent');
+      const parentTxId = computeTxId(parentTx);
+      const replyAuthor = makeTestIdentity();
+      const { commit: replyCommit, tx: replyTx, postId: replyId, content: replyContent } =
+        await seedPostTx(replyAuthor, 'reorg carry parent reply', { parentRefs: [parentId] }, parentAuthor.userId);
+      const replyTxId = computeTxId(replyTx);
+
+      posts.insertPost(parentId, parentTxId, parentCommit, parentContent);
+      posts.insertPost(replyId, replyTxId, replyCommit, replyContent);
+      mempool.insertUtxoTx(parentTx, parentTxId, 1000);
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+      const ordering = await importOrdering();
+      const block1 = ordering.getOrderingBlock(1);
+      expect(block1).not.toBeNull();
+
+      // Pooled reply after block 1 fills the pool at cap 1.
+      mempool.setMempoolCap(1);
+      mempool.insertUtxoTx(replyTx, replyTxId, 1000);
+      expect(mempool.getPendingEntries(100)).toHaveLength(1);
+
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, await stagePrefix([block1!]));
+
+      // Controls: the parent's `mempool full` warning fired, and the parent
+      // is confirmed by the applied chain.
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('Reorg re-insertion dropped, mempool full')),
+      ).toBe(true);
+      const parentRow = posts.getPost(parentId);
+      expect(parentRow).not.toBeNull();
+      expect(parentRow!.status).toBe('confirmed');
+
+      // Last: the reply is held.
+      const storeIdx = await import('../../src/store/index.js');
+      expect(storeIdx.getHeldEntry(replyTxId)).not.toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
