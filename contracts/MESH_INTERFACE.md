@@ -343,8 +343,13 @@ monotonic clock, so a clock that steps never holds a node out or retries it at o
 **An entry keeps its last failure's kind and message**, for the page to show why a node is in `retry`; the message is
 shown, never acted on.
 
-**Retry.** After the `n`th failure in a row, a node is next tried `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))` later,
-on a monotonic clock. A success ends the run.
+**Retry.** After the `n`th failure in a row, a node is next tried after a wait drawn uniformly between half and the
+whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`, on a monotonic clock. The draw spreads the clients that failed at
+one instant — a node's restart drops every reader at once — across half the wait, so they do not return at one instant
+either. A success ends the run.
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** The mesh client waits the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`,
+> with no draw.
 
 **Candidates** are tried in this order: `ok`, `trailing`, `behind`, nodes not yet tried, then `retry` nodes whose time
 has come. A `blacklisted` node is never one. An entry the client holds no connection to is a candidate at its API base
@@ -408,7 +413,7 @@ status is the write's (`WEB_INTERFACE → The extension → "The mesh is the ext
 
 | Name | Value | Reads as |
 |---|---|---|
-| `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's wait |
+| `RETRY_BASE_MS` | `5_000` | 5 s, the first retry's longest wait |
 | `RETRY_CAP_MS` | `600_000` | 10 min, the longest wait |
 | `CHECK_INTERVAL_MS` | `30_000` | 30 s between checks |
 | `DIAL_TIMEOUT_MS` | `3_000` | 3 s per address in one node's dial; the dial's deadline is this times its addresses, or `PEER_DIAL_MIN_MS`, whichever is longer |
