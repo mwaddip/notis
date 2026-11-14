@@ -466,8 +466,6 @@ pending row leaves (`deletePendingPost`); then every pooled entry spending one o
 finds a block's spenders by, and the reply read the one `removeUnconfirmed` walks replies by — one statement each,
 shared, never a copy. One SQLite transaction — a savepoint of the switch's. Returns the number of entries removed.
 
-> ⚠ **AHEAD OF CODE (2026-11-14).** `store/mempool.ts` has no `removeUnreturned`.
-
 ### removeEntry
 
 ```
@@ -832,9 +830,6 @@ pooled entry spending one of its outputs or replying to its post, and so on down
 entry leaving unconfirmed takes, for the same reason. `reorg` runs it once the new chain is applied, inside the
 switch's transaction, so a post the new chain carries is confirmed on the row it has, body intact, and an entry that
 depends on a transaction the new chain carries stays.
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** `reorg` leaves such a transaction's post row pending with no pool entry, for good,
-> and its pooled dependents wait for their expiry.
 
 ---
 

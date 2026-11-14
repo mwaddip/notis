@@ -1457,7 +1457,7 @@ tree collapse into clean rejections:
 > | `UnreadableStoredBlockError` | a stored block's bytes, its interlinks vector or its journal will not decode — or a header-tree row's header or interlinks, or a staged block's bytes | `store/ordering.ts` → `rowToOrderingBlock`, `getInterlinks`; `store/journal.ts` → `getBlockJournal`; `store/header-tree.ts` → `getHeaderRow`, `getStagedBlock` |
 > | `DivergedStateTreeError` | the AVL+ tree refuses one of a block's writes or of genesis's — writes derived from the tree's own state, so the tree contradicts itself | `state/avl-prover.ts` |
 > | `InconsistentStateTreeError` | a read of this node's own tree contradicts itself — `consensus`'s `TreeInconsistencyError` over the node's prover session (`CONSENSUS_INTERFACE → The tree view`), in block application, the speculative run or the settlement's build | `services/block-apply.ts`, `services/block-creator.ts` |
-> | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the reach floor admits no fork point below `lowestJournal − 1`, the revert starts one above it, and a fork at the root is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point") | `services/fork-resolution.ts` → `revertBlock` |
+> | `MissingJournalError` | a block journal at or above the lowest one kept is absent. Every height `revertBlock` can be asked for lies there: the reach floor admits no fork point below `lowestJournal − 1`, the revert starts one above it, and a fork at the root is reachable only while `lowestJournal ≤ 1` (Fork choice decides on verified headers → "The reach floor is the horizon, one rule for every fork point"). So does every height a switch applies, whose journal its own apply wrote in the same transaction (Block Journal) | `services/fork-resolution.ts` → `revertBlock`, `reorg` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the reach floor admits. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 > | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 > | `MissingStagedBlockError` | a switch reads a staged block its own synchronous item found staged a moment before — the row is gone, so the store lost it (Fork choice decides on verified headers → "The switch") | `services/fork-resolution.ts` → `reorg` |
@@ -1982,9 +1982,6 @@ There is **no other legal bond or invite shape**. In particular:
   withdrawal needs topology, not a body. `isLivePost` is the guard at every site that asks whether
   a post is live ("Resolution order for a post id"); an unknown parent is `Parent post not found`;
   a reply to a withdrawn post stays valid (ARCHITECTURE → Post structure).
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** A reverted post whose re-insertion the pool refuses or the ceiling screens, and
-> which the new chain does not carry, keeps a pending row with no pool entry after the switch, and answers `tx: null`.
 
 ### Withdrawal transactions
 
@@ -4482,9 +4479,9 @@ predecessor first, which the fill preserves and the ordering rule at apply requi
 finalization) — and **a withdrawal is one of those
 transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key. Once the new chain is
 applied, the switch tells a reverted transaction the new chain carries from one it leaves behind by the `txId`s of the
-`appliedUtxoTxs` its own applies journalled (MEMPOOL_INTERFACE → removeUnreturned).
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** `reorg` reads no journal of the heights it applies.
+`appliedUtxoTxs` its own applies journalled (MEMPOOL_INTERFACE → removeUnreturned); a height among them with no
+journal is `MissingJournalError`, fail-stop as a reverted height's is — the switch's own apply wrote it in the same
+transaction.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse
