@@ -449,7 +449,7 @@ describe('startExtensionMesh — the lifecycle', () => {
   // WEB_INTERFACE → The extension → "The mesh client's faults reach the
   // page's console" — the extension hands its mesh client a log that
   // writes each line to the page's console as an error.
-  it.fails('the mesh client is handed a log that writes each line to console.error', async () => {
+  it('the mesh client is handed a log that writes each line to console.error', async () => {
     let startOpts: StartMeshClientOptions | null = null;
     const client = fakeClient();
     const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => {
