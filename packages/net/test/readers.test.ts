@@ -177,6 +177,51 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+// `getMeshPeers` and `direct` live on gossipsub's concrete class; the
+// `GossipSub` interface `@libp2p/gossipsub` re-exports does not publish
+// either. The cases below read both through this intersection type.
+interface GossipSubInternal extends GossipSub {
+  getMeshPeers(topic: string): string[];
+  readonly direct: Set<string>;
+}
+
+function pubsubOf(node: NetNode): GossipSubInternal {
+  const lp = node.libp2pNode;
+  if (!lp) throw new Error('node is not started');
+  return (lp as unknown as { services: { pubsub: GossipSubInternal } })
+    .services.pubsub;
+}
+
+function readerPubsub(host: Libp2p): GossipSubInternal {
+  return (host as unknown as { services: { pubsub: GossipSubInternal } })
+    .services.pubsub;
+}
+
+/**
+ * Dial `addrA` with `n` fresh readers, pacing dials under
+ * `READER_DIAL_GAP_MS` and running the handshake on each. Each reader is
+ * subscribed to the ordering-block topic.
+ */
+async function dialNReaders(
+  n: number,
+  addrA: string,
+  hosts: Libp2p[],
+): Promise<Libp2p[]> {
+  const readers: Libp2p[] = [];
+  const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+  let lastDialAt = 0;
+  for (let i = 0; i < n; i++) {
+    await sleep(Math.max(0, READER_DIAL_GAP_MS - (Date.now() - lastDialAt)));
+    const r = await makeReaderLibp2p(MAGIC_TESTNET);
+    hosts.push(r);
+    readers.push(r);
+    lastDialAt = Date.now();
+    await runReaderHandshake(r, addrA, MAGIC_TESTNET);
+    readerPubsub(r).subscribe(topic);
+  }
+  return readers;
+}
+
 describe('NET_INTERFACE → Readers', () => {
   const nodes: NetNode[] = [];
   const hosts: Libp2p[] = [];
@@ -882,4 +927,298 @@ describe('NET_INTERFACE → Readers', () => {
     // last: the hook saw a Misbehavior for the reader's id.
     expect(penalties).toContainEqual({ peerId: readerId, kind: 'misbehavior' });
   }, TIMEOUT);
+
+  // MESH_INTERFACE → Block gossip → "A node's readers are its router's
+  // direct peers". Thirteen readers dial A and complete their handshakes
+  // before B dials; C is peered with B alone. A topic's mesh holds
+  // chain-serving peers alone, so its degree bounds a node's node peers,
+  // not its readers, and a node that dials another after that one's
+  // readers arrive is grafted as gossipsub's rules grant.
+  it.fails(
+    "a node that dials another after that one's readers arrive is in its mesh",
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const readers = await dialNReaders(13, addrA, hosts);
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toHaveLength(13);
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+
+      // Give gossipsub's heartbeat (1 s) enough ticks to fill A's mesh
+      // with the readers' subscriptions before B dials. Dhi is 12.
+      await sleep(4_000);
+
+      const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+      nodes.push(nodeB);
+      await nodeB.start();
+      const addrB = nodeTcpAddress(nodeB);
+
+      const nodeC = new NetNode(makeConfig({ bootstrapPeers: [addrB] }), validators);
+      nodes.push(nodeC);
+      await nodeC.start();
+
+      // controls: every reader's handshake completed; B and A connected.
+      expect(nodeA.getConnectedReaders()).toHaveLength(readers.length);
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+          expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+
+      // last: B is in A's ordering-block mesh and A in B's.
+      const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+      await vi.waitFor(
+        () => {
+          expect(pubsubOf(nodeA).getMeshPeers(topic)).toContain(nodeB.peerId());
+          expect(pubsubOf(nodeB).getMeshPeers(topic)).toContain(nodeA.peerId());
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+    },
+    180_000,
+  );
+
+  // MESH_INTERFACE → Block gossip → "A node's readers are its router's
+  // direct peers": the router holds a reader as a direct peer, in no
+  // topic's mesh, and answers its `GRAFT` with a `PRUNE`.
+  it.fails(
+    "a node's mesh holds no reader, and no reader's router holds the node in its mesh",
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const readers = await dialNReaders(13, addrA, hosts);
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toHaveLength(13);
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+
+      // Four heartbeats are enough for a mesh graft to settle either way.
+      await sleep(4_000);
+
+      // control: every reader is a topic peer of A (A has heard each
+      // reader's subscription).
+      const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+      const readerIds = readers.map((r) => r.peerId.toString());
+      await vi.waitFor(
+        () => {
+          const subs = pubsubOf(nodeA)
+            .getSubscribers(topic)
+            .map((p) => p.toString());
+          for (const id of readerIds) expect(subs).toContain(id);
+        },
+        { timeout: 15_000, interval: 300 },
+      );
+
+      // last: A's mesh lists no reader, and each reader's own router
+      // lists A in no mesh.
+      await vi.waitFor(
+        () => {
+          const meshAtA = pubsubOf(nodeA).getMeshPeers(topic);
+          for (const id of readerIds) expect(meshAtA).not.toContain(id);
+          const aId = nodeA.peerId();
+          for (const r of readers) {
+            expect(readerPubsub(r).getMeshPeers(topic)).not.toContain(aId);
+          }
+        },
+        { timeout: 30_000, interval: 500 },
+      );
+    },
+    180_000,
+  );
+
+  // MESH_INTERFACE → Block gossip → "A node's readers are its router's
+  // direct peers": the router forwards every message on a topic the
+  // reader subscribes to straight to it. The block enters at C so A
+  // forwards it rather than publishes it.
+  it.fails(
+    'every reader receives a block the node forwards',
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const nodeB = new NetNode(makeConfig({ bootstrapPeers: [addrA] }), validators);
+      nodes.push(nodeB);
+      await nodeB.start();
+      const addrB = nodeTcpAddress(nodeB);
+
+      const nodeC = new NetNode(makeConfig({ bootstrapPeers: [addrB] }), validators);
+      nodes.push(nodeC);
+      await nodeC.start();
+
+      const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+      // control: A↔B and B↔C are peered, and the ordering-block mesh
+      // reaches from C through B to A.
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+          expect(nodeB.getConnectedPeers()).toContain(nodeC.peerId());
+          expect(pubsubOf(nodeA).getMeshPeers(topic)).toContain(nodeB.peerId());
+          expect(pubsubOf(nodeB).getMeshPeers(topic)).toContain(nodeC.peerId());
+        },
+        { timeout: 30_000, interval: 300 },
+      );
+
+      const readers = await dialNReaders(30, addrA, hosts);
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toHaveLength(30);
+          const subs = pubsubOf(nodeA)
+            .getSubscribers(topic)
+            .map((p) => p.toString());
+          for (const r of readers) expect(subs).toContain(r.peerId.toString());
+        },
+        { timeout: 30_000, interval: 300 },
+      );
+
+      // Each reader records every message its router delivers on the
+      // ordering-block topic.
+      const deliveries = new Map<string, Uint8Array[]>();
+      for (const r of readers) {
+        const arr: Uint8Array[] = [];
+        deliveries.set(r.peerId.toString(), arr);
+        readerPubsub(r).addEventListener('gossipsub:message', (evt) => {
+          const detail = evt.detail as {
+            msg?: { topic: string; data: Uint8Array };
+          } | undefined;
+          if (detail?.msg?.topic === topic) arr.push(detail.msg.data);
+        });
+      }
+
+      const block = makeBlockAt(1, PROTOCOL_VERSION);
+      await nodeC.broadcastOrderingBlock(block);
+
+      // last: every reader's router delivered that block.
+      await vi.waitFor(
+        () => {
+          for (const r of readers) {
+            const arr = deliveries.get(r.peerId.toString())!;
+            expect(arr.length).toBeGreaterThanOrEqual(1);
+          }
+        },
+        { timeout: 45_000, interval: 500 },
+      );
+    },
+    240_000,
+  );
+
+  // MESH_INTERFACE → Block gossip → "A node's readers are its router's
+  // direct peers": the node's router takes a reader as a direct peer when
+  // its handshake completes and lets it go when the node holds no
+  // connection to it.
+  //
+  // The direct set `pubsub.direct` is read on `GossipSub` the concrete
+  // class owns; net's patch adds and removes entries after construction
+  // and is the only mutator of the set outside `opts.directPeers` (net
+  // passes none), so what the case reads is the state the patch keeps.
+  it.fails(
+    "a reader leaves the router's direct peers when the node holds no connection to it",
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+      hosts.push(reader);
+      await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+      const readerId = reader.peerId.toString();
+
+      // control: the reader is held as a reader on A.
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toContain(readerId);
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+
+      // control: the reader is a direct peer of A's router.
+      const pubsubA = pubsubOf(nodeA);
+      await vi.waitFor(
+        () => {
+          expect(pubsubA.direct.has(readerId)).toBe(true);
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+
+      // Stop the reader so its connection to A closes; libp2p fires
+      // `peer:disconnect` at A.
+      await reader.stop();
+
+      // last: the reader is no longer a direct peer of A's router.
+      await vi.waitFor(
+        () => {
+          expect(pubsubA.direct.has(readerId)).toBe(false);
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+    },
+    TIMEOUT,
+  );
+
+  // NET_INTERFACE → Readers → "A reader is its node's gossip direct
+  // peer"; MESH_INTERFACE → Block gossip → "A node's readers are its
+  // router's direct peers": a router never graylists a direct peer by
+  // its score, so a reader's misbehaviour is weighed by net's ban policy,
+  // whose ban ends the connection. A ProtocolViolation bans at once.
+  it(
+    "a reader's invalid block is still weighed by net's ban policy",
+    async () => {
+      const nodeA = new NetNode(makeConfig(), validators);
+      nodes.push(nodeA);
+      await nodeA.start();
+      const addrA = nodeTcpAddress(nodeA);
+
+      const reader = await makeReaderLibp2p(MAGIC_TESTNET);
+      hosts.push(reader);
+      await runReaderHandshake(reader, addrA, MAGIC_TESTNET);
+      const readerId = reader.peerId.toString();
+      const topic = gossipTopics(MAGIC_TESTNET).orderingBlock;
+      readerPubsub(reader).subscribe(topic);
+
+      // control: the reader is held as a reader, and A has heard the
+      // reader's subscription on the ordering-block topic.
+      await vi.waitFor(
+        () => {
+          expect(nodeA.getConnectedReaders()).toContain(readerId);
+          const subs = pubsubOf(nodeA)
+            .getSubscribers(topic)
+            .map((p) => p.toString());
+          expect(subs).toContain(readerId);
+        },
+        { timeout: 10_000, interval: 200 },
+      );
+
+      // The reader publishes bytes that do not decode as an ordering
+      // block header; A's topic validator records a ProtocolViolation
+      // against the reader, which bans at once.
+      await readerPubsub(reader).publish(topic, new Uint8Array([0, 1, 2, 3]));
+
+      // last: A holds no connection to the reader.
+      await vi.waitFor(
+        () => {
+          const held = nodeA
+            .libp2pNode!.getConnections()
+            .filter((c) => c.remotePeer.toString() === readerId);
+          expect(held).toHaveLength(0);
+        },
+        { timeout: 15_000, interval: 200 },
+      );
+    },
+    TIMEOUT,
+  );
 });
