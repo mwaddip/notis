@@ -215,8 +215,7 @@ export class NodeList {
     // MESH_INTERFACE → The client's node list → "Retry" — the random
     // source whose draw spreads the retry between half and the whole
     // of the schedule. Required; every caller passes one, no default
-    // inside the module (a seam with a default lets every case take
-    // the test path while the shipped path goes unheld).
+    // inside the module.
     random: () => number,
   ) {
     assertNotisId(ownId);
