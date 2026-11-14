@@ -265,6 +265,7 @@ describe('fix 7 — lastFailures keeps one entry per address', () => {
       [{ notisId: id, addrs: ['/ip4/1.1.1.1/tcp/1/p2p/P1', '/ip4/2.2.2.2/tcp/2/p2p/P2'] }],
       other,
       () => now,
+      () => 0,
     );
     now = 200;
     (list as unknown as { failure: (id: string, k: string, m: string, a: string) => void }).failure(
@@ -288,6 +289,7 @@ describe('fix 7 — lastFailures keeps one entry per address', () => {
       [{ notisId: id, addrs: ['/ip4/1.1.1.1/tcp/1/p2p/P1'] }],
       other,
       () => 100,
+      () => 0,
     );
     (list as unknown as { failure: (id: string, k: string, m: string, a: string) => void }).failure(
       id, 'timeout', 'TimeoutError', '/ip4/1.1.1.1/tcp/1/p2p/P1',

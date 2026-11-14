@@ -294,7 +294,7 @@ describe('the AggregateError is attributed back to each address', () => {
   it('NodeList.failure writes lastFailures[addr] when an addr is passed', async () => {
     const id = 'a'.repeat(64);
     const own = 'b'.repeat(64);
-    const list = new NodeList([{ notisId: id, addrs: ['/ip4/1/tcp/1/p2p/P'] }], own, () => 1000);
+    const list = new NodeList([{ notisId: id, addrs: ['/ip4/1/tcp/1/p2p/P'] }], own, () => 1000, () => 0);
     list.failure(id, 'transport', 'ECONNREFUSED', '/ip4/1/tcp/1/p2p/P');
     const e = list.entry(id)!;
     expect(e.lastFailures['/ip4/1/tcp/1/p2p/P']).toEqual({

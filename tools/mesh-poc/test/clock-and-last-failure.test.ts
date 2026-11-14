@@ -130,6 +130,7 @@ describe('NodeList — lastFailure set on failure, cleared on success', () => {
       [{ notisId: id, addrs: [] }],
       'b'.repeat(64),
       () => now,
+      () => 0,
     );
     now = 500;
     list.failure(id, 'transport', 'DialDeniedError: gater refused');
@@ -147,6 +148,7 @@ describe('NodeList — lastFailure set on failure, cleared on success', () => {
       [{ notisId: id, addrs: [] }],
       'b'.repeat(64),
       () => now,
+      () => 0,
     );
     list.failure(id, 'timeout', 'DialTimeoutError');
     expect(list.entry(id)!.lastFailure).not.toBeNull();
@@ -162,6 +164,7 @@ describe('NodeList — lastFailure set on failure, cleared on success', () => {
       [{ notisId: id, addrs: [] }],
       'b'.repeat(64),
       () => 100,
+      () => 0,
     );
     list.failure(id, 'clock', 'verify failed: clock at index 134');
     const e = list.entry(id)!;
