@@ -620,13 +620,11 @@ it accepts an inbound connection — TCP at the socket's accept, the secure WebS
 WebRTC-direct once its noise handshake is done — and frees it when the upgrade (protocol selection, the noise
 handshake, the muxer) ends, or at `INBOUND_UPGRADE_TIMEOUT_MS`, when libp2p aborts the upgrade and closes the
 connection. The node holds at most `maxPeers + maxReaders + HANDSHAKE_SLACK` slots at once — its connection ceiling —
-and one address at most `PENDING_UPGRADES_PER_ADDRESS`, an IPv6 address counted by its /64. A connection past either
-bound is refused at once, ahead of the per-address rate below. An honest upgrade holds its slot for two to three round
-trips, so an address that opens connections and sends nothing holds four slots, each for five seconds, and every other
-address finds the rest open (`CONSTANTS → net`).
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** net passes libp2p none of the three bounds: libp2p holds ten slots for the whole
-> node, one address may hold all ten, and an upgrade holds its slot up to ten seconds.
+and one address at most `PENDING_UPGRADES_PER_ADDRESS` — an IPv6 address counted by its /64, an IPv4-mapped one as its
+IPv4 address. A connection past either bound is refused at once, ahead of the per-address rate below. An honest upgrade
+holds its slot for two to three round trips, so an address that opens connections and sends nothing holds four slots,
+each for five seconds, and every other address finds the rest open (`CONSTANTS → net`). libp2p counts no address's
+slots of its own; net's local patch to it does (`MESH_INTERFACE → Place in the workspace`).
 
 **An address opens at most five inbound connections a second.** libp2p refuses an inbound connection at its upgrade
 when its remote IP address has already opened five within the current second — `inboundConnectionThreshold`, libp2p's

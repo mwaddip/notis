@@ -31,14 +31,17 @@ are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
-— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Four pinned
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Five pinned
 packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
 the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
 "The WebRTC-direct certificate persists"); `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to its
 stream and whose Node-side server adapter is kept out of the browser's import path; `@libp2p/http-fetch`, whose
 request line carries the URL's query, whose string and bytes bodies keep the `content-type` the caller set, and whose
 string body is counted in UTF-8 bytes for its `content-length` — so a mesh read keeps its query and a mesh write its
-JSON body, as over HTTP (→ The node endpoint); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
+JSON body, as over HTTP (→ The node endpoint); `libp2p`, whose connection manager holds each address to a bound on its
+inbound connections still upgrading — an IPv6 address by its /64, an IPv4-mapped one as its IPv4 address — and releases
+an address's count when an upgrade ends (`NET_INTERFACE → Readers → "An address upgrades at most four inbound
+connections at once, each within five seconds"`); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
 the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
 "A peer's gossip follows its newest connection"), and which takes and lets go of a direct peer while it runs (→ Block
 gossip → "A node's readers are its router's direct peers"). A pin that moves carries its patch to the new version, the cases
@@ -128,9 +131,6 @@ relay for its reservation afterwards, every attempt under `RELAY_LISTEN_TIMEOUT_
 away, or that never completes a reservation is tried again on the node list's retry cadence, each wait drawn as a
 node's is (→ The client's node list → "Retry"), and the node reserves on it once it answers; meanwhile it serves through
 whichever relays it holds.
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** net's relay retry waits the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`,
-> with no draw.
 
 **A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
 until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
@@ -351,9 +351,6 @@ shown, never acted on.
 whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`, on a monotonic clock. The draw spreads the clients that failed at
 one instant — a node's restart drops every reader at once — across half the wait, so they do not return at one instant
 either. A success ends the run.
-
-> ⚠ **AHEAD OF CODE (2026-11-14).** The mesh client waits the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`,
-> with no draw.
 
 **Candidates** are tried in this order: `ok`, `trailing`, `behind`, nodes not yet tried, then `retry` nodes whose time
 has come. A `blacklisted` node is never one. An entry the client holds no connection to is a candidate at its API base
