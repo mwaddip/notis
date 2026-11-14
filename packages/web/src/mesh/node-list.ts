@@ -206,9 +206,20 @@ export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
 
-  constructor(firstContact: MeshContact[], ownId: string, clock: () => number) {
+  constructor(
+    firstContact: MeshContact[],
+    ownId: string,
+    clock: () => number,
+    // MESH_INTERFACE → The client's node list → "Retry" — the random source
+    // whose draw spreads the retry between half and the whole of the
+    // schedule. Required in the module's final shape; the parameter
+    // rides here as optional to let a case pass it ahead of the draw
+    // landing in the file.
+    random?: () => number,
+  ) {
     assertNotisId(ownId);
     this.clock = clock;
+    void random;
     for (const a of firstContact) {
       assertNotisId(a.notisId);
       // "the client's own key is none" (MESH_INTERFACE → Discovery).

@@ -396,4 +396,91 @@ describe('node-list', () => {
       expect((thrown as Error).message).toContain(unknown);
     }
   });
+
+  // MESH_INTERFACE → The client's node list → "Retry" — the wait after
+  // the n-th failure in a row is drawn uniformly between half and the
+  // whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n − 1))`; the draw
+  // spreads the clients that failed at one instant. The random source
+  // is a required argument on the list's constructor.
+
+  it.fails('a random source at 0 answers half the schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at most 2·RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS * 2);
+    // Drive the failure count past the cap — the schedule saturates
+    // to RETRY_CAP_MS, half of which is RETRY_CAP_MS / 2.
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
+    // -- LAST ASSERTION --
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: half of RETRY_CAP_MS').toBe(RETRY_CAP_MS / 2);
+  });
+
+  it.fails('a random source near 1 answers just under the whole schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS / 2);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS);
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    const wCap = list.entry(idA)!.retryAtMs - t;
+    expect(wCap, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
+    // -- LAST ASSERTION --
+    expect(wCap, 'past the cap: strictly less than the cap').toBeLessThan(RETRY_CAP_MS);
+  });
+
+  it.fails('a random source at 0.5 answers three quarters of the schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0.5);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS / 2);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS);
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
+    // -- LAST ASSERTION --
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: three quarters of RETRY_CAP_MS').toBe((RETRY_CAP_MS * 3) / 4);
+  });
+
+  it.fails('the clamp caps the exposed wait at RETRY_CAP_MS from the current clock when the clock steps back below the failure, with a drawn wait', () => {
+    // The clamp (`clampedRetryAt`) reads `min(stored, now + RETRY_CAP_MS)`
+    // when the clock has stepped back below the failure — a draw does
+    // not change that. A big step-back lands below the clamp and the
+    // exposed wait is `RETRY_CAP_MS` from `now`; a tiny step-back
+    // leaves `stored` under the clamp and the exposed wait is the
+    // drawn wait plus the step-back.
+    let t = 1_000_000;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'at failure: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    t = 1_000_000 - 3_600_000; // step back 1 h; `now + RETRY_CAP_MS` sits well below `stored`
+    const wBig = list.entry(idA)!.retryAtMs - t;
+    expect(wBig, 'big step back: non-negative').toBeGreaterThanOrEqual(0);
+    expect(wBig, 'big step back: the clamp caps at RETRY_CAP_MS from now').toBe(RETRY_CAP_MS);
+    t = 1_000_000 - 10; // tiny step back; `stored` sits under the clamp
+    const wSmall = list.entry(idA)!.retryAtMs - t;
+    expect(wSmall, 'tiny step back: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
+    // -- LAST ASSERTION --
+    expect(wSmall, 'tiny step back: the drawn wait reaches the exposed view').toBe(RETRY_BASE_MS / 2 + 10);
+  });
+
+  it.fails('two lists failed at one clock reading, each with its own random source, expose different retry times — the draw is per failure', () => {
+    // The draw lands on the moment of the failure through the list's
+    // random source, so two lists with different sources, failed at
+    // one clock reading, hold two different stored waits.
+    const t = 0;
+    const listLo = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    const listHi = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
+    listLo.failure(idA, 'timeout');
+    listHi.failure(idA, 'timeout');
+    const wLo = listLo.entry(idA)!.retryAtMs - t;
+    const wHi = listHi.entry(idA)!.retryAtMs - t;
+    expect(wLo, 'low source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    expect(wHi, 'high source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    // -- LAST ASSERTION --
+    expect(wHi, 'the draw is per failure: the two lists differ').not.toBe(wLo);
+  });
 });
