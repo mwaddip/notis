@@ -168,7 +168,12 @@ connection to; nothing dials for gossip's sake.
 **A block is checked before it is forwarded, and never applied.** A receiver runs the ordering-block topic's checks of
 `NET_INTERFACE → Stage 1`, in their order, through `net`'s `BlockCheck`, and forwards a block that passes them
 (`NET_INTERFACE → Forwarding Rule`). The client checks the schedule where its chain holds the parent (→ The client's
-node list → "The client's chain"). A client applies no block and forwards no transaction.
+node list → "The client's chain"). A client applies no block and forwards no transaction. A receiver decodes a block
+once: what its delivery reads is the block the check's verdict carries (`NET_INTERFACE → Inbound Processing → "A
+gossiped message is decoded once"`).
+
+> ⚠ **AHEAD OF CODE (2026-11-14).** The client's `gossipsub:message` listener decodes each accepted block a second
+> time, whole, for its header, and discards a failure of that decode unlogged.
 
 **A refused block is evidence as `net` weighs it.** A block over its bound or undecodable, or well-formed and failing
 its field domains, the network's floor, its work, its validator signature, its structure or its body's root, is a lie of
