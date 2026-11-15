@@ -66,12 +66,28 @@ export const HANDSHAKE_DEADLINE_FACTOR = 3;
  * inbound that has not sent its frame, an outbound whose answer has not
  * come back, both counting toward libp2p's `maxConnections` before either
  * budget is charged. 16 matches `MAX_INBOUND_SYNC_STREAMS`' shape (one
- * waiting stream's worth per concurrent handshake) and is above libp2p
- * 3.x's `maxIncomingPendingConnections` default of 10, so an honest
- * inbound cannot be refused on pending alone before the slack closes it.
+ * waiting stream's worth per concurrent handshake).
  * Unexported — the ceiling is an internal argument, not a protocol number.
  */
 export const HANDSHAKE_SLACK = 16;
+
+/**
+ * NET_INTERFACE → Readers — "An address upgrades at most four inbound
+ * connections at once, each within five seconds" (`CONSTANTS → net`).
+ * The time one inbound connection's upgrade may hold a pending slot:
+ * protocol selection, the noise handshake, the muxer (libp2p's
+ * `inboundUpgradeTimeout`, set from this).
+ */
+export const INBOUND_UPGRADE_TIMEOUT_MS = 5_000;
+
+/**
+ * NET_INTERFACE → Readers — "An address upgrades at most four inbound
+ * connections at once, each within five seconds" (`CONSTANTS → net`).
+ * The pending-upgrade slots one IP address — an IPv6 address by its
+ * /64 — holds at once (libp2p's `maxIncomingPendingConnectionsPerHost`,
+ * set from this).
+ */
+export const PENDING_UPGRADES_PER_ADDRESS = 4;
 
 // ---------------------------------------------------------------------------
 // Resource limits (untrusted counts and sizes)

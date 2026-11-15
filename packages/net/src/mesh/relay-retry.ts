@@ -1,17 +1,28 @@
-// MESH_INTERFACE → NAT → "A relay that does not answer never stops a private node".
-// `failures` counts failed attempts so far; the schedule is
-// `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures−1))`. Pure. Zero or
-// negative count reads 0.
+// MESH_INTERFACE → NAT → "A relay that does not answer never stops a
+// private node" and MESH_INTERFACE → The client's node list → "Retry".
+// The wait after the n-th failure is drawn uniformly between half and
+// the whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(failures − 1))`.
+// Pure. Zero or negative count reads 0.
 
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Libp2p } from '@libp2p/interface';
 import { RETRY_BASE_MS, RETRY_CAP_MS, RELAY_LISTEN_TIMEOUT_MS } from './constants.js';
 
-export function retryIntervalMs(failures: number, base?: number, cap?: number): number {
+export function retryIntervalMs(
+  failures: number,
+  base: number | undefined,
+  cap: number | undefined,
+  // MESH_INTERFACE → The client's node list → "Retry" — the random source
+  // whose draw spreads the retry. Required; every caller passes one, no
+  // default inside the module.
+  random: () => number,
+): number {
   if (!Number.isFinite(failures) || failures <= 0) return 0;
   const b = typeof base === 'number' && base > 0 ? base : RETRY_BASE_MS;
   const c = typeof cap === 'number' && cap > 0 ? cap : RETRY_CAP_MS;
-  return Math.min(c, b * Math.pow(2, failures - 1));
+  const whole = Math.min(c, b * Math.pow(2, failures - 1));
+  const half = whole / 2;
+  return half + random() * half;
 }
 
 /**
@@ -35,8 +46,11 @@ export interface RelayRetry {
 export function startRelayRetry(
   node: Libp2p,
   addrString: string,
-  opts: { baseMs: number; capMs: number; listenTimeoutMs?: number },
+  opts: { baseMs: number; capMs: number; listenTimeoutMs?: number; random: () => number },
 ): RelayRetry {
+  // MESH_INTERFACE → The client's node list → "Retry" — the required
+  // random source whose draw spreads the retry.
+  const random = opts.random;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let failures = 0;
@@ -102,10 +116,10 @@ export function startRelayRetry(
         return;
       }
       failures += 1;
-      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs));
+      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs, random));
     } catch {
       failures += 1;
-      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs));
+      scheduleRetry(retryIntervalMs(failures, opts.baseMs, opts.capMs, random));
     }
   };
 

@@ -27,7 +27,7 @@ const a3 = '/ip4/3.3.3.3/tcp/1';
 
 describe('node-list', () => {
   it('no answer never blacklists', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     const kinds: FailureKind[] = ['timeout', 'refused', 'dropped', 'transport'];
     for (const k of kinds) {
       for (let i = 0; i < 100; i++) list.failure(idA, k);
@@ -40,24 +40,24 @@ describe('node-list', () => {
 
   it('retry intervals double to the cap', () => {
     let t = 0;
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
-    expect(list.entry(idA)!.retryAtMs - t).toBe(5000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS / 2);
     list.failure(idA, 'timeout');
-    expect(list.entry(idA)!.retryAtMs - t).toBe(10000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS);
     list.failure(idA, 'timeout');
-    expect(list.entry(idA)!.retryAtMs - t).toBe(20000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS * 2);
     for (let i = 0; i < 5; i++) list.failure(idA, 'timeout'); // 8 total
     expect(list.entry(idA)!.failures).toBe(8);
-    expect(list.entry(idA)!.retryAtMs - t).toBe(600000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_CAP_MS / 2);
     for (let i = 0; i < 4; i++) list.failure(idA, 'timeout'); // 12 total
     expect(list.entry(idA)!.failures).toBe(12);
-    expect(list.entry(idA)!.retryAtMs - t).toBe(600000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_CAP_MS / 2);
   });
 
   it('a success clears the count', () => {
     let t = 0;
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
     list.failure(idA, 'timeout');
     list.failure(idA, 'timeout');
@@ -67,11 +67,11 @@ describe('node-list', () => {
     expect(list.entry(idA)!.status).toBe('ok');
     list.failure(idA, 'timeout');
     expect(list.entry(idA)!.failures).toBe(1);
-    expect(list.entry(idA)!.retryAtMs - t).toBe(5000);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS / 2);
   });
 
   it('a lie is permanent and keeps its evidence', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     const ev: LieEvidence = { kind: 'malformed', atMs: 1000, detail: 'bad bytes' };
     list.lie(idA, ev);
     expect(list.entry(idA)!.status).toBe('blacklisted');
@@ -86,7 +86,7 @@ describe('node-list', () => {
   });
 
   it('a wrong key drops that address only', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0, () => 0);
     const before = list.entry(idA)!;
     list.wrongKey(idA, a1, idB);
     const e = list.entry(idA)!;
@@ -120,13 +120,15 @@ describe('node-list', () => {
       ],
       own,
       () => t,
+      () => 1 - 1e-12,
     );
     list.success(idA);
     list.trailing(idB);
     list.behind(idC);
     // idD is 'new' (never a success/failure call).
     list.failure(idE, 'timeout');
-    // idE's retry fires at t + RETRY_BASE_MS = 105000; step past.
+    // idE's drawn retry lands just under t + RETRY_BASE_MS — stored
+    // just under 105000; step well past.
     t = 110000;
     expect(list.candidates()).toEqual([idA, idB, idC, idD, idE]);
   });
@@ -137,7 +139,7 @@ describe('node-list', () => {
     // `firstContact` is unchanged by `addByHand`: a new entry has it
     // `false`; a build node already in the list keeps it `true`.
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
-    const list = new NodeList([], own, () => 0);
+    const list = new NodeList([], own, () => 0, () => 0);
     list.addByHand(idA, [addr], true);
     const trustedEntry = list.entry(idA)!;
     expect(trustedEntry.firstContact).toBe(false);
@@ -158,7 +160,7 @@ describe('node-list', () => {
     // A build node (`firstContact: true`) marked by hand stays
     // `firstContact: true`, `yours` follows the latest trusted value.
     const addr3 = '/ip4/10.0.0.3/udp/4001/webrtc-direct/certhash/uEiC';
-    const list3 = new NodeList([{ notisId: idC, addrs: [] }], own, () => 0);
+    const list3 = new NodeList([{ notisId: idC, addrs: [] }], own, () => 0, () => 0);
     expect(list3.entry(idC)!.firstContact).toBe(true);
     list3.addByHand(idC, [addr3], true);
     expect(list3.entry(idC)!.firstContact).toBe(true);
@@ -174,7 +176,7 @@ describe('node-list', () => {
     // so its addresses no longer in the list and the gater refuses
     // the private one the reader entered next dial.
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
-    const list = new NodeList([], own, () => 0);
+    const list = new NodeList([], own, () => 0, () => 0);
     list.addByHand(idA, [addr], true);
     expect(list.entry(idA)).toBeDefined();
     expect(list.configuredAddrs(idA)).toEqual([addr]);
@@ -188,7 +190,7 @@ describe('node-list', () => {
     // the first-contact list named stays after `removeByHand`, with
     // `yours = false` and `byHand = false`; `configuredAddrs` still
     // answers the build addresses.
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     list.addByHand(idA, [], true);
     expect(list.entry(idA)!.yours).toBe(true);
     expect(list.entry(idA)!.byHand).toBe(true);
@@ -204,7 +206,7 @@ describe('node-list', () => {
 
   it('a hand-added node caught lying is blacklisted and leaves the candidate set', () => {
     const addr = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
-    const list = new NodeList([], own, () => 0);
+    const list = new NodeList([], own, () => 0, () => 0);
     list.addByHand(idA, [addr], true);
     list.success(idA);
     expect(list.entry(idA)!.yours).toBe(true);
@@ -221,7 +223,7 @@ describe('node-list', () => {
   });
 
   it('a changed address revives a first-contact node', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1, a2] }], own, () => 0, () => 0);
     list.wrongKey(idA, a1, idB);
     list.wrongKey(idA, a2, idB);
     list.failure(idA, 'transport');
@@ -238,9 +240,9 @@ describe('node-list', () => {
 
   it('a clock that steps back does not hold a node out', () => {
     let t = 1_000_000;
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
     list.failure(idA, 'timeout');
-    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS);
+    expect(list.entry(idA)!.retryAtMs - t).toBe(RETRY_BASE_MS / 2);
     t = 1_000_000 - 3_600_000; // step back 1 h
     const wait = list.entry(idA)!.retryAtMs - t;
     expect(wait).toBeLessThanOrEqual(RETRY_CAP_MS);
@@ -253,7 +255,7 @@ describe('node-list', () => {
       { notisId: idA, addrs: [a2] },
       { notisId: own, addrs: [a3] },
     ];
-    const list = new NodeList(firstContact, own, () => 0);
+    const list = new NodeList(firstContact, own, () => 0, () => 0);
     const es = list.entries();
     expect(es.length).toBe(1);
     expect(es[0]!.notisId).toBe(idA);
@@ -265,10 +267,10 @@ describe('node-list', () => {
   it('an id that is not 64 lowercase hex is refused', () => {
     const bad = 'AB'.repeat(32);
     const tooShort = 'ab'.repeat(31);
-    expect(() => new NodeList([{ notisId: bad, addrs: [] }], own, () => 0)).toThrow(MeshKeyError);
-    expect(() => new NodeList([{ notisId: tooShort, addrs: [] }], own, () => 0)).toThrow(MeshKeyError);
-    expect(() => new NodeList([], bad, () => 0)).toThrow(MeshKeyError);
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0);
+    expect(() => new NodeList([{ notisId: bad, addrs: [] }], own, () => 0, () => 0)).toThrow(MeshKeyError);
+    expect(() => new NodeList([{ notisId: tooShort, addrs: [] }], own, () => 0, () => 0)).toThrow(MeshKeyError);
+    expect(() => new NodeList([], bad, () => 0, () => 0)).toThrow(MeshKeyError);
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => 0, () => 0);
     expect(() => list.add(bad, [])).toThrow(MeshKeyError);
     expect(() => list.success(bad)).toThrow(MeshKeyError);
     expect(() => list.failure(bad, 'timeout')).toThrow(MeshKeyError);
@@ -291,6 +293,7 @@ describe('node-list', () => {
       ],
       own,
       () => 0,
+      () => 0,
     );
     expect(list.entry(idA)!.api).toBe('https://node.example');
     expect(list.entry(idA)!.addrs).toEqual([a1, a2]);
@@ -302,7 +305,7 @@ describe('node-list', () => {
   it('an entry added through `add` or `addByHand` has api null', () => {
     // MESH_INTERFACE → The client's node list — the api is the list's
     // own; DHT- or hand-added entries carry none.
-    const list = new NodeList([], own, () => 0);
+    const list = new NodeList([], own, () => 0, () => 0);
     list.add(idA, [a1]);
     expect(list.entry(idA)!.api).toBeNull();
     const webrtc = '/ip4/10.0.0.1/udp/4001/webrtc-direct/certhash/uEiA';
@@ -311,7 +314,7 @@ describe('node-list', () => {
   });
 
   it('candidates() keeps first-known order inside a status', () => {
-    const list = new NodeList([], own, () => 0);
+    const list = new NodeList([], own, () => 0, () => 0);
     list.add(idB, []);
     list.add(idA, []);
     list.add(idC, []);
@@ -323,9 +326,10 @@ describe('node-list', () => {
 
   it('a retry whose time has not come is not a candidate, and is once it has', () => {
     let t = 1000;
-    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t);
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
     list.failure(idA, 'timeout');
-    // Stored retry at t + 5000 = 6000; now 1000 → not a candidate.
+    // Drawn retry just under t + RETRY_BASE_MS — stored just under 6000;
+    // now 1000 → not a candidate.
     expect(list.candidates()).not.toContain(idA);
     t = 5999;
     expect(list.candidates()).not.toContain(idA);
@@ -337,7 +341,7 @@ describe('node-list', () => {
     // MESH_INTERFACE → Discovery → "A node added by hand" — the settings
     // row's commit path. A hand-only entry is removed. A build node
     // marked by hand stays with `yours = false` and `byHand = false`.
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     list.addByHand(idB, [a2], true);
     expect(list.entries().map((e) => e.notisId).sort()).toEqual([idA, idB].sort());
     expect(list.entry(idB)!.yours).toBe(true);
@@ -357,13 +361,13 @@ describe('node-list', () => {
   });
 
   it('removeByHand on an id the list does not hold is a no-op', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     list.removeByHand(idC);
     expect(list.entries().map((e) => e.notisId)).toEqual([idA]);
   });
 
   it('removeByHand refuses a non-64-hex id', () => {
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     expect(() => list.removeByHand('abc')).toThrow(MeshKeyError);
   });
 
@@ -373,7 +377,7 @@ describe('node-list', () => {
     // list throws rather than swallows. The two no-ops the contract keeps
     // apply only to a `blacklisted` entry (the lie is for good) and to `add`
     // on one (MESH_INTERFACE → The client's node list).
-    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0);
+    const list = new NodeList([{ notisId: idA, addrs: [a1] }], own, () => 0, () => 0);
     const unknown = idB; // valid 64-hex, not held
     const calls: Array<[string, () => void]> = [
       ['success', () => list.success(unknown)],
@@ -395,5 +399,87 @@ describe('node-list', () => {
       expect((thrown as Error).message).toContain(name);
       expect((thrown as Error).message).toContain(unknown);
     }
+  });
+
+  // MESH_INTERFACE → The client's node list → "Retry" — the wait after
+  // the n-th failure in a row is drawn uniformly between half and the
+  // whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n − 1))`; the draw
+  // spreads the clients that failed at one instant. The random source
+  // is a required argument on the list's constructor.
+
+  it('a random source at 0 answers half the schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at most 2·RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS * 2);
+    // Drive the failure count past the cap — the schedule saturates
+    // to RETRY_CAP_MS, half of which is RETRY_CAP_MS / 2.
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: half of RETRY_CAP_MS').toBe(RETRY_CAP_MS / 2);
+  });
+
+  it('a random source near 1 answers just under the whole schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS / 2);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS);
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    const wCap = list.entry(idA)!.retryAtMs - t;
+    expect(wCap, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
+    expect(wCap, 'past the cap: strictly less than the cap').toBeLessThan(RETRY_CAP_MS);
+  });
+
+  it('a random source at 0.5 answers three quarters of the schedule at n = 1, n = 2, and past the cap', () => {
+    let t = 0;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0.5);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 1: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS / 2);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'n = 2: at least half').toBeGreaterThanOrEqual(RETRY_BASE_MS);
+    for (let i = 0; i < 20; i++) list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: at least half the cap').toBeGreaterThanOrEqual(RETRY_CAP_MS / 2);
+    expect(list.entry(idA)!.retryAtMs - t, 'past the cap: three quarters of RETRY_CAP_MS').toBe((RETRY_CAP_MS * 3) / 4);
+  });
+
+  it('the clamp caps the exposed wait at RETRY_CAP_MS from the current clock when the clock steps back below the failure, with a drawn wait', () => {
+    // The clamp (`clampedRetryAt`) reads `min(stored, now + RETRY_CAP_MS)`
+    // when the clock has stepped back below the failure — a draw does
+    // not change that. A big step-back lands below the clamp and the
+    // exposed wait is `RETRY_CAP_MS` from `now`; a tiny step-back
+    // leaves `stored` under the clamp and the exposed wait is the
+    // drawn wait plus the step-back.
+    let t = 1_000_000;
+    const list = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    list.failure(idA, 'timeout');
+    expect(list.entry(idA)!.retryAtMs - t, 'at failure: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    t = 1_000_000 - 3_600_000; // step back 1 h; `now + RETRY_CAP_MS` sits well below `stored`
+    const wBig = list.entry(idA)!.retryAtMs - t;
+    expect(wBig, 'big step back: non-negative').toBeGreaterThanOrEqual(0);
+    expect(wBig, 'big step back: the clamp caps at RETRY_CAP_MS from now').toBe(RETRY_CAP_MS);
+    t = 1_000_000 - 10; // tiny step back; `stored` sits under the clamp
+    const wSmall = list.entry(idA)!.retryAtMs - t;
+    expect(wSmall, 'tiny step back: at most RETRY_CAP_MS').toBeLessThanOrEqual(RETRY_CAP_MS);
+    expect(wSmall, 'tiny step back: the drawn wait reaches the exposed view').toBe(RETRY_BASE_MS / 2 + 10);
+  });
+
+  it('two lists failed at one clock reading, each with its own random source, expose different retry times — the draw is per failure', () => {
+    // The draw lands on the moment of the failure through the list's
+    // random source, so two lists with different sources, failed at
+    // one clock reading, hold two different stored waits.
+    const t = 0;
+    const listLo = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 0);
+    const listHi = new NodeList([{ notisId: idA, addrs: [] }], own, () => t, () => 1 - 1e-12);
+    listLo.failure(idA, 'timeout');
+    listHi.failure(idA, 'timeout');
+    const wLo = listLo.entry(idA)!.retryAtMs - t;
+    const wHi = listHi.entry(idA)!.retryAtMs - t;
+    expect(wLo, 'low source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    expect(wHi, 'high source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
+    expect(wHi, 'the draw is per failure: the two lists differ').not.toBe(wLo);
   });
 });

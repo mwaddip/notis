@@ -905,7 +905,7 @@ class MeshClientImpl implements MeshClient {
     this.agentName = o.agentName;
     this.log = o.log;
     this.httpFetchFn = httpFetch;
-    this.nodeList = new NodeList(o.firstContact, ownId, clock);
+    this.nodeList = new NodeList(o.firstContact, ownId, clock, random);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
     // MESH_INTERFACE → Discovery → "Known nodes" — a seed is a candidate
     // like any node the DHT finds. Added before the first check, so a seed

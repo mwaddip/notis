@@ -263,6 +263,7 @@ describe('memory — nodesToRemember', () => {
       ],
       own,
       () => t,
+      () => 0,
     );
     t = 200; list.success(idA);
     t = 300; list.success(idB);
