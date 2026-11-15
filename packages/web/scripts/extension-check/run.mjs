@@ -11301,7 +11301,14 @@ async function main() {
   await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
   await cx10.waitFor(`!!window.__btn('lock')`, 'lock button in profile 12d');
   await cx10.eval(`window.__btn('lock').click()`, true);
-  await sleep(1000);
+  // The lock clears `chrome.storage.session['notis.seed']`
+  // (WEB_INTERFACE → The identity module); the next read is the step's own
+  // `lockedSession12d` assertion, so the wait ends on that storage read
+  // returning empty.
+  await cx10.waitFor(
+    `(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] === undefined)()`,
+    'notis.seed cleared after the lock press', 15000,
+  ).catch(() => {});
   const lockedSession12d = await cx10.eval(`(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] ?? null)()`);
   await cx10.eval(`document.querySelector('[aria-label="open wallet"]').click()`, true);
   const events12dStart = cx10.events.length;
@@ -11335,7 +11342,10 @@ async function main() {
     pw.value = ${JSON.stringify(PASSPHRASE)};
     form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   })()`, true);
-  await sleep(3000);
+  // The unlock lets the send through, and the ask policy opens the prompt
+  // (WEB_INTERFACE → The wallet window → "The `send` row"); the step's
+  // next read is the prompt target, so `findExt` polling `/json/list` ends
+  // the wait on its arrival.
   const prompt12dFirst = await findExt('prompt.html');
   if (prompt12dFirst) {
     const cxp = await openSession(prompt12dFirst.webSocketDebuggerUrl);
