@@ -2038,6 +2038,25 @@ function proofRequestsSince(events, startIdx) {
   return out;
 }
 
+// The mesh client's check reads since `startIdx` — phase 2's
+// `/blocks/current` per candidate, phase 3a's `/blocks/<height>` fills, and
+// phase 4's `/nipopow/proof/` proofs (MESH_INTERFACE → The client's node
+// list → "A check"). The count covers both arms of a run: a check that
+// places every tip reads `/blocks/current` per candidate alone and reads no
+// proof; one that cannot fills or reads a proof besides.
+function tipCheckReadsSince(events, startIdx) {
+  let n = 0;
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const url = ev.params?.request?.url ?? '';
+    if (url.includes('/blocks/current')) n += 1;
+    else if (url.includes('/nipopow/proof/')) n += 1;
+    else if (/\/blocks\/\d+(?:$|\?)/.test(url)) n += 1;
+  }
+  return n;
+}
+
 // Wait for the corner to reach a rendered shape the caller can name — one of
 // `verified`, `thin`, `refused`, `checking` — with an optional predicate on
 // the reading. The App renders the corner in place after each run, so a poll
@@ -2057,23 +2076,27 @@ async function waitForCornerState(cx, predicate, description, ms = 45000) {
   });
 }
 
-// Wait for the App's next verifier run to complete, since its own press. The
-// App keeps the previous verdict rendered *through* the next run (a stale
-// verdict is not cleared by a trigger, only by `onReadingNodeChanged`), so a
-// press-before-read on a state the previous run already produced returns at
-// once — before the new run's fetches have registered. The observable signal
-// of a run happening is the request pair itself (Network.requestWillBeSent
-// with `/nipopow/proof/`), and the observable signal of it *finishing* is a
-// short quiet window with no new such request. Returns the collected requests.
-async function waitForVerifierRun(cx, sinceIdx, atLeast, ms = 30000, quietMs = 1500) {
-  return recordWait(`waitForVerifierRun(atLeast=${atLeast})`, ms, async () => {
+// Wait for the App's next verifier run to complete, since its own press
+// (WEB_INTERFACE → The extension → "The verified tip"). The App keeps the
+// previous verdict rendered *through* the next run (a stale verdict is not
+// cleared by a trigger, only by `onReadingNodeChanged`), so the run is
+// observed from outside by its own reads: the mesh client reads each
+// candidate's `/blocks/current` in phase 2, fills headers in phase 3a and
+// reads `/nipopow/proof/` in phase 4 (MESH_INTERFACE → The client's node
+// list → "A check"). The wait ends on the first quiet window past the last
+// such read — a check that places every tip reads `/blocks/current` per
+// candidate alone and settles the window there, a check that cannot fills
+// or reads a proof besides and settles after. Returns the proofs the run
+// asked for, which may be empty.
+async function waitForVerifierRun(cx, sinceIdx, ms = 30000, quietMs = 1500) {
+  return recordWait(`waitForVerifierRun`, ms, async () => {
     const t0 = Date.now();
     let last = 0;
     let lastAt = t0;
     while (Date.now() - t0 < ms) {
-      const now = proofRequestsSince(cx.events, sinceIdx).length;
+      const now = tipCheckReadsSince(cx.events, sinceIdx);
       if (now !== last) { last = now; lastAt = Date.now(); }
-      if (now >= atLeast && Date.now() - lastAt >= quietMs) return proofRequestsSince(cx.events, sinceIdx);
+      if (now > 0 && Date.now() - lastAt >= quietMs) return proofRequestsSince(cx.events, sinceIdx);
       await sleep(100);
     }
     return proofRequestsSince(cx.events, sinceIdx);
@@ -2130,7 +2153,7 @@ async function pressAndReadVerdict(cx, opts = {}) {
   const startIdx = cx.events.length;
   await pressCorner(cx);
   const proofs = await waitForVerifierRun(
-    cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+    cx, startIdx, opts.ms ?? 30000, opts.quietMs ?? 1500);
   await sleep(200);
   return { proofs, reading: await readCorner(cx) };
 }
@@ -2407,7 +2430,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       return false;
     });
 
-    const stopped = await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 });
+    const stopped = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     // Wait for the corner to settle on the one-node title even if the poll
     // above races the verdict render.
     const reachedStopped = await waitForCornerState(cx,
@@ -2433,7 +2456,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     const bBackUp = await waitForHttpUp(B_ORIGIN, 30000);
     const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000) : null;
 
-    const back = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const back = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     const backOk = back.reading.ledClass === 'led fresh'
       && back.reading.tipClass === 'tip mono'
       && /^verified across \d+ nodes · tip \d+$/.test(back.reading.title ?? '');
@@ -2803,7 +2826,7 @@ async function pressCornerRepeatedly(cx, presses, opts = {}) {
     const startIdx = cx.events.length;
     await pressCorner(cx);
     const proofs = await waitForVerifierRun(
-      cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+      cx, startIdx, opts.ms ?? 30000, opts.quietMs ?? 1500);
     await sleep(200);
     const r = await readCorner(cx);
     readings.push({
@@ -2885,7 +2908,7 @@ async function waitForFiguresRun(cx, sinceIdx, ms = 30000, quietMs = 2000, origi
 async function pressCornerAndReadFigures(cx, opts = {}) {
   const startIdx = cx.events.length;
   await pressCorner(cx);
-  await waitForVerifierRun(cx, startIdx, opts.tipAtLeast ?? 2, opts.tipMs ?? 30000, opts.tipQuietMs ?? 1500);
+  await waitForVerifierRun(cx, startIdx, opts.tipMs ?? 30000, opts.tipQuietMs ?? 1500);
   const figProofs = await waitForFiguresRun(cx, startIdx, opts.figMs ?? 30000, opts.figQuietMs ?? 2000);
   await sleep(300);
   return { figProofs };
@@ -4432,7 +4455,7 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
       });
       await cx.waitFor(`!matchMedia('(max-width: 955px)').matches && !!document.querySelector('[aria-label="open profile"].hdr-word') && !!document.querySelector('.corner')`,
         'the header at a tiling width', 30000);
-      verifiedReading = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+      verifiedReading = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     } catch (e) {
       preError = String(e);
     }
@@ -8168,7 +8191,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     // re-runs on load, so the corner is reset here too.
     await cx.call('Page.reload');
     await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
-    const verifiedPre = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 }).catch(() => null);
+    const verifiedPre = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 }).catch(() => null);
     const verifiedOk = verifiedPre !== null && verifiedPre.reading.ledClass === 'led fresh'
       && /^verified across \d+ nodes · tip \d+$/.test(verifiedPre.reading.title ?? '');
     if (!verifiedOk) {
@@ -8952,7 +8975,7 @@ async function lightSteps(cx, targetId = 'unknown') {
           RB.mode = 'upstream-D';
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 feed after reload with upstream=D', 60000);
-          await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
+          await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 }).catch(() => {});
           // Poll the browser's database list — D's database present and
           // A's absent — until the delete lands; bounded to 15 s. No
           // call opens aDbName here: `indexedDB.open` of a database
