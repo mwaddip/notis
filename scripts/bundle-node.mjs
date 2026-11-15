@@ -393,21 +393,29 @@ writeFileSync(path.join(args.out, 'package.json'), JSON.stringify({
 
 copyFileSync(path.join(REPO, 'LICENSE'), path.join(args.out, 'LICENSE'));
 
-const licensed = new Map(); // key: name@version -> { name, version, text }
+const licensed = new Map(); // key: name@version -> { name, version, files: [{ name, text }] }
+const repoRootPkgName = readJson(path.join(REPO, 'package.json')).name;
 for (const e of ENTRIES) {
   for (const inputPath of Object.keys(metafiles[e.name].inputs)) {
-    if (inputPath.startsWith('(disabled):')) continue;
+    // A metafile input is a real file on disk when its key is a plain path; a
+    // plugin-provided module is namespaced as `<namespace>:<name>` and walks up
+    // to no package of its own. Skip anything that is not a file input.
+    if (inputPath.includes(':')) continue;
     const abs = path.resolve(REPO, inputPath);
     const pkg = nearestPackageJson(abs);
     if (!pkg) continue;
     const info = readJson(pkg);
     if (!info.name) continue;
-    if (info.name.startsWith('@dagsocial/')) continue; // the repository's own, covered by LICENSE.
+    // The repository's own packages — the `@dagsocial/*` members and the root
+    // `dagsocial` package — are covered by LICENSE. Listing them here would
+    // double-count (nothing in the tree is third-party about them).
+    if (info.name.startsWith('@dagsocial/')) continue;
+    if (info.name === repoRootPkgName) continue;
     const key = `${info.name}@${info.version ?? '0.0.0'}`;
     if (licensed.has(key)) continue;
     const dir = path.dirname(pkg);
-    const text = readLicenceText(dir, info);
-    licensed.set(key, { name: info.name, version: info.version ?? '0.0.0', text });
+    const files = readLicenceFiles(dir, info);
+    licensed.set(key, { name: info.name, version: info.version ?? '0.0.0', files });
   }
 }
 
@@ -426,21 +434,46 @@ function readJson(p) {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-function readLicenceText(dir, info) {
-  for (const name of readdirSync(dir)) {
-    if (/^(LICEN[CS]E|COPYING|NOTICE)([._-].*)?$/i.test(name)) {
-      const p = path.join(dir, name);
-      if (statSync(p).isFile()) return readFileSync(p, 'utf8');
-    }
+// Every root file whose name starts with LICEN[CS]E, COPYING or NOTICE (any
+// case) — the full set, so a package shipping LICENSE and NOTICE keeps both,
+// and a dual-licenced one shipping LICENSE-MIT and LICENSE-APACHE keeps both.
+// Sorted by code units so two readers of one directory read the same order.
+function readLicenceFiles(dir, info) {
+  const names = readdirSync(dir)
+    .filter((n) => /^(LICEN[CS]E|COPYING|NOTICE)([._-].*)?$/i.test(n))
+    .filter((n) => statSync(path.join(dir, n)).isFile())
+    .sort();
+  if (names.length === 0) {
+    const license = typeof info.license === 'string'
+      ? info.license
+      : JSON.stringify(info.license ?? 'UNKNOWN');
+    return [{ name: 'package.json', text: `License: ${license}\n` }];
   }
-  return `License: ${typeof info.license === 'string' ? info.license : JSON.stringify(info.license ?? 'UNKNOWN')}\n`;
+  return names.map((n) => ({ name: n, text: readFileSync(path.join(dir, n), 'utf8') }));
 }
 
 {
-  const sorted = Array.from(licensed.values()).sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
-  const parts = [`THIRD-PARTY-LICENSES\n\nThis tree bundles the packages below. Each section carries the package's own licence text, or the licence its package.json names where it ships none.\n\n${sorted.length} packages.\n`];
+  // Code units, never `localeCompare` — the builder's locale would otherwise
+  // sort two hosts' output differently (NODE_INTERFACE → "The packages carry
+  // the node as one bundle, beside the native modules it loads.").
+  const sorted = Array.from(licensed.values()).sort((a, b) => {
+    if (a.name < b.name) return -1;
+    if (a.name > b.name) return 1;
+    if (a.version < b.version) return -1;
+    if (a.version > b.version) return 1;
+    return 0;
+  });
+  const bar = '='.repeat(78);
+  const parts = [
+    'THIRD-PARTY-LICENSES\n\n',
+    "This tree bundles the packages below. Each section carries the package's own licence files, or the licence its package.json names where it ships none.\n\n",
+    `${sorted.length} packages.\n`,
+  ];
   for (const row of sorted) {
-    parts.push(`\n${'='.repeat(78)}\n${row.name}@${row.version}\n${'='.repeat(78)}\n\n${row.text.endsWith('\n') ? row.text : row.text + '\n'}`);
+    parts.push(`\n${bar}\n${row.name}@${row.version}\n${bar}\n`);
+    for (const f of row.files) {
+      parts.push(`\n--- ${f.name} ---\n\n${f.text.endsWith('\n') ? f.text : f.text + '\n'}`);
+    }
   }
   writeFileSync(path.join(args.out, 'THIRD-PARTY-LICENSES'), parts.join(''));
 }
