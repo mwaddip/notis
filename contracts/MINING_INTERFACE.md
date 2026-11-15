@@ -837,12 +837,16 @@ file does not read or parse as either form, is the web client's encrypted envelo
 passphrase — or holds a secret that does not derive the public key it names; and where a `MINER_PUBKEY` set beside
 it names another key.
 
+> ⚠ **AHEAD OF CODE (2026-11-16).** The packages carry `packages/node/dist/miner-consolidate.js` unbundled, beside
+> `packages/node/scripts/miner.mjs`, with the workspace packages it imports.
+
 **With a key file the script loads node's build; without one it loads nothing more.** It imports the consolidation
 `@dagsocial/node` builds beside its entry — `src/miner-consolidate.ts`, built to `dist/miner-consolidate.js`, over
 `@dagsocial/types` (the transaction, its id, its JSON) and `@dagsocial/node-reads` (the `/status` and listing reads)
-— from the install it runs in: the `.deb`'s `/opt/dagsocial`, the tarball's and the Windows installer's `app`, a
-built checkout. Where that file does not load, as beside a bare copy of the script or in a checkout not built, the
-script refuses to start, naming the file. Without `MINER_KEY_PATH` it imports `node:crypto` alone.
+— as `../dist/miner-consolidate.js` from the script's own directory: `packages/node/dist/` in a built checkout, and
+in the `.deb`, the tarball and the Windows installer the tree's `dist/`, where it is bundled with everything it
+imports (`NODE_INTERFACE → The packaged node`). Where that file does not load, as beside a bare copy of the script or
+in a checkout not built, the script refuses to start, naming the file. Without `MINER_KEY_PATH` it imports `node:crypto` alone.
 
 **A check runs once an interval, never inside a work window.** The first runs at the script's first template; each
 next one at the first template height an interval above the last check that read the interval — the interval as it

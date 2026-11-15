@@ -5819,7 +5819,7 @@ local WebRTC-direct addresses its operator hands over (`MESH_INTERFACE → Disco
 
 ---
 
-## The packaged node — its user, its file modes and its runtime
+## The packaged node — its user, its file modes, its tree and its runtime
 
 **The packaged services run as root, unsandboxed, by choice.** `dagsocial-node.service` and
 `dagsocial-faucet.service` carry no `User=`, `Group=` or sandbox directive, and the `.deb`'s postinst owns
@@ -5831,25 +5831,52 @@ the build's default mode; it ships no `faucet.key`, and its postinst names 0600 
 It ships no node key either: the node writes its own on first start, the one file it writes with a mode of its own
 (`NET_INTERFACE → The node key`).
 The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, runs the `.deb`'s
-`/opt/dagsocial/packages/node/scripts/miner.mjs` and carries `NODE_URL`, `MINING_SECRET` and `MINER_KEY_PATH` as
+`/opt/dagsocial/scripts/miner.mjs` and carries `NODE_URL`, `MINING_SECRET` and `MINER_KEY_PATH` as
 `Environment=` lines for the operator to fill, each a placeholder — the unit names no one's key.
 `gen-miner-key.mjs` writes the miner key with the process's default mode; the tarball's `run-miner.sh` and the
 Windows installer's `launch-miner.cmd` pass the file it writes as `MINER_KEY_PATH`, so their miners consolidate
 (`MINING_INTERFACE → Consolidation`).
 
-**The packages carry the node and its tools, never the client, the mesh suite or the mesh stage.**
-`scripts/package-excludes.txt`, the one exclude list the `.deb`, the tarball and the Windows installer share, leaves
-out `packages/web` — the web client ships as its own zip (→ The node serves no client) — `tools/e2e`, the test suite,
-and `tools/mesh-poc`, the mesh's stage and page (`MESH_INTERFACE → Place in the workspace`). On Windows it is also
-what keeps the installer buildable: Inno Setup follows pnpm's hoisted workspace links, and each link a chain crosses
-lengthens the path. With `tools/mesh-poc` staged, its chain through `@dagsocial/web` and `@dagsocial/nipopow-client`
-reaches 275 characters and 133 paths pass 260; without it the deepest is 242, inside `@libp2p/webrtc` (measured
-2026-11-06 on a production install of the staged tree, links followed, under the runner's
-`D:\a\_temp\notis-stage\app\` prefix) against Windows' 260.
+> ⚠ **AHEAD OF CODE (2026-11-16).** `scripts/bundle-node.mjs` does not exist. The three packages copy the working
+> tree less `scripts/package-excludes.txt` and install its production dependencies into it — every member's `src` and
+> tests, the contracts, source maps and every platform's native binaries ride; no build starts the node it built; the
+> tarball carries Node's binary; and the miner unit runs `/opt/dagsocial/packages/node/scripts/miner.mjs`.
 
-**The bundled Node runtime is the one nodejs.org serves.** `scripts/build-tarball.sh` and
-`scripts/windows/build-bundle.ps1` download the build host's Node version from `https://nodejs.org/dist/` over
-HTTPS and check no checksum: the official source is trusted as served.
+**The packages carry the node as one bundle, beside the native modules it loads.** `scripts/bundle-node.mjs` builds
+the one tree the `.deb`, the tarball and the Windows installer carry, from the workspace's built `dist/` directories
+and its installed dependencies — the patched ones (`patches/`) as patched:
+
+- `dist/node.js` — the node: its entry and every module it imports, as one ES module.
+- `dist/miner-consolidate.js` — the consolidation `scripts/miner.mjs` loads with a key file, bundled the same way
+  (`MINING_INTERFACE → Consolidation`).
+- `dist/faucet.js` — the faucet, bundled the same way; in the `.deb` alone, the one package with a faucet unit.
+- `scripts/miner.mjs` and `scripts/gen-miner-key.mjs`, as written; they import Node built-ins alone.
+- `node_modules/` — the three native modules the bundles load and do not carry, `better-sqlite3`, `node-datachannel`
+  and `cbor-extract`, each with the packages it loads, at the lockfile's versions and with the build platform's binary
+  alone.
+- `package.json`, which names the tree's `.js` files ES modules; the repository's `LICENSE`; and
+  `THIRD-PARTY-LICENSES`.
+
+Nothing else rides: no member's `src` or tests, no contract, no source map or declaration file, no other platform's
+binary. The web client ships as its own zip (→ The node serves no client); the mesh suite, the mesh stage and the
+light client's command line run from a checkout.
+
+**A bundle imports nothing the tree does not carry.** The build refuses a bundle that imports any module but a Node
+built-in and the three native modules, and a tree that lacks a package one of the three loads.
+
+**The tree carries the licence of everything it carries.** `THIRD-PARTY-LICENSES` holds, for each package a bundle
+includes, its name, its version and its licence text — or, where it ships no licence file, the licence its
+`package.json` names; a native module keeps its own licence file in its directory.
+
+**A package build runs the node it built.** Each build starts the tree's `dist/node.js` once, on devnet with a fresh
+store and no seeds — under the build host's Node, the Windows build under the `node.exe` it carries — and fails
+unless the node answers `GET /blocks/current`.
+
+**The `.deb` and the tarball run the system's Node; the Windows installer carries its own.** The `.deb` depends on
+`nodejs (>= 24)`; the tarball's `run.sh` and `run-miner.sh` run the `node` on the `PATH`, and stop with one line
+naming its version where it is older than 24. The Windows installer carries `node.exe`:
+`scripts/windows/build-bundle.ps1` downloads the build host's Node version from `https://nodejs.org/dist/` over HTTPS
+and checks no checksum — the official source is trusted as served.
 
 ---
 
