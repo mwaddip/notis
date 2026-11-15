@@ -12150,6 +12150,25 @@ const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 // into step 12; the summary line reads what WEB_INTERFACE → The extension asks.
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
 console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
+// The waits block — per-step wall, time in condition-ended waits, time in
+// fixed sleeps, and one line per wait that ended at its cap, with its label
+// and elapsed. Then one line per run: wall, cap-ended, fixed-sleep totals.
+// Every line opens with a fixed `[waits]` prefix no existing line uses.
+const fmtSecs = (ms) => (ms / 1000).toFixed(1);
+let totalWall = 0;
+let totalCap = 0;
+let totalSleep = 0;
+console.log('\n[waits] === per-step waits ===');
+for (const f of findings) {
+  totalWall += f.wallMs ?? 0;
+  totalCap += f.capMs ?? 0;
+  totalSleep += f.sleepMs ?? 0;
+  console.log(`[waits] step ${f.step}: wall ${fmtSecs(f.wallMs)}s · condition ${fmtSecs(f.conditionMs)}s · sleeps ${fmtSecs(f.sleepMs)}s · cap ${fmtSecs(f.capMs)}s (${(f.capWaits ?? []).length} wait${(f.capWaits ?? []).length === 1 ? '' : 's'})`);
+  for (const cw of f.capWaits ?? []) {
+    console.log(`[waits]   ended at cap: ${cw.label} — cap ${fmtSecs(cw.cap)}s, elapsed ${fmtSecs(cw.elapsed)}s`);
+  }
+}
+console.log(`[waits] === run totals === wall ${fmtSecs(totalWall)}s · cap-ended ${fmtSecs(totalCap)}s · fixed sleeps ${fmtSecs(totalSleep)}s`);
 console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
 // A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
 // is a run that recorded step failures, which is exit code 1 only when the
