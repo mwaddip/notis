@@ -10519,17 +10519,16 @@ async function runVerifiedBlocksAlone() {
 }
 
 async function main() {
-  // Open the extension's page.
-  const p1 = await findExt('index.html');
-  if (p1) {} else {
-    // Open one via Target.createTarget through the browser websocket.
-    const bv = await browserVersion();
-    const br = new WebSocket(bv.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
-    br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
-    await sleep(2000);
-    br.close();
-  }
+  // Chrome launched with `--load-extension` does not open the extension's
+  // `index.html` on its own; a `Target.createTarget` opens it, and the
+  // page appears in `/json/list` once Chrome finishes attaching the new
+  // target.
+  const bv = await browserVersion();
+  const br = new WebSocket(bv.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
+  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
+  await sleep(2000);
+  br.close();
   const page = await findExt('index.html');
   if (!page) throw new Error('no extension page');
   // Give the page a moment to finish parsing before we attach — main.ts's
