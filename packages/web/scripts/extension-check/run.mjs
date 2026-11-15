@@ -4019,8 +4019,8 @@ async function runLieArm(bcx, relays, arm) {
     // first figures run fires from the App's `startFigures` once the tip
     // check verifies (WEB_INTERFACE → The extension → "The verified
     // figures"), which under memory for the seated chain can race the
-    // window raises and land before them. The idx is below the raises
-    // so `waitForFiguresRun` reads the whole span.
+    // window raises and land before them. The index is below the raises
+    // so the count at the end reads the whole span.
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
     const changeIdx = fcx.events.length;
@@ -12374,7 +12374,7 @@ console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIP
 // The waits block — per-step wall, time in condition-ended waits, time in
 // fixed sleeps, and one line per wait that ended at its cap, with its label
 // and elapsed. Then one line per run: wall, cap-ended, fixed-sleep totals.
-// Every line opens with a fixed `[waits]` prefix no existing line uses.
+// Every line opens with a fixed `[waits]` prefix no other output line uses.
 const fmtSecs = (ms) => (ms / 1000).toFixed(1);
 let totalWall = 0;
 let totalCap = 0;
