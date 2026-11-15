@@ -15,6 +15,18 @@ import * as esbuild from 'esbuild';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
+// The repository's real path — every metafile input, every package directory
+// the script copies, and every node_modules an undeclared import could walk
+// up to lies under it. A path outside is a dependency the tree does not carry
+// but that silently rode in from `/home/mwaddip/node_modules` or elsewhere
+// (NODE_INTERFACE → "A bundle imports nothing the tree does not carry.").
+const REPO_REAL = realpathSync(REPO);
+
+function underRepo(p) {
+  const real = realpathSync(p);
+  const rel = path.relative(REPO_REAL, real);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
 
 // ---------------------------------------------------------------------------
 // Arguments
@@ -193,6 +205,15 @@ for (const e of ENTRIES) {
     if (isAllowedNativeImport(spec)) continue;
     die(`${e.name} imports ${spec}, which is neither a Node built-in nor one of ${NATIVES.join(', ')}`);
   }
+  // Every file input lies under the repository's real path. A dependency the
+  // tree does not declare but that resolved above the repo is caught here
+  // rather than by the build happening to run under /tmp.
+  for (const inputPath of Object.keys(metafiles[e.name].inputs)) {
+    if (inputPath.includes(':')) continue;
+    const abs = path.resolve(REPO, inputPath);
+    if (!existsSync(abs)) die(`${e.name} input ${inputPath} does not exist`);
+    if (!underRepo(abs)) die(`${e.name} input ${inputPath} resolves outside the repository`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +266,11 @@ function copyPackageTree(srcPkgDir, dstPkgDir, opts = {}) {
 }
 
 function pkgRootOf(resolvedPkgJsonPath) {
-  return path.dirname(realpathSync(resolvedPkgJsonPath));
+  const root = path.dirname(realpathSync(resolvedPkgJsonPath));
+  if (!underRepo(root)) {
+    die(`${resolvedPkgJsonPath} resolves to ${root}, outside the repository`);
+  }
+  return root;
 }
 
 // Resolve a dependency's package.json through either pkgJsonOf form — a dependency whose `exports` leaves package.json out is resolved by walking up from its entry.
