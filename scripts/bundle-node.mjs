@@ -534,63 +534,113 @@ function readLicenceFiles(dir, info) {
 }
 
 // ---------------------------------------------------------------------------
-// NODE_INTERFACE → "A package build runs the node it built." — starts <out>/dist/node.js on devnet, waits for GET /blocks/current to answer with a height.
+// NODE_INTERFACE → "A package build runs the node it built." — starts
+// <out>/dist/node.js on devnet with PORT=0 and ADMIN_PORT=0, reads the bound
+// API port off the node's `api_listening` journal line, and waits for
+// GET /blocks/current to answer with a height.
 // ---------------------------------------------------------------------------
+
+// Every variable packages/node/src/config.ts reads whose presence in the
+// inherited environment would change a plain devnet start. The check empties
+// each one on the child's env, then sets the few the check itself names.
+const CONFIG_ENV_VARS = [
+  'NETWORK_TYPE', 'DB_PATH', 'PORT', 'ADMIN_PORT', 'ADMIN_BIND_ADDRESS',
+  'NODE_KEY_PATH', 'NODE_ROLE', 'WEB_SHELL_PATH',
+  'BLOCK_BODY_BUDGET_BYTES', 'MAX_MEMPOOL_ENTRIES', 'MIN_FEE_RATE_PER_BYTE',
+  'MINING_SECRET',
+  'MAX_PROOF_HISTORY', 'PROOF_RETENTION_BLOCKS', 'PROOF_RETENTION_BYTES',
+  'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
+  'BOOTSTRAP_PEERS', 'LISTEN_ADDRS',
+  'MAX_PEERS', 'MAX_READERS', 'MIN_PEERS', 'PEER_DB_CAP',
+  'OUTBOUND_REDIAL_COOLDOWN_MS', 'PENALTY_SCORE_THRESHOLD',
+  'TEMPORAL_BAN_DURATION_MS', 'PENALTY_DECAY_INTERVAL_MS',
+  'SYNC_REQUEST_TIMEOUT_MS',
+  'MESH_ROLE', 'MESH_LISTEN', 'MESH_ANNOUNCE', 'MESH_STUN',
+  'MESH_STUN_SERVERS', 'MESH_WSS', 'MESH_ACME_DIRECTORY',
+  'MESH_ACME_CHALLENGE_PORT',
+];
 
 await startNodeAndWait(args.out, args.nodeExe);
 console.log(`bundle-node: ${args.out}`);
 
 async function startNodeAndWait(outDir, nodeExe) {
   const stateDir = mkdtempSync(path.join(tmpdir(), 'dagsocial-bundle-check-'));
-  // Any ports but 3000 and 3001 (the user's own node may be on 3000). A fresh ephemeral range picks one above 20000, both >= three apart so admin does not collide.
-  const port = pickEphemeralPort();
-  const adminPort = port + 1;
-  const env = {
-    ...process.env,
+  const env = { ...process.env };
+  for (const name of CONFIG_ENV_VARS) delete env[name];
+  Object.assign(env, {
     NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'server',
     DB_PATH: path.join(stateDir, 'node.db'),
     NODE_KEY_PATH: path.join(stateDir, 'node.key'),
     ADMIN_BIND_ADDRESS: '127.0.0.1',
     LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: '',
-    PORT: String(port),
-    ADMIN_PORT: String(adminPort),
-  };
+    PORT: '0',
+    ADMIN_PORT: '0',
+  });
   const logChunks = [];
-  const child = spawn(nodeExe, [path.join(outDir, 'dist/node.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  child.stdout.on('data', (b) => logChunks.push(b));
-  child.stderr.on('data', (b) => logChunks.push(b));
+  const child = spawn(nodeExe, [path.join(outDir, 'dist/node.js')], {
+    env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  // The exit promise is taken at spawn: a child that exits before the
+  // timeout's `once('exit')` is attached would otherwise hang the cleanup.
+  const exited = new Promise((r) => child.once('exit', r));
+  let logBuffered = '';
+  child.stdout.on('data', (b) => {
+    logChunks.push(b);
+    logBuffered += b.toString('utf8');
+  });
+  child.stderr.on('data', (b) => { logChunks.push(b); });
   const deadline = Date.now() + 60_000;
   let ok = false;
+  let boundPort = null;
   try {
     while (Date.now() < deadline) {
-      await sleep(500);
       if (child.exitCode !== null) break;
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/blocks/current`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
-          const body = await res.json();
-          if (typeof body.height === 'number') { ok = true; break; }
-        }
-      } catch {}
+      if (boundPort === null) boundPort = readBoundPort(logBuffered);
+      if (boundPort !== null) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${boundPort}/blocks/current`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          if (res.ok) {
+            const body = await res.json();
+            if (typeof body.height === 'number') { ok = true; break; }
+          }
+        } catch {}
+      }
+      await sleep(250);
     }
   } finally {
     if (child.exitCode === null) {
-      child.kill('SIGINT');
-      await new Promise((r) => child.once('exit', r));
+      child.kill('SIGTERM');
+      // SIGKILL if SIGTERM does not land within 10 s — a node that will not
+      // quit does not keep the bundler running.
+      const killer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+      await exited;
+      clearTimeout(killer);
+    } else {
+      await exited;
     }
     rmSync(stateDir, { recursive: true, force: true });
   }
   if (!ok) {
-    const out = Buffer.concat(logChunks).toString('utf8');
-    process.stderr.write(out);
+    process.stderr.write(Buffer.concat(logChunks).toString('utf8'));
     die('the built node did not answer GET /blocks/current under 60 s');
   }
 }
 
-function pickEphemeralPort() {
-  // 21000 is well above the user's 3000/3001 ceiling, well below the ephemeral range Linux assigns above 32768. Deterministic per run, PID-salted so two parallel checks do not collide.
-  return 21000 + (process.pid % 1000) * 4;
+function readBoundPort(stdoutText) {
+  // Every journal event is one JSON line on stdout; `api_listening` carries
+  // the actual bound port the node's listener read off the socket.
+  for (const line of stdoutText.split('\n')) {
+    if (!line.includes('"event":"api_listening"')) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj && typeof obj.port === 'number' && obj.port > 0) return obj.port;
+    } catch {}
+  }
+  return null;
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
