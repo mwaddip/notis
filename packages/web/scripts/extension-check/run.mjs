@@ -1157,6 +1157,54 @@ async function findExt(pathSuffix, chromePort = port) {
   });
 }
 
+// A press on a write that may open a prompt or go silent — the two
+// outcomes `WEB_INTERFACE → The extension → "The prompt policy"` names.
+// Under a silent policy the client signs and posts the request; under
+// an ask policy it opens `prompt.html`. The wait ends on whichever
+// happens first — the write's request on the wire, or a prompt target
+// appearing in `/json/list` — so an assertion of "no prompt" ends on
+// the write and reads the prompt as never opened. `pathSuffix` matches
+// the write's URL pathname. Returns `{ sent, prompt }`: `sent` true
+// where the write went out first, `prompt` the target where the ask
+// path opened first; both null-paths at the cap.
+async function waitForWriteOrPrompt(cx, sinceIdx, pathSuffix, label, cap = 20000) {
+  const matches = (url) => {
+    try { return new URL(url).pathname.endsWith(pathSuffix); }
+    catch { return false; }
+  };
+  return recordWait(`waitForWriteOrPrompt(${label})`, cap, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < cap) {
+      for (let i = sinceIdx; i < cx.events.length; i++) {
+        const ev = cx.events[i];
+        if (ev.method !== 'Network.requestWillBeSent') continue;
+        const req = ev.params?.request;
+        if (!req || (req.method !== 'POST' && req.method !== 'DELETE')) continue;
+        if (matches(req.url ?? '')) return { sent: true, prompt: null };
+      }
+      const list = await jsonList();
+      const p = list.find((t) => t.type === 'page'
+        && typeof t.url === 'string'
+        && t.url.startsWith(`chrome-extension://${EXT_ID}/`)
+        && t.url.includes('prompt.html'));
+      if (p?.webSocketDebuggerUrl) return { sent: false, prompt: p };
+      await sleep(100);
+    }
+    return { sent: false, prompt: null };
+  });
+}
+
+// The quiet interval a write that reads the lock needs to settle — the
+// client mounts the unlock form on the lock, after which no prompt opens
+// (WEB_INTERFACE → The wallet window → "The `send` row";
+// → The identity module). The number is argued from the longest a press
+// that does open a prompt takes to the `prompt.html` target appearing —
+// under 400 ms in the record (step 5's `prompt5`, step 6's `prompt6`,
+// step 7's `prompt7`, each named by its step's `condition` time in the
+// `[waits]` block) — three times over for the margin a run under load can
+// take.
+const LOCK_REFUSAL_SETTLE_MS = 1500;
+
 async function findWorker(chromePort = port) {
   const list = await jsonList(chromePort);
   return list.find((t) => (t.type === 'service_worker' || t.type === 'worker') && t.url.endsWith('/background.js'));
@@ -3371,10 +3419,11 @@ async function runFiguresStep24(cx) {
     await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled 24', 15000);
     const postIdx = cx.events.length;
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-    // A prompt refuses the silent policy; the step asserts none appears.
-    await sleep(2000);
-    const promptOpen24 = await findExt('prompt.html');
-    if (promptOpen24) {
+    // Under a silent policy the client signs and posts; the write's
+    // request on the wire settles the "no prompt" assertion since no
+    // prompt can precede it.
+    const outcome24 = await waitForWriteOrPrompt(cx, postIdx, '/posts', 'step-24 post');
+    if (outcome24.prompt) {
       record(24, false, `a prompt opened for the step 24 post — policy is not silent`);
       return;
     }
@@ -10623,11 +10672,13 @@ async function main() {
   })()`, true);
   // Wait for affordability read to complete so post enables.
   await cx2.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled');
-  // No prompt target should appear under silent policy.
+  // Under a silent policy the client signs and posts; the write's
+  // request on the wire settles the "no prompt" assertion since no
+  // prompt can precede it.
+  const submitIdx3 = cx2.events.length;
   await cx2.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-  // Wait: no prompt page opens.
-  await sleep(2000);
-  const promptOpen = await findExt('prompt.html');
+  const outcome3 = await waitForWriteOrPrompt(cx2, submitIdx3, '/posts', 'step-3 post');
+  const promptOpen = outcome3.prompt;
   const composerAfter = await cx2.eval(`!!document.querySelector('.composer')`);
   const cardVisible = await cx2.eval(`!!document.querySelector('.card.pending')`);
   const landed3 = await pollKarma(15, 45000);
@@ -10650,14 +10701,17 @@ async function main() {
     return { id: other.getAttribute('data-post-id'), author: other.getAttribute('data-author') };
   })()`);
   if (otherPost) {
+    const submitIdx4 = cx2.events.length;
     await cx2.eval(`(() => {
       const card = document.querySelector('[data-post-id="' + ${JSON.stringify(otherPost.id)} + '"]');
       const like = [...card.querySelectorAll('.word')].find(w => w.textContent.trim() === 'like');
       like.click();
     })()`, true);
-    await sleep(2000);
-    // Check the like is optimistic (green) and no prompt appears.
-    const promptOpen4 = await findExt('prompt.html');
+    // Under a silent policy the client signs and posts; the write's
+    // request on the wire settles the "no prompt" assertion since no
+    // prompt can precede it.
+    const outcome4 = await waitForWriteOrPrompt(cx2, submitIdx4, '/likes', 'step-4 like');
+    const promptOpen4 = outcome4.prompt;
     const cardLiked = await cx2.eval(`(() => {
       const card = document.querySelector('[data-post-id="' + ${JSON.stringify(otherPost.id)} + '"]');
       return card ? card.textContent.includes('liked') : false;
@@ -10698,10 +10752,10 @@ async function main() {
         value: l.querySelector('.target-value')?.textContent ?? null,
       }));
     })()`);
-    // Approve.
+    // Approve. The prompt target's destruction settles "the prompt closed"
+    // — an approved prompt tears its own page down.
     await cxp.eval(`document.querySelector('.prompt button.btn-primary').click()`, true);
-    await sleep(2000);
-    const promptGone = !(await findExt('prompt.html'));
+    const promptGone = await waitForTargetGone(prompt5.id, 20000);
     const landed5 = await pollKarma(0, 45000).catch(() => ({ ok: true }));
     await sleep(2000);
     const feedShows5 = await cx2.eval(`[...document.querySelectorAll('.card-content')].some(n => n.textContent && n.textContent.includes(${JSON.stringify(CONTENT5)}))`);
@@ -11175,11 +11229,19 @@ async function main() {
     form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   })()`, true);
   // The unlock form mounts under the credits form as `.credits-field
-  // .card-unlock`, never in a confirm.
+  // .card-unlock`, never in a confirm. The mount is the signal the
+  // client's flow took the lock path — a locked send mounts the unlock
+  // form in place and refuses to go out — so after the form mounts a
+  // quiet interval covers any late prompt opening that would trip the
+  // step.
   await cx10.waitFor(`!!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]')`, 'card-unlock 12d');
   const unlockMounted12d = await cx10.eval(`!!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]')`);
   const noConfirmLocked12d = await cx10.eval(`!document.querySelector('.credits-field .pf-confirm')`);
-  const promptSeen12d = await findExt('prompt.html');
+  await sleep(LOCK_REFUSAL_SETTLE_MS);
+  const promptSeen12d = (await jsonList()).find((t) => t.type === 'page'
+    && typeof t.url === 'string'
+    && t.url.startsWith(`chrome-extension://${EXT_ID}/`)
+    && t.url.includes('prompt.html')) ?? null;
   const transferSeen12dLocked = cx10.events.slice(events12dStart).some((e) =>
     e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').includes('/credits/transfer'));
   await cx10.eval(`(() => {
