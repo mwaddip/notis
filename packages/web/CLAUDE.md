@@ -699,7 +699,7 @@ naming which; **19b** D mined past A by 50 — the client seats D's chain, B nam
 corner's tip D's height; **20** the hosted web build — the first paragraph's title and no `/nipopow/` request in
 twenty seconds or after a press. In a full run the block runs after step 16 on a session opened on the extension page
 live at that moment (step 15 closes the first one), and `13-uncancelled`, the browser-context arm, runs after the
-verified blocks and before the mesh block. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
+verified blocks. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
 naming the two relays, each `notisId` read from its node's start line; the harness refuses otherwise.
 **With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
 the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and
