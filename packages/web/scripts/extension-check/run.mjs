@@ -9567,6 +9567,41 @@ async function setupMeshStack() {
     );
   }
   console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+
+  // Wait for A' and B' each to stand at A's tip within ± 2 before the
+  // browser launches, so every M-step's fresh page reads two synced nodes
+  // (`WEB_INTERFACE → The extension → "The verified tip"`: the verdict
+  // counts nodes whose chain the verifier could check). B' bootstraps off
+  // A' and reaches A's chain through it, taking on the order of a minute
+  // from a cold start. The cap names which node fell short.
+  console.log(`[vm] waiting for A' and B' to each stand at A's tip (± 2)`);
+  const synced = await recordWait("A'/B' at A's tip (setup)", 180000, async () => {
+    const t0 = Date.now();
+    let last = { a: null, apTip: null, bpTip: null };
+    while (Date.now() - t0 < 180000) {
+      const [a, apTip, bpTip] = await Promise.all([
+        currentTip(NODE), currentTip(AP_ORIGIN), currentTip(BP_ORIGIN),
+      ]);
+      last = { a, apTip, bpTip };
+      if (a !== null && a.height > 0 && apTip !== null && bpTip !== null
+          && Math.abs(a.height - apTip.height) <= 2
+          && Math.abs(a.height - bpTip.height) <= 2) {
+        return { ok: true, ...last };
+      }
+      await sleep(500);
+    }
+    return { ok: false, ...last };
+  });
+  if (!synced.ok) {
+    const aH = synced.a?.height ?? null;
+    const apH = synced.apTip?.height ?? null;
+    const bpH = synced.bpTip?.height ?? null;
+    const short = [];
+    if (apH === null || aH === null || Math.abs(aH - apH) > 2) short.push(`A'=${apH ?? '?'}`);
+    if (bpH === null || aH === null || Math.abs(aH - bpH) > 2) short.push(`B'=${bpH ?? '?'}`);
+    throw new Error(`mesh setup: A' and/or B' did not reach A's tip within 180 s — A=${aH ?? '?'}, ${short.join(', ')}`);
+  }
+  console.log(`[vm] synced: A=${synced.a.height}, A'=${synced.apTip.height}, B'=${synced.bpTip.height}`);
 }
 
 async function teardownMeshStack() {

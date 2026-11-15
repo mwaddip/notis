@@ -835,7 +835,11 @@ read NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NO
 nodes **A′** and **B′**, spawned from `--node-dist` with
 `MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
 loopback cannot share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep
-reaches them. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
+reaches them. **The setup waits for A′ and B′ each to stand at A's tip within ± 2 before the browser launches** — B′
+bootstraps off A′ and takes on the order of a minute to reach A's chain from a cold start, and each M-step's fresh
+page reads one node of the two the extension's seed list names; a page opened while B′ is still syncing reads one
+verified node and holds that verdict, since the verifier's next run is minutes away. The cap is 180 s and the
+refusal names which node fell short. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
 multiaddr>], api:<A′'s HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's
 start line gives it — and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium
 takes `--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product
