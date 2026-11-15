@@ -396,17 +396,47 @@ writeFileSync(path.join(args.out, 'package.json'), JSON.stringify({
   type: 'module',
 }, null, 2) + '\n');
 
+// Load each native from <out> alone, and reach its binary while doing so.
+// better-sqlite3 only loads its .node file when a database opens; the import
+// alone passes even with the prebuild removed, so open an in-memory database
+// and close it. cbor-extract's binary rides on its loader's own require, so
+// checking extractStrings is a function is enough — the JS path returns no
+// such function.
+//
+// Every require.cache key the load adds is checked against <out>'s real
+// path, so a dependency the tree lacks that some ancestor node_modules
+// supplied fails here rather than at the host's first run.
+const OUT_REAL = realpathSync(args.out);
 {
   const req = createRequire(path.join(args.out, 'package.json'));
+  const beforeKeys = new Set(Object.keys(req.cache));
   for (const name of NATIVES) {
+    let mod;
     try {
-      const mod = req(name);
-      if (!mod) die(`${name} loaded from <out> as ${typeof mod}`);
-      if (name === 'cbor-extract') {
-        if (typeof mod.extractStrings !== 'function') die('cbor-extract loaded but has no extractStrings — JS fallback, not the native binary');
-      }
+      mod = req(name);
     } catch (err) {
       die(`${name} does not load from <out>: ${err && err.message ? err.message : err}`);
+    }
+    if (!mod) die(`${name} loaded from <out> as ${typeof mod}`);
+    if (name === 'better-sqlite3') {
+      try {
+        const db = new mod(':memory:');
+        db.close();
+      } catch (err) {
+        die(`better-sqlite3 loads but cannot open a database: ${err && err.message ? err.message : err}`);
+      }
+    } else if (name === 'cbor-extract') {
+      if (typeof mod.extractStrings !== 'function') {
+        die('cbor-extract loaded but has no extractStrings — JS fallback, not the native binary');
+      }
+    }
+  }
+  for (const key of Object.keys(req.cache)) {
+    if (beforeKeys.has(key)) continue;
+    const real = realpathSync(key);
+    const rel = path.relative(OUT_REAL, real);
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+      die(`load check reached ${key} (${real}), outside <out>`);
     }
   }
 }
