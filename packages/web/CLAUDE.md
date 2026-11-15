@@ -834,8 +834,8 @@ and 2 (the seed-list check and R's import — the only earlier state the block n
 read NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NOT RUN. The harness owns two public
 nodes **A′** and **B′**, spawned from `--node-dist` with
 `MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
-loopback cannot share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep
-reaches them. **The setup waits for A′ and B′ each to stand at A's tip within ± 2 before the browser launches** — B′
+loopback cannot share `STUN_PORT`), A′ bootstrapped off A (`--node-p2p`) and B′ off A′, so they are peers on A's chain
+and R's rep reaches them. **The setup waits for A′ and B′ each to stand at A's tip within ± 2 before the browser launches** — B′
 bootstraps off A′ and takes on the order of a minute to reach A's chain from a cold start, and each M-step's fresh
 page reads one node of the two the extension's seed list names; a page opened while B′ is still syncing reads one
 verified node and holds that verdict, since the verifier's next run is minutes away. The cap is 180 s and the
