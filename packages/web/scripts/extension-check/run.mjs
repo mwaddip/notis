@@ -5226,30 +5226,70 @@ async function authorRecord(cx, stop = false) {
   })()`);
 }
 
-// The author window's states after the node change, read for WEB_INTERFACE →
-// The author window → "The line is drawn with the window's render": the first
-// handle the window drew, and — where it drew it ink — the state the clay
-// landed in and the one just before it.
-function authorLanding(snaps, rName) {
-  const drawnAt = snaps.findIndex((s) => s.state === 'handle');
+// The author window's states around the node change, read for WEB_INTERFACE →
+// The author window → "The line is drawn with the window's render". The first
+// snapshot after the change picks the arm: clay with the line is the result
+// held when the window rendered; clay with no line and the rows at the
+// offsets of the last snapshot before the change is the result landed after
+// the render in place, its line waiting for the next render; ink is the
+// window drawing the handle ink first and flipping it clay in place later
+// with no line and the rows held. Anything else fails and the detail names
+// what it saw.
+function authorLanding(snaps, rName, changeAt) {
+  const preChange = snaps.filter((s) => s.t < changeAt);
+  const postChange = snaps.filter((s) => s.t >= changeAt);
+  const drawnAt = postChange.findIndex((s) => s.state === 'handle');
   if (drawnAt === -1) return { ok: false, seen: 'no handle drawn after the change' };
-  const drawn = snaps[drawnAt];
-  if (drawn.clay) {
+  const drawn = postChange[drawnAt];
+
+  // arm 1 — clay with the line: the result held when the window rendered.
+  if (drawn.clay && drawn.line === NAME_LINE) {
     return {
-      ok: drawn.text === '@' + rName && drawn.line === NAME_LINE,
+      ok: drawn.text === '@' + rName,
       seen: 'the result held when the window rendered — clay with the line at once',
     };
   }
-  const clayAt = snaps.findIndex((s, i) => i > drawnAt && s.state === 'handle' && s.clay);
-  if (clayAt === -1) return { ok: false, seen: 'drawn ink, never clay' };
-  const before = snaps[clayAt - 1];
-  const landing = snaps[clayAt];
-  const rowsHeld = before.state === 'handle' && JSON.stringify(before.rows) === JSON.stringify(landing.rows);
+
+  // arm 2 — clay with no line, rows at the offsets of the last snapshot
+  // before the change: the result landed after the render, in place; the
+  // line waits for the next render.
+  if (drawn.clay && drawn.line === null) {
+    const lastBefore = preChange.at(-1);
+    const rowsHeld = lastBefore !== undefined
+      && lastBefore.state === 'handle'
+      && JSON.stringify(lastBefore.rows) === JSON.stringify(drawn.rows);
+    if (rowsHeld) {
+      return {
+        ok: drawn.text === '@' + rName,
+        seen: 'the result landed after the render, in place — clay with no line, the rows at the offsets of the last snapshot before the change',
+      };
+    }
+    return {
+      ok: false,
+      seen: `clay with no line, the rows ${lastBefore === undefined ? 'with no snapshot before the change to compare against' : 'moved from the last snapshot before the change'}`,
+    };
+  }
+
+  // arm 3 — ink: the window drew the handle ink first; a result landing
+  // after flips it clay in place with no line and the rows held.
+  if (!drawn.clay) {
+    const clayAt = postChange.findIndex((s, i) => i > drawnAt && s.state === 'handle' && s.clay);
+    if (clayAt === -1) return { ok: false, seen: 'drawn ink, never clay' };
+    const before = postChange[clayAt - 1];
+    const landing = postChange[clayAt];
+    const rowsHeld = before.state === 'handle' && JSON.stringify(before.rows) === JSON.stringify(landing.rows);
+    return {
+      ok: drawn.line === null && before.state === 'handle' && !before.clay && before.line === null
+        && landing.text === '@' + rName && landing.line === null && rowsHeld,
+      seen: `the result landed after the render — ${landing.t - drawn.t} ms after the window drew the handle ink it turned clay in place, ` +
+        `line ${landing.line === null ? 'none' : JSON.stringify(landing.line)}, the rows below ${rowsHeld ? 'at the offsets they rendered at' : 'moved'}`,
+    };
+  }
+
+  // Anything else — clay with a line the rule does not accept.
   return {
-    ok: drawn.line === null && before.state === 'handle' && !before.clay && before.line === null
-      && landing.text === '@' + rName && landing.line === null && rowsHeld,
-    seen: `the result landed after the render — ${landing.t - drawn.t} ms after the window drew the handle ink it turned clay in place, ` +
-      `line ${landing.line === null ? 'none' : JSON.stringify(landing.line)}, the rows below ${rowsHeld ? 'at the offsets they rendered at' : 'moved'}`,
+    ok: false,
+    seen: `the handle drawn clay with a line the rule does not accept — ${JSON.stringify(drawn.line)}`,
   };
 }
 
@@ -5319,7 +5359,7 @@ async function runNamesStep27d(bcx, relays, ctx) {
     // (3) The window's states from the press until the name checks go quiet —
     // the render, then the landing — then its ↻, which draws the line.
     if (verified) await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
-    const landing = authorLanding((await authorRecord(fcx)).filter((s) => s.t >= changeAt), rName);
+    const landing = authorLanding(await authorRecord(fcx), rName, changeAt);
     await fcx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
     const lineDrawn = await fcx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
       .then(() => true, () => false);
