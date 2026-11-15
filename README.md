@@ -244,7 +244,7 @@ preconfigured for testnet:
 
 | Artifact | What it is |
 |---|---|
-| `notis-node-<ver>-linux-x64.tar.gz` | the node with a bundled Node runtime — unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines; no system Node needed |
+| `notis-node-<ver>-linux-x64.tar.gz` | the node for a Linux host with Node ≥ 24 on the `PATH` — unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines |
 | `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 24; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
 | `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
 | `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
