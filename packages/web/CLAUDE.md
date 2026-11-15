@@ -699,7 +699,7 @@ naming which; **19b** D mined past A by 50 — the client seats D's chain, B nam
 corner's tip D's height; **20** the hosted web build — the first paragraph's title and no `/nipopow/` request in
 twenty seconds or after a press. In a full run the block runs after step 16 on a session opened on the extension page
 live at that moment (step 15 closes the first one), and `13-uncancelled`, the browser-context arm, runs after the
-verified blocks and before the mesh block. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
+verified blocks. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
 naming the two relays, each `notisId` read from its node's start line; the harness refuses otherwise.
 **With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
 the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and
@@ -804,7 +804,9 @@ later `findExt('index.html')` can return the half-closed page (its CDP session i
 a `[diag]` log line when a target never leaves; a step that threw past its own close is held by the block's outer
 `try` so the finally runs the teardown and every unrecorded W-step reads FAIL.
 **With `--light` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and `--web-dist`
-for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1–16. **Every
+for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1 and 2 (the
+seed-list check and R's import — the only earlier state the block needs); steps 3–16 and `13-uncancelled` read
+NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NOT RUN. **Every
 node entry the extension knows reaches a relay of the harness's own at its API base** (`addrs: []`): `RA` on `:19810`
 in front of node A and `RB` on `:19815` in front of a second node B, started before the browser, so the extension for
 it is built with `VITE_NODES` naming `[{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[], api:RB}]` and the
@@ -827,11 +829,17 @@ list polled until the delete lands and A's name never opened after the switch (a
 creates it), a replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no
 `light`, no `tx`, no batch, no database.
 **With `--mesh` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; it takes no verified flag
-and not `--light`) the mesh block**, M1–M5, proves the mesh path in the built extension and runs after
-`13-uncancelled`. The harness owns two public nodes **A′** and **B′**, spawned from `--node-dist` with
+and not `--light`) the mesh block**, M1–M5, proves the mesh path in the built extension and runs alone after steps 1
+and 2 (the seed-list check and R's import — the only earlier state the block needs); steps 3–16 and `13-uncancelled`
+read NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NOT RUN. The harness owns two public
+nodes **A′** and **B′**, spawned from `--node-dist` with
 `MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
-loopback cannot share `STUN_PORT`), both bootstrapped off A (`--node-p2p`) so they are peers on A's chain and R's rep
-reaches them. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
+loopback cannot share `STUN_PORT`), A′ bootstrapped off A (`--node-p2p`) and B′ off A′, so they are peers on A's chain
+and R's rep reaches them. **The setup waits for A′ and B′ each to stand at A's tip within ± 2 before the browser launches** — B′
+bootstraps off A′ and takes on the order of a minute to reach A's chain from a cold start, and each M-step's fresh
+page reads one node of the two the extension's seed list names; a page opened while B′ is still syncing reads one
+verified node and holds that verdict, since the verifier's next run is minutes away. The cap is 180 s and the
+refusal names which node fell short. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
 multiaddr>], api:<A′'s HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's
 start line gives it — and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium
 takes `--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product
@@ -892,7 +900,7 @@ response's `close` while it is not ended.
 by id through the pending record `notis.open.<id>` written from the background's context — the page has no post-id
 hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses the pane's
 `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
-⚠ **Each run of the block needs a member that has not run steps 11–12.**
+⚠ **A relays run needs a member that has not run steps 11–12.**
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: a press that reads a node a block behind the other must
 read *verified across 2 nodes*, never the alarm; at about three blocks a second the two reads see different heights,
@@ -926,6 +934,13 @@ process group, and when that shell exits the kernel's SIGCONT to the orphaned gr
 pacer's next stop; in a shell with job control on, `setsid` forks and `$!` names the exited parent. ⚠ **`promote.mjs`
 under the pacer needs retries** — its waits lose to windows that yield nothing; run it again after a pacer
 cycle.
+
+**The waits block beside the summary** names every wait each step made — each line opens `[waits]`, a prefix no
+other output carries. A per-step line gives the step's wall and the time split across waits ended by their condition,
+fixed sleeps and waits ended at their cap; each cap-ended wait then stands on its own line with its label and its
+elapsed. A wait ended at its cap in a passing step is a wait whose condition never came — the cap, not the condition,
+released the step. Each `findings` entry carries the same figures as `wallMs`, `conditionMs`, `sleepMs`, `capMs` and
+`capWaits`.
 
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
 `packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,

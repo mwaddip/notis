@@ -982,7 +982,47 @@ const findChrome = () => {
 const CHROME = findChrome();
 if (!CHROME) { console.error('no Chromium found'); process.exit(2); }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The wait recorder — every wait the harness makes reports to it: the helper
+// or inline site's label, its cap in ms, its elapsed ms, and how it ended
+// (its condition, or its cap). A `sleep(ms)` is a fixed wait that always runs
+// its full ms. Only innermost waits record: a wrapper that calls another
+// helper records nothing of its own, since only the helper's body is wrapped
+// by `recordWait`; a `sleep` inside a `recordWait` wrapper is the wait's
+// polling mechanism, already in the wait's elapsed, and the recorder drops it
+// (`_wR.waitDepth > 0`). `record(step, …)` flushes the pending entries to
+// that step and stamps the step's wall time. The [waits] block prints at the
+// end of the run beside the summary.
+const _wR = {
+  pending: [],           // waits since the last record() call
+  waitDepth: 0,          // non-zero only inside a recordWait fn()
+  steps: [],             // [{ step, status, detail, wallMs, waits: [...] }]
+  runStart: Date.now(),  // process-start clock; the first step's wall is from here
+  lastMark: null,        // Date.now() at the previous record() call
+};
+
+async function recordWait(label, capMs, fn) {
+  _wR.waitDepth++;
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    const elapsedMs = Date.now() - start;
+    _wR.waitDepth--;
+    // Elapsed >= cap → the `while (Date.now() - t0 < ms)` guard exited the
+    // loop at the cap; elapsed < cap → the condition returned, or the body
+    // threw, before the cap. Both throwing and returning helpers end at the
+    // cap when their loop runs out.
+    const endedAtCap = elapsedMs >= capMs;
+    _wR.pending.push({ kind: 'wait', label, capMs, elapsedMs, endedAtCap });
+  }
+}
+
+const sleep = async (ms) => {
+  if (_wR.waitDepth === 0) {
+    _wR.pending.push({ kind: 'sleep', label: `sleep(${ms})`, capMs: ms, elapsedMs: ms, endedAtCap: false });
+  }
+  await new Promise((r) => setTimeout(r, ms));
+};
 
 // A Chromium instance the harness owns — its own DevTools port, its own user
 // data dir, and the single extension it loads at --extension-dir
@@ -1009,14 +1049,16 @@ async function launchChromium(extensionDir) {
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
   chromeProc.stdout.on('data', () => {});
-  for (let i = 0; i < 200; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
-      if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
-    } catch {}
-    await sleep(100);
-  }
-  throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
+  return recordWait('launchChromium DevTools up', 200 * 100, async () => {
+    for (let i = 0; i < 200; i++) {
+      try {
+        const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
+        if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
+      } catch {}
+      await sleep(100);
+    }
+    throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
+  });
 }
 
 // The Chromium — loaded with the extension at --extension-dir. Every step
@@ -1037,24 +1079,65 @@ async function jsonList(chromePort = port) {
 }
 
 // A CDP session over one target — Page, Runtime, Network enabled; window.__btn
-// is the byName helper the precedent used.
+// is the byName helper the precedent used. Chrome closes a page target's
+// DevTools socket when the target is destroyed; this session's `onclose`
+// past open rejects every call pending at that moment with a `CDP session
+// closed` error, and any later `call` rejects immediately the same way.
+// The 60 s timeout stays as the failure bound for a session that stays open
+// and silent.
 async function openSession(wsUrl) {
   const s = new WebSocket(wsUrl);
-  await new Promise((res, rej) => { s.onopen = res; s.onerror = rej; });
+  // Handshake: `onopen` resolves, `onerror` rejects, and `onclose` before
+  // open rejects too — a socket that closes before opening without firing
+  // `onerror` would otherwise leave the handshake promise hanging forever.
+  let opened = false;
+  await new Promise((res, rej) => {
+    s.onopen = () => { opened = true; res(); };
+    s.onerror = (e) => { if (!opened) rej(new Error(`websocket error before open: ${e?.message ?? String(e)}`)); };
+    s.onclose = () => { if (!opened) rej(new Error('websocket closed before open')); };
+  });
   let n = 0;
   const p = new Map();
   const events = [];
+  // `closedReason` holds the first `close` or `error` the socket fired past
+  // open: it rejects every call pending at that moment and every call made
+  // after. The timeout below stays as the failure bound for a session that
+  // stays open and silent.
+  let closedReason = null;
+  const rejectAll = (reason) => {
+    if (closedReason !== null) return;
+    closedReason = reason;
+    for (const [, entry] of p) {
+      clearTimeout(entry.timer);
+      entry.rej(reason);
+    }
+    p.clear();
+  };
+  s.onclose = () => rejectAll(new Error('CDP session closed: websocket close'));
+  s.onerror = (e) => rejectAll(new Error(`CDP session closed: websocket error ${e?.message ?? String(e)}`));
   s.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.id && p.has(m.id)) { p.get(m.id)(m); p.delete(m.id); }
+    if (m.id && p.has(m.id)) {
+      const entry = p.get(m.id);
+      p.delete(m.id);
+      clearTimeout(entry.timer);
+      if (m.error) entry.rej(new Error(JSON.stringify(m.error)));
+      else entry.res(m.result);
+    }
     if (m.method) events.push(m);
   };
   const CALL_TIMEOUT_MS = 60000;
   const call = (method, params = {}) => new Promise((res, rej) => {
+    if (closedReason !== null) { rej(closedReason); return; }
     const id = ++n;
     const timer = setTimeout(() => { p.delete(id); rej(new Error(`CDP timeout ${CALL_TIMEOUT_MS}ms on ${method}`)); }, CALL_TIMEOUT_MS);
-    p.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
-    s.send(JSON.stringify({ id, method, params }));
+    p.set(id, { res, rej, timer });
+    try { s.send(JSON.stringify({ id, method, params })); }
+    catch (e) {
+      p.delete(id);
+      clearTimeout(timer);
+      rej(e instanceof Error ? e : new Error(String(e)));
+    }
   });
   await call('Page.enable');
   await call('Runtime.enable');
@@ -1067,11 +1150,11 @@ async function openSession(wsUrl) {
     if (r.exceptionDetails) throw new Error('eval: ' + JSON.stringify(r.exceptionDetails));
     return r.result?.value;
   };
-  const waitFor = async (expression, what, ms = 15000) => {
+  const waitFor = async (expression, what, ms = 15000) => recordWait(`cx.waitFor(${what})`, ms, async () => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) { if (await eval_(expression)) return; await sleep(200); }
     throw new Error(`timeout waiting for ${what}`);
-  };
+  });
   await eval_(`window.__btn = (t, r) => [...(r||document).querySelectorAll('button')].find(b=>b.textContent.trim()===t)||null; window.__req = []; true`);
   return { s, call, eval: eval_, waitFor, events };
 }
@@ -1079,19 +1162,89 @@ async function openSession(wsUrl) {
 const findings = [];
 const record = (step, status, detail) => {
   const s = status === true ? 'PASS' : status === false ? 'FAIL' : status === 'skipped' ? 'SKIPPED' : String(status);
-  findings.push({ step, status: s, detail });
+  const now = Date.now();
+  const prev = _wR.lastMark === null ? _wR.runStart : _wR.lastMark;
+  const wallMs = now - prev;
+  _wR.lastMark = now;
+  const waits = _wR.pending;
+  _wR.pending = [];
+  _wR.steps.push({ step, status: s, detail, wallMs, waits });
+  // Aggregates the report line reads: time in waits ended by their condition
+  // (and in waits that ended before the cap for any other reason), time in
+  // fixed sleeps, time in waits ended at the cap, and the cap-ended waits
+  // themselves.
+  let conditionMs = 0;
+  let sleepMs = 0;
+  let capMs = 0;
+  const capWaits = [];
+  for (const w of waits) {
+    if (w.kind === 'sleep') sleepMs += w.elapsedMs;
+    else if (w.endedAtCap) { capMs += w.elapsedMs; capWaits.push({ label: w.label, cap: w.capMs, elapsed: w.elapsedMs }); }
+    else conditionMs += w.elapsedMs;
+  }
+  findings.push({ step, status: s, detail, wallMs, conditionMs, sleepMs, capMs, capWaits });
   console.log(`step ${step}: ${s} — ${detail}`);
 };
 
 async function findExt(pathSuffix, chromePort = port) {
-  for (let i = 0; i < 100; i++) {
-    const list = await jsonList(chromePort);
-    const p = list.find((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`) && (pathSuffix ? t.url.includes(pathSuffix) : true));
-    if (p?.webSocketDebuggerUrl) return p;
-    await sleep(200);
-  }
-  return null;
+  return recordWait(`findExt(${pathSuffix ?? '*'})`, 100 * 200, async () => {
+    for (let i = 0; i < 100; i++) {
+      const list = await jsonList(chromePort);
+      const p = list.find((t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${EXT_ID}/`) && (pathSuffix ? t.url.includes(pathSuffix) : true));
+      if (p?.webSocketDebuggerUrl) return p;
+      await sleep(200);
+    }
+    return null;
+  });
 }
+
+// A press on a write that may open a prompt or go silent — the two
+// outcomes `WEB_INTERFACE → The extension → "The policy"` names.
+// Under a silent policy the client signs and posts the request; under
+// an ask policy it opens `prompt.html`. The wait ends on whichever
+// happens first — the write's request on the wire, or a prompt target
+// appearing in `/json/list` — so an assertion of "no prompt" ends on
+// the write and reads the prompt as never opened. `pathSuffix` matches
+// the write's URL pathname. Returns `{ sent, prompt }`: `sent` true
+// where the write went out first, `prompt` the target where the ask
+// path opened first; both null-paths at the cap.
+async function waitForWriteOrPrompt(cx, sinceIdx, pathSuffix, label, cap = 20000) {
+  const matches = (url) => {
+    try { return new URL(url).pathname.endsWith(pathSuffix); }
+    catch { return false; }
+  };
+  return recordWait(`waitForWriteOrPrompt(${label})`, cap, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < cap) {
+      for (let i = sinceIdx; i < cx.events.length; i++) {
+        const ev = cx.events[i];
+        if (ev.method !== 'Network.requestWillBeSent') continue;
+        const req = ev.params?.request;
+        if (!req || (req.method !== 'POST' && req.method !== 'DELETE')) continue;
+        if (matches(req.url ?? '')) return { sent: true, prompt: null };
+      }
+      const list = await jsonList();
+      const p = list.find((t) => t.type === 'page'
+        && typeof t.url === 'string'
+        && t.url.startsWith(`chrome-extension://${EXT_ID}/`)
+        && t.url.includes('prompt.html'));
+      if (p?.webSocketDebuggerUrl) return { sent: false, prompt: p };
+      await sleep(100);
+    }
+    return { sent: false, prompt: null };
+  });
+}
+
+// The quiet interval a write that reads the lock needs to settle — the
+// client mounts the unlock form on the lock, after which no prompt opens
+// (WEB_INTERFACE → The wallet window → "The `send` row";
+// → The identity module). The number is argued from the longest a press
+// that does open a prompt takes to the `prompt.html` target appearing —
+// under 400 ms in the record (step 5's `prompt5`, step 6's `prompt6`,
+// step 7's `prompt7`, each named by its step's `condition` time in the
+// `[waits]` block) — three times over for the margin a run under load can
+// take.
+const LOCK_REFUSAL_SETTLE_MS = 1500;
 
 async function findWorker(chromePort = port) {
   const list = await jsonList(chromePort);
@@ -1277,25 +1430,29 @@ async function trustedClickAt(cx, selector) {
 
 // Wait for a target from `/json/list` matching a predicate (typically by id).
 async function findTargetById(id, ms = 20000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const list = await jsonList();
-    const t = list.find((x) => x.id === id);
-    if (t && t.webSocketDebuggerUrl) return t;
-    await sleep(150);
-  }
-  return null;
+  return recordWait(`findTargetById(${id})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const list = await jsonList();
+      const t = list.find((x) => x.id === id);
+      if (t && t.webSocketDebuggerUrl) return t;
+      await sleep(150);
+    }
+    return null;
+  });
 }
 
 // Wait for a target to disappear from `/json/list` (destroyed).
 async function waitForTargetGone(id, ms = 20000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const list = await jsonList();
-    if (!list.find((x) => x.id === id)) return true;
-    await sleep(100);
-  }
-  return false;
+  return recordWait(`waitForTargetGone(${id})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const list = await jsonList();
+      if (!list.find((x) => x.id === id)) return true;
+      await sleep(100);
+    }
+    return false;
+  });
 }
 
 // Set the extension's links preference through the settings window's real
@@ -1317,14 +1474,16 @@ async function setLinksPrefViaUi(cx, value) {
   // The click stashes through `chrome.storage.local.set` — wait on the read
   // to observe the stored value, capped at 5 s. Any wait for the write is
   // the value's arrival, not a sleep.
-  const t0 = Date.now();
-  let applied = null;
-  while (Date.now() - t0 < 5000) {
-    applied = await cx.eval(`(async () => (await chrome.storage.local.get('notis.links'))['notis.links'] ?? 'here')()`);
-    if (applied === value) return applied;
-    await sleep(50);
-  }
-  return applied;
+  return recordWait(`setLinksPrefViaUi(${value})`, 5000, async () => {
+    const t0 = Date.now();
+    let applied = null;
+    while (Date.now() - t0 < 5000) {
+      applied = await cx.eval(`(async () => (await chrome.storage.local.get('notis.links'))['notis.links'] ?? 'here')()`);
+      if (applied === value) return applied;
+      await sleep(50);
+    }
+    return applied;
+  });
 }
 
 // Read a root post id authored by R from the node — a post the run itself
@@ -1343,17 +1502,19 @@ async function pickOwnRootPostId() {
 }
 
 async function pollKarma(target = 20, ms = 25000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`);
-      const j = await r.json();
-      const total = Number(j.effective ?? j.total ?? 0);
-      if (total >= target) return { ok: true, total };
-    } catch {}
-    await sleep(1000);
-  }
-  return { ok: false };
+  return recordWait(`pollKarma(target=${target})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const r = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`);
+        const j = await r.json();
+        const total = Number(j.effective ?? j.total ?? 0);
+        if (total >= target) return { ok: true, total };
+      } catch {}
+      await sleep(1000);
+    }
+    return { ok: false };
+  });
 }
 
 async function feedContains(id) {
@@ -1444,63 +1605,73 @@ async function currentHeight(origin) {
 }
 
 async function waitForHttpUp(origin, ms = 30000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await fetch(`${origin}/blocks/current`);
-      if (r.ok) return true;
-    } catch {}
-    await sleep(250);
-  }
-  return false;
+  return recordWait(`waitForHttpUp(${origin})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const r = await fetch(`${origin}/blocks/current`);
+        if (r.ok) return true;
+      } catch {}
+      await sleep(250);
+    }
+    return false;
+  });
 }
 
 async function waitForHealth(adminOrigin, ms = 30000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await fetch(`${adminOrigin}/health`);
-      if (r.ok) return await r.json();
-    } catch {}
-    await sleep(250);
-  }
-  return null;
+  return recordWait(`waitForHealth(${adminOrigin})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const r = await fetch(`${adminOrigin}/health`);
+        if (r.ok) return await r.json();
+      } catch {}
+      await sleep(250);
+    }
+    return null;
+  });
 }
 
 async function waitForPeers(adminOrigin, min, ms = 30000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await fetch(`${adminOrigin}/health`);
-      if (r.ok) {
-        const j = await r.json();
-        if ((j.peers_connected ?? 0) >= min) return j.peers_connected;
-      }
-    } catch {}
-    await sleep(500);
-  }
-  return null;
+  return recordWait(`waitForPeers(${adminOrigin}, min=${min})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const r = await fetch(`${adminOrigin}/health`);
+        if (r.ok) {
+          const j = await r.json();
+          if ((j.peers_connected ?? 0) >= min) return j.peers_connected;
+        }
+      } catch {}
+      await sleep(500);
+    }
+    return null;
+  });
 }
 
 async function waitForHeight(origin, target, ms = 300000, pollMs = 500) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const h = await currentHeight(origin);
-    if (h !== null && h >= target) return h;
-    await sleep(pollMs);
-  }
-  return null;
+  return recordWait(`waitForHeight(${origin}, target=${target})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const h = await currentHeight(origin);
+      if (h !== null && h >= target) return h;
+      await sleep(pollMs);
+    }
+    return null;
+  });
 }
 
 async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const hA = await currentHeight(originA);
-    const hB = await currentHeight(originB);
-    if (hA !== null && hB !== null && Math.abs(hA - hB) <= tolerance) return { hA, hB };
-    await sleep(500);
-  }
-  return null;
+  return recordWait(`waitForHeightsClose(${originA}, ${originB})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const hA = await currentHeight(originA);
+      const hB = await currentHeight(originB);
+      if (hA !== null && hB !== null && Math.abs(hA - hB) <= tolerance) return { hA, hB };
+      await sleep(500);
+    }
+    return null;
+  });
 }
 
 // A tip-block relay — WEB_INTERFACE → The extension → "The verified tip". It
@@ -1956,6 +2127,25 @@ function proofRequestsSince(events, startIdx) {
   return out;
 }
 
+// The mesh client's check reads since `startIdx` — phase 2's
+// `/blocks/current` per candidate, phase 3a's `/blocks/<height>` fills, and
+// phase 4's `/nipopow/proof/` proofs (MESH_INTERFACE → The client's node
+// list → "A check"). The count covers both arms of a run: a check that
+// places every tip reads `/blocks/current` per candidate alone and reads no
+// proof; one that cannot fills or reads a proof besides.
+function tipCheckReadsSince(events, startIdx) {
+  let n = 0;
+  for (let i = startIdx; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.method !== 'Network.requestWillBeSent') continue;
+    const url = ev.params?.request?.url ?? '';
+    if (url.includes('/blocks/current')) n += 1;
+    else if (url.includes('/nipopow/proof/')) n += 1;
+    else if (/\/blocks\/\d+(?:$|\?)/.test(url)) n += 1;
+  }
+  return n;
+}
+
 // Wait for the corner to reach a rendered shape the caller can name — one of
 // `verified`, `thin`, `refused`, `checking` — with an optional predicate on
 // the reading. The App renders the corner in place after each run, so a poll
@@ -1963,35 +2153,43 @@ function proofRequestsSince(events, startIdx) {
 // last reading is present in both arms (on match, it is the reading that
 // satisfied the predicate; on timeout, it is the last reading polled).
 async function waitForCornerState(cx, predicate, description, ms = 45000) {
-  const t0 = Date.now();
-  let last = null;
-  while (Date.now() - t0 < ms) {
-    last = await readCorner(cx);
-    if (last.present && predicate(last)) return { timedOut: false, last };
-    await sleep(200);
-  }
-  return { timedOut: true, last };
+  return recordWait(`waitForCornerState(${description})`, ms, async () => {
+    const t0 = Date.now();
+    let last = null;
+    while (Date.now() - t0 < ms) {
+      last = await readCorner(cx);
+      if (last.present && predicate(last)) return { timedOut: false, last };
+      await sleep(200);
+    }
+    return { timedOut: true, last };
+  });
 }
 
-// Wait for the App's next verifier run to complete, since its own press. The
-// App keeps the previous verdict rendered *through* the next run (a stale
-// verdict is not cleared by a trigger, only by `onReadingNodeChanged`), so a
-// press-before-read on a state the previous run already produced returns at
-// once — before the new run's fetches have registered. The observable signal
-// of a run happening is the request pair itself (Network.requestWillBeSent
-// with `/nipopow/proof/`), and the observable signal of it *finishing* is a
-// short quiet window with no new such request. Returns the collected requests.
-async function waitForVerifierRun(cx, sinceIdx, atLeast, ms = 30000, quietMs = 1500) {
-  const t0 = Date.now();
-  let last = 0;
-  let lastAt = t0;
-  while (Date.now() - t0 < ms) {
-    const now = proofRequestsSince(cx.events, sinceIdx).length;
-    if (now !== last) { last = now; lastAt = Date.now(); }
-    if (now >= atLeast && Date.now() - lastAt >= quietMs) return proofRequestsSince(cx.events, sinceIdx);
-    await sleep(100);
-  }
-  return proofRequestsSince(cx.events, sinceIdx);
+// Wait for the App's next verifier run to complete, since its own press
+// (WEB_INTERFACE → The extension → "The verified tip"). The App keeps the
+// previous verdict rendered *through* the next run (a stale verdict is not
+// cleared by a trigger, only by `onReadingNodeChanged`), so the run is
+// observed from outside by its own reads: the mesh client reads each
+// candidate's `/blocks/current` in phase 2, fills headers in phase 3a and
+// reads `/nipopow/proof/` in phase 4 (MESH_INTERFACE → The client's node
+// list → "A check"). The wait ends on the first quiet window past the last
+// such read — a check that places every tip reads `/blocks/current` per
+// candidate alone and settles the window there, a check that cannot fills
+// or reads a proof besides and settles after. Returns the proofs the run
+// asked for, which may be empty.
+async function waitForVerifierRun(cx, sinceIdx, ms = 30000, quietMs = 1500) {
+  return recordWait(`waitForVerifierRun`, ms, async () => {
+    const t0 = Date.now();
+    let last = 0;
+    let lastAt = t0;
+    while (Date.now() - t0 < ms) {
+      const now = tipCheckReadsSince(cx.events, sinceIdx);
+      if (now !== last) { last = now; lastAt = Date.now(); }
+      if (now > 0 && Date.now() - lastAt >= quietMs) return proofRequestsSince(cx.events, sinceIdx);
+      await sleep(100);
+    }
+    return proofRequestsSince(cx.events, sinceIdx);
+  });
 }
 
 // Parse the `tip N` integer out of a corner title (WEB_INTERFACE → The
@@ -2044,7 +2242,7 @@ async function pressAndReadVerdict(cx, opts = {}) {
   const startIdx = cx.events.length;
   await pressCorner(cx);
   const proofs = await waitForVerifierRun(
-    cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+    cx, startIdx, opts.ms ?? 30000, opts.quietMs ?? 1500);
   await sleep(200);
   return { proofs, reading: await readCorner(cx) };
 }
@@ -2311,7 +2509,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     await stopChild('b');
     // B's stop is observed through B's own HTTP going silent; the assertion
     // then reads *only one node could be checked* without racing gossip.
-    const bGone = await (async () => {
+    const bGone = await recordWait('verified-tip B gone probe', 20000, async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 20000) {
         const h = await currentHeight(B_ORIGIN);
@@ -2319,9 +2517,9 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
         await sleep(200);
       }
       return false;
-    })();
+    });
 
-    const stopped = await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 });
+    const stopped = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     // Wait for the corner to settle on the one-node title even if the poll
     // above races the verdict render.
     const reachedStopped = await waitForCornerState(cx,
@@ -2347,7 +2545,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     const bBackUp = await waitForHttpUp(B_ORIGIN, 30000);
     const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000) : null;
 
-    const back = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+    const back = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     const backOk = back.reading.ledClass === 'led fresh'
       && back.reading.tipClass === 'tip mono'
       && /^verified across \d+ nodes · tip \d+$/.test(back.reading.title ?? '');
@@ -2717,7 +2915,7 @@ async function pressCornerRepeatedly(cx, presses, opts = {}) {
     const startIdx = cx.events.length;
     await pressCorner(cx);
     const proofs = await waitForVerifierRun(
-      cx, startIdx, opts.atLeast ?? 2, opts.ms ?? 30000, opts.quietMs ?? 1500);
+      cx, startIdx, opts.ms ?? 30000, opts.quietMs ?? 1500);
     await sleep(200);
     const r = await readCorner(cx);
     readings.push({
@@ -2778,16 +2976,18 @@ function figuresProofRequestsSince(events, startIdx, origin = null) {
 // empty list at the bound. With `origin`, only the runs against that node
 // count.
 async function waitForFiguresRun(cx, sinceIdx, ms = 30000, quietMs = 2000, origin = null) {
-  const t0 = Date.now();
-  let last = 0;
-  let lastAt = t0;
-  while (Date.now() - t0 < ms) {
-    const now = figuresProofRequestsSince(cx.events, sinceIdx, origin).length;
-    if (now !== last) { last = now; lastAt = Date.now(); }
-    if (now > 0 && Date.now() - lastAt >= quietMs) return figuresProofRequestsSince(cx.events, sinceIdx, origin);
-    await sleep(100);
-  }
-  return figuresProofRequestsSince(cx.events, sinceIdx, origin);
+  return recordWait(`waitForFiguresRun(origin=${origin ?? 'any'})`, ms, async () => {
+    const t0 = Date.now();
+    let last = 0;
+    let lastAt = t0;
+    while (Date.now() - t0 < ms) {
+      const now = figuresProofRequestsSince(cx.events, sinceIdx, origin).length;
+      if (now !== last) { last = now; lastAt = Date.now(); }
+      if (now > 0 && Date.now() - lastAt >= quietMs) return figuresProofRequestsSince(cx.events, sinceIdx, origin);
+      await sleep(100);
+    }
+    return figuresProofRequestsSince(cx.events, sinceIdx, origin);
+  });
 }
 
 // Press the corner and wait for BOTH the tip run and the figures run to settle.
@@ -2797,7 +2997,7 @@ async function waitForFiguresRun(cx, sinceIdx, ms = 30000, quietMs = 2000, origi
 async function pressCornerAndReadFigures(cx, opts = {}) {
   const startIdx = cx.events.length;
   await pressCorner(cx);
-  await waitForVerifierRun(cx, startIdx, opts.tipAtLeast ?? 2, opts.tipMs ?? 30000, opts.tipQuietMs ?? 1500);
+  await waitForVerifierRun(cx, startIdx, opts.tipMs ?? 30000, opts.tipQuietMs ?? 1500);
   const figProofs = await waitForFiguresRun(cx, startIdx, opts.figMs ?? 30000, opts.figQuietMs ?? 2000);
   await sleep(300);
   return { figProofs };
@@ -2862,14 +3062,16 @@ async function readKarmaField(cx) {
 // holds or `ms` passes. Returns `{ timedOut, last }` — the last reading in both
 // arms, as waitForCornerState does.
 async function waitForRow(read, cx, predicate, ms) {
-  const t0 = Date.now();
-  let last = null;
-  while (Date.now() - t0 < ms) {
-    last = await read(cx);
-    if (predicate(last)) return { timedOut: false, last };
-    await sleep(200);
-  }
-  return { timedOut: true, last };
+  return recordWait(`waitForRow(${read.name || 'read'})`, ms, async () => {
+    const t0 = Date.now();
+    let last = null;
+    while (Date.now() - t0 < ms) {
+      last = await read(cx);
+      if (predicate(last)) return { timedOut: false, last };
+      await sleep(200);
+    }
+    return { timedOut: true, last };
+  });
 }
 
 // Press a window's header control — `open wallet`, `open profile`. A window
@@ -2886,14 +3088,16 @@ async function raiseWindow(cx, label) {
 // twelve is comfortably above expectation. A trip returns
 // { reached: false, last }, with `last` being the last read.
 async function waitForNodeTip(target, ms = 12 * 60 * 1000, pollMs = 10000) {
-  const t0 = Date.now();
-  let last = null;
-  while (Date.now() - t0 < ms) {
-    last = await currentHeight(NODE);
-    if (last !== null && last >= target) return { reached: true, last, elapsedMs: Date.now() - t0 };
-    await sleep(pollMs);
-  }
-  return { reached: false, last, elapsedMs: Date.now() - t0 };
+  return recordWait(`waitForNodeTip(target=${target})`, ms, async () => {
+    const t0 = Date.now();
+    let last = null;
+    while (Date.now() - t0 < ms) {
+      last = await currentHeight(NODE);
+      if (last !== null && last >= target) return { reached: true, last, elapsedMs: Date.now() - t0 };
+      await sleep(pollMs);
+    }
+    return { reached: false, last, elapsedMs: Date.now() - t0 };
+  });
 }
 
 async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
@@ -3075,16 +3279,18 @@ async function runFiguresStep21(cx) {
 
     // The 2xx of /credits/transfer. The row re-reads /credits?pending=1 at the
     // 2xx (WEB_INTERFACE → The wallet window → "The `balance` row").
-    const t2xxStart = Date.now();
     let transfer2xx = null;
-    while (Date.now() - t2xxStart < 60000 && transfer2xx === null) {
-      const ev = cx.events.slice(submitIdx).find((e) =>
-        e.method === 'Network.responseReceived'
-        && (e.params.response.url || '').includes('/credits/transfer')
-        && e.params.response.status >= 200 && e.params.response.status < 300);
-      if (ev) transfer2xx = ev;
-      else await sleep(100);
-    }
+    await recordWait('figures-21 /credits/transfer 2xx', 60000, async () => {
+      const t2xxStart = Date.now();
+      while (Date.now() - t2xxStart < 60000 && transfer2xx === null) {
+        const ev = cx.events.slice(submitIdx).find((e) =>
+          e.method === 'Network.responseReceived'
+          && (e.params.response.url || '').includes('/credits/transfer')
+          && e.params.response.status >= 200 && e.params.response.status < 300);
+        if (ev) transfer2xx = ev;
+        else await sleep(100);
+      }
+    });
     if (transfer2xx === null) {
       record(21, false, 'no 2xx of /credits/transfer within 60 s of the submit');
       return;
@@ -3111,21 +3317,23 @@ async function runFiguresStep21(cx) {
     const POOLED_CLAUSE_CREDITS = /^\S.* \$NOTIS proven at block \d+ · \S.* \$NOTIS to spend in the next block, by this node's word$/;
     let pooledClauseReading = null;
     if (pooledAt2xx) {
-      const t0 = Date.now();
-      while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
-        const r = await readCreditsRow(cx);
-        const txt = r.figHintText;
-        if (typeof txt === 'string' && POOLED_CLAUSE_CREDITS.test(txt)) {
-          const amt = creditsAmountIn(txt, / · (\d+(?:\.\d{1,8})?) \$NOTIS to spend in the next block, by this node's word$/);
-          pooledClauseReading = {
-            text: txt,
-            clauseBaseUnits: amt === null ? null : amt.toString(),
-            rowBaseUnits: rowBaseUnits?.toString() ?? null,
-            matches: amt !== null && rowBaseUnits !== null && amt === rowBaseUnits,
-          };
+      await recordWait('figures-21 pooled clause credits', 3000, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
+          const r = await readCreditsRow(cx);
+          const txt = r.figHintText;
+          if (typeof txt === 'string' && POOLED_CLAUSE_CREDITS.test(txt)) {
+            const amt = creditsAmountIn(txt, / · (\d+(?:\.\d{1,8})?) \$NOTIS to spend in the next block, by this node's word$/);
+            pooledClauseReading = {
+              text: txt,
+              clauseBaseUnits: amt === null ? null : amt.toString(),
+              rowBaseUnits: rowBaseUnits?.toString() ?? null,
+              matches: amt !== null && rowBaseUnits !== null && amt === rowBaseUnits,
+            };
+          }
+          await sleep(250);
         }
-        await sleep(250);
-      }
+      });
     }
 
     // The landing, off the plain listing — a box id outside the pre-send set
@@ -3252,10 +3460,11 @@ async function runFiguresStep24(cx) {
     await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled 24', 15000);
     const postIdx = cx.events.length;
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-    // A prompt refuses the silent policy; the step asserts none appears.
-    await sleep(2000);
-    const promptOpen24 = await findExt('prompt.html');
-    if (promptOpen24) {
+    // Under a silent policy the client signs and posts; the write's
+    // request on the wire settles the "no prompt" assertion since no
+    // prompt can precede it.
+    const outcome24 = await waitForWriteOrPrompt(cx, postIdx, '/posts', 'step-24 post');
+    if (outcome24.prompt) {
       record(24, false, `a prompt opened for the step 24 post — policy is not silent`);
       return;
     }
@@ -3265,16 +3474,18 @@ async function runFiguresStep24(cx) {
     // The post's 2xx on A — the row re-reads /karma?pending=1 at it
     // (WEB_INTERFACE → The profile window → "The `rep` row is the rep view's
     // `effective` alone").
-    const t2xxStart = Date.now();
     let post2xx = null;
-    while (Date.now() - t2xxStart < 60000 && post2xx === null) {
-      const ev = cx.events.slice(postIdx).find((e) =>
-        e.method === 'Network.responseReceived'
-        && /\/posts(\?|$)/.test(e.params.response.url || '')
-        && e.params.response.status >= 200 && e.params.response.status < 300);
-      if (ev) post2xx = ev;
-      else await sleep(100);
-    }
+    await recordWait('figures-24 POST /posts 2xx', 60000, async () => {
+      const t2xxStart = Date.now();
+      while (Date.now() - t2xxStart < 60000 && post2xx === null) {
+        const ev = cx.events.slice(postIdx).find((e) =>
+          e.method === 'Network.responseReceived'
+          && /\/posts(\?|$)/.test(e.params.response.url || '')
+          && e.params.response.status >= 200 && e.params.response.status < 300);
+        if (ev) post2xx = ev;
+        else await sleep(100);
+      }
+    });
     if (post2xx === null) {
       record(24, false, 'no 2xx of POST /posts within 60 s of the submit');
       return;
@@ -3300,21 +3511,23 @@ async function runFiguresStep24(cx) {
     const POOLED_CLAUSE_REP = /^\S.* rep proven at block \d+ · \S.* rep to spend in the next block, by this node's word$/;
     let pooledClauseReading = null;
     if (pooledAt2xx) {
-      const t0 = Date.now();
-      while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
-        const k = await readKarmaField(cx);
-        const txt = k.hintText;
-        if (typeof txt === 'string' && POOLED_CLAUSE_REP.test(txt)) {
-          const amt = karmaAmountIn(txt, / · (\d+) rep to spend in the next block, by this node's word$/);
-          pooledClauseReading = {
-            text: txt,
-            clauseAmount: amt === null ? null : amt.toString(),
-            rowRep: rowRep2xx,
-            matches: amt !== null && rowRep2xx !== null && amt === BigInt(rowRep2xx),
-          };
+      await recordWait('figures-24 pooled clause rep', 3000, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < 3000 && pooledClauseReading === null) {
+          const k = await readKarmaField(cx);
+          const txt = k.hintText;
+          if (typeof txt === 'string' && POOLED_CLAUSE_REP.test(txt)) {
+            const amt = karmaAmountIn(txt, / · (\d+) rep to spend in the next block, by this node's word$/);
+            pooledClauseReading = {
+              text: txt,
+              clauseAmount: amt === null ? null : amt.toString(),
+              rowRep: rowRep2xx,
+              matches: amt !== null && rowRep2xx !== null && amt === BigInt(rowRep2xx),
+            };
+          }
+          await sleep(250);
         }
-        await sleep(250);
-      }
+      });
     }
 
     // The landing, off the plain listing — a box id outside the pre-post set
@@ -3478,23 +3691,25 @@ async function readNodeCreditsPending(key) {
 // listings, never `pending=1`"). Answers { landed: true, boxId, atHeight,
 // elapsedMs } on a match, { landed: false, elapsedMs } past the bound.
 async function waitForFaucetPaymentBox(key, baseValue, preBoxIds, ms = 180000, pollMs = 2000) {
-  const t0 = Date.now();
-  const pre = new Set(preBoxIds);
-  while (Date.now() - t0 < ms) {
-    const c = await readNodeCredits(key);
-    if (c !== null) {
-      const hit = c.boxes.find((b) => {
-        if (pre.has(b.boxId)) return false;
-        try { return BigInt(b.value) === baseValue; } catch { return false; }
-      });
-      if (hit) {
-        const h = await currentHeight(NODE);
-        return { landed: true, boxId: hit.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+  return recordWait(`waitForFaucetPaymentBox(value=${baseValue})`, ms, async () => {
+    const t0 = Date.now();
+    const pre = new Set(preBoxIds);
+    while (Date.now() - t0 < ms) {
+      const c = await readNodeCredits(key);
+      if (c !== null) {
+        const hit = c.boxes.find((b) => {
+          if (pre.has(b.boxId)) return false;
+          try { return BigInt(b.value) === baseValue; } catch { return false; }
+        });
+        if (hit) {
+          const h = await currentHeight(NODE);
+          return { landed: true, boxId: hit.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+        }
       }
+      await sleep(pollMs);
     }
-    await sleep(pollMs);
-  }
-  return { landed: false, elapsedMs: Date.now() - t0 };
+    return { landed: false, elapsedMs: Date.now() - t0 };
+  });
 }
 
 // Poll a key's plain /credits for a box id outside the pre-send set — the
@@ -3502,20 +3717,22 @@ async function waitForFaucetPaymentBox(key, baseValue, preBoxIds, ms = 180000, p
 // (WEB_INTERFACE → The wallet → "A landing reads the plain listings, never
 // `pending=1`").
 async function waitForCreditsLanding(key, preBoxIds, ms = 180000, pollMs = 2000) {
-  const t0 = Date.now();
-  const pre = new Set(preBoxIds);
-  while (Date.now() - t0 < ms) {
-    const c = await readNodeCredits(key);
-    if (c !== null) {
-      const fresh = c.boxes.find((b) => !pre.has(b.boxId));
-      if (fresh) {
-        const h = await currentHeight(NODE);
-        return { landed: true, boxId: fresh.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+  return recordWait('waitForCreditsLanding', ms, async () => {
+    const t0 = Date.now();
+    const pre = new Set(preBoxIds);
+    while (Date.now() - t0 < ms) {
+      const c = await readNodeCredits(key);
+      if (c !== null) {
+        const fresh = c.boxes.find((b) => !pre.has(b.boxId));
+        if (fresh) {
+          const h = await currentHeight(NODE);
+          return { landed: true, boxId: fresh.boxId, atHeight: h, elapsedMs: Date.now() - t0 };
+        }
       }
+      await sleep(pollMs);
     }
-    await sleep(pollMs);
-  }
-  return { landed: false, elapsedMs: Date.now() - t0 };
+    return { landed: false, elapsedMs: Date.now() - t0 };
+  });
 }
 
 // Poll R's plain /karma for a box id outside the pre-post set — the reader's
@@ -3523,20 +3740,22 @@ async function waitForCreditsLanding(key, preBoxIds, ms = 180000, pollMs = 2000)
 // listing (WEB_INTERFACE → The wallet → "A landing reads the plain listings,
 // never `pending=1`").
 async function waitForKarmaLanding(preBoxIds, ms = 5 * 60 * 1000, pollMs = 2000) {
-  const t0 = Date.now();
-  const pre = new Set(preBoxIds);
-  while (Date.now() - t0 < ms) {
-    const k = await readNodeKarma();
-    if (k !== null) {
-      const fresh = k.boxIds.find((id) => !pre.has(id));
-      if (fresh) {
-        const h = await currentHeight(NODE);
-        return { landed: true, atHeight: h, elapsedMs: Date.now() - t0, boxCount: k.boxCount, effective: k.effective };
+  return recordWait('waitForKarmaLanding', ms, async () => {
+    const t0 = Date.now();
+    const pre = new Set(preBoxIds);
+    while (Date.now() - t0 < ms) {
+      const k = await readNodeKarma();
+      if (k !== null) {
+        const fresh = k.boxIds.find((id) => !pre.has(id));
+        if (fresh) {
+          const h = await currentHeight(NODE);
+          return { landed: true, atHeight: h, elapsedMs: Date.now() - t0, boxCount: k.boxCount, effective: k.effective };
+        }
       }
+      await sleep(pollMs);
     }
-    await sleep(pollMs);
-  }
-  return { landed: false, elapsedMs: Date.now() - t0 };
+    return { landed: false, elapsedMs: Date.now() - t0 };
+  });
 }
 
 // ---- The lie arms — 22a · 22b · 22c · 22d · 22e · 23 (WEB_INTERFACE → The
@@ -3837,11 +4056,17 @@ async function runLieArm(bcx, relays, arm) {
   for (const r of relays) r.mode = arm.mode;
   try {
     // (2) A fresh page whose tip run returns verified across N nodes.
+    // `changeIdx` sits right at the page's opening — the fresh page's
+    // first figures run fires from the App's `startFigures` once the tip
+    // check verifies (WEB_INTERFACE → The extension → "The verified
+    // figures"), which under memory for the seated chain can race the
+    // window raises and land before them. The index is below the raises
+    // so the count at the end reads the whole span.
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
+    const changeIdx = fcx.events.length;
     await raiseWindow(fcx, 'open profile');
     await raiseWindow(fcx, 'open wallet');
-    const changeIdx = fcx.events.length;
     const reached = await waitForCornerState(fcx,
       (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
       `led fresh + verified across N nodes (fresh page under ${arm.mode})`, 60000);
@@ -3861,7 +4086,10 @@ async function runLieArm(bcx, relays, arm) {
     // AND every reading of the lying row was in line. `presses === 0`
     // (step 23) leaves no room for retry.
     await raiseWindow(fcx, 'open wallet');
-    const relayRun = verified ? await waitForFiguresRun(fcx, changeIdx, 60000, 2000, null) : [];
+    // `waitForRow` is the authoritative settle — the row's state is
+    // what the arm asserts, and a figures run that lands on it moves
+    // it to `arm.creditsSettled`. The figures run requests are counted
+    // at the end for the record.
     let credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
     const creditsReadings = [`after the fresh page: ${creditsSeen(credits.last)}`];
     const pressWhen = arm.pressWhen ?? 'credits';
@@ -3954,6 +4182,9 @@ async function runLieArm(bcx, relays, arm) {
     const lieBoxText = lieBox === null
       ? 'none (the sentence carries no amount)'
       : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
+    // The figures requests the arm's fresh-page run made since the page
+    // opened — one count at the end, read over all events the page saw.
+    const relayRun = figuresProofRequestsSince(fcx.events, changeIdx, null);
     record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
       `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')}); lie box=${lieBoxText}; ` +
       `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
@@ -4175,33 +4406,37 @@ function checkTrafficSince(events, startIdx) {
 // check landed, where one read before it may read a pair no check has decided
 // — which reads ink as well.
 async function waitForNameChecks(cx, startIdx, { boxId = null, ms = 90000, quietMs = 3000 } = {}) {
-  const t0 = Date.now();
-  let traffic = -1;
-  let quietFrom = t0;
-  while (Date.now() - t0 < ms) {
-    const now = checkTrafficSince(cx.events, startIdx);
-    if (now !== traffic) { traffic = now; quietFrom = Date.now(); }
-    let proven = true;
-    if (boxId !== null) {
-      const proofs = nameRequestsSince(cx.events, startIdx, { boxId }).boxProofs;
-      const settled = settledRequestIds(cx.events, startIdx);
-      proven = proofs.length > 0 && proofs.every((p) => settled.has(p.requestId));
+  return recordWait(`waitForNameChecks(boxId=${boxId ?? 'null'})`, ms, async () => {
+    const t0 = Date.now();
+    let traffic = -1;
+    let quietFrom = t0;
+    while (Date.now() - t0 < ms) {
+      const now = checkTrafficSince(cx.events, startIdx);
+      if (now !== traffic) { traffic = now; quietFrom = Date.now(); }
+      let proven = true;
+      if (boxId !== null) {
+        const proofs = nameRequestsSince(cx.events, startIdx, { boxId }).boxProofs;
+        const settled = settledRequestIds(cx.events, startIdx);
+        proven = proofs.length > 0 && proofs.every((p) => settled.has(p.requestId));
+      }
+      if (proven && Date.now() - quietFrom >= quietMs) return { settled: true, ms: Date.now() - t0 };
+      await sleep(200);
     }
-    if (proven && Date.now() - quietFrom >= quietMs) return { settled: true, ms: Date.now() - t0 };
-    await sleep(200);
-  }
-  return { settled: false, ms: Date.now() - t0 };
+    return { settled: false, ms: Date.now() - t0 };
+  });
 }
 
 // Wait for a CDP event named `method` on the session since `startIdx`; throws
 // at `ms`, as the session's own waitFor does.
 async function waitForEvent(cx, startIdx, method, ms) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    for (let i = startIdx; i < cx.events.length; i++) if (cx.events[i].method === method) return;
-    await sleep(100);
-  }
-  throw new Error(`timeout waiting for ${method}`);
+  return recordWait(`waitForEvent(${method})`, ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      for (let i = startIdx; i < cx.events.length; i++) if (cx.events[i].method === method) return;
+      await sleep(100);
+    }
+    throw new Error(`timeout waiting for ${method}`);
+  });
 }
 
 // Every site step 26 reads a handle at (WEB_INTERFACE → The identity display),
@@ -4322,7 +4557,7 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
       });
       await cx.waitFor(`!matchMedia('(max-width: 955px)').matches && !!document.querySelector('[aria-label="open profile"].hdr-word') && !!document.querySelector('.corner')`,
         'the header at a tiling width', 30000);
-      verifiedReading = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 });
+      verifiedReading = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 });
     } catch (e) {
       preError = String(e);
     }
@@ -4414,25 +4649,27 @@ async function runNamesStep26(cx, rKey) {
     // pending handle in inkMute with the stage line, then the handle held.
     const states = [];
     let landed = false;
-    const t0 = Date.now();
-    while (Date.now() - t0 < 5 * 60 * 1000) {
-      const s = await cx.eval(`(() => {
-        const row = ${USERNAME_ROW_JS};
-        if (!row) return null;
-        const h = row.querySelector('.username-line .handle');
-        return {
-          handle: h === null ? null : h.textContent.trim(),
-          inkmute: h === null ? null : h.classList.contains('inkmute'),
-          clay: h === null ? null : h.classList.contains('clay'),
-          flight: (row.querySelector('.username-flight')?.textContent ?? '').trim(),
-        };
-      })()`);
-      const shown = s === null ? 'no row' : `${s.handle ?? '—'}${s.inkmute ? ' (inkmute)' : ''}${s.flight !== '' ? ' · ' + s.flight : ''}`;
-      if (states[states.length - 1] !== shown) states.push(shown);
-      if (s !== null && s.handle === '@' + name && s.inkmute === false) { landed = true; break; }
-      if (s !== null && /^(claim rejected|no block took)/.test(s.flight)) break;
-      await sleep(200);
-    }
+    await recordWait(`names-26 username row landing (@${name})`, 5 * 60 * 1000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 5 * 60 * 1000) {
+        const s = await cx.eval(`(() => {
+          const row = ${USERNAME_ROW_JS};
+          if (!row) return null;
+          const h = row.querySelector('.username-line .handle');
+          return {
+            handle: h === null ? null : h.textContent.trim(),
+            inkmute: h === null ? null : h.classList.contains('inkmute'),
+            clay: h === null ? null : h.classList.contains('clay'),
+            flight: (row.querySelector('.username-flight')?.textContent ?? '').trim(),
+          };
+        })()`);
+        const shown = s === null ? 'no row' : `${s.handle ?? '—'}${s.inkmute ? ' (inkmute)' : ''}${s.flight !== '' ? ' · ' + s.flight : ''}`;
+        if (states[states.length - 1] !== shown) states.push(shown);
+        if (s !== null && s.handle === '@' + name && s.inkmute === false) { landed = true; return; }
+        if (s !== null && /^(claim rejected|no block took)/.test(s.flight)) return;
+        await sleep(200);
+      }
+    });
     const promptDuringClaim = (await jsonList()).some((t) => t.url.includes('prompt.html'));
     const held = await usernameOf(NODE, rKey);
     if (!landed || held === null || held.name !== name) {
@@ -5030,30 +5267,70 @@ async function authorRecord(cx, stop = false) {
   })()`);
 }
 
-// The author window's states after the node change, read for WEB_INTERFACE →
-// The author window → "The line is drawn with the window's render": the first
-// handle the window drew, and — where it drew it ink — the state the clay
-// landed in and the one just before it.
-function authorLanding(snaps, rName) {
-  const drawnAt = snaps.findIndex((s) => s.state === 'handle');
+// The author window's states around the node change, read for WEB_INTERFACE →
+// The author window → "The line is drawn with the window's render". The first
+// snapshot after the change picks the arm: clay with the line is the result
+// held when the window rendered; clay with no line and the rows at the
+// offsets of the last snapshot before the change is the result landed after
+// the render in place, its line waiting for the next render; ink is the
+// window drawing the handle ink first and flipping it clay in place later
+// with no line and the rows held. Anything else fails and the detail names
+// what it saw.
+function authorLanding(snaps, rName, changeAt) {
+  const preChange = snaps.filter((s) => s.t < changeAt);
+  const postChange = snaps.filter((s) => s.t >= changeAt);
+  const drawnAt = postChange.findIndex((s) => s.state === 'handle');
   if (drawnAt === -1) return { ok: false, seen: 'no handle drawn after the change' };
-  const drawn = snaps[drawnAt];
-  if (drawn.clay) {
+  const drawn = postChange[drawnAt];
+
+  // arm 1 — clay with the line: the result held when the window rendered.
+  if (drawn.clay && drawn.line === NAME_LINE) {
     return {
-      ok: drawn.text === '@' + rName && drawn.line === NAME_LINE,
+      ok: drawn.text === '@' + rName,
       seen: 'the result held when the window rendered — clay with the line at once',
     };
   }
-  const clayAt = snaps.findIndex((s, i) => i > drawnAt && s.state === 'handle' && s.clay);
-  if (clayAt === -1) return { ok: false, seen: 'drawn ink, never clay' };
-  const before = snaps[clayAt - 1];
-  const landing = snaps[clayAt];
-  const rowsHeld = before.state === 'handle' && JSON.stringify(before.rows) === JSON.stringify(landing.rows);
+
+  // arm 2 — clay with no line, rows at the offsets of the last snapshot
+  // before the change: the result landed after the render, in place; the
+  // line waits for the next render.
+  if (drawn.clay && drawn.line === null) {
+    const lastBefore = preChange.at(-1);
+    const rowsHeld = lastBefore !== undefined
+      && lastBefore.state === 'handle'
+      && JSON.stringify(lastBefore.rows) === JSON.stringify(drawn.rows);
+    if (rowsHeld) {
+      return {
+        ok: drawn.text === '@' + rName,
+        seen: 'the result landed after the render, in place — clay with no line, the rows at the offsets of the last snapshot before the change',
+      };
+    }
+    return {
+      ok: false,
+      seen: `clay with no line, the rows ${lastBefore === undefined ? 'with no snapshot before the change to compare against' : 'moved from the last snapshot before the change'}`,
+    };
+  }
+
+  // arm 3 — ink: the window drew the handle ink first; a result landing
+  // after flips it clay in place with no line and the rows held.
+  if (!drawn.clay) {
+    const clayAt = postChange.findIndex((s, i) => i > drawnAt && s.state === 'handle' && s.clay);
+    if (clayAt === -1) return { ok: false, seen: 'drawn ink, never clay' };
+    const before = postChange[clayAt - 1];
+    const landing = postChange[clayAt];
+    const rowsHeld = before.state === 'handle' && JSON.stringify(before.rows) === JSON.stringify(landing.rows);
+    return {
+      ok: drawn.line === null && before.state === 'handle' && !before.clay && before.line === null
+        && landing.text === '@' + rName && landing.line === null && rowsHeld,
+      seen: `the result landed after the render — ${landing.t - drawn.t} ms after the window drew the handle ink it turned clay in place, ` +
+        `line ${landing.line === null ? 'none' : JSON.stringify(landing.line)}, the rows below ${rowsHeld ? 'at the offsets they rendered at' : 'moved'}`,
+    };
+  }
+
+  // Anything else — clay with a line the rule does not accept.
   return {
-    ok: drawn.line === null && before.state === 'handle' && !before.clay && before.line === null
-      && landing.text === '@' + rName && landing.line === null && rowsHeld,
-    seen: `the result landed after the render — ${landing.t - drawn.t} ms after the window drew the handle ink it turned clay in place, ` +
-      `line ${landing.line === null ? 'none' : JSON.stringify(landing.line)}, the rows below ${rowsHeld ? 'at the offsets they rendered at' : 'moved'}`,
+    ok: false,
+    seen: `the handle drawn clay with a line the rule does not accept — ${JSON.stringify(drawn.line)}`,
   };
 }
 
@@ -5123,7 +5400,7 @@ async function runNamesStep27d(bcx, relays, ctx) {
     // (3) The window's states from the press until the name checks go quiet —
     // the render, then the landing — then its ↻, which draws the line.
     if (verified) await waitForNameChecks(fcx, changeIdx, { ms: 90000, quietMs: 3000 });
-    const landing = authorLanding((await authorRecord(fcx)).filter((s) => s.t >= changeAt), rName);
+    const landing = authorLanding(await authorRecord(fcx), rName, changeAt);
     await fcx.eval(`${authorBarJs(rKey)}.querySelector('[aria-label="refresh this author"]').click()`, true);
     const lineDrawn = await fcx.waitFor(`(${authorNameRowJs(rKey)}).line !== null`, 'the author window\'s line after ↻', 30000)
       .then(() => true, () => false);
@@ -5459,11 +5736,13 @@ async function promptTargetIds() {
 // within 30 s.
 async function readAndDeclinePrompt(promptsBefore, what) {
   let prompt = null;
-  const t0 = Date.now();
-  while (prompt === null && Date.now() - t0 < 30000) {
-    prompt = (await jsonList()).find((t) => t.url.includes(`chrome-extension://${EXT_ID}/prompt.html?id=`) && !promptsBefore.has(t.id) && t.webSocketDebuggerUrl) ?? null;
-    if (prompt === null) await sleep(200);
-  }
+  await recordWait(`readAndDeclinePrompt (${what})`, 30000, async () => {
+    const t0 = Date.now();
+    while (prompt === null && Date.now() - t0 < 30000) {
+      prompt = (await jsonList()).find((t) => t.url.includes(`chrome-extension://${EXT_ID}/prompt.html?id=`) && !promptsBefore.has(t.id) && t.webSocketDebuggerUrl) ?? null;
+      if (prompt === null) await sleep(200);
+    }
+  });
   let lines = null;
   let declined = false;
   if (prompt !== null) {
@@ -5910,16 +6189,18 @@ async function spendRKarmaBoxOutside() {
 // the outside spend took effect (WEB_INTERFACE → The wallet → "A builder
 // names the own box, always", "The returned box is its change").
 async function waitForRBoxReplaced(previousBoxId, ms = 180000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const j = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json());
-      const first = (Array.isArray(j?.boxes) ? j.boxes : [])[0]?.boxId ?? null;
-      if (first !== null && first !== previousBoxId) return first;
-    } catch {}
-    await sleep(2000);
-  }
-  return null;
+  return recordWait('waitForRBoxReplaced', ms, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const j = await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}?pending=1`).then((r) => r.json());
+        const first = (Array.isArray(j?.boxes) ? j.boxes : [])[0]?.boxId ?? null;
+        if (first !== null && first !== previousBoxId) return first;
+      } catch {}
+      await sleep(2000);
+    }
+    return null;
+  });
 }
 
 // Set both tip relays to `mode`, used by the waiting-writes block the same
@@ -5973,15 +6254,18 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // to the 60 s wall). Bounded; a page that never leaves the list
     // is noted in the log but no error — the top-level finally has
     // already called close.
-    const t0 = Date.now();
-    while (Date.now() - t0 < 10000) {
-      try {
-        const list = await jsonList();
-        if (!list.some((t) => t.id === page.targetId)) return;
-      } catch {}
-      await sleep(200);
-    }
-    console.log(`[diag] closeBlockPage: target ${page.targetId.slice(0, 8)}… still in /json/list after 10s`);
+    const gone = await recordWait(`closeBlockPage target leave (${page.targetId.slice(0, 8)}…)`, 10000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 10000) {
+        try {
+          const list = await jsonList();
+          if (!list.some((t) => t.id === page.targetId)) return true;
+        } catch {}
+        await sleep(200);
+      }
+      return false;
+    });
+    if (!gone) console.log(`[diag] closeBlockPage: target ${page.targetId.slice(0, 8)}… still in /json/list after 10s`);
   };
 
   try {
@@ -6082,28 +6366,30 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // lists A's database only once the open completes. A timeout names
     // the chain the page still held and ends W1 FAIL before `down` is set.
     const chainMoveBoundMs = 60000;
-    const chainMovedStart = Date.now();
     let chainMoveSnap = { remembered: null, lists: [] };
     let chainMoved = false;
-    while (Date.now() - chainMovedStart < chainMoveBoundMs) {
-      chainMoveSnap = await pCx.eval(`(async () => {
-        let remembered = null;
-        try { remembered = localStorage.getItem('notis.posts.chain'); } catch {}
-        let lists = [];
-        if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
-          const dbs = await indexedDB.databases();
-          lists = dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+    await recordWait('W1 prep chain-moved', chainMoveBoundMs, async () => {
+      const chainMovedStart = Date.now();
+      while (Date.now() - chainMovedStart < chainMoveBoundMs) {
+        chainMoveSnap = await pCx.eval(`(async () => {
+          let remembered = null;
+          try { remembered = localStorage.getItem('notis.posts.chain'); } catch {}
+          let lists = [];
+          if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
+            const dbs = await indexedDB.databases();
+            lists = dbs.map((d) => d.name).filter((n) => typeof n === 'string' && n.startsWith('notis.posts.'));
+          }
+          return { remembered, lists };
+        })()`).catch(() => ({ remembered: null, lists: [] }));
+        const rem = typeof chainMoveSnap?.remembered === 'string' ? chainMoveSnap.remembered.toLowerCase() : null;
+        const lists = Array.isArray(chainMoveSnap?.lists) ? chainMoveSnap.lists.map((n) => String(n).toLowerCase()) : [];
+        if (prepExpectedDb !== null && rem === (prepABlock1?.toLowerCase() ?? null) && lists.includes(prepExpectedDb)) {
+          chainMoved = true;
+          return;
         }
-        return { remembered, lists };
-      })()`).catch(() => ({ remembered: null, lists: [] }));
-      const rem = typeof chainMoveSnap?.remembered === 'string' ? chainMoveSnap.remembered.toLowerCase() : null;
-      const lists = Array.isArray(chainMoveSnap?.lists) ? chainMoveSnap.lists.map((n) => String(n).toLowerCase()) : [];
-      if (prepExpectedDb !== null && rem === (prepABlock1?.toLowerCase() ?? null) && lists.includes(prepExpectedDb)) {
-        chainMoved = true;
-        break;
+        await sleep(1000);
       }
-      await sleep(1000);
-    }
+    });
     prepChainDb = Array.isArray(chainMoveSnap?.lists) && chainMoveSnap.lists.length > 0
       ? chainMoveSnap.lists[0]
       : null;
@@ -6119,36 +6405,38 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // page — the one source that answers whether a row stands. Poll
     // under a bound until it is at least `prepCachedTarget`.
     if (prepChainDb !== null) {
-      const t0 = Date.now();
-      while (Date.now() - t0 < prepCachedBoundMs) {
-        const snap = await pCx.eval(`(async () => {
-          if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
-          return new Promise((resolve) => {
-            let req;
-            try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
-            catch { resolve({ count: 0, ids: [] }); return; }
-            req.onerror = () => resolve({ count: 0, ids: [] });
-            req.onsuccess = () => {
-              const db = req.result;
-              if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
-              const tx = db.transaction('entries', 'readonly');
-              const store = tx.objectStore('entries');
-              const c = store.count();
-              const k = store.getAllKeys();
-              let cnt = 0;
-              let keys = [];
-              c.onsuccess = () => { cnt = c.result; };
-              k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
-              tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
-              tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
-            };
-          });
-        })()`);
-        prepCached = typeof snap?.count === 'number' ? snap.count : 0;
-        prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
-        if (prepCached >= prepCachedTarget) break;
-        await sleep(1000);
-      }
+      await recordWait(`W1 prep cached count (target ${prepCachedTarget})`, prepCachedBoundMs, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < prepCachedBoundMs) {
+          const snap = await pCx.eval(`(async () => {
+            if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
+            return new Promise((resolve) => {
+              let req;
+              try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
+              catch { resolve({ count: 0, ids: [] }); return; }
+              req.onerror = () => resolve({ count: 0, ids: [] });
+              req.onsuccess = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
+                const tx = db.transaction('entries', 'readonly');
+                const store = tx.objectStore('entries');
+                const c = store.count();
+                const k = store.getAllKeys();
+                let cnt = 0;
+                let keys = [];
+                c.onsuccess = () => { cnt = c.result; };
+                k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
+                tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
+                tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
+              };
+            });
+          })()`);
+          prepCached = typeof snap?.count === 'number' ? snap.count : 0;
+          prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
+          if (prepCached >= prepCachedTarget) return;
+          await sleep(1000);
+        }
+      });
     }
     // Intersect R's root ids (read from the node before the page opened)
     // with the cache's ids: a card W1 can click has its id in both.
@@ -6225,22 +6513,24 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
             await pCx.eval(`(() => { const b = document.querySelector('.composer .btn-primary'); if (b) b.click(); })()`, true);
             // Poll the pending card's stage line until it reads
             // 'submitted' (write's 2xx landed; rep view recorded).
-            const t0 = Date.now();
             const bound = 60000;
             let landed = null;
-            while (Date.now() - t0 < bound) {
-              const snap = await pCx.eval(`(() => {
-                const cards = [...document.querySelectorAll('.card.pending')];
-                for (const c of cards) {
-                  if ((c.textContent ?? '').includes(${JSON.stringify(prepPostContent)})) {
-                    return { id: c.getAttribute('data-post-id'), stage: c.querySelector('.stage span')?.textContent ?? null };
+            await recordWait('W1 prep post submitted', bound, async () => {
+              const t0 = Date.now();
+              while (Date.now() - t0 < bound) {
+                const snap = await pCx.eval(`(() => {
+                  const cards = [...document.querySelectorAll('.card.pending')];
+                  for (const c of cards) {
+                    if ((c.textContent ?? '').includes(${JSON.stringify(prepPostContent)})) {
+                      return { id: c.getAttribute('data-post-id'), stage: c.querySelector('.stage span')?.textContent ?? null };
+                    }
                   }
-                }
-                return null;
-              })()`).catch(() => null);
-              if (snap && snap.stage === 'submitted') { landed = snap; break; }
-              await sleep(1000);
-            }
+                  return null;
+                })()`).catch(() => null);
+                if (snap && snap.stage === 'submitted') { landed = snap; return; }
+                await sleep(1000);
+              }
+            });
             prepPostResult = landed !== null
               ? { ok: true, postId: landed.id }
               : { ok: false, reason: 'post never read submitted within ' + bound + 'ms' };
@@ -6568,32 +6858,34 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // like before post`; the detail widens so a red names each POST's
     // position relative to the honest switch and to the corner press.
     const bound = 300000;
-    const t0 = Date.now();
     let forwardedLikes = 0;
     let forwardedPosts = 0;
     let likeFirstAt = null;
     let postFirstAt = null;
     let likeArrivals = [];
     let postArrivals = [];
-    while (Date.now() - t0 < bound) {
-      const aNew = tipRelays.a.log.slice(w3LogAIdx);
-      const bNew = tipRelays.b.log.slice(w3LogBIdx);
-      const merged = [...aNew, ...bNew].filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts');
-      const likes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
-      const posts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
-      forwardedLikes = likes.length;
-      forwardedPosts = posts.length;
-      if (likeFirstAt === null && likes.length > 0) likeFirstAt = likes[0].at;
-      if (postFirstAt === null && posts.length > 0) postFirstAt = posts[0].at;
-      likeArrivals = likes.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
-      postArrivals = posts.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
-      if (forwardedLikes >= 1 && forwardedPosts >= 1 && likeFirstAt !== null && postFirstAt !== null) break;
-      await sleep(1000);
-    }
+    await recordWait('W3 forwarded like/post flush', bound, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < bound) {
+        const aNew = tipRelays.a.log.slice(w3LogAIdx);
+        const bNew = tipRelays.b.log.slice(w3LogBIdx);
+        const merged = [...aNew, ...bNew].filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts');
+        const likes = merged.filter((e) => (e.url === '/likes' || (e.url ?? '').startsWith('/likes?')));
+        const posts = merged.filter((e) => (e.url === '/posts' || (e.url ?? '').startsWith('/posts?')));
+        forwardedLikes = likes.length;
+        forwardedPosts = posts.length;
+        if (likeFirstAt === null && likes.length > 0) likeFirstAt = likes[0].at;
+        if (postFirstAt === null && posts.length > 0) postFirstAt = posts[0].at;
+        likeArrivals = likes.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
+        postArrivals = posts.map((e) => ({ msAfterHonest: e.at - w3HonestAt, status: e.status, edit: e.edit ?? null, upstream: e.upstream }));
+        if (forwardedLikes >= 1 && forwardedPosts >= 1 && likeFirstAt !== null && postFirstAt !== null) return;
+        await sleep(1000);
+      }
+    });
     // Each txId admitted — in the node's pool (`/mempool`) or the chain
     // (`/posts/:id` answers 200). The client's post content lands in the
     // feed as a confirmed card the feed reads.
-    const postLanded = await (async () => {
+    const postLanded = await recordWait('W3 post landed on A', bound, async () => {
       const t1 = Date.now();
       while (Date.now() - t1 < bound) {
         try {
@@ -6603,7 +6895,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
         await sleep(2000);
       }
       return false;
-    })();
+    });
     const feedShowsConfirmed = await w3Cx.eval(`(() => {
       const nodes = [...document.querySelectorAll('.card .card-content')];
       return nodes.some((n) => (n.textContent ?? '').includes(${JSON.stringify(w2PostContent)}));
@@ -6800,24 +7092,26 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
       // onto the submission and re-renders the pending card, so the
       // `.stage` text replaces 'waiting for a node' with the reason.
       const bound = 180000;
-      const t0 = Date.now();
       let firstPostForwarded = 0;
       let firstStage = firstStageWaiting;
       let secondStage = secondStageWaiting;
-      while (Date.now() - t0 < bound) {
-        const aNew = tipRelays.a.log.slice(w4LogAIdx);
-        const bNew = tipRelays.b.log.slice(w4LogBIdx);
-        const forwardedPosts = [...aNew, ...bNew]
-          .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
-          .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
-        firstPostForwarded = forwardedPosts.length;
-        firstStage = await stageOf(firstPostContent);
-        secondStage = await stageOf(secondPostContent);
-        const firstMoved = typeof firstStage === 'string' && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
-        const secondStranded = typeof secondStage === 'string' && secondStage.includes('not sent: the one before it was refused');
-        if (firstPostForwarded >= 1 && firstMoved && secondStranded) break;
-        await sleep(1500);
-      }
+      await recordWait('W4 first flush forwarded + stranded', bound, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < bound) {
+          const aNew = tipRelays.a.log.slice(w4LogAIdx);
+          const bNew = tipRelays.b.log.slice(w4LogBIdx);
+          const forwardedPosts = [...aNew, ...bNew]
+            .filter((e) => e.method === 'POST' && e.edit !== 'down' && e.edit !== 'hold-posts')
+            .filter((e) => e.url === '/posts' || (e.url ?? '').startsWith('/posts?'));
+          firstPostForwarded = forwardedPosts.length;
+          firstStage = await stageOf(firstPostContent);
+          secondStage = await stageOf(secondPostContent);
+          const firstMoved = typeof firstStage === 'string' && firstStage !== 'waiting for a node' && firstStage !== 'submitting…' && firstStage !== 'submitted';
+          const secondStranded = typeof secondStage === 'string' && secondStage.includes('not sent: the one before it was refused');
+          if (firstPostForwarded >= 1 && firstMoved && secondStranded) return;
+          await sleep(1500);
+        }
+      });
       // After the flush, the second post never forwarded: the stranding
       // rule drops it before any POST goes.
       await sleep(3000);
@@ -7461,16 +7755,18 @@ async function ensureLightFixture(cx) {
     await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer enabled', 15000);
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
     await sleep(2000);
-    const t0 = Date.now();
     let landed = null;
-    while (Date.now() - t0 < 5 * 60 * 1000) {
-      const tr = await fetch(`${NODE}/posts/${rootId}/thread?limit=200`).then((r) => r.json()).catch(() => null);
-      landed = Array.isArray(tr?.descendants)
-        ? tr.descendants.find((d) => liveDirect(d, parentId) && typeof d.content === 'string' && d.content === CONTENT) ?? null
-        : null;
-      if (landed) break;
-      await sleep(2000);
-    }
+    await recordWait('ensureLightFixture reply landing', 5 * 60 * 1000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 5 * 60 * 1000) {
+        const tr = await fetch(`${NODE}/posts/${rootId}/thread?limit=200`).then((r) => r.json()).catch(() => null);
+        landed = Array.isArray(tr?.descendants)
+          ? tr.descendants.find((d) => liveDirect(d, parentId) && typeof d.content === 'string' && d.content === CONTENT) ?? null
+          : null;
+        if (landed) return;
+        await sleep(2000);
+      }
+    });
     if (landed === null) return null;
     // Refresh the pane so the thread's own read brings the row and the
     // client drops the landed submission from its state. Without this a
@@ -7817,7 +8113,9 @@ async function writePendingOpenFromWorker(id) {
       await wake.eval(`chrome.runtime.sendMessage({ kind: 'state' })`).catch(() => {});
       try { wake.s.close(); } catch {}
     }
-    for (let i = 0; i < 50 && !worker; i++) { await sleep(200); worker = await findWorker(); }
+    await recordWait('writePendingOpenFromWorker find worker', 10000, async () => {
+      for (let i = 0; i < 50 && !worker; i++) { await sleep(200); worker = await findWorker(); }
+    });
   }
   if (!worker) throw new Error('no background service_worker target to write the pending-open record');
   const s = new WebSocket(worker.webSocketDebuggerUrl);
@@ -7967,24 +8265,26 @@ const lightListsIn = (slice) => slice.filter((e) => e.method === 'GET' && e.path
 // entry means the batch is held. Returns as soon as any relay in `relays`
 // holds such a batch. Throws `timeout waiting for <label>` on timeout.
 async function waitForHeldBatch(relays, id, ms, label) {
-  const target = String(id).toLowerCase();
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    for (const relay of relays) {
-      for (const e of relay.log) {
-        if (e.method === 'POST'
-          && e.path.split('?')[0] === '/posts/batch'
-          && e.mode === 'hold'
-          && e.status === null
-          && Array.isArray(e.batchIds)
-          && e.batchIds.some((b) => typeof b === 'string' && b.toLowerCase() === target)) {
-          return;
+  return recordWait(`waitForHeldBatch(${label})`, ms, async () => {
+    const target = String(id).toLowerCase();
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      for (const relay of relays) {
+        for (const e of relay.log) {
+          if (e.method === 'POST'
+            && e.path.split('?')[0] === '/posts/batch'
+            && e.mode === 'hold'
+            && e.status === null
+            && Array.isArray(e.batchIds)
+            && e.batchIds.some((b) => typeof b === 'string' && b.toLowerCase() === target)) {
+            return;
+          }
         }
       }
+      await sleep(50);
     }
-    await sleep(50);
-  }
-  throw new Error(`timeout waiting for ${label}`);
+    throw new Error(`timeout waiting for ${label}`);
+  });
 }
 
 async function lightSteps(cx, targetId = 'unknown') {
@@ -8033,7 +8333,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     // re-runs on load, so the corner is reset here too.
     await cx.call('Page.reload');
     await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
-    const verifiedPre = await pressAndReadVerdict(cx, { atLeast: 2, ms: 60000, quietMs: 2000 }).catch(() => null);
+    const verifiedPre = await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 }).catch(() => null);
     const verifiedOk = verifiedPre !== null && verifiedPre.reading.ledClass === 'led fresh'
       && /^verified across \d+ nodes · tip \d+$/.test(verifiedPre.reading.title ?? '');
     if (!verifiedOk) {
@@ -8226,15 +8526,17 @@ async function lightSteps(cx, targetId = 'unknown') {
     })()`, true);
     await cx.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'L3 composer enabled', 15000);
     await cx.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-    const t0 = Date.now();
     let ownId = null;
-    while (Date.now() - t0 < 5 * 60 * 1000) {
-      const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=5`).then((r) => r.json()).catch(() => null);
-      const rows = Array.isArray(r?.posts) ? r.posts : [];
-      const row = rows.find((p) => typeof p.content === 'string' && p.content === CONTENT);
-      if (row) { ownId = row.id; break; }
-      await sleep(2000);
-    }
+    await recordWait('L3 own post landed on chain', 5 * 60 * 1000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 5 * 60 * 1000) {
+        const r = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=5`).then((r) => r.json()).catch(() => null);
+        const rows = Array.isArray(r?.posts) ? r.posts : [];
+        const row = rows.find((p) => typeof p.content === 'string' && p.content === CONTENT);
+        if (row) { ownId = row.id; return; }
+        await sleep(2000);
+      }
+    });
     if (ownId === null) {
       record('L3', false, 'the reader\'s own new post never landed within 5 min');
     } else {
@@ -8441,12 +8743,14 @@ async function lightSteps(cx, targetId = 'unknown') {
     await clearCacheAndReload(cx, aDbName);
     // Find the batch request's arrival at RA.
     let batchT0 = null;
-    const tStart = Date.now();
-    while (Date.now() - tStart < 10000 && batchT0 === null) {
-      const batches = batchesIn(RA.log.slice(idxBefore.ra));
-      if (batches.length > 0) batchT0 = batches[0].at;
-      else await sleep(100);
-    }
+    await recordWait('L9 batch arrival at RA', 10000, async () => {
+      const tStart = Date.now();
+      while (Date.now() - tStart < 10000 && batchT0 === null) {
+        const batches = batchesIn(RA.log.slice(idxBefore.ra));
+        if (batches.length > 0) batchT0 = batches[0].at;
+        else await sleep(100);
+      }
+    });
     if (batchT0 === null) {
       record('L9', false, 'the batch request never reached RA under hang');
     } else {
@@ -8685,13 +8989,15 @@ async function lightSteps(cx, targetId = 'unknown') {
       })()`, true);
       // Wait for the withdrawn state to land — the card becomes a
       // withdrawn card.
-      const tLand = Date.now();
       let landed = false;
-      while (Date.now() - tLand < 5 * 60 * 1000) {
-        const row = await fetch(`${NODE}/posts/${reply2Id}`).then((r) => r.json()).catch(() => null);
-        if (row && row.kind === 'withdrawn') { landed = true; break; }
-        await sleep(2000);
-      }
+      await recordWait('L12 withdrawn row landed', 5 * 60 * 1000, async () => {
+        const tLand = Date.now();
+        while (Date.now() - tLand < 5 * 60 * 1000) {
+          const row = await fetch(`${NODE}/posts/${reply2Id}`).then((r) => r.json()).catch(() => null);
+          if (row && row.kind === 'withdrawn') { landed = true; return; }
+          await sleep(2000);
+        }
+      });
       await refreshThreadPane(cx, rootId);
       await sleep(2000);
       const paneWithdrawn = await readThreadPaneShape(cx, rootId);
@@ -8770,8 +9076,10 @@ async function lightSteps(cx, targetId = 'unknown') {
     RB.recordNextList = true;
     // Trigger a feed read.
     await refreshFeed(cx);
-    const t0 = Date.now();
-    while (Date.now() - t0 < 15000 && RA.replayPage === null && RB.replayPage === null) await sleep(100);
+    await recordWait('L13 relay replayPage recorded', 15000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 15000 && RA.replayPage === null && RB.replayPage === null) await sleep(100);
+    });
     // Once one relay holds the page, the other relay's record flag is
     // cleared so no later read overwrites it, and that page is set as
     // replayPage on both relays so the replay arm serves it at whichever
@@ -8809,24 +9117,26 @@ async function lightSteps(cx, targetId = 'unknown') {
           RB.mode = 'upstream-D';
           await cx.call('Page.reload');
           await cx.waitFor(`!!document.querySelector('#feed')`, 'L13 feed after reload with upstream=D', 60000);
-          await pressAndReadVerdict(cx, { atLeast: 1, ms: 60000, quietMs: 2000 }).catch(() => {});
+          await pressAndReadVerdict(cx, { ms: 60000, quietMs: 2000 }).catch(() => {});
           // Poll the browser's database list — D's database present and
           // A's absent — until the delete lands; bounded to 15 s. No
           // call opens aDbName here: `indexedDB.open` of a database
           // that does not exist creates one (empty, version 1), which
           // would put A's name back in the list.
-          const pollDeadline = Date.now() + 15000;
           let namesOnD = null;
           let dListedANotListed = false;
-          while (Date.now() < pollDeadline) {
-            const dbsOnD = await listIndexedDBDatabases(cx);
-            namesOnD = Array.isArray(dbsOnD) ? dbsOnD.map((d) => d.name) : null;
-            if (Array.isArray(namesOnD) && namesOnD.includes(dDbName) && !namesOnD.includes(aDbName)) {
-              dListedANotListed = true;
-              break;
+          await recordWait('L13 D db present, A db absent', 15000, async () => {
+            const pollDeadline = Date.now() + 15000;
+            while (Date.now() < pollDeadline) {
+              const dbsOnD = await listIndexedDBDatabases(cx);
+              namesOnD = Array.isArray(dbsOnD) ? dbsOnD.map((d) => d.name) : null;
+              if (Array.isArray(namesOnD) && namesOnD.includes(dDbName) && !namesOnD.includes(aDbName)) {
+                dListedANotListed = true;
+                return;
+              }
+              await sleep(250);
             }
-            await sleep(250);
-          }
+          });
           // Switch both relays to list-replay and press ↻ — whichever the
           // client's routed pick chose answers the recorded page
           // (MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows");
@@ -9122,16 +9432,18 @@ function logOffset(logPath) {
   try { return readFileSync(logPath, 'utf8').length; } catch { return 0; }
 }
 async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 180000) {
-  const needle = new RegExp(`outbound handshake with ${peerId}( on id=\\S+)?: ok=true`);
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const data = readFileSync(logPath, 'utf8');
-      if (data.length > sinceOffset && needle.test(data.slice(sinceOffset))) return true;
-    } catch {}
-    await sleep(500);
-  }
-  return false;
+  return recordWait(`waitForOutboundHandshakeInLog(peerId=${peerId.slice(0, 8)}…)`, ms, async () => {
+    const needle = new RegExp(`outbound handshake with ${peerId}( on id=\\S+)?: ok=true`);
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const data = readFileSync(logPath, 'utf8');
+        if (data.length > sinceOffset && needle.test(data.slice(sinceOffset))) return true;
+      } catch {}
+      await sleep(500);
+    }
+    return false;
+  });
 }
 
 // Wait for a node's log to carry an `Applied ordering block height=…` line
@@ -9149,16 +9461,18 @@ async function waitForOutboundHandshakeInLog(logPath, peerId, sinceOffset, ms = 
 // relays to A through that mesh (`NET_INTERFACE → Forwarding Rule`).
 // Returns true on match, false on timeout.
 async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
-  const needle = 'Applied ordering block height=';
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const data = readFileSync(logPath, 'utf8');
-      if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
-    } catch {}
-    await sleep(500);
-  }
-  return false;
+  return recordWait('waitForAppliedBlockInLog', ms, async () => {
+    const needle = 'Applied ordering block height=';
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const data = readFileSync(logPath, 'utf8');
+        if (data.length > sinceOffset && data.slice(sinceOffset).includes(needle)) return true;
+      } catch {}
+      await sleep(500);
+    }
+    return false;
+  });
 }
 
 // Wait for a node's log to carry a new `[net] inbound handshake from <peerId>
@@ -9169,24 +9483,26 @@ async function waitForAppliedBlockInLog(logPath, sinceOffset, ms = 180000) {
 // the offset after it lets the caller start the next wait from this point.
 // Returns `{ peerId, matched, offsetAfter }` on match, `null` on timeout.
 async function waitForNewInboundHandshakeInLog(logPath, sinceOffset, ms = 90000) {
-  const needle = /\[net\] inbound handshake from (\S+) on id=\S+: ok=true/;
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const data = readFileSync(logPath, 'utf8');
-      if (data.length > sinceOffset) {
-        const slice = data.slice(sinceOffset);
-        const m = needle.exec(slice);
-        if (m !== null) {
-          const lineEndRel = slice.indexOf('\n', m.index);
-          const offsetAfter = sinceOffset + (lineEndRel === -1 ? slice.length : lineEndRel + 1);
-          return { peerId: m[1], matched: m[0], offsetAfter };
+  return recordWait('waitForNewInboundHandshakeInLog', ms, async () => {
+    const needle = /\[net\] inbound handshake from (\S+) on id=\S+: ok=true/;
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      try {
+        const data = readFileSync(logPath, 'utf8');
+        if (data.length > sinceOffset) {
+          const slice = data.slice(sinceOffset);
+          const m = needle.exec(slice);
+          if (m !== null) {
+            const lineEndRel = slice.indexOf('\n', m.index);
+            const offsetAfter = sinceOffset + (lineEndRel === -1 ? slice.length : lineEndRel + 1);
+            return { peerId: m[1], matched: m[0], offsetAfter };
+          }
         }
-      }
-    } catch { /* log not written yet or vanished — poll again */ }
-    await sleep(500);
-  }
-  return null;
+      } catch { /* log not written yet or vanished — poll again */ }
+      await sleep(500);
+    }
+    return null;
+  });
 }
 
 // `GET /blocks/current` of a node as `{height, hash}` or null; a height-0
@@ -9292,6 +9608,41 @@ async function setupMeshStack() {
     );
   }
   console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+
+  // Wait for A' and B' each to stand at A's tip within ± 2 before the
+  // browser launches, so every M-step's fresh page reads two synced nodes
+  // (`WEB_INTERFACE → The extension → "The verified tip"`: the verdict
+  // counts nodes whose chain the verifier could check). B' bootstraps off
+  // A' and reaches A's chain through it, taking on the order of a minute
+  // from a cold start. The cap names which node fell short.
+  console.log(`[vm] waiting for A' and B' to each stand at A's tip (± 2)`);
+  const synced = await recordWait("A'/B' at A's tip (setup)", 180000, async () => {
+    const t0 = Date.now();
+    let last = { a: null, apTip: null, bpTip: null };
+    while (Date.now() - t0 < 180000) {
+      const [a, apTip, bpTip] = await Promise.all([
+        currentTip(NODE), currentTip(AP_ORIGIN), currentTip(BP_ORIGIN),
+      ]);
+      last = { a, apTip, bpTip };
+      if (a !== null && a.height > 0 && apTip !== null && bpTip !== null
+          && Math.abs(a.height - apTip.height) <= 2
+          && Math.abs(a.height - bpTip.height) <= 2) {
+        return { ok: true, ...last };
+      }
+      await sleep(500);
+    }
+    return { ok: false, ...last };
+  });
+  if (!synced.ok) {
+    const aH = synced.a?.height ?? null;
+    const apH = synced.apTip?.height ?? null;
+    const bpH = synced.bpTip?.height ?? null;
+    const short = [];
+    if (apH === null || aH === null || Math.abs(aH - apH) > 2) short.push(`A'=${apH ?? '?'}`);
+    if (bpH === null || aH === null || Math.abs(aH - bpH) > 2) short.push(`B'=${bpH ?? '?'}`);
+    throw new Error(`mesh setup: A' and/or B' did not reach A's tip within 180 s — A=${aH ?? '?'}, ${short.join(', ')}`);
+  }
+  console.log(`[vm] synced: A=${synced.a.height}, A'=${synced.apTip.height}, B'=${synced.bpTip.height}`);
 }
 
 async function teardownMeshStack() {
@@ -9358,7 +9709,7 @@ async function runMeshStepM1(bcx) {
     // and `newPostsLine`). A refresh's reads are routed by the mesh client,
     // so the signal is the report text updating — the reads themselves
     // leave no HTTP request when the mesh serves them.
-    const landed = await (async () => {
+    const landed = await recordWait('M1 feed report updated', 30000, async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 30000) {
         const text = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
@@ -9370,7 +9721,7 @@ async function runMeshStepM1(bcx) {
         await sleep(200);
       }
       return false;
-    })();
+    });
     const httpPostMark = page.cx.events.filter((ev, i) => {
       if (i < markIdx) return false;
       if (ev.method !== 'Network.requestWillBeSent') return false;
@@ -9545,7 +9896,7 @@ async function runMeshStepM3(bcx) {
     // and CONTENT for M5, which takes a copy of A''s store and nulls this
     // id's text on the copy — NODE_INTERFACE → Posts DAG →
     // "A serving reader is asked for what has been due".
-    const landed = await (async () => {
+    const landed = await recordWait('M3 post landed on both nodes', 180000, async () => {
       const t0 = Date.now();
       // The operator's miner is paced (40 s stopped, 3 s running per
       // cycle); 180 s is more than three cycles, the floor the landing
@@ -9566,7 +9917,7 @@ async function runMeshStepM3(bcx) {
         await sleep(1000);
       }
       return false;
-    })();
+    });
     // POST /posts in the page's Network domain since the composer opened.
     const postsOverHttp = page.cx.events.filter((ev) => {
       if (ev.method !== 'Network.requestWillBeSent') return false;
@@ -9679,7 +10030,7 @@ async function runMeshStepM4(bcx) {
     // until all three match, then press at once: the recipe's miner is
     // paused 40 s in every 43, so a write made right after both reach a
     // fresh block has the 10 s hold and the resend inside a quiet window.
-    const pressTips = await (async () => {
+    const pressTips = await recordWait("M4 A'/B' at A's tip", 120000, async () => {
       const t0 = Date.now();
       let last = { a: null, apTip: null, bpTip: null };
       while (Date.now() - t0 < 120000) {
@@ -9699,7 +10050,7 @@ async function runMeshStepM4(bcx) {
         await sleep(200);
       }
       return { ok: false, ...last };
-    })();
+    });
     if (!pressTips.ok) {
       throw new Error(`M4: A' and B' did not reach A's tip within 120 s before the composer press — A=${pressTips.a?.height ?? '?'}/${pressTips.a?.hash?.slice(0, 16) ?? '?'}…, A'=${pressTips.apTip?.height ?? '?'}/${pressTips.apTip?.hash?.slice(0, 16) ?? '?'}…, B'=${pressTips.bpTip?.height ?? '?'}/${pressTips.bpTip?.hash?.slice(0, 16) ?? '?'}…`);
     }
@@ -9708,17 +10059,19 @@ async function runMeshStepM4(bcx) {
     // While the first POST is held, the card reads pending. On the retry,
     // the same bytes reach B' and land there, then propagate to A'.
     let pendingSeen = false;
-    const pendingSeenUntil = Date.now() + 10000;
-    while (Date.now() < pendingSeenUntil) {
-      const p = await page.cx.eval(`!!document.querySelector('.card.pending')`).catch(() => false);
-      if (p) { pendingSeen = true; break; }
-      await sleep(250);
-    }
+    await recordWait('M4 pending card seen', 10000, async () => {
+      const pendingSeenUntil = Date.now() + 10000;
+      while (Date.now() < pendingSeenUntil) {
+        const p = await page.cx.eval(`!!document.querySelector('.card.pending')`).catch(() => false);
+        if (p) { pendingSeen = true; return; }
+        await sleep(250);
+      }
+    });
     // The content lands exactly once on each node (one post per node, not
     // two). The operator's miner is paced (40 s stopped, 3 s running per
     // cycle); 180 s is more than three cycles, the floor the landing
     // polls elsewhere in this file take.
-    const landed = await (async () => {
+    const landed = await recordWait('M4 post lands once per node', 180000, async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 180000) {
         const [a, b] = await Promise.all([
@@ -9732,7 +10085,7 @@ async function runMeshStepM4(bcx) {
         await sleep(1000);
       }
       return { inA: 0, inB: 0, landed: false };
-    })();
+    });
     const heldOnce = m4Relay.log.filter((l) => l.edit === 'hold-posts').length === 1;
     const rejected = await page.cx.eval(`!!document.querySelector('.card.rejected') || document.body.textContent.includes('refused')`).catch(() => false);
     record('M4',
@@ -9956,7 +10309,7 @@ async function runMeshStepM5(cx, bcx) {
       btn.click();
     })()`, true);
     const pressAt = Date.now();
-    const serveApplied = await (async () => {
+    const serveApplied = await recordWait('M5b notis.serve applied', 5000, async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 5000) {
         const v = await page5b.cx.eval(`localStorage.getItem('notis.serve')`).catch(() => null);
@@ -9964,7 +10317,7 @@ async function runMeshStepM5(cx, bcx) {
         await sleep(50);
       }
       return false;
-    })();
+    });
     const hintUnderRow = await page5b.cx.eval(`(() => {
       const rows = [...document.querySelectorAll('.row')];
       const row = rows.find((r) => r.querySelector('label')?.textContent === 'serve posts');
@@ -10294,17 +10647,16 @@ async function runVerifiedBlocksAlone() {
 }
 
 async function main() {
-  // Open the extension's page.
-  const p1 = await findExt('index.html');
-  if (p1) {} else {
-    // Open one via Target.createTarget through the browser websocket.
-    const bv = await browserVersion();
-    const br = new WebSocket(bv.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
-    br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
-    await sleep(2000);
-    br.close();
-  }
+  // Chrome launched with `--load-extension` does not open the extension's
+  // `index.html` on its own; a `Target.createTarget` opens it, and the
+  // page appears in `/json/list` once Chrome finishes attaching the new
+  // target.
+  const bv = await browserVersion();
+  const br = new WebSocket(bv.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
+  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
+  await sleep(2000);
+  br.close();
   const page = await findExt('index.html');
   if (!page) throw new Error('no extension page');
   // Give the page a moment to finish parsing before we attach — main.ts's
@@ -10435,6 +10787,40 @@ async function main() {
     return;
   }
 
+  // --light and --mesh: the block runs on steps 1 and 2 alone — R's identity
+  // loaded, nothing of steps 3–16 below. The block's nodes (the two light
+  // relays for --light; A' and B' for --mesh) are up from before the browser
+  // launched (setupLightRelays / setupMeshStack). The other blocks and
+  // 13-uncancelled read NOT RUN, and the [diag] line prints just before
+  // 13-uncancelled's NOT RUN.
+  if (LIGHT || MESH) {
+    const name = LIGHT ? 'light' : 'mesh';
+    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+      record(s, 'NOT RUN', `--${name} runs its block alone after step 2`);
+    }
+    markVerifiedTipNotRun(`--${name} runs its block alone`);
+    markVerifiedFiguresNotRun(`--${name} runs its block alone`);
+    markVerifiedNamesNotRun(`--${name} runs its block alone`);
+    markWaitingWritesNotRun(`--${name} is not a relays build — the waiting-writes block is relays-build only`);
+    if (LIGHT) markMeshNotRun('no --mesh');
+    else markLightNotRun('no --light');
+    const bbcx = await openBrowserSession();
+    try {
+      let bPage = await findExt('index.html');
+      if (!bPage) throw new Error(`--${name}: no extension page`);
+      const bCx = await openSession(bPage.webSocketDebuggerUrl);
+      try {
+        if (LIGHT) await lightSteps(bCx, bPage.id);
+        else await meshSteps(bCx, bbcx, bPage.id);
+      } finally { try { bCx.s.close(); } catch {} }
+      await diagBeforeThirteenUncancelled(page.id);
+      record('13-uncancelled', 'NOT RUN', `--${name} runs its block alone`);
+    } finally {
+      try { bbcx.s.close(); } catch {}
+    }
+    return;
+  }
+
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
@@ -10447,11 +10833,13 @@ async function main() {
   })()`, true);
   // Wait for affordability read to complete so post enables.
   await cx2.waitFor(`!document.querySelector('.composer .btn-primary').disabled`, 'composer post enabled');
-  // No prompt target should appear under silent policy.
+  // Under a silent policy the client signs and posts; the write's
+  // request on the wire settles the "no prompt" assertion since no
+  // prompt can precede it.
+  const submitIdx3 = cx2.events.length;
   await cx2.eval(`document.querySelector('.composer .btn-primary').click()`, true);
-  // Wait: no prompt page opens.
-  await sleep(2000);
-  const promptOpen = await findExt('prompt.html');
+  const outcome3 = await waitForWriteOrPrompt(cx2, submitIdx3, '/posts', 'step-3 post');
+  const promptOpen = outcome3.prompt;
   const composerAfter = await cx2.eval(`!!document.querySelector('.composer')`);
   const cardVisible = await cx2.eval(`!!document.querySelector('.card.pending')`);
   const landed3 = await pollKarma(15, 45000);
@@ -10474,14 +10862,17 @@ async function main() {
     return { id: other.getAttribute('data-post-id'), author: other.getAttribute('data-author') };
   })()`);
   if (otherPost) {
+    const submitIdx4 = cx2.events.length;
     await cx2.eval(`(() => {
       const card = document.querySelector('[data-post-id="' + ${JSON.stringify(otherPost.id)} + '"]');
       const like = [...card.querySelectorAll('.word')].find(w => w.textContent.trim() === 'like');
       like.click();
     })()`, true);
-    await sleep(2000);
-    // Check the like is optimistic (green) and no prompt appears.
-    const promptOpen4 = await findExt('prompt.html');
+    // Under a silent policy the client signs and posts; the write's
+    // request on the wire settles the "no prompt" assertion since no
+    // prompt can precede it.
+    const outcome4 = await waitForWriteOrPrompt(cx2, submitIdx4, '/likes', 'step-4 like');
+    const promptOpen4 = outcome4.prompt;
     const cardLiked = await cx2.eval(`(() => {
       const card = document.querySelector('[data-post-id="' + ${JSON.stringify(otherPost.id)} + '"]');
       return card ? card.textContent.includes('liked') : false;
@@ -10522,10 +10913,10 @@ async function main() {
         value: l.querySelector('.target-value')?.textContent ?? null,
       }));
     })()`);
-    // Approve.
+    // Approve. The prompt target's destruction settles "the prompt closed"
+    // — an approved prompt tears its own page down.
     await cxp.eval(`document.querySelector('.prompt button.btn-primary').click()`, true);
-    await sleep(2000);
-    const promptGone = !(await findExt('prompt.html'));
+    const promptGone = await waitForTargetGone(prompt5.id, 20000);
     const landed5 = await pollKarma(0, 45000).catch(() => ({ ok: true }));
     await sleep(2000);
     const feedShows5 = await cx2.eval(`[...document.querySelectorAll('.card-content')].some(n => n.textContent && n.textContent.includes(${JSON.stringify(CONTENT5)}))`);
@@ -10905,13 +11296,15 @@ async function main() {
   let clientLanding12bMs = 0;
   let clientLanding12bLanded = false;
   if (payment12b.landed) {
-    const cl0 = Date.now();
-    while (Date.now() - cl0 < 180000) {
-      const stage = await cx10.eval(`document.querySelector('.credits-flight .stage')?.textContent?.trim() ?? null`);
-      if (stage === 'sent') { clientLanding12bLanded = true; clientLanding12bMs = Date.now() - cl0; break; }
-      await sleep(1000);
-    }
-    if (!clientLanding12bLanded) clientLanding12bMs = Date.now() - cl0;
+    await recordWait('12b send row reads sent', 180000, async () => {
+      const cl0 = Date.now();
+      while (Date.now() - cl0 < 180000) {
+        const stage = await cx10.eval(`document.querySelector('.credits-flight .stage')?.textContent?.trim() ?? null`);
+        if (stage === 'sent') { clientLanding12bLanded = true; clientLanding12bMs = Date.now() - cl0; return; }
+        await sleep(1000);
+      }
+      clientLanding12bMs = Date.now() - cl0;
+    });
   }
   const resolvedOk12b = resolvedKey12b === DEVNET_FAUCET_KEY;
   const whatOk12b = promptShape12b?.[0]?.cls === 'what' && promptShape12b?.[0]?.text === 'Notis transfer';
@@ -10984,7 +11377,14 @@ async function main() {
   await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
   await cx10.waitFor(`!!window.__btn('lock')`, 'lock button in profile 12d');
   await cx10.eval(`window.__btn('lock').click()`, true);
-  await sleep(1000);
+  // The lock clears `chrome.storage.session['notis.seed']`
+  // (WEB_INTERFACE → The identity module); the next read is the step's own
+  // `lockedSession12d` assertion, so the wait ends on that storage read
+  // returning empty.
+  await cx10.waitFor(
+    `(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] === undefined)()`,
+    'notis.seed cleared after the lock press', 15000,
+  ).catch(() => {});
   const lockedSession12d = await cx10.eval(`(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] ?? null)()`);
   await cx10.eval(`document.querySelector('[aria-label="open wallet"]').click()`, true);
   const events12dStart = cx10.events.length;
@@ -10997,11 +11397,19 @@ async function main() {
     form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   })()`, true);
   // The unlock form mounts under the credits form as `.credits-field
-  // .card-unlock`, never in a confirm.
+  // .card-unlock`, never in a confirm. The mount is the signal the
+  // client's flow took the lock path — a locked send mounts the unlock
+  // form in place and refuses to go out — so after the form mounts a
+  // quiet interval covers any late prompt opening that would trip the
+  // step.
   await cx10.waitFor(`!!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]')`, 'card-unlock 12d');
   const unlockMounted12d = await cx10.eval(`!!document.querySelector('.credits-field .card-unlock form.pf input[type="password"]')`);
   const noConfirmLocked12d = await cx10.eval(`!document.querySelector('.credits-field .pf-confirm')`);
-  const promptSeen12d = await findExt('prompt.html');
+  await sleep(LOCK_REFUSAL_SETTLE_MS);
+  const promptSeen12d = (await jsonList()).find((t) => t.type === 'page'
+    && typeof t.url === 'string'
+    && t.url.startsWith(`chrome-extension://${EXT_ID}/`)
+    && t.url.includes('prompt.html')) ?? null;
   const transferSeen12dLocked = cx10.events.slice(events12dStart).some((e) =>
     e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').includes('/credits/transfer'));
   await cx10.eval(`(() => {
@@ -11010,7 +11418,10 @@ async function main() {
     pw.value = ${JSON.stringify(PASSPHRASE)};
     form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   })()`, true);
-  await sleep(3000);
+  // The unlock lets the send through, and the ask policy opens the prompt
+  // (WEB_INTERFACE → The wallet window → "The `send` row"); the step's
+  // next read is the prompt target, so `findExt` polling `/json/list` ends
+  // the wait on its arrival.
   const prompt12dFirst = await findExt('prompt.html');
   if (prompt12dFirst) {
     const cxp = await openSession(prompt12dFirst.webSocketDebuggerUrl);
@@ -11103,17 +11514,19 @@ async function main() {
   // event's arrival stamp (from `ev.__at`), so wall time is a difference in
   // that clock.
   async function waitForDestroyEvent(targetId, startIdx, ms) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < ms) {
-      for (let i = startIdx; i < bcx.events.length; i++) {
-        const ev = bcx.events[i];
-        if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === targetId) {
-          return ev.__at ?? Date.now();
+    return recordWait(`waitForDestroyEvent(${targetId.slice(0, 8)}…)`, ms, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        for (let i = startIdx; i < bcx.events.length; i++) {
+          const ev = bcx.events[i];
+          if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === targetId) {
+            return ev.__at ?? Date.now();
+          }
         }
+        await sleep(50);
       }
-      await sleep(50);
-    }
-    return null;
+      return null;
+    });
   }
 
   // The raw event sequence for one target from the browser-session, between
@@ -11198,12 +11611,14 @@ async function main() {
         // Wait up to 10 s for the bridge's isolated world to be created on
         // this target — the extension's content script registers one at
         // document_start.
-        const t0 = Date.now();
         let bridgeCx = null;
-        while (Date.now() - t0 < 10000 && bridgeCx === null) {
-          bridgeCx = ctxCreated.find((c) => c.auxData?.type === 'isolated' && typeof c.origin === 'string' && c.origin === EXT_ORIGIN) ?? null;
-          if (bridgeCx === null) await sleep(100);
-        }
+        await recordWait('13a bridge isolated world', 10000, async () => {
+          const t0 = Date.now();
+          while (Date.now() - t0 < 10000 && bridgeCx === null) {
+            bridgeCx = ctxCreated.find((c) => c.auxData?.type === 'isolated' && typeof c.origin === 'string' && c.origin === EXT_ORIGIN) ?? null;
+            if (bridgeCx === null) await sleep(100);
+          }
+        });
         if (bridgeCx === null) {
           record('13a', false, `no isolated execution context at origin ${EXT_ORIGIN} on the hosted page`);
         } else {
@@ -11384,17 +11799,25 @@ async function main() {
           cxT14 = await openSession(info14.webSocketDebuggerUrl);
           // Poll `#appbar` children — record whether the hosted App mounted
           // before the destruction. Bail out on any eval error (a destroying
-          // target rejects Runtime.evaluate). Recorded, never asserted — a
-          // CDP session attached to a tab that lives tens of milliseconds is
-          // a race the harness loses; the static server's request log is the
+          // target rejects Runtime.evaluate), on `#appbar`'s mount, or on
+          // the destroy event the step then reads: the tab is gone and
+          // nothing more can mount. Recorded, never asserted — a CDP session
+          // attached to a tab that lives tens of milliseconds is a race the
+          // harness loses; the static server's request log is the
           // measurement from outside.
-          const t1 = Date.now();
-          while (Date.now() - t1 < 15000) {
-            const has = await cxT14.eval(`(document.querySelector('#appbar')?.children.length ?? 0) > 0`).catch(() => 'gone');
-            if (has === true) { mounted14 = true; break; }
-            if (has === 'gone') { break; }
-            await sleep(50);
-          }
+          await recordWait('step-14 #appbar mounted probe', 15000, async () => {
+            const t1 = Date.now();
+            while (Date.now() - t1 < 15000) {
+              for (let i = evStart14; i < bcx.events.length; i++) {
+                const ev = bcx.events[i];
+                if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === tid14) return;
+              }
+              const has = await cxT14.eval(`(document.querySelector('#appbar')?.children.length ?? 0) > 0`).catch(() => 'gone');
+              if (has === true) { mounted14 = true; return; }
+              if (has === 'gone') { return; }
+              await sleep(50);
+            }
+          });
         } catch {}
       }
       const destAt14 = await waitForDestroyEvent(tid14, evStart14, 20000);
@@ -11477,17 +11900,19 @@ async function main() {
     // become the extension page.
     let becameExtension15 = false;
     let cx15 = null;
-    const t0 = Date.now();
-    while (Date.now() - t0 < 20000) {
-      const list = await jsonList();
-      const t = list.find((x) => x.id === tid15);
-      if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
-        becameExtension15 = true;
-        cx15 = await openSession(t.webSocketDebuggerUrl);
-        break;
+    await recordWait('step-15 target became extension', 20000, async () => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 20000) {
+        const list = await jsonList();
+        const t = list.find((x) => x.id === tid15);
+        if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+          becameExtension15 = true;
+          cx15 = await openSession(t.webSocketDebuggerUrl);
+          return;
+        }
+        await sleep(150);
       }
-      await sleep(150);
-    }
+    });
     let firstColOk15 = false;
     let noOpen15 = false;
     let backUrl15 = null;
@@ -11541,13 +11966,15 @@ async function main() {
           const priorState = before.historyState;
           await cx15.eval(`history.back()`);
           backCount15 += 1;
-          const t0b = Date.now();
-          while (Date.now() - t0b < 5000) {
-            const urlNow = await cx15.eval(`location.href`).catch(() => priorUrl);
-            const stateNow = await cx15.eval(`JSON.stringify(history.state)`).catch(() => priorState);
-            if (urlNow !== priorUrl || stateNow !== priorState) break;
-            await sleep(50);
-          }
+          await recordWait('step-16c url or state changed', 5000, async () => {
+            const t0b = Date.now();
+            while (Date.now() - t0b < 5000) {
+              const urlNow = await cx15.eval(`location.href`).catch(() => priorUrl);
+              const stateNow = await cx15.eval(`JSON.stringify(history.state)`).catch(() => priorState);
+              if (urlNow !== priorUrl || stateNow !== priorState) return;
+              await sleep(50);
+            }
+          });
           const urlAfter = await cx15.eval(`location.href`).catch(() => priorUrl);
           const stateAfter = await cx15.eval(`JSON.stringify(history.state)`).catch(() => priorState);
           backSteps15.push({ before: 'after back ' + attempt, url: urlAfter, historyState: stateAfter });
@@ -11586,12 +12013,14 @@ async function main() {
       // Trusted click on the same-tab link.
       try { await trustedClickAt(cxA, '#same'); } catch {}
       // Wait for the navigation to land on the hosted post URL.
-      const t0a = Date.now();
-      while (Date.now() - t0a < 15000) {
-        const u = await cxA.eval(`location.href`).catch(() => null);
-        if (u === publicLink) break;
-        await sleep(150);
-      }
+      await recordWait('step-16a navigation to publicLink', 15000, async () => {
+        const t0a = Date.now();
+        while (Date.now() - t0a < 15000) {
+          const u = await cxA.eval(`location.href`).catch(() => null);
+          if (u === publicLink) return;
+          await sleep(150);
+        }
+      });
       same16a_url = await cxA.eval(`location.href`);
       try { await cxA.waitFor(`!!document.querySelector('.card[data-post-id="${postId}"]')`, '16a hosted card', 20000); } catch {}
       // Sleep 2s and assert it stays.
@@ -11660,61 +12089,65 @@ async function main() {
         // id — never by URL, because `Target.targetCreated` for a link-opened
         // tab announces with an empty URL, and the real URL arrives in a
         // later `Target.targetInfoChanged`.
-        const t0d = Date.now();
-        while (Date.now() - t0d < 15000 && !blank16d_newTargetId) {
-          for (let i = startIdx; i < bcx.events.length; i++) {
-            const ev = bcx.events[i];
-            if (ev.method !== 'Target.targetCreated') continue;
-            const info = ev.params?.targetInfo;
-            if (!info || info.type !== 'page') continue;
-            if (info.openerId === tidD) {
+        await recordWait('step-16d popup target created', 15000, async () => {
+          const t0d = Date.now();
+          while (Date.now() - t0d < 15000 && !blank16d_newTargetId) {
+            for (let i = startIdx; i < bcx.events.length; i++) {
+              const ev = bcx.events[i];
+              if (ev.method !== 'Target.targetCreated') continue;
+              const info = ev.params?.targetInfo;
+              if (!info || info.type !== 'page') continue;
+              if (info.openerId === tidD) {
+                blank16d_newTargetId = info.targetId;
+                blank16d_openerIdPresent = true;
+                break;
+              }
+            }
+            if (blank16d_newTargetId) return;
+            for (let i = startIdx; i < bcx.events.length; i++) {
+              const ev = bcx.events[i];
+              if (ev.method !== 'Target.targetCreated') continue;
+              const info = ev.params?.targetInfo;
+              if (!info || info.type !== 'page') continue;
+              if (info.targetId === tidD) continue;
+              if (knownIds.has(info.targetId)) continue;
               blank16d_newTargetId = info.targetId;
-              blank16d_openerIdPresent = true;
+              blank16d_openerIdPresent = false;
               break;
             }
+            if (!blank16d_newTargetId) await sleep(100);
           }
-          if (blank16d_newTargetId) break;
-          for (let i = startIdx; i < bcx.events.length; i++) {
-            const ev = bcx.events[i];
-            if (ev.method !== 'Target.targetCreated') continue;
-            const info = ev.params?.targetInfo;
-            if (!info || info.type !== 'page') continue;
-            if (info.targetId === tidD) continue;
-            if (knownIds.has(info.targetId)) continue;
-            blank16d_newTargetId = info.targetId;
-            blank16d_openerIdPresent = false;
-            break;
-          }
-          if (!blank16d_newTargetId) await sleep(100);
-        }
+        });
         if (blank16d_newTargetId) {
           // Follow `Target.targetInfoChanged` for the URL; the takeover ends
           // with the extension page URL (no live workspace tab existed at
           // the click). `/json/list` is polled as a second reader in case a
           // changed event is missed.
-          const t1 = Date.now();
           let extInfo = null;
-          while (Date.now() - t1 < 20000) {
-            for (let i = startIdx; i < bcx.events.length; i++) {
-              const ev = bcx.events[i];
-              if (ev.method !== 'Target.targetInfoChanged') continue;
-              const info = ev.params?.targetInfo;
-              if (info?.targetId !== blank16d_newTargetId) continue;
-              if (typeof info.url === 'string' && info.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
-                blank16d_urlSeen = info.url;
-                break;
+          await recordWait('step-16d popup became extension', 20000, async () => {
+            const t1 = Date.now();
+            while (Date.now() - t1 < 20000) {
+              for (let i = startIdx; i < bcx.events.length; i++) {
+                const ev = bcx.events[i];
+                if (ev.method !== 'Target.targetInfoChanged') continue;
+                const info = ev.params?.targetInfo;
+                if (info?.targetId !== blank16d_newTargetId) continue;
+                if (typeof info.url === 'string' && info.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+                  blank16d_urlSeen = info.url;
+                  break;
+                }
               }
+              if (blank16d_urlSeen) return;
+              const list = await jsonList();
+              const t = list.find((x) => x.id === blank16d_newTargetId);
+              if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
+                blank16d_urlSeen = t.url;
+                extInfo = t;
+                return;
+              }
+              await sleep(150);
             }
-            if (blank16d_urlSeen) break;
-            const list = await jsonList();
-            const t = list.find((x) => x.id === blank16d_newTargetId);
-            if (t && typeof t.url === 'string' && t.url.startsWith(`chrome-extension://${EXT_ID}/`)) {
-              blank16d_urlSeen = t.url;
-              extInfo = t;
-              break;
-            }
-            await sleep(150);
-          }
+          });
           blank16d_becameExtension = blank16d_urlSeen !== null;
           blank16d_takenOver = blank16d_becameExtension;
           // First col holds the thread — in the redirected new tab, and the
@@ -11979,6 +12412,25 @@ const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 // into step 12; the summary line reads what WEB_INTERFACE → The extension asks.
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
 console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
+// The waits block — per-step wall, time in condition-ended waits, time in
+// fixed sleeps, and one line per wait that ended at its cap, with its label
+// and elapsed. Then one line per run: wall, cap-ended, fixed-sleep totals.
+// Every line opens with a fixed `[waits]` prefix no other output line uses.
+const fmtSecs = (ms) => (ms / 1000).toFixed(1);
+let totalWall = 0;
+let totalCap = 0;
+let totalSleep = 0;
+console.log('\n[waits] === per-step waits ===');
+for (const f of findings) {
+  totalWall += f.wallMs ?? 0;
+  totalCap += f.capMs ?? 0;
+  totalSleep += f.sleepMs ?? 0;
+  console.log(`[waits] step ${f.step}: wall ${fmtSecs(f.wallMs)}s · condition ${fmtSecs(f.conditionMs)}s · sleeps ${fmtSecs(f.sleepMs)}s · cap ${fmtSecs(f.capMs)}s (${(f.capWaits ?? []).length} wait${(f.capWaits ?? []).length === 1 ? '' : 's'})`);
+  for (const cw of f.capWaits ?? []) {
+    console.log(`[waits]   ended at cap: ${cw.label} — cap ${fmtSecs(cw.cap)}s, elapsed ${fmtSecs(cw.elapsed)}s`);
+  }
+}
+console.log(`[waits] === run totals === wall ${fmtSecs(totalWall)}s · cap-ended ${fmtSecs(totalCap)}s · fixed sleeps ${fmtSecs(totalSleep)}s`);
 console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
 // A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
 // is a run that recorded step failures, which is exit code 1 only when the
