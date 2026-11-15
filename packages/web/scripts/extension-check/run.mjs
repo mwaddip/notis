@@ -1079,24 +1079,65 @@ async function jsonList(chromePort = port) {
 }
 
 // A CDP session over one target — Page, Runtime, Network enabled; window.__btn
-// is the byName helper the precedent used.
+// is the byName helper the precedent used. Chrome closes a page target's
+// DevTools socket when the target is destroyed; this session's `onclose`
+// past open rejects every call pending at that moment with a `CDP session
+// closed` error, and any later `call` rejects immediately the same way.
+// The 60 s timeout stays as the failure bound for a session that stays open
+// and silent.
 async function openSession(wsUrl) {
   const s = new WebSocket(wsUrl);
-  await new Promise((res, rej) => { s.onopen = res; s.onerror = rej; });
+  // Handshake: `onopen` resolves, `onerror` rejects, and `onclose` before
+  // open rejects too — a socket that closes before opening without firing
+  // `onerror` would otherwise leave the handshake promise hanging forever.
+  let opened = false;
+  await new Promise((res, rej) => {
+    s.onopen = () => { opened = true; res(); };
+    s.onerror = (e) => { if (!opened) rej(new Error(`websocket error before open: ${e?.message ?? String(e)}`)); };
+    s.onclose = () => { if (!opened) rej(new Error('websocket closed before open')); };
+  });
   let n = 0;
   const p = new Map();
   const events = [];
+  // `closedReason` holds the first `close` or `error` the socket fired past
+  // open: it rejects every call pending at that moment and every call made
+  // after. The timeout below stays as the failure bound for a session that
+  // stays open and silent.
+  let closedReason = null;
+  const rejectAll = (reason) => {
+    if (closedReason !== null) return;
+    closedReason = reason;
+    for (const [, entry] of p) {
+      clearTimeout(entry.timer);
+      entry.rej(reason);
+    }
+    p.clear();
+  };
+  s.onclose = () => rejectAll(new Error('CDP session closed: websocket close'));
+  s.onerror = (e) => rejectAll(new Error(`CDP session closed: websocket error ${e?.message ?? String(e)}`));
   s.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.id && p.has(m.id)) { p.get(m.id)(m); p.delete(m.id); }
+    if (m.id && p.has(m.id)) {
+      const entry = p.get(m.id);
+      p.delete(m.id);
+      clearTimeout(entry.timer);
+      if (m.error) entry.rej(new Error(JSON.stringify(m.error)));
+      else entry.res(m.result);
+    }
     if (m.method) events.push(m);
   };
   const CALL_TIMEOUT_MS = 60000;
   const call = (method, params = {}) => new Promise((res, rej) => {
+    if (closedReason !== null) { rej(closedReason); return; }
     const id = ++n;
     const timer = setTimeout(() => { p.delete(id); rej(new Error(`CDP timeout ${CALL_TIMEOUT_MS}ms on ${method}`)); }, CALL_TIMEOUT_MS);
-    p.set(id, (m) => { clearTimeout(timer); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result); });
-    s.send(JSON.stringify({ id, method, params }));
+    p.set(id, { res, rej, timer });
+    try { s.send(JSON.stringify({ id, method, params })); }
+    catch (e) {
+      p.delete(id);
+      clearTimeout(timer);
+      rej(e instanceof Error ? e : new Error(String(e)));
+    }
   });
   await call('Page.enable');
   await call('Runtime.enable');
