@@ -1158,7 +1158,7 @@ async function findExt(pathSuffix, chromePort = port) {
 }
 
 // A press on a write that may open a prompt or go silent — the two
-// outcomes `WEB_INTERFACE → The extension → "The prompt policy"` names.
+// outcomes `WEB_INTERFACE → The extension → "The policy"` names.
 // Under a silent policy the client signs and posts the request; under
 // an ask policy it opens `prompt.html`. The wait ends on whichever
 // happens first — the write's request on the wire, or a prompt target
