@@ -10671,6 +10671,40 @@ async function main() {
     return;
   }
 
+  // --light and --mesh: the block runs on steps 1 and 2 alone — R's identity
+  // loaded, nothing of steps 3–16 below. The block's nodes (the two light
+  // relays for --light; A' and B' for --mesh) are up from before the browser
+  // launched (setupLightRelays / setupMeshStack). The other blocks and
+  // 13-uncancelled read NOT RUN, and the [diag] line prints just before
+  // 13-uncancelled's NOT RUN.
+  if (LIGHT || MESH) {
+    const name = LIGHT ? 'light' : 'mesh';
+    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
+      record(s, 'NOT RUN', `--${name} runs its block alone after step 2`);
+    }
+    markVerifiedTipNotRun(`--${name} runs its block alone`);
+    markVerifiedFiguresNotRun(`--${name} runs its block alone`);
+    markVerifiedNamesNotRun(`--${name} runs its block alone`);
+    markWaitingWritesNotRun(`--${name} is not a relays build — the waiting-writes block is relays-build only`);
+    if (LIGHT) markMeshNotRun('no --mesh');
+    else markLightNotRun('no --light');
+    const bbcx = await openBrowserSession();
+    try {
+      let bPage = await findExt('index.html');
+      if (!bPage) throw new Error(`--${name}: no extension page`);
+      const bCx = await openSession(bPage.webSocketDebuggerUrl);
+      try {
+        if (LIGHT) await lightSteps(bCx, bPage.id);
+        else await meshSteps(bCx, bbcx, bPage.id);
+      } finally { try { bCx.s.close(); } catch {} }
+      await diagBeforeThirteenUncancelled(page.id);
+      record('13-uncancelled', 'NOT RUN', `--${name} runs its block alone`);
+    } finally {
+      try { bbcx.s.close(); } catch {}
+    }
+    return;
+  }
+
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
