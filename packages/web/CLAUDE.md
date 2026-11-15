@@ -927,6 +927,13 @@ pacer's next stop; in a shell with job control on, `setsid` forks and `$!` names
 under the pacer needs retries** — its waits lose to windows that yield nothing; run it again after a pacer
 cycle.
 
+**The waits block beside the summary** names every wait each step made — each line opens `[waits]`, a prefix no
+other output carries. A per-step line gives the step's wall and the time split across waits ended by their condition,
+fixed sleeps and waits ended at their cap; each cap-ended wait then stands on its own line with its label and its
+elapsed. A wait ended at its cap in a passing step is a wait whose condition never came — the cap, not the condition,
+released the step. Each `findings` entry carries the same figures as `wallMs`, `conditionMs`, `sleepMs`, `capMs` and
+`capWaits`.
+
 ⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
 `packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,
 stalling the chain for an hour and three quarters and then for forty minutes. Start each process of the stack with
