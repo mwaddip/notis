@@ -11628,13 +11628,19 @@ async function main() {
           cxT14 = await openSession(info14.webSocketDebuggerUrl);
           // Poll `#appbar` children — record whether the hosted App mounted
           // before the destruction. Bail out on any eval error (a destroying
-          // target rejects Runtime.evaluate). Recorded, never asserted — a
-          // CDP session attached to a tab that lives tens of milliseconds is
-          // a race the harness loses; the static server's request log is the
+          // target rejects Runtime.evaluate), on `#appbar`'s mount, or on
+          // the destroy event the step then reads: the tab is gone and
+          // nothing more can mount. Recorded, never asserted — a CDP session
+          // attached to a tab that lives tens of milliseconds is a race the
+          // harness loses; the static server's request log is the
           // measurement from outside.
           await recordWait('step-14 #appbar mounted probe', 15000, async () => {
             const t1 = Date.now();
             while (Date.now() - t1 < 15000) {
+              for (let i = evStart14; i < bcx.events.length; i++) {
+                const ev = bcx.events[i];
+                if (ev.method === 'Target.targetDestroyed' && ev.params?.targetId === tid14) return;
+              }
               const has = await cxT14.eval(`(document.querySelector('#appbar')?.children.length ?? 0) > 0`).catch(() => 'gone');
               if (has === true) { mounted14 = true; return; }
               if (has === 'gone') { return; }
