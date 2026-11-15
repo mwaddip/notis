@@ -260,10 +260,10 @@ async function main() {
 
   // MINING_INTERFACE → Consolidation → "With a key file the script loads
   // node's build; without one it loads nothing more." The dynamic import
-  // resolves against the script's own install — `/opt/dagsocial/packages/node/dist/`
-  // in the `.deb` and `app/packages/node/dist/` in the tarball and the
-  // Windows bundle — so a bare copy of the script with `MINER_KEY_PATH` set
-  // refuses to start with one line naming the file.
+  // resolves against the script's own install — `packages/node/dist/` in a
+  // built checkout, and the tree's `dist/` in the `.deb`, the tarball and
+  // the Windows installer — so a bare copy of the script with
+  // `MINER_KEY_PATH` set refuses to start with one line naming the file.
   let cadence = null;
   if (MINER_KEY_PATH) {
     const consolidateUrl = new URL('../dist/miner-consolidate.js', import.meta.url);
