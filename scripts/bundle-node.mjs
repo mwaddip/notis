@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads." — builds the one tree the .deb, the tarball and the Windows installer carry.
+// Builds the one tree the .deb, the tarball and the Windows installer carry
+// (NODE_INTERFACE → "The packages carry the node as one bundle, beside the
+// native modules it loads.").
 // Usage: node scripts/bundle-node.mjs --out <dir> [--faucet] [--node-exe <path>]
-import { createHash } from 'node:crypto';
 import {
-  copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
+  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
   readdirSync, realpathSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import * as esbuild from 'esbuild';
 
@@ -54,7 +55,9 @@ function die(msg) {
 const args = parseArgs(process.argv.slice(2));
 
 // ---------------------------------------------------------------------------
-// Refuses to run when a dist entry it bundles is missing — NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads."
+// Refuses to run when a dist entry it bundles is missing (NODE_INTERFACE →
+// "The packages carry the node as one bundle, beside the native modules it
+// loads.").
 // ---------------------------------------------------------------------------
 
 const ENTRIES = [
@@ -71,14 +74,18 @@ for (const e of ENTRIES) {
 }
 
 // ---------------------------------------------------------------------------
-// The three native modules the bundles leave external — NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads.".
-// Each resolves from the package that imports it (not from the repo root), so a dependency the importer declares cannot be hidden by a hoist.
+// The three native modules the bundles leave external (NODE_INTERFACE →
+// "The packages carry the node as one bundle, beside the native modules it
+// loads."). Each resolves from the package that imports it, so a dependency
+// the importer declares cannot be hidden by a hoist.
 // ---------------------------------------------------------------------------
 
 const NATIVES = ['better-sqlite3', 'node-datachannel', 'cbor-extract'];
 const BUILTIN_NAMES = new Set(builtinModules);
 
-// `packages/node` carries better-sqlite3 and cbor-x; `packages/net` carries @libp2p/webrtc. Each native's importer is the workspace member that depends on it, not a transitive chain. The two resolver forms carry each importer's own package.json where the dependency exports it, and otherwise walk up from a resolved entry — @libp2p/webrtc's exports map leaves package.json out.
+// `packages/node` imports better-sqlite3 and cbor-x directly; `cbor-extract`
+// is carried transitively through `cbor-x`. `node-datachannel` is carried
+// through `@libp2p/webrtc`, which `packages/net` depends on.
 const NATIVE_IMPORTERS = {
   'better-sqlite3':   path.join(REPO, 'packages/node/package.json'),
   'node-datachannel': pkgJsonOf(path.join(REPO, 'packages/net/package.json'),  '@libp2p/webrtc'),
@@ -90,7 +97,9 @@ function pkgJsonOf(fromPkgJson, name) {
   try {
     return req.resolve(`${name}/package.json`);
   } catch {}
-  // Fall back: resolve the package's main entry, then walk upward until the directory has a package.json whose name is this one. @libp2p/webrtc exports '.' but not './package.json'.
+  // Fall back: resolve the package's main entry, then walk upward until the
+  // directory has a package.json whose name is this one. @libp2p/webrtc's
+  // `exports` map holds '.' and no './package.json'.
   const entry = req.resolve(name);
   let dir = path.dirname(entry);
   while (true) {
@@ -105,10 +114,6 @@ function pkgJsonOf(fromPkgJson, name) {
   }
 }
 
-function resolveFrom(fromPkgJson, spec) {
-  return createRequire(fromPkgJson).resolve(spec);
-}
-
 // ---------------------------------------------------------------------------
 // Prepare the output tree
 // ---------------------------------------------------------------------------
@@ -119,8 +124,9 @@ mkdirSync(path.join(args.out, 'scripts'), { recursive: true });
 mkdirSync(path.join(args.out, 'node_modules'), { recursive: true });
 
 // ---------------------------------------------------------------------------
-// Bundle each entry — ESM, node24, the three natives external. Any warning fails the build.
-// A banner gives bundled CommonJS a real `require`; the binding is named so nothing in the bundle can collide with it.
+// Bundle each entry — ESM, node24, the three natives external. Any warning
+// fails the build. A banner gives bundled CommonJS a real `require`; its
+// binding is named so nothing in the bundle collides with it.
 // ---------------------------------------------------------------------------
 
 const BANNER_CODE = [
@@ -128,8 +134,10 @@ const BANNER_CODE = [
   "const require = __notisCreateRequire(import.meta.url);",
 ].join(' ');
 
-// `ws` carries optional native accelerators it loads with `require()` inside a try/catch; bundling with the tree's three externals alone leaves the bare names as external imports the tree does not carry. The plugin inlines a stub that throws MODULE_NOT_FOUND, so `ws`'s catch sees the same error it would on a host without them and takes its pure-JS path.
-const OPTIONAL_STUBS = new Set(['bufferutil', 'utf-8-validate']);
+// `ws` carries optional native accelerators it loads with `require()` inside
+// a try/catch. The plugin inlines a stub that throws MODULE_NOT_FOUND, so
+// `ws` takes its pure-JS path and the bundle imports nothing outside the
+// three natives and Node built-ins.
 const optionalStubPlugin = {
   name: 'notis-optional-stubs',
   setup(build) {
@@ -170,7 +178,8 @@ for (const e of ENTRIES) {
 }
 
 // ---------------------------------------------------------------------------
-// Enforce NODE_INTERFACE → "A bundle imports nothing the tree does not carry." — every external import must be a Node built-in or one of the three natives.
+// Every external import must be a Node built-in or one of the three natives
+// (NODE_INTERFACE → "A bundle imports nothing the tree does not carry.").
 // ---------------------------------------------------------------------------
 
 function externalImports(metafile, entryOutput) {
@@ -225,8 +234,10 @@ for (const name of ['miner.mjs', 'gen-miner-key.mjs']) {
 }
 
 // ---------------------------------------------------------------------------
-// Copy the three native modules with what each loads, at the installed versions, the build platform's binary alone.
-// Each resolved from its importer (see NATIVE_IMPORTERS). Leaves out source maps, declaration files, .md files but LICEN[CS]E, source trees, other platforms' binaries.
+// Copy the three native modules with what each loads, at the installed
+// versions, the build platform's binary alone. Each resolves from its
+// importer (see NATIVE_IMPORTERS). Leaves out source maps, declaration
+// files, .md files but LICEN[CS]E, source trees, other platforms' binaries.
 // ---------------------------------------------------------------------------
 
 const RUNTIME_FILE_EXTS_OUT = new Set(['.map', '.d.ts', '.d.cts', '.d.mts', '.ts', '.tsx']);
@@ -273,12 +284,16 @@ function pkgRootOf(resolvedPkgJsonPath) {
   return root;
 }
 
-// Resolve a dependency's package.json through either pkgJsonOf form — a dependency whose `exports` leaves package.json out is resolved by walking up from its entry.
+// Resolve a dependency's package.json through either pkgJsonOf form — a
+// dependency whose `exports` leaves package.json out is resolved by walking
+// up from its entry.
 function resolveDepPkgJson(fromPkgJson, name) {
   return pkgJsonOf(fromPkgJson, name);
 }
 
-// better-sqlite3: lib/, binding.js, package.json, LICENSE, and the build platform's one prebuild. No deps/, src/, binding.gyp, no other platforms' prebuilds.
+// better-sqlite3: lib/, binding.js, package.json, LICENSE, and the build
+// platform's one prebuild. No deps/, src/, binding.gyp, no other platforms'
+// prebuilds.
 const bsq3Root = pkgRootOf(resolveDepPkgJson(NATIVE_IMPORTERS['better-sqlite3'], 'better-sqlite3'));
 {
   const dst = path.join(args.out, 'node_modules/better-sqlite3');
@@ -286,7 +301,6 @@ const bsq3Root = pkgRootOf(resolveDepPkgJson(NATIVE_IMPORTERS['better-sqlite3'],
     skipDirs: new Set(['deps', 'src', 'prebuilds']),
     filter: (rel) => rel !== 'binding.gyp',
   });
-  // Pick the one prebuild the running platform loads (lib/binding.js chooses linuxmusl on musl).
   const target = selectBsq3PrebuildName();
   const srcPre = path.join(bsq3Root, 'prebuilds', `${target}.node`);
   if (!existsSync(srcPre)) die(`better-sqlite3 has no prebuild for ${target} at ${srcPre}`);
@@ -295,7 +309,8 @@ const bsq3Root = pkgRootOf(resolveDepPkgJson(NATIVE_IMPORTERS['better-sqlite3'],
 }
 
 function selectBsq3PrebuildName() {
-  // Mirrors better-sqlite3/lib/binding.js — NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads.".
+  // Mirrors better-sqlite3/lib/binding.js: linuxmusl on musl, linux-<arch>
+  // otherwise.
   if (process.platform === 'linux') {
     const header = process.report.getReport().header;
     const musl = !header.glibcVersionRuntime;
@@ -304,18 +319,18 @@ function selectBsq3PrebuildName() {
   return `${process.platform}-${process.arch}`;
 }
 
-// node-datachannel: the dist tree (cjs/esm/types), its root files, plus detect-libc and the build platform's @node-datachannel/<platform> package.
+// node-datachannel: the dist tree (cjs/esm/types), the package.json, every
+// root licence/copying/notice file, and the build platform's
+// @node-datachannel/<platform> subpackage plus the detect-libc it loads.
 const ndcPkgJson = resolveDepPkgJson(NATIVE_IMPORTERS['node-datachannel'], 'node-datachannel');
 const ndcRoot = pkgRootOf(ndcPkgJson);
 {
   const dst = path.join(args.out, 'node_modules/node-datachannel');
-  // Keep only what the module loads at runtime from its own tree: the dist/ outputs and the package.json/LICENSE. Drop the source tree, configs and README.
   copyPackageTree(ndcRoot, dst, {
     skipDirs: new Set(['src']),
     filter: (rel) => {
       if (rel === 'package.json') return true;
       if (rel.startsWith('dist/')) return true;
-      // Keep LICENSE at root; keepFile already filtered .md but allow licence markdowns.
       const base = path.basename(rel);
       if (/^(LICEN[CS]E|COPYING|NOTICE)([._-].*)?$/i.test(base)) return true;
       return false;
@@ -337,7 +352,8 @@ const ndcRoot = pkgRootOf(ndcPkgJson);
 }
 
 function ndcPlatformPackage() {
-  // Mirrors node-datachannel's getPackageName — NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads.".
+  // Mirrors node-datachannel's getPackageName — platform + arch + the libc
+  // family on Linux.
   const { platform, arch } = process;
   if (platform === 'linux') {
     const glibc = process.report.getReport().header.glibcVersionRuntime != null;
@@ -354,7 +370,9 @@ function ndcPlatformPackage() {
   die(`node-datachannel: no subpackage for ${platform}-${arch}`);
 }
 
-// cbor-extract: the loader (index.js), its node-gyp-build-optional-packages dependency and detect-libc (both loaded at runtime), plus the build platform's @cbor-extract/cbor-extract-<platform> subpackage.
+// cbor-extract: the loader (index.js), its node-gyp-build-optional-packages
+// dependency and detect-libc (both loaded at runtime), plus the build
+// platform's @cbor-extract/cbor-extract-<platform> subpackage.
 const cbxPkgJson = resolveDepPkgJson(NATIVE_IMPORTERS['cbor-extract'], 'cbor-extract');
 const cbxRoot = pkgRootOf(cbxPkgJson);
 {
@@ -367,7 +385,10 @@ const gypPkgJson = resolveDepPkgJson(cbxPkgJson, 'node-gyp-build-optional-packag
 {
   copyPackageTree(pkgRootOf(gypPkgJson), path.join(args.out, 'node_modules/node-gyp-build-optional-packages'));
 }
-// node-gyp-build-optional-packages loads detect-libc on Linux — keep it available at the top level so a nested resolution reaches the same one. The node-datachannel branch above already placed it when the chain depends on it; copy here only if missing.
+// node-gyp-build-optional-packages loads detect-libc on Linux. The
+// node-datachannel branch above already placed it; copy here only if
+// missing, so a tree without libp2p-webrtc still carries the one dependency
+// cbor-extract reads at runtime.
 if (!existsSync(path.join(args.out, 'node_modules/detect-libc'))) {
   const detectRoot = pkgRootOf(resolveDepPkgJson(gypPkgJson, 'detect-libc'));
   copyPackageTree(detectRoot, path.join(args.out, 'node_modules/detect-libc'));
@@ -379,14 +400,16 @@ if (!existsSync(path.join(args.out, 'node_modules/detect-libc'))) {
 }
 
 function cbxPlatformPackage() {
-  // Mirrors node-gyp-build-optional-packages' naming — NODE_INTERFACE → "The packages carry the node as one bundle, beside the native modules it loads.".
+  // Mirrors node-gyp-build-optional-packages' naming — platform + arch.
   const { platform, arch } = process;
   return `@cbor-extract/cbor-extract-${platform}-${arch}`;
 }
 
 // ---------------------------------------------------------------------------
-// Load each native from <out> alone, so a tree that lacks a package one of them loads fails here. cbor-extract must load its binary (not fall back).
-// NODE_INTERFACE → "A bundle imports nothing the tree does not carry." — the second half.
+// Load each native from <out> alone, so a tree that lacks a package one of
+// them loads fails here. cbor-extract must load its binary (not fall back).
+// NODE_INTERFACE → "A bundle imports nothing the tree does not carry." —
+// the second half.
 // ---------------------------------------------------------------------------
 
 writeFileSync(path.join(args.out, 'package.json'), JSON.stringify({
@@ -396,16 +419,13 @@ writeFileSync(path.join(args.out, 'package.json'), JSON.stringify({
   type: 'module',
 }, null, 2) + '\n');
 
-// Load each native from <out> alone, and reach its binary while doing so.
-// better-sqlite3 only loads its .node file when a database opens; the import
-// alone passes even with the prebuild removed, so open an in-memory database
-// and close it. cbor-extract's binary rides on its loader's own require, so
-// checking extractStrings is a function is enough — the JS path returns no
-// such function.
-//
-// Every require.cache key the load adds is checked against <out>'s real
-// path, so a dependency the tree lacks that some ancestor node_modules
-// supplied fails here rather than at the host's first run.
+// Load each native from <out> alone and reach its binary. better-sqlite3's
+// .node file loads only when a database opens, so open an in-memory one and
+// close it. cbor-extract's binary rides on its loader's own require, so
+// extractStrings being a function is enough — the JS path has no such
+// function. Every require.cache key the load adds lies under <out>'s real
+// path, else fail naming it: a dependency the tree lacks must not be found
+// in a node_modules above the output.
 const OUT_REAL = realpathSync(args.out);
 {
   const req = createRequire(path.join(args.out, 'package.json'));
@@ -442,8 +462,9 @@ const OUT_REAL = realpathSync(args.out);
 }
 
 // ---------------------------------------------------------------------------
-// Repository LICENSE and THIRD-PARTY-LICENSES — NODE_INTERFACE → "The tree carries the licence of everything it carries."
-// Enumerates every package whose files any bundle included, from the metafiles' input paths.
+// Repository LICENSE and THIRD-PARTY-LICENSES (NODE_INTERFACE → "The tree
+// carries the licence of everything it carries."). Enumerates every package
+// whose files any bundle included, from the metafiles' input paths.
 // ---------------------------------------------------------------------------
 
 copyFileSync(path.join(REPO, 'LICENSE'), path.join(args.out, 'LICENSE'));
@@ -509,8 +530,7 @@ function readLicenceFiles(dir, info) {
 
 {
   // Code units, never `localeCompare` — the builder's locale would otherwise
-  // sort two hosts' output differently (NODE_INTERFACE → "The packages carry
-  // the node as one bundle, beside the native modules it loads.").
+  // sort two hosts' output differently.
   const sorted = Array.from(licensed.values()).sort((a, b) => {
     if (a.name < b.name) return -1;
     if (a.name > b.name) return 1;
