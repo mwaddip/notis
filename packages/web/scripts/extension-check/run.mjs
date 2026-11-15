@@ -4015,11 +4015,17 @@ async function runLieArm(bcx, relays, arm) {
   for (const r of relays) r.mode = arm.mode;
   try {
     // (2) A fresh page whose tip run returns verified across N nodes.
+    // `changeIdx` sits right at the page's opening — the fresh page's
+    // first figures run fires from the App's `startFigures` once the tip
+    // check verifies (WEB_INTERFACE → The extension → "The verified
+    // figures"), which under memory for the seated chain can race the
+    // window raises and land before them. The idx is below the raises
+    // so `waitForFiguresRun` reads the whole span.
     page = await openFreshExtensionPage(bcx);
     const fcx = page.cx;
+    const changeIdx = fcx.events.length;
     await raiseWindow(fcx, 'open profile');
     await raiseWindow(fcx, 'open wallet');
-    const changeIdx = fcx.events.length;
     const reached = await waitForCornerState(fcx,
       (c) => c.ledClass === 'led fresh' && /^verified across \d+ nodes · tip \d+$/.test(c.title ?? ''),
       `led fresh + verified across N nodes (fresh page under ${arm.mode})`, 60000);
@@ -4039,7 +4045,10 @@ async function runLieArm(bcx, relays, arm) {
     // AND every reading of the lying row was in line. `presses === 0`
     // (step 23) leaves no room for retry.
     await raiseWindow(fcx, 'open wallet');
-    const relayRun = verified ? await waitForFiguresRun(fcx, changeIdx, 60000, 2000, null) : [];
+    // `waitForRow` is the authoritative settle — the row's state is
+    // what the arm asserts, and a figures run that lands on it moves
+    // it to `arm.creditsSettled`. The figures run requests are counted
+    // at the end for the record.
     let credits = await waitForRow(readCreditsRow, fcx, arm.creditsSettled, 15000);
     const creditsReadings = [`after the fresh page: ${creditsSeen(credits.last)}`];
     const pressWhen = arm.pressWhen ?? 'credits';
@@ -4132,6 +4141,9 @@ async function runLieArm(bcx, relays, arm) {
     const lieBoxText = lieBox === null
       ? 'none (the sentence carries no amount)'
       : `${lieBox.boxId.slice(0, 12)}… (${lieBox.value})`;
+    // The figures requests the arm's fresh-page run made since the page
+    // opened — one count at the end, read over all events the page saw.
+    const relayRun = figuresProofRequestsSince(fcx.events, changeIdx, null);
     record(arm.step, verified && creditsOk && karmaOk && creditsInLine && karmaInLine && cornerOk && back.ok,
       `relays ${arm.mode} edits=${edits} (${relays.map((r, i) => `${r.origin}: ${r.edits[arm.mode] - editsBefore[i]}`).join(', ')}); lie box=${lieBoxText}; ` +
       `fresh page: led=${changeReading.ledClass}, title=${JSON.stringify(changeReading.title)}, verified=${verified}; ` +
