@@ -98,6 +98,26 @@ describe('cache', () => {
     expect(readState(cacheRoot, FINGERPRINT, NAME)).toBeNull();
   });
 
+  it('reports no state when the manifest fingerprint differs from the directory', () => {
+    const dir = join(cacheRoot, FINGERPRINT, NAME);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'manifest.json'),
+      JSON.stringify({ name: NAME, fingerprint: '1'.repeat(64) }),
+    );
+    expect(readState(cacheRoot, FINGERPRINT, NAME)).toBeNull();
+  });
+
+  it('reports no state when the manifest name differs from the directory', () => {
+    const dir = join(cacheRoot, FINGERPRINT, NAME);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'manifest.json'),
+      JSON.stringify({ name: 'elsewhere', fingerprint: FINGERPRINT }),
+    );
+    expect(readState(cacheRoot, FINGERPRINT, NAME)).toBeNull();
+  });
+
   it('a rename error that is not ENOTEMPTY or EEXIST propagates', () => {
     // The target path is a regular file, so rename(dir, file) throws
     // ENOTDIR — writeState must not swallow it.

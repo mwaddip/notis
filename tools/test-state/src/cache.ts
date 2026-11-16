@@ -34,7 +34,9 @@ export function cacheRootDir(env: NodeJS.ProcessEnv): string {
 }
 
 // A read finds a state by its fingerprint and name and parses its manifest.
-// A missing directory or an unparsable manifest is no state.
+// A missing directory, an unparsable manifest, or a manifest whose
+// `fingerprint` or `name` does not match the directory it sits in is no
+// state.
 export function readState(
   cacheRoot: string,
   fingerprint: string,
@@ -54,6 +56,9 @@ export function readState(
   try {
     manifest = JSON.parse(bytes) as Manifest;
   } catch {
+    return null;
+  }
+  if (manifest.fingerprint !== fingerprint || manifest.name !== name) {
     return null;
   }
   return { manifest, dir };
