@@ -28,12 +28,34 @@ interface SpawnedNode {
   stop(): Promise<void>;
 }
 
+// Environment variables the spawned node reads from the developer shell
+// without the test's say-so (PATH to resolve `node`'s dynamic libraries,
+// HOME for the OS's fallback temp root, and the temp-dir variables). Every
+// other variable the test sets by name, so a shell carrying MESH_* or
+// WEB_SHELL_PATH cannot change what the node under test sees.
+const SPAWN_ENV_ALLOWLIST: readonly string[] = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+];
+
+function allowlistedEnv(): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const name of SPAWN_ENV_ALLOWLIST) {
+    const v = process.env[name];
+    if (v !== undefined) out[name] = v;
+  }
+  return out;
+}
+
 async function spawnDevnetNode(opts: { miningSecret: string }): Promise<SpawnedNode> {
   assertDistFresh(NODE_LOADS, REPO_ROOT);
   const tmpDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-miner-'));
   const dbPath = join(tmpDir, 'db.sqlite');
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...allowlistedEnv(),
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'miner',
     BOOTSTRAP_PEERS: '',
