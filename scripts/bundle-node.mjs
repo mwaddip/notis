@@ -137,14 +137,17 @@ const BANNER_CODE = [
 // `ws` carries optional native accelerators it loads with `require()` inside
 // a try/catch. The plugin inlines a stub that throws MODULE_NOT_FOUND, so
 // `ws` takes its pure-JS path and the bundle imports nothing outside the
-// three natives and Node built-ins.
+// three natives and Node built-ins. A metafile input key `<namespace>:…`
+// is a module from this plugin's namespace, never a real file on disk.
+const STUB_NAMESPACE = 'notis-optional-stub';
+const STUB_INPUT_PREFIX = `${STUB_NAMESPACE}:`;
 const optionalStubPlugin = {
   name: 'notis-optional-stubs',
   setup(build) {
     build.onResolve({ filter: /^(bufferutil|utf-8-validate)$/ }, (arg) => ({
-      path: arg.path, namespace: 'notis-optional-stub',
+      path: arg.path, namespace: STUB_NAMESPACE,
     }));
-    build.onLoad({ filter: /.*/, namespace: 'notis-optional-stub' }, (arg) => ({
+    build.onLoad({ filter: /.*/, namespace: STUB_NAMESPACE }, (arg) => ({
       contents: `const e = new Error("Cannot find module '${arg.path}'"); e.code = 'MODULE_NOT_FOUND'; throw e;`,
       loader: 'js',
     }));
@@ -216,9 +219,11 @@ for (const e of ENTRIES) {
   }
   // Every file input lies under the repository's real path. A dependency the
   // tree does not declare but that resolved above the repo is caught here
-  // rather than by the build happening to run under /tmp.
+  // rather than by the build happening to run under /tmp. The one skip is
+  // the stub plugin's namespace; a Windows drive path (`C:/…`) is a file
+  // key and is checked like every other.
   for (const inputPath of Object.keys(metafiles[e.name].inputs)) {
-    if (inputPath.includes(':')) continue;
+    if (inputPath.startsWith(STUB_INPUT_PREFIX)) continue;
     const abs = path.resolve(REPO, inputPath);
     if (!existsSync(abs)) die(`${e.name} input ${inputPath} does not exist`);
     if (!underRepo(abs)) die(`${e.name} input ${inputPath} resolves outside the repository`);
@@ -473,10 +478,11 @@ const licensed = new Map(); // key: name@version -> { name, version, files: [{ n
 const repoRootPkgName = readJson(path.join(REPO, 'package.json')).name;
 for (const e of ENTRIES) {
   for (const inputPath of Object.keys(metafiles[e.name].inputs)) {
-    // A metafile input is a real file on disk when its key is a plain path; a
-    // plugin-provided module is namespaced as `<namespace>:<name>` and walks up
-    // to no package of its own. Skip anything that is not a file input.
-    if (inputPath.includes(':')) continue;
+    // A metafile input whose key is `<namespace>:<name>` is a plugin-provided
+    // module and walks up to no package of its own; skip only the stub
+    // plugin's. A Windows drive path (`C:/…`) is a real file and is read
+    // like any other.
+    if (inputPath.startsWith(STUB_INPUT_PREFIX)) continue;
     const abs = path.resolve(REPO, inputPath);
     const pkg = nearestPackageJson(abs);
     if (!pkg) continue;
