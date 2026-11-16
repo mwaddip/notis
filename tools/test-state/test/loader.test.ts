@@ -207,6 +207,27 @@ describe('loader', () => {
     expect(elapsed).toBeLessThan(30_000);
   }, 60_000);
 
+  it('up reads the peerId off the node\'s [net] listening line; nodeP2p carries /p2p/', async () => {
+    const runDir = newRunDir('peerid');
+    const result = await up({
+      stateName: MINIMAL.name,
+      runDir,
+      repoRoot: REPO_ROOT,
+      cacheRoot: sharedCache!.dir,
+      ports: { http: 0, admin: 0, p2p: 0, faucet: 0, miner: 0 },
+      intervalMs: 500,
+    });
+    expect(result.peerId).not.toBeNull();
+    expect(result.peerId).toMatch(/^[A-Za-z0-9]+$/);
+    expect(result.nodeP2p).toMatch(
+      /^\/ip4\/127\.0\.0\.1\/tcp\/[0-9]+\/p2p\/[A-Za-z0-9]+$/,
+    );
+    expect(result.nodeP2p).toContain(`/p2p/${result.peerId}`);
+    await down(runDir);
+    activeUps.delete(runDir);
+    rmSync(runDir, { recursive: true, force: true });
+  }, 60_000);
+
   it('the CLI up exits 0 with the stack running; the tip rises; down leaves nothing', async () => {
     // L1: up (CLI) spawns three detached processes and exits with their
     // readiness read from log files. After `up` returns, A's tip still
