@@ -208,40 +208,24 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 // Write each chunk the child emits on stdout and stderr to `logPath` as it
 // arrives, so a work directory kept on a failure reads A's output up to the
-// moment the failure fired. `waitForLine` still attaches its own `data`
-// listener for the readiness line; Node emits each chunk to every listener.
+// moment the failure fired. The fd closes on `close`, not `exit`: a child's
+// stdio streams can still deliver data after `exit`, and those late chunks
+// are exactly the last lines a crashing node prints. `waitForLine` still
+// attaches its own `data` listener for the readiness line; Node emits each
+// chunk to every listener.
 export function streamChildToLog(cp: ChildProcess, logPath: string): void {
   const fd = openSync(logPath, 'a');
-  let closed = false;
-  const close = (): void => {
-    if (closed) return;
-    closed = true;
-    try {
-      closeSync(fd);
-    } catch {
-      // already closed
-    }
-  };
   cp.stdout?.setEncoding('utf8');
   cp.stdout?.on('data', (chunk: string | Buffer) => {
     const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
-    try {
-      writeSync(fd, bytes);
-    } catch {
-      // the log was closed; a late chunk from the child after exit is
-      // dropped rather than crashing the process
-    }
+    writeSync(fd, bytes);
   });
   cp.stderr?.setEncoding('utf8');
   cp.stderr?.on('data', (chunk: string | Buffer) => {
     const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-    try {
-      writeSync(fd, Buffer.from('[stderr] ' + s, 'utf8'));
-    } catch {
-      // see above
-    }
+    writeSync(fd, Buffer.from('[stderr] ' + s, 'utf8'));
   });
-  cp.once('exit', close);
+  cp.once('close', () => closeSync(fd));
 }
 
 interface PromoteOutput {
