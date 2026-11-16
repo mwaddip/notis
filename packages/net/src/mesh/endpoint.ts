@@ -36,7 +36,7 @@ export function meshEndpoint(
         // request; a `null` answer aborts the stream as a refused
         // upstream does, with no `fetch` attempted. The throw lands in
         // the catch below, which aborts the libp2p stream with no
-        // answer; `null` names the window before `net`'s own HTTP API
+        // answer; `null` names the window before the node's HTTP API
         // has bound (`NODE_INTERFACE → Configuration → "The node's mesh
         // endpoint forwards to its own public listener"`).
         const current = httpBase();

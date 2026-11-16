@@ -5,7 +5,7 @@
 // circuit-relay server on a public node, DCUtR and the circuit-relay
 // transport on a private, and `@libp2p/http` serving the endpoint.
 // Without `mesh`, nothing of these is added — the plain options stand
-// byte-for-byte as they did (`NET_INTERFACE → The mesh`).
+// (`NET_INTERFACE → The mesh`).
 
 import { webRTC, webRTCDirect } from '@libp2p/webrtc';
 import { autoNATv2 } from '@libp2p/autonat-v2';
@@ -68,10 +68,9 @@ export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
  * (`libp2p/src/address-manager/index.ts` `getAddressesWithMetadata`).
  *
  * - `mesh.announce` explicit: announce that list verbatim.
- * - no port-0 listen entry: announce every listen entry verbatim, so
- *   the deployed `/ip4/0.0.0.0/tcp/<port>` configuration's set stays
- *   byte-for-byte as it was and public-IP entries do not wait on
- *   AutoNAT (`transport-addresses.ts` would otherwise hold them out).
+ * - no port-0 listen entry: announce exactly the listen entries, so a
+ *   public IP among them is announced from the start and does not wait
+ *   on AutoNAT (`transport-addresses.ts` would otherwise hold it out).
  * - any port-0 listen entry: use `appendAnnounce` for the concrete
  *   entries and let transport addresses carry the bound port-0 ones.
  *   On loopback the transport addresses are private, so
