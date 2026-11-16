@@ -2654,6 +2654,9 @@ Six rules govern it:
    so a bundling or externalisation break passes the suite. `pnpm -r build && pnpm -r typecheck &&
    pnpm -r test` is the gate before any commit or PR — **the build is a separate obligation, not a
    side effect of testing.**
+   > ⚠ **AHEAD OF CODE (2026-11-16).** Before a pull request every member is built, and the typechecks and suites
+   > that run are the ones the change warrants (`TEST_MATRIX_INTERFACE → How a path is placed`); the pull request's CI
+   > runs every one.
 4. **Spawned processes are exempt and still need a real build.** A vitest alias exists only inside
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
    artefact, so it needs a genuine build first and no alias reaches it. **Two members do.
