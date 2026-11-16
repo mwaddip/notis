@@ -267,9 +267,6 @@ const MESH = BLOCK === 'mesh';
 // opens a fresh page under `down` on both relays and asserts the controls
 // a page no node answers offers.
 const WAITING = BLOCK === 'waiting';
-// A second name for the same value, kept because sites inside the file
-// read it under this name.
-const WAITING_ONLY = WAITING;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -2237,7 +2234,7 @@ async function bringUpNodeB() {
   console.log(`[vt] node B bound: http=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT}`);
   // The tip and light relays whose upstream is B (RLB for the verified and
   // waiting runs, RB for `--light`) move to B's new origin on every spawn.
-  if (tipRelays.b !== null && !WAITING_ONLY) tipRelays.b.upstream = B_ORIGIN;
+  if (tipRelays.b !== null && !WAITING) tipRelays.b.upstream = B_ORIGIN;
   if (lightRelays.b !== null) lightRelays.b.upstream = B_ORIGIN;
   return { bDbPath };
 }
@@ -10726,14 +10723,12 @@ async function openBlockExtensionPage(bcx, label) {
   return page;
 }
 
-// The per-block dispatcher called after steps 1 and 2 for every block whose
-// own steps run on a fresh session. `bcx` is the browser session the
-// fresh-page openings ask. `writes` runs its steps on `main()`'s page and
-// calls this only through its diag prefix; `links` opens the hosted page's
-// targets inline. Kept as `runVerifiedBlocks` because the identifier reads
-// in several sites, and the body is a one-block dispatcher under
-// EXTENSION_CHECK_INTERFACE → Blocks.
-async function runVerifiedBlocks(bcx) {
+// Open the run's block's own extension page through `bcx` and run its
+// steps on it (EXTENSION_CHECK_INTERFACE → Blocks). `writes` runs its
+// steps on `main()`'s page and never reaches this; `links` opens the
+// hosted page's targets inline. Called from `main()` after steps 1 and 2
+// for every other block.
+async function runOneBlock(bcx) {
   if (VERIFIED_TIP) {
     const vtPage = await openBlockExtensionPage(bcx, 'tip');
     const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
@@ -10871,7 +10866,7 @@ async function main() {
   if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING || LIGHT || MESH) {
     const bbcx = await openBrowserSession();
     try {
-      await runVerifiedBlocks(bbcx);
+      await runOneBlock(bbcx);
       // Every block prints the diag liveness line at its end, as `--light`
       // and `--mesh` did when they ran alone. `links` prints its own diag
       // before `13-uncancelled` on its own path below.
@@ -12449,7 +12444,7 @@ async function setupTipRelays() {
   // answer. `writes` and `links` never spawn B, so RLB answers 502 past
   // setup; the client's reads fall to RLA.
   const rla = await startTipRelay(NODE.replace(/\/+$/, ''), 0);
-  const rlb = await startTipRelay(WAITING_ONLY ? NODE.replace(/\/+$/, '') : null, 0);
+  const rlb = await startTipRelay(WAITING ? NODE.replace(/\/+$/, '') : null, 0);
   tipRelays.a = rla;
   tipRelays.b = rlb;
   RLA_PORT = rla.port; RLA_ORIGIN = rla.origin;
