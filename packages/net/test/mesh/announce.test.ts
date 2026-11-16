@@ -137,4 +137,139 @@ describe('mesh — public announce (live)', () => {
     );
     expect(hasWebrtcDirectCerthash).toBe(true);
   }, 30_000);
+
+  // `MESH_INTERFACE → NAT → "A public node announces its listen
+  // addresses from the start"` — every listen address at the port it
+  // bound, port 0 included. A node whose TCP and WebRTC-direct listens
+  // are both on port 0 holds both bound ports in `meshIdentity().multiaddrs`.
+  it('a public node on tcp/0 and webrtc-direct udp/0 announces both at their bound ports', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-announce-00-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    nodes.push(node);
+    const mas = node.meshIdentity()!.multiaddrs;
+    const tcpBound = mas.find((a) => /\/ip4\/127\.0\.0\.1\/tcp\/\d+/.test(a) && !/\/webrtc/.test(a));
+    const webrtcBound = mas.find((a) => /\/ip4\/127\.0\.0\.1\/udp\/\d+\/webrtc-direct\/certhash\//.test(a));
+    expect(tcpBound).toBeDefined();
+    expect(webrtcBound).toBeDefined();
+    // Both ports are non-zero (the kernel picked them at bind).
+    expect(/\/tcp\/0(?:\/|$)/.test(tcpBound!)).toBe(false);
+    expect(/\/udp\/0\/webrtc-direct/.test(webrtcBound!)).toBe(false);
+  }, 30_000);
+
+  // `MESH_INTERFACE → NAT → "A public node announces its listen
+  // addresses from the start"` — after a restart that keeps the state
+  // directory, the operator pins the WebRTC-direct port to the first
+  // start's bound one; TCP stays on port 0. Both bound ports are
+  // announced on the restarted node.
+  //
+  // Plain-`it` failure:
+  //   AssertionError: expected undefined to be defined
+  //   — a listen entry with a concrete port replaces the auto-default,
+  //   and the `/tcp/0` listen is dropped from the announce; the bound
+  //   TCP port never reaches `meshIdentity().multiaddrs`.
+  it.fails('a public node restarted with webrtc-direct pinned and tcp/0 announces both at their bound ports', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-announce-pin-'));
+    dirs.push(dir);
+    const key = generateKeyPair();
+
+    const first = new NetNode(makeConfig({
+      nodeKey: key,
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await first.start();
+    const firstWebrtc = first.meshIdentity()!.multiaddrs
+      .find((a) => /\/udp\/\d+\/webrtc-direct\/certhash\//.test(a))!;
+    const firstPortMatch = /\/udp\/(\d+)\/webrtc-direct/.exec(firstWebrtc);
+    const pinnedPort = Number.parseInt(firstPortMatch![1]!, 10);
+    await first.stop();
+
+    const second = new NetNode(makeConfig({
+      nodeKey: key,
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: [`/ip4/127.0.0.1/udp/${pinnedPort}/webrtc-direct`],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await second.start();
+    nodes.push(second);
+    const mas = second.meshIdentity()!.multiaddrs;
+    const tcpBound = mas.find((a) => /\/ip4\/127\.0\.0\.1\/tcp\/\d+/.test(a) && !/\/webrtc/.test(a));
+    const webrtcBound = mas.find((a) => /\/ip4\/127\.0\.0\.1\/udp\/\d+\/webrtc-direct\/certhash\//.test(a));
+    expect(tcpBound).toBeDefined();
+    expect(webrtcBound).toBeDefined();
+    // The webrtc-direct port is the pinned one; the TCP port is the
+    // kernel's choice at the restart.
+    expect(webrtcBound).toMatch(new RegExp(`/udp/${pinnedPort}/webrtc-direct/certhash/`));
+    expect(/\/tcp\/0(?:\/|$)/.test(tcpBound!)).toBe(false);
+  }, 60_000);
+
+  // `MESH_INTERFACE → NAT → "A public node announces its listen
+  // addresses from the start"` — a concrete TCP port beside a
+  // webrtc-direct listen on udp/0 announces both at their bound ports.
+  //
+  // Plain-`it` failure:
+  //   AssertionError: expected undefined to be defined
+  //   — the listen entry with a concrete port replaces the auto-default,
+  //   and the `/udp/0/webrtc-direct` listen is dropped from the announce;
+  //   the bound WebRTC-direct port never reaches
+  //   `meshIdentity().multiaddrs`.
+  it.fails('a public node on tcp/<concrete> + webrtc-direct udp/0 announces both at their bound ports', async () => {
+    // Bind a TCP socket to find a free port, then release it — the
+    // kernel usually hands the same port back on the next listen; a
+    // rare collision would retry here if it mattered.
+    const { createServer } = await import('node:net');
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const tcpPort = (probe.address() as { port: number }).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-announce-mixed-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: `/ip4/127.0.0.1/tcp/${tcpPort}`,
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    nodes.push(node);
+    const mas = node.meshIdentity()!.multiaddrs;
+    const tcpBound = mas.find((a) => a.includes(`/ip4/127.0.0.1/tcp/${tcpPort}`) && !/\/webrtc/.test(a));
+    const webrtcBound = mas.find((a) => /\/ip4\/127\.0\.0\.1\/udp\/\d+\/webrtc-direct\/certhash\//.test(a));
+    expect(tcpBound).toBeDefined();
+    expect(webrtcBound).toBeDefined();
+    expect(/\/udp\/0\/webrtc-direct/.test(webrtcBound!)).toBe(false);
+  }, 30_000);
 });
