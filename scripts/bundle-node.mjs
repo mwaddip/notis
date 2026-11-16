@@ -474,6 +474,11 @@ const OUT_REAL = realpathSync(args.out);
 
 copyFileSync(path.join(REPO, 'LICENSE'), path.join(args.out, 'LICENSE'));
 
+// The directory the bundler reads SPDX licence texts from — one release of
+// spdx/license-list-data. A fresh release names a new tag next to the dir.
+const LICENSE_TEXT_DIR = path.join(REPO, 'scripts/licenses'); // spdx/license-list-data v3.29.0
+const LICENSES_NEEDED = new Set();
+
 const licensed = new Map(); // key: name@version -> { name, version, files: [{ name, text }] }
 const repoRootPkgName = readJson(path.join(REPO, 'package.json')).name;
 for (const e of ENTRIES) {
@@ -496,7 +501,7 @@ for (const e of ENTRIES) {
     const key = `${info.name}@${info.version ?? '0.0.0'}`;
     if (licensed.has(key)) continue;
     const dir = path.dirname(pkg);
-    const files = readLicenceFiles(dir, info);
+    const files = readLicenceFiles(dir, info, key);
     licensed.set(key, { name: info.name, version: info.version ?? '0.0.0', files });
   }
 }
@@ -520,18 +525,34 @@ function readJson(p) {
 // case) — the full set, so a package shipping LICENSE and NOTICE keeps both,
 // and a dual-licenced one shipping LICENSE-MIT and LICENSE-APACHE keeps both.
 // Sorted by code units so two readers of one directory read the same order.
-function readLicenceFiles(dir, info) {
+// Where a package ships no licence file, its `package.json` `license` is
+// read as a string; a non-string field fails the build, naming the package.
+function readLicenceFiles(dir, info, pkgKey) {
   const names = readdirSync(dir)
     .filter((n) => /^(LICEN[CS]E|COPYING|NOTICE)([._-].*)?$/i.test(n))
     .filter((n) => statSync(path.join(dir, n)).isFile())
     .sort();
   if (names.length === 0) {
-    const license = typeof info.license === 'string'
-      ? info.license
-      : JSON.stringify(info.license ?? 'UNKNOWN');
-    return [{ name: 'package.json', text: `License: ${license}\n` }];
+    if (typeof info.license !== 'string') {
+      die(`${pkgKey} ships no licence file and its package.json "license" is ${JSON.stringify(info.license)}`);
+    }
+    for (const id of spdxIdentifiers(info.license)) LICENSES_NEEDED.add(id);
+    return [{ name: 'package.json', text: `License: ${info.license}\n` }];
   }
   return names.map((n) => ({ name: n, text: readFileSync(path.join(dir, n), 'utf8') }));
+}
+
+// An SPDX expression's identifiers, past OR/AND/WITH and parentheses: the
+// tokens left over, de-duplicated. A `+` on an identifier (e.g. `GPL-2.0+`)
+// drops it — the suffix is "or later" and not part of the file name.
+function spdxIdentifiers(expr) {
+  const out = new Set();
+  const tokens = expr
+    .replace(/[()]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t && t !== 'OR' && t !== 'AND' && t !== 'WITH');
+  for (const t of tokens) out.add(t.endsWith('+') ? t.slice(0, -1) : t);
+  return out;
 }
 
 {
@@ -547,13 +568,26 @@ function readLicenceFiles(dir, info) {
   const bar = '='.repeat(78);
   const parts = [
     'THIRD-PARTY-LICENSES\n\n',
-    "This tree bundles the packages below. Each section carries the package's own licence files, or the licence its package.json names where it ships none.\n\n",
+    "This tree bundles the packages below. Each section carries the package's own licence files, or the licence its package.json names where it ships none. After the packages, the standard text of every licence identifier a package.json names.\n\n",
     `${sorted.length} packages.\n`,
   ];
   for (const row of sorted) {
     parts.push(`\n${bar}\n${row.name}@${row.version}\n${bar}\n`);
     for (const f of row.files) {
       parts.push(`\n--- ${f.name} ---\n\n${f.text.endsWith('\n') ? f.text : f.text + '\n'}`);
+    }
+  }
+  // Standard licence texts, once each, in code-unit order on the identifier.
+  const ids = Array.from(LICENSES_NEEDED).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (ids.length > 0) {
+    parts.push(`\n${bar}\nStandard licence texts\n${bar}\n`);
+    for (const id of ids) {
+      const file = path.join(LICENSE_TEXT_DIR, `${id}.txt`);
+      if (!existsSync(file)) {
+        die(`scripts/licenses/${id}.txt is missing — a package.json "license" names "${id}"`);
+      }
+      const text = readFileSync(file, 'utf8');
+      parts.push(`\n--- ${id} ---\n\n${text.endsWith('\n') ? text : text + '\n'}`);
     }
   }
   writeFileSync(path.join(args.out, 'THIRD-PARTY-LICENSES'), parts.join(''));
