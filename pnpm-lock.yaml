@@ -632,6 +632,21 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
 
+  tools/test-state:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
+
 packages:
 
   '@achingbrain/http-parser-js@0.5.9':
