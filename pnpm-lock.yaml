@@ -635,6 +635,18 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
 
+  tools/test-matrix:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
+
   tools/test-state:
     dependencies:
       '@dagsocial/net':

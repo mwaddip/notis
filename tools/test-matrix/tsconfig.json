@@ -1,0 +1,12 @@
+{
+  // TEST_MATRIX_INTERFACE → Place in the workspace: the member runs from its
+  // source with no build. Node 24's type stripping is the one runtime; the
+  // source is erasable TypeScript, and relative imports name their .ts file.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src"]
+}

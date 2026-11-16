@@ -1,0 +1,12 @@
+{
+  // Typechecks the test tree as well as src (ARCHITECTURE → "Build and test
+  // resolution"). The member declares no @dagsocial/* dependency; relative
+  // .ts imports stay allowed, and nothing is emitted.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src", "test"]
+}
