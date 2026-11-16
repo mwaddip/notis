@@ -503,12 +503,7 @@ describe('mesh — the node endpoint', () => {
   // per request: a `httpBase` that answers `null` aborts the stream as a
   // refused upstream does, and a later live answer forwards the next
   // `GET` on the same node without a restart.
-  //
-  // Plain-`it` failure: `Error: Test timed out in 30000ms.` — the second
-  // fetch never resolves because the cached base is `""`, so the
-  // endpoint's `fetch` throws a URL error and the client's response
-  // promise is unreachable.
-  it.fails('httpBase answering null aborts the stream, and a later live base forwards the next GET with no restart', async () => {
+  it('httpBase answering null aborts the stream, and a later live base forwards the next GET with no restart', async () => {
     let base: string | null = null;
     const received: Array<{ method: string; path: string }> = [];
     const server = createServer((req, res) => {
@@ -559,12 +554,7 @@ describe('mesh — the node endpoint', () => {
   // MESH_INTERFACE → The node endpoint — the endpoint reads its upstream
   // per request: a base that changes between two requests is read for
   // each, so the second request lands on the new base's upstream.
-  //
-  // Plain-`it` failure:
-  //   AssertionError: expected '{"from":"first"}' to be '{"from":"second"}'
-  // — the base is read once at construction, so the second request
-  // lands on `stub1` as the first did.
-  it.fails('a httpBase that changes between two requests is read for each', async () => {
+  it('a httpBase that changes between two requests is read for each', async () => {
     const stub1 = await makeStub((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"from":"first"}');

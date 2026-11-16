@@ -22,11 +22,6 @@ export function meshEndpoint(
   httpBase: () => string | null,
   opts?: { upstreamTimeoutMs?: number },
 ): WebServer {
-  // Read once at construction; a later commit reads per request so the
-  // base can change and a `null` answer aborts the stream as a refused
-  // upstream does.
-  const once = httpBase();
-  const base = (once ?? '').replace(/\/+$/, '');
   const upstreamTimeoutMs = opts?.upstreamTimeoutMs ?? REQUEST_TIMEOUT_MS;
   return {
     async inject(info, stream, _connection) {
@@ -37,6 +32,12 @@ export function meshEndpoint(
           await stream.close().catch(() => undefined);
           return;
         }
+        // MESH_INTERFACE → The node endpoint — the base is read per
+        // request; a `null` answer aborts the stream as a refused
+        // upstream does. The empty-string coalesce leaves `fetch` with
+        // a relative URL, which it refuses — the throw lands in the
+        // catch below, which aborts the libp2p stream with no answer.
+        const base = (httpBase() ?? '').replace(/\/+$/, '');
         const url = normalizeUrl(info);
         const init: RequestInit = {
           method,
