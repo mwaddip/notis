@@ -224,13 +224,14 @@
 // cadence (TEST_STATE_INTERFACE → Blocks during a run).
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from 'node:crypto';
 import { computeTxId, txToJson } from '@dagsocial/types';
+import { loadNodeKey } from '@dagsocial/net';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
 // Boolean flags — never consume the next argument. Without this the parser
@@ -252,6 +253,11 @@ const FAUCET = args.get('faucet') ?? 'http://localhost:3103';
 const EXT_ID = args.get('extension-id') ?? 'kafmnekclgkjnkhnbafdoefnlllboddm';
 const PUBLIC = args.get('public') ?? null;
 const WEB_DIST = args.get('web-dist') ?? null;
+// A's `notisId` — the 64-hex key its node prints as `notisId` on its first
+// JSON start line (`up`'s `notisId`, `NET_INTERFACE → The node key`). The
+// seed list the harness writes names this value for A's entry (RLA for the
+// verified and waiting runs, RA for `--light`).
+const NODE_ID = args.get('node-id') ?? null;
 // The stack's miner-control origin — `up`'s `minerControlOrigin`
 // (TEST_STATE_INTERFACE → What a caller reads). Null runs every wait on
 // the stack's steady cadence; a given origin asks for each A-height wait
@@ -728,7 +734,6 @@ if ((PUBLIC === null) !== (WEB_DIST === null)) {
 let publicOrigin = null;
 let publicBase = null;
 let publicPort = null;
-let webDistAbs = null;
 if (PUBLIC !== null) {
   let u;
   try { u = new URL(PUBLIC); } catch { console.error(`--public must be a URL, got: ${PUBLIC}`); process.exit(2); }
@@ -740,60 +745,67 @@ if (PUBLIC !== null) {
   publicBase = u.pathname;
   publicPort = Number(u.port);
   if (!existsSync(WEB_DIST)) { console.error(`--web-dist not found: ${WEB_DIST}`); process.exit(2); }
-  webDistAbs = resolve(WEB_DIST);
-  if (!existsSync(join(webDistAbs, 'index.html'))) { console.error(`--web-dist has no index.html: ${webDistAbs}`); process.exit(2); }
+  if (!existsSync(join(resolve(WEB_DIST), 'index.html'))) { console.error(`--web-dist has no index.html: ${resolve(WEB_DIST)}`); process.exit(2); }
 }
 
-// Grant two loopback origins on the *unpacked* manifest — CDP cannot drive the
-// browser's permission dialog, so the App's fetch to the faucet is refused at
-// the network layer even after step 11 stubs `chrome.permissions.request` true.
-// The tracked template (`extension/manifest.template.json`) and the packed
-// release manifest are untouched.
-const MANIFEST_PATH = join(EXT_DIR, 'manifest.json');
-const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
-const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
-manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), ...LOOPBACKS])];
-writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
-console.log(`manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
+// The harness copies `--extension-dir` and `--web-dist` into `--scratch` and
+// loads, serves and edits only the copies; the given directories are read,
+// never written (EXTENSION_CHECK_INTERFACE → Builds). So `--scratch` is always
+// required, on every run.
+if (!SCRATCH) {
+  console.error('--scratch <dir> is required — the harness copies --extension-dir and --web-dist into it and writes the run\'s values into those copies');
+  process.exit(2);
+}
+if (!existsSync(SCRATCH)) {
+  console.error(`--scratch not found: ${SCRATCH}`);
+  process.exit(2);
+}
 
-// The build's faucet base is the shell's `notis-faucet` — WEB_INTERFACE →
-// "The faucet step". prefs.faucet reads it once at load, and the press's
-// permission ask uses that value. A build whose meta does not match --faucet
-// would die at step 11 with no word why, so fail fast here and name it. The
-// check is skipped in verified-tip-only mode (no --r-key) where step 11 does
-// not run.
-const SHELL_PATH = join(EXT_DIR, 'index.html');
-const shellHtml = readFileSync(SHELL_PATH, 'utf8');
-if (R_KEY) {
-  const faucetMetaMatch = shellHtml.match(/<meta[^>]+name="notis-faucet"[^>]+content="([^"]*)"[^>]*>/);
-  const shellFaucet = faucetMetaMatch ? faucetMetaMatch[1] : null;
-  if (shellFaucet !== FAUCET) {
-    console.error(`FAIL: shell notis-faucet="${shellFaucet}" != --faucet="${FAUCET}"`);
-    console.error(`      rebuild with VITE_FAUCET_BASE=${FAUCET} bash packages/web/scripts/build-extension.sh`);
+// A run whose seed list the harness owns (the verified and waiting runs, and
+// --light) names A's `notisId` for A's entry: the 64-hex key its node prints
+// as `notisId` on its first JSON start line (`NET_INTERFACE → The node key`).
+// --mesh reads A' and B''s `notisId`s from their own identity lines
+// (`setupMeshStack`), so --node-id is not read there and a plain run with no
+// block flag leaves the shell's `notis-nodes` as the build baked it.
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || WAITING_ONLY) {
+  if (NODE_ID === null) {
+    console.error('--node-id <64 hex> is required — A\'s `notisId`, the key the seed list names for A\'s entry; the value is on `up`\'s first JSON line as `notisId`');
     process.exit(2);
   }
-  console.log(`shell notis-faucet=${shellFaucet} matches --faucet`);
+  if (!/^[0-9a-f]{64}$/.test(NODE_ID)) {
+    console.error(`--node-id is not a 64-hex key: ${NODE_ID}`);
+    process.exit(2);
+  }
 }
 
-// The build's network is the shell's `notis-network` — WEB_INTERFACE →
-// The extension → "The verified tip". Every block that reads a verified tip —
-// 17–20, the figures block, the names block, the light block — refuses to run
-// against a bundle whose profile disagrees: an extension built for testnet's
-// profile against a devnet chain would read *no node's proof verified* and a
-// green step would be a lie about the check. The bundle's `notis-nodes` must
-// be exactly the pair the run's build names, in that order — the verified
-// blocks name RLA in front of A, then RLB in front of B; --light names RA,
-// then RB (WEB_INTERFACE → The extension → "The verified tip", "The light
-// read"). Each entry is a node object with `notisId` 64 hex, `addrs` empty,
-// and `api` the base this run serves (MESH_INTERFACE → The client's node
-// list → "An entry may carry an API base"); an entry with no addrs is
-// reached at its api alone, so the relays stay on the path and every read
-// the extension makes passes through one of them. The notisId the shell
-// carries is not checked against a live value here — the invoker baked the
-// key of each api's node into the build before this harness ran — only its
-// shape.
+// `EXT_DIR_COPY` and `webDistAbs` are the per-run copies the harness writes
+// the shell's values into and serves. The originals at `EXT_DIR` and
+// `WEB_DIST` are read, never written.
+const EXT_DIR_COPY = join(SCRATCH, 'ext');
+rmSync(EXT_DIR_COPY, { force: true, recursive: true });
+cpSync(EXT_DIR, EXT_DIR_COPY, { recursive: true });
+console.log(`extension copy: ${EXT_DIR} → ${EXT_DIR_COPY}`);
+
+let webDistAbs = null;
+if (PUBLIC !== null) {
+  webDistAbs = join(SCRATCH, 'web');
+  rmSync(webDistAbs, { force: true, recursive: true });
+  cpSync(resolve(WEB_DIST), webDistAbs, { recursive: true });
+  console.log(`web copy: ${resolve(WEB_DIST)} → ${webDistAbs}`);
+}
+
+// The shell as the build baked it — read from the original for the two
+// checks the harness keeps: `notis-network` names the network profile the
+// build was made against (every block that reads a verified tip refuses a
+// bundle whose profile disagrees), and `notis-public` is the build's public
+// origin, which the background and the bridge carry as built. The other
+// three metas (`notis-nodes`, `notis-faucet`, `notis-api`) are the run's own
+// values and written into the copy below.
+const shellHtmlOriginal = readFileSync(join(EXT_DIR, 'index.html'), 'utf8');
+const manifestOriginal = JSON.parse(readFileSync(join(EXT_DIR, 'manifest.json'), 'utf8'));
+
 if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
-  const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
+  const networkMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
     console.error(`FAIL: shell notis-network="${shellNetwork}" != "devnet"`);
@@ -801,91 +813,10 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
     process.exit(2);
   }
   console.log(`shell notis-network=${shellNetwork} matches "devnet"`);
-
-  // Vite wraps a `content=` value carrying `"` in single quotes, and one
-  // carrying `'` in double quotes; the meta for notis-nodes is a JSON array
-  // so single-quoted. Match either style.
-  const nodesMetaMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
-  const shellNodesRaw = nodesMetaMatch ? (nodesMetaMatch[1] ?? nodesMetaMatch[2]) : null;
-  let shellNodes = null;
-  try { shellNodes = JSON.parse(shellNodesRaw ?? ''); } catch {}
-  // The two apis this run's build names, in order — the verified blocks name
-  // RLA in front of A and RLB in front of B (`startTipRelay`), the --light
-  // block names the two light relays RA and RB, and --mesh names A' and B'
-  // at their direct HTTP bases (the mesh block reaches each at its base and
-  // over the mesh at the address the seed-list entry names in `addrs`).
-  // The verified blocks' reads pass through RLA / RLB verbatim in `honest`
-  // mode, so steps that do not set another mode see the node's own answers
-  // (WEB_INTERFACE → The extension → "The verified tip"). Mainnet's [] and
-  // testnet's live JSON are not valid here — the run is for a devnet stack
-  // with the harness's own bases.
-  const expectedApis = MESH
-    ? [AP_ORIGIN, BP_ORIGIN]
-    : LIGHT
-      ? [RA_ORIGIN, RB_ORIGIN]
-      : [RLA_ORIGIN, RLB_ORIGIN];
-  const hex64 = /^[0-9a-f]{64}$/;
-  // For --mesh each entry's `addrs` carries exactly one WebRTC-direct
-  // multiaddr naming the node's own mesh listen port, with certhash and
-  // /p2p/<peerId> — the shape libp2p prints. MESH_INTERFACE → Discovery →
-  // "A node added by hand" holds the shape of an address the client dials;
-  // the shell check here reads the port, the webrtc-direct segment, a
-  // certhash and a /p2p/ segment, and leaves the specific certhash and
-  // peerId to the setup's identity-line read (setupMeshStack).
-  const expectedMeshPorts = MESH ? [AP_MESH_PORT, BP_MESH_PORT] : null;
-  const meshAddrOk = (addr, i) => {
-    if (typeof addr !== 'string') return false;
-    const re = new RegExp(
-      `^/ip4/127\\.0\\.0\\.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`,
-    );
-    return re.test(addr);
-  };
-  const entryOk = (e, i) => {
-    if (e === null || typeof e !== 'object') return false;
-    if (typeof e.notisId !== 'string' || !hex64.test(e.notisId)) return false;
-    if (typeof e.api !== 'string' || e.api.replace(/\/+$/, '') !== expectedApis[i]) return false;
-    if (!Array.isArray(e.addrs)) return false;
-    if (MESH) {
-      return e.addrs.length === 1 && meshAddrOk(e.addrs[0], i);
-    }
-    return e.addrs.length === 0;
-  };
-  const nodesOk = Array.isArray(shellNodes)
-    && shellNodes.length === expectedApis.length
-    && shellNodes.every(entryOk);
-  if (!nodesOk) {
-    const expectedShape = expectedApis.map((api, i) => ({
-      notisId: '<the api\'s node\'s 64-hex key, from its start line>',
-      addrs: MESH
-        ? [`/ip4/127.0.0.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/<multihash>/p2p/<the api\'s node\'s peerId, from its start line>`]
-        : [],
-      api,
-    }));
-    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} is not the two-node shape this run expects`);
-    console.error(`      rebuild with VITE_NODES set to a JSON array of two entries in this shape, each entry's api in order:`);
-    console.error(`      ${JSON.stringify(expectedShape)}`);
-    console.error(`      each notisId is the 64-hex key its api's node prints as the first JSON line of its start output${MESH ? ', and each addrs[0] is the WebRTC-direct multiaddr that line names in `multiaddrs`' : ''}`);
-    process.exit(2);
-  }
-  const shapeLabel = MESH
-    ? '[{api: A\', addrs: [A\' webrtc-direct], …}, {api: B\', addrs: [B\' webrtc-direct], …}]'
-    : LIGHT
-      ? '[{api: RA, …}, {api: RB, …}]'
-      : '[{api: A, …}, {api: B, …}]';
-  console.log(`shell notis-nodes=${shellNodesRaw} matches ${shapeLabel}`);
 }
 
-// The build's public base is the shell's `notis-public` — WEB_INTERFACE →
-// The extension → "Links into the extension". When --public is passed, the
-// shell must carry it exactly, and the manifest's one content_scripts entry
-// must be the port-less pattern derived from --public (via the module the
-// emitter uses; never a second implementation here — the faucet check's
-// shape, for the same reason). Skipped in verified-tip-only mode (no --r-key),
-// where step 20 uses --public to open the hosted web build served by the
-// harness's static server — the extension's own `notis-public` and bridge
-// have no bearing on that step.
 if (PUBLIC !== null && R_KEY) {
-  const publicMetaMatch = shellHtml.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
+  const publicMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
   const shellPublic = publicMetaMatch ? publicMetaMatch[1] : null;
   if (shellPublic !== PUBLIC) {
     console.error(`FAIL: shell notis-public="${shellPublic}" != --public="${PUBLIC}"`);
@@ -894,7 +825,7 @@ if (PUBLIC !== null && R_KEY) {
   }
   console.log(`shell notis-public=${shellPublic} matches --public`);
   const expectedPattern = matchPatternFor(PUBLIC);
-  const cs = manifest.content_scripts;
+  const cs = manifestOriginal.content_scripts;
   if (!Array.isArray(cs) || cs.length !== 1) {
     console.error(`FAIL: manifest content_scripts must have one entry, got: ${JSON.stringify(cs)}`);
     process.exit(2);
@@ -905,6 +836,158 @@ if (PUBLIC !== null && R_KEY) {
     process.exit(2);
   }
   console.log(`manifest content_scripts[0].matches=${csMatches[0]} matches expected pattern (port-less)`);
+}
+
+// Grant two loopback origins on the copy's manifest — CDP cannot drive the
+// browser's permission dialog, so the App's fetch to the faucet is refused at
+// the network layer even after step 11 stubs `chrome.permissions.request` true.
+// The original `--extension-dir` manifest stays untouched, as does the tracked
+// template (`extension/manifest.template.json`) and the packed release
+// manifest.
+const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
+{
+  const copyManifestPath = join(EXT_DIR_COPY, 'manifest.json');
+  const copyManifest = JSON.parse(readFileSync(copyManifestPath, 'utf8'));
+  copyManifest.host_permissions = [
+    ...new Set([...(copyManifest.host_permissions ?? []), ...LOOPBACKS]),
+  ];
+  writeFileSync(copyManifestPath, JSON.stringify(copyManifest, null, 2) + '\n');
+  // Read back — the guard on the write.
+  const verify = JSON.parse(readFileSync(copyManifestPath, 'utf8'));
+  for (const h of LOOPBACKS) {
+    if (!Array.isArray(verify.host_permissions) || !verify.host_permissions.includes(h)) {
+      console.error(`FAIL: copy manifest host_permissions missing ${h}: ${JSON.stringify(verify.host_permissions)}`);
+      process.exit(2);
+    }
+  }
+  console.log(`copy manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
+}
+
+// Pre-create B's key file at `${SCRATCH}/b.key`, so every B of a run — the
+// one `setupLightRelays` spawns, and the one `verifiedTipSteps` /
+// `verifiedFiguresSteps` / `verifiedNamesSteps` spawn — reads the same key
+// (`NET_INTERFACE → The node key`: `loadNodeKey` is the one reader of a key
+// file, and it writes a fresh key where none is). `bringUpNodeB` wipes the
+// store at each spawn and never the key, so the key persists across every B
+// in the run — and the entry the seed list names for B carries its public
+// key as `notisId`, read here before the seed list is written. The default
+// derives `b.key` beside `b.db` (`NODE_INTERFACE → Configuration → "The key
+// file is named for the store"`: unset `NODE_KEY_PATH` replaces the db's
+// extension with `.key`), the path `bringUpNodeB`'s spawn takes.
+let B_NOTIS_ID = null;
+if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || WAITING_ONLY) {
+  const bKeyPath = join(SCRATCH, 'b.key');
+  let bKp;
+  try { bKp = await loadNodeKey(bKeyPath); }
+  catch (e) {
+    console.error(`FAIL: could not pre-create B's key file at ${bKeyPath}: ${e.message}`);
+    process.exit(2);
+  }
+  B_NOTIS_ID = Buffer.from(bKp.publicKey).toString('hex');
+  console.log(`B key at ${bKeyPath}: notisId=${B_NOTIS_ID}`);
+}
+
+// The seed list the harness writes into the copy's shell for a run that owns
+// one. `--mesh`'s entries carry A' and B''s `notisId`s and WebRTC-direct
+// multiaddrs, both read from the identity lines; `setupMeshStack` fills them
+// in before the write pass runs. The relays' entries carry A's and B's
+// `notisId`s with empty `addrs`, so each is reached at its api alone
+// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
+// base"`). A run with no block flag leaves `notis-nodes` as the build baked
+// it; the harness still writes `notis-faucet` on every run and `notis-api`
+// on every run with `--public`.
+function buildOwnedSeedList() {
+  if (MESH) {
+    // Filled by `setupMeshStack` after it reads each identity line; the
+    // write pass runs after setup, so these are non-null by then.
+    return [
+      { notisId: meshNodes.ap.identity.notisId, addrs: [meshApAddr], api: AP_ORIGIN },
+      { notisId: meshNodes.bp.identity.notisId, addrs: [meshBpAddr], api: BP_ORIGIN },
+    ];
+  }
+  if (LIGHT) {
+    return [
+      { notisId: NODE_ID, addrs: [], api: RA_ORIGIN },
+      { notisId: B_NOTIS_ID, addrs: [], api: RB_ORIGIN },
+    ];
+  }
+  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY) {
+    return [
+      { notisId: NODE_ID, addrs: [], api: RLA_ORIGIN },
+      { notisId: B_NOTIS_ID, addrs: [], api: RLB_ORIGIN },
+    ];
+  }
+  return null;
+}
+
+// The webrtc-direct addrs `setupMeshStack` records for A' and B'. Filled in
+// before the write pass runs.
+let meshApAddr = null;
+let meshBpAddr = null;
+
+// Write the run's values into the copy's `index.html` and read them back —
+// `notis-faucet` on every run, `notis-api` on every run with `--public`
+// (web copy only), and `notis-nodes` on runs that own a seed list. Exits 2
+// before Chromium starts on a read-back mismatch, the guard on the write
+// (EXTENSION_CHECK_INTERFACE → Builds).
+function writeShellMeta(html, name, value) {
+  // The build's shell writes a string value in double quotes and a JSON
+  // array in single quotes (Vite's quoting); match either and rewrite as
+  // single-quoted when `value` carries a `"`, else double-quoted.
+  const re = new RegExp(`(<meta[^>]+name="${name}"[^>]+content=)(?:"([^"]*)"|'([^']*)')`);
+  const needsSingle = value.includes('"');
+  const quoted = needsSingle ? `'${value}'` : `"${value}"`;
+  if (!re.test(html)) {
+    throw new Error(`shell has no <meta name="${name}"> to rewrite`);
+  }
+  return html.replace(re, `$1${quoted}`);
+}
+
+function readShellMeta(html, name) {
+  const m = html.match(new RegExp(`<meta[^>]+name="${name}"[^>]+content=(?:"([^"]*)"|'([^']*)')`));
+  return m ? (m[1] ?? m[2]) : null;
+}
+
+function writeAndVerifyCopyShells() {
+  // Extension shell.
+  const extShellPath = join(EXT_DIR_COPY, 'index.html');
+  let html = readFileSync(extShellPath, 'utf8');
+  html = writeShellMeta(html, 'notis-faucet', FAUCET);
+  const ownedNodes = buildOwnedSeedList();
+  if (ownedNodes !== null) {
+    html = writeShellMeta(html, 'notis-nodes', JSON.stringify(ownedNodes));
+  }
+  writeFileSync(extShellPath, html);
+  const verify = readFileSync(extShellPath, 'utf8');
+  const gotFaucet = readShellMeta(verify, 'notis-faucet');
+  if (gotFaucet !== FAUCET) {
+    console.error(`FAIL: copy ext shell notis-faucet="${gotFaucet}" != "${FAUCET}"`);
+    process.exit(2);
+  }
+  if (ownedNodes !== null) {
+    const gotNodes = readShellMeta(verify, 'notis-nodes');
+    if (gotNodes !== JSON.stringify(ownedNodes)) {
+      console.error(`FAIL: copy ext shell notis-nodes=${gotNodes} != ${JSON.stringify(ownedNodes)}`);
+      process.exit(2);
+    }
+    console.log(`copy ext shell notis-nodes rewritten to ${gotNodes}`);
+  }
+  console.log(`copy ext shell notis-faucet rewritten to ${gotFaucet}`);
+
+  // Web shell, when --public is passed.
+  if (webDistAbs !== null) {
+    const webShellPath = join(webDistAbs, 'index.html');
+    let webHtml = readFileSync(webShellPath, 'utf8');
+    webHtml = writeShellMeta(webHtml, 'notis-api', NODE);
+    writeFileSync(webShellPath, webHtml);
+    const webVerify = readFileSync(webShellPath, 'utf8');
+    const gotApi = readShellMeta(webVerify, 'notis-api');
+    if (gotApi !== NODE) {
+      console.error(`FAIL: copy web shell notis-api="${gotApi}" != "${NODE}"`);
+      process.exit(2);
+    }
+    console.log(`copy web shell notis-api rewritten to ${gotApi}`);
+  }
 }
 
 // The web server for --web-dist — WEB_INTERFACE → The extension → "Links into
@@ -978,7 +1061,6 @@ async function startWebServer() {
   });
   console.log(`web server: ${webDistAbs} served on ${publicOrigin}${publicBase} (port ${publicPort})`);
 }
-await startWebServer();
 
 // R's clear key is read only when the write steps run. Verified-tip-only mode
 // (--verified-tip without --r-key) skips 1–16, so no wallet identity is imported.
@@ -1078,12 +1160,15 @@ async function launchChromium(extensionDir) {
   });
 }
 
-// The Chromium — loaded with the extension at --extension-dir. Every step
-// runs against this instance's DevTools port.
-const primary = await launchChromium(EXT_DIR);
-const proc = primary.proc;
-const port = primary.port;
-const profile = primary.profile;
+// The Chromium — loaded with the copy of the extension that the harness has
+// written the run's values into. The variables are set from the launch below,
+// after `setupTipRelays`, `setupLightRelays` and `setupMeshStack` have run
+// and `writeAndVerifyCopyShells` has written the seed list, so the first
+// paint reads the values the run owns.
+let primary = null;
+let proc = null;
+let port = null;
+let profile = null;
 
 async function browserVersion(chromePort = port) {
   const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
@@ -9646,39 +9731,23 @@ async function setupMeshStack() {
   meshNodes.bp = {
     identity: bpSpawn.identity, ports: BP_PORTS, dbPath: bpDb, mesh: true,
   };
-  // The build's shell was shape-checked at the top (`notis-nodes` carries
-  // two entries with one webrtc-direct addr each on the expected ports);
-  // here we validate the identity values — notisId and the addrs[0]
-  // string — against what the nodes actually printed. The invoker baked
-  // these into the build, and a mismatch names the exact rebuild line.
-  const shellMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
-  const shellNodesRaw = shellMatch ? (shellMatch[1] ?? shellMatch[2]) : '';
-  let parsed = null;
-  try { parsed = JSON.parse(shellNodesRaw); } catch {}
+  // Each entry's `addrs[0]` is the WebRTC-direct multiaddr the node prints
+  // in its identity line's `multiaddrs` (certhash and /p2p/ included,
+  // `MESH_INTERFACE → Discovery → "A node added by hand"`). The write pass
+  // below carries these into the copy's `notis-nodes`; a missing match is a
+  // `ConfigError` here, before Chromium launches.
   const apAddr = pickWebRtcDirectAddr(apSpawn.identity, AP_MESH_PORT);
   const bpAddr = pickWebRtcDirectAddr(bpSpawn.identity, BP_MESH_PORT);
-  const expected = [
-    { notisId: apSpawn.identity.notisId, addrs: [apAddr], api: AP_ORIGIN },
-    { notisId: bpSpawn.identity.notisId, addrs: [bpAddr], api: BP_ORIGIN },
-  ];
-  const entryMatches = (shell, exp) =>
-    shell !== null && typeof shell === 'object'
-    && typeof shell.notisId === 'string' && shell.notisId.toLowerCase() === exp.notisId.toLowerCase()
-    && Array.isArray(shell.addrs) && shell.addrs.length === 1 && shell.addrs[0] === exp.addrs[0]
-    && typeof shell.api === 'string' && shell.api.replace(/\/+$/, '') === exp.api;
-  const ok = Array.isArray(parsed) && parsed.length === 2
-    && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
-  if (!ok || apAddr === null || bpAddr === null) {
-    // The refusal is a `ConfigError`: the outer try/catch reads it as exit code
-    // 2 and closes the browser, A' and B' through the normal teardown.
+  if (apAddr === null || bpAddr === null) {
     throw new ConfigError(
-      `shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities\n`
-      + `      rebuild with VITE_NODES set exactly to:\n`
-      + `      ${JSON.stringify(expected)}\n`
-      + `      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`,
+      `mesh node identity line carried no webrtc-direct multiaddr for the expected port\n`
+      + `      A': port ${AP_MESH_PORT}, got ${apAddr === null ? 'none' : apAddr}; multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}\n`
+      + `      B': port ${BP_MESH_PORT}, got ${bpAddr === null ? 'none' : bpAddr}; multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`,
     );
   }
-  console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+  meshApAddr = apAddr;
+  meshBpAddr = bpAddr;
+  console.log(`[vm] mesh addrs: A'=${apAddr}, B'=${bpAddr}`);
 
   // Wait for A' and B' each to stand at A's tip within ± 2 before the
   // browser launches, so every M-step's fresh page reads two synced nodes
@@ -12452,16 +12521,28 @@ async function teardownTipRelays() {
 
 let exitCode = 0;
 try {
+  // The nodes an entry names and every key the harness owns come up first;
+  // then the seed list is written into the copy and read back; then Chromium
+  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds: "The copy is whole
+  // before Chromium loads it"). A refusal during setup — a `ConfigError`
+  // from `setupMeshStack` — fires before the browser launches, so no
+  // process stands to close.
   await setupTipRelays();
   await setupLightRelays();
   await setupMeshStack();
+  writeAndVerifyCopyShells();
+  primary = await launchChromium(EXT_DIR_COPY);
+  proc = primary.proc;
+  port = primary.port;
+  profile = primary.profile;
+  await startWebServer();
   await main();
 } catch (e) {
   // `ConfigError` is the setup's refusal of a build whose values do not match
-  // what the harness owns — the pre-launch argument checks' exit code 2, from
-  // a check that runs after the browser launched. The teardown below still
-  // runs, then `proc.kill()` and `webServer.close()` close the child
-  // Chromium and the harness's own web server.
+  // what the harness owns — the pre-launch argument checks' exit code 2. The
+  // teardown below still runs, then `proc.kill()` and `webServer.close()`
+  // close the child Chromium and the harness's own web server (when a launch
+  // has happened).
   if (e instanceof ConfigError) {
     console.error(`FAIL: ${e.message}`);
     exitCode = 2;
@@ -12508,6 +12589,6 @@ console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2)
 // outer catch did not already set a higher one.
 if (fail > 0 && exitCode === 0) exitCode = 1;
 
-proc.kill();
+if (proc !== null) proc.kill();
 if (webServer) await new Promise((r) => webServer.close(() => r()));
 process.exit(exitCode);
