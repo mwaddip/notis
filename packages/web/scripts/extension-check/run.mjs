@@ -12481,7 +12481,11 @@ async function teardownTipRelays() {
 
 // EXTENSION_CHECK_INTERFACE → The command — "Whatever ends a check stops
 // everything it started". On SIGTERM or SIGINT the harness runs the same
-// teardown its normal end runs — tip, light and mesh teardowns, Chromium
+// teardown its normal end runs — tip, light and mesh teardowns, every
+// node and miner the block spawned through `stopAllChildren` (the tip,
+// figures and names blocks spawn B, C, D and D's miner into
+// `vtChildren`; the tip and figures and names blocks' own cleanup runs
+// at the block's own end, which a throw past that point skips), Chromium
 // through `proc.kill()`, the web server closed — and exits. A second
 // signal during the teardown exits at once.
 let signalEnding = false;
@@ -12492,6 +12496,7 @@ async function endOnSignal(signal) {
   try { await teardownTipRelays(); } catch {}
   try { await teardownLightRelays(); } catch {}
   try { await teardownMeshStack(); } catch {}
+  try { await stopAllChildren(); } catch {}
   if (proc !== null) { try { proc.kill(); } catch {} }
   if (webServer) { try { await new Promise((r) => webServer.close(() => r())); } catch {} }
   process.exit(130);
@@ -12536,6 +12541,12 @@ try {
 await teardownTipRelays();
 await teardownLightRelays();
 await teardownMeshStack();
+// The tip, figures and names blocks spawn B, C, D and D's miner into
+// `vtChildren` and run `stopAllChildren` at the block's own end; a
+// throw out of the block past that point reaches the outer `catch` and
+// leaves them. The normal end stops them the same way the signal
+// teardown does.
+await stopAllChildren();
 
 console.log(`\n=== SUMMARY (block=${BLOCK}) ===`);
 for (const r of findings) console.log(`  step ${r.step} [${r.block}]: ${r.status} — ${r.detail}`);
