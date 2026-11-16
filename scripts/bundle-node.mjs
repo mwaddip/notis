@@ -566,33 +566,26 @@ function readLicenceFiles(dir, info) {
 // GET /blocks/current to answer with a height.
 // ---------------------------------------------------------------------------
 
-// Every variable packages/node/src/config.ts reads whose presence in the
-// inherited environment would change a plain devnet start. The check empties
-// each one on the child's env, then sets the few the check itself names.
-const CONFIG_ENV_VARS = [
-  'NETWORK_TYPE', 'DB_PATH', 'PORT', 'ADMIN_PORT', 'ADMIN_BIND_ADDRESS',
-  'NODE_KEY_PATH', 'NODE_ROLE', 'WEB_SHELL_PATH',
-  'BLOCK_BODY_BUDGET_BYTES', 'MAX_MEMPOOL_ENTRIES', 'MIN_FEE_RATE_PER_BYTE',
-  'MINING_SECRET',
-  'MAX_PROOF_HISTORY', 'PROOF_RETENTION_BLOCKS', 'PROOF_RETENTION_BYTES',
-  'PROOF_WINDOW_BLOCKS', 'PROOF_WINDOW_NODES',
-  'BOOTSTRAP_PEERS', 'LISTEN_ADDRS',
-  'MAX_PEERS', 'MAX_READERS', 'MIN_PEERS', 'PEER_DB_CAP',
-  'OUTBOUND_REDIAL_COOLDOWN_MS', 'PENALTY_SCORE_THRESHOLD',
-  'TEMPORAL_BAN_DURATION_MS', 'PENALTY_DECAY_INTERVAL_MS',
-  'SYNC_REQUEST_TIMEOUT_MS',
-  'MESH_ROLE', 'MESH_LISTEN', 'MESH_ANNOUNCE', 'MESH_STUN',
-  'MESH_STUN_SERVERS', 'MESH_WSS', 'MESH_ACME_DIRECTORY',
-  'MESH_ACME_CHALLENGE_PORT',
-];
+// A short allowlist of OS variables the child needs to run, matched
+// case-insensitively (Windows keeps `Path`, `TEMP`, `UserProfile`): the
+// shell's PATH, the temporary-directory variables, HOME/USERPROFILE, and
+// on Windows SystemRoot/windir. Everything else inherited is dropped, then
+// the check names its own nine.
+const INHERITED_ENV_ALLOW = new Set(
+  ['PATH', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'SystemRoot', 'windir']
+    .map((n) => n.toLowerCase()),
+);
 
 await startNodeAndWait(args.out, args.nodeExe);
 console.log(`bundle-node: ${args.out}`);
 
 async function startNodeAndWait(outDir, nodeExe) {
   const stateDir = mkdtempSync(path.join(tmpdir(), 'dagsocial-bundle-check-'));
-  const env = { ...process.env };
-  for (const name of CONFIG_ENV_VARS) delete env[name];
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (INHERITED_ENV_ALLOW.has(name.toLowerCase())) env[name] = value;
+  }
   Object.assign(env, {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'server',
