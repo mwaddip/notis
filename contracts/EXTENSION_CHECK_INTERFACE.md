@@ -65,6 +65,11 @@ stack's ports (`up` with 0), each node the harness spawns (its `api_listening` e
 port (`--remote-debugging-port=0`, read from the profile's `DevToolsActivePort`). Blocks and checks run side by side,
 and beside the mesh suite, with no port of one meeting another's.
 
+**A node restarted behind the seed-list entry it answers for takes back the ports its first start was given** — the
+entry names them: `mesh`'s A′ and B′ across M2–M4, whose WebRTC-direct address no relay can stand in front of. A port
+another process took in between fails the restart, and the block names it. A node behind a relay — B behind RLB —
+restarts on any port, the relay's upstream moved to it.
+
 **One address is the build's: the hosted page's public origin.** The extension's background and bridge carry
 `VITE_PUBLIC` as built, and the background reads a tab as a Notis link by that origin, its port included
 (`WEB_INTERFACE → The extension → "Links into the extension"`). `links` serves the hosted page there. A block whose
