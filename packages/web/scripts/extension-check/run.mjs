@@ -3659,16 +3659,25 @@ async function readNodeKarmaPending() {
 // Ask the faucet for R's credits through its HTTP route, the one the
 // extension's own faucet step asks (NODE_INTERFACE → Faucet,
 // WEB_INTERFACE → The faucet step): POST <FAUCET>/credits with
-// `{ pubkey: <R> }`. A 202 carries the grant's `boxId`; the helper then
-// asks the stack's miner for the next heights (`askMineTo`, as the other
-// height waits do) and waits until R's plain `/credits` on A lists a box
-// of that id — the node's own word, never a balance figure moving (a row
-// read as a landing is the trap). Answers `{ ok, boxId?, reason? }`; a
-// refusal or missed landing lets the caller fail every in-block step with
-// the reason. `figures` reads R holding $NOTIS (step 21's send refuses
-// under 2 $NOTIS; the row's figure is the pending view's spendable sum);
-// `names` reads R holding $NOTIS too (step 29 types a send to S's handle
-// and the flow builds a transfer tx on R's spendable boxes).
+// `{ pubkey: <R> }`. A 202 carries the grant's `boxId`. A pooled transfer
+// lands in the next block, so the helper asks the stack's miner for tip
+// + 1 (`askMineTo`, as the other height waits do) and waits for R's
+// plain `/credits` on A to list a box of that id — the node's own word,
+// never a balance figure moving (a row read as a landing is the trap).
+// Where the grant has not landed by that height, the helper asks for the
+// next tip + 1 and waits again, within the same 180 s bound; the ask is
+// a no-op when `--miner-control` is not set. The grant's
+// `expiresAtHeight` is the transfer's mempool expiry (tip +
+// `MEMPOOL_EXPIRY_BLOCKS` = 720 on devnet), ~720 blocks past devnet's
+// `karmaStaleThresholdBlocks` (500) and seven rent periods (100), so the
+// helper never asks for it — a pre-mine through it would shift R's rep
+// and boxes past what the block's steps expect. Answers
+// `{ ok, boxId?, reason? }`; a refusal or missed landing lets the caller
+// fail every in-block step with the reason. `figures` reads R holding
+// $NOTIS (step 21's send refuses under 2 $NOTIS; the row's figure is the
+// pending view's spendable sum); `names` reads R holding $NOTIS too
+// (step 29 types a send to S's handle and the flow builds a transfer tx
+// on R's spendable boxes).
 async function prepareFaucetCreditsForR() {
   const rKey = R_JSON?.pubKeyHex;
   if (typeof rKey !== 'string' || !/^[0-9a-f]{64}$/.test(rKey)) {
@@ -3693,35 +3702,37 @@ async function prepareFaucetCreditsForR() {
   }
   const grantBoxId = typeof answer?.boxId === 'string' && /^[0-9a-f]{64}$/i.test(answer.boxId)
     ? answer.boxId.toLowerCase() : null;
-  const expiresAtHeight = typeof answer?.expiresAtHeight === 'number' ? answer.expiresAtHeight : null;
   if (grantBoxId === null) {
     return { ok: false, reason: `POST ${url} 202 carried no 64-hex boxId: ${bodyText.slice(0, 200)}` };
   }
-  // Ask the stack's miner to mine to the expiry height (or two blocks past
-  // the current one where no expiry is named) so the grant's transaction
-  // lands on A before the wait begins. The ask is a no-op when
-  // --miner-control is not set; the wait then runs on the cadence.
-  const nowHeight = await currentHeight(NODE);
-  const target = expiresAtHeight ?? ((nowHeight ?? 0) + 2);
-  if (MINER_CONTROL !== null && typeof target === 'number') {
-    try { await askMineTo(target, 'faucet credits prep'); }
-    catch (e) { return { ok: false, reason: `askMineTo(${target}) failed: ${e?.message ?? String(e)}` }; }
-  }
-  const wait = await recordWait('faucet credits prep landing', 180000, async () => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < 180000) {
+  const BOUND_MS = 180000;
+  const t0 = Date.now();
+  const attempts = [];
+  while (Date.now() - t0 < BOUND_MS) {
+    const nowHeight = await currentHeight(NODE);
+    if (typeof nowHeight !== 'number') {
+      return { ok: false, reason: `could not read A's current height; attempts=${JSON.stringify(attempts)}` };
+    }
+    const target = nowHeight + 1;
+    attempts.push({ at: Date.now() - t0, from: nowHeight, to: target });
+    if (MINER_CONTROL !== null) {
+      try { await askMineTo(target, 'faucet credits prep'); }
+      catch (e) { return { ok: false, reason: `askMineTo(${target}) failed: ${e?.message ?? String(e)}; attempts=${JSON.stringify(attempts)}` }; }
+    }
+    // Poll A's plain /credits for the grant's box until either the tip
+    // moves past `target` without a match (another attempt follows) or
+    // the 180 s bound runs out.
+    while (Date.now() - t0 < BOUND_MS) {
       const c = await readNodeCredits(rKey);
       if (c !== null && c.boxIds.some((id) => id.toLowerCase() === grantBoxId)) {
-        return { landed: true, elapsedMs: Date.now() - t0 };
+        return { ok: true, boxId: grantBoxId, elapsedMs: Date.now() - t0, attempts };
       }
+      const h = await currentHeight(NODE);
+      if (typeof h === 'number' && h > target) break;
       await sleep(2000);
     }
-    return { landed: false, elapsedMs: Date.now() - t0 };
-  });
-  if (!wait.landed) {
-    return { ok: false, reason: `the faucet grant (boxId ${grantBoxId.slice(0, 12)}…) did not land on R's plain /credits within ${(wait.elapsedMs / 1000).toFixed(0)}s` };
   }
-  return { ok: true, boxId: grantBoxId, elapsedMs: wait.elapsedMs };
+  return { ok: false, reason: `the faucet grant (boxId ${grantBoxId.slice(0, 12)}…) did not land on R's plain /credits within ${((Date.now() - t0) / 1000).toFixed(0)}s; attempts=${JSON.stringify(attempts)}` };
 }
 
 // A key's plain /credits on A — the plain listing's boxes (id, value, locked
