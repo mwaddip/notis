@@ -1651,24 +1651,6 @@ async function stopAllChildren() {
   }
 }
 
-// Whether a TCP port on 127.0.0.1 is free right now — the test the restart
-// rule reads before pinning a port a node took on its first start. Binds a
-// bare server on the port; a successful bind proves the port is free (the
-// server is closed before the function returns). The caller's refusal names
-// the port on a false answer: a port taken between a node's first start and
-// its restart behind the seed-list entry it answers for fails the block, the
-// port and the node named.
-async function portIsFree(port) {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.once('error', () => resolve(false));
-    srv.once('listening', () => {
-      srv.close(() => resolve(true));
-    });
-    srv.listen(port, '127.0.0.1');
-  });
-}
-
 // Read the p2p port and peerId out of a `[net] listening on` line —
 // `/ip4/<host>/tcp/<port>/p2p/<peerId>`. The `tools/test-state` loader
 // reads the same line (its `nodePeerIdFromListenLine`); web declares no
@@ -9609,10 +9591,22 @@ async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
     child.stdout?.on('data', onData);
     child.on('exit', () => {
       clearTimeout(to);
-      if (!have()) reject(new Error(
-        `${name} exited before every start line was printed`
-        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`,
-      ));
+      if (!have()) {
+        // Read the tail of the log so the rejection carries the node's own
+        // words — a bind failure on a pinned port prints the port there
+        // (`EADDRINUSE` on HTTP or admin, the libp2p listen message on p2p
+        // or mesh), and the caller's `record` names the node. Together they
+        // name both the port and the node without a pre-bind probe.
+        let tail = '';
+        if (logPath) {
+          try { tail = readFileSync(logPath, 'utf8').slice(-4000); } catch {}
+        }
+        reject(new Error(
+          `${name} exited before every start line was printed`
+          + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`
+          + (tail ? `\nlog tail:\n${tail}` : ''),
+        ));
+      }
     });
   });
   await ready;
@@ -9622,17 +9616,6 @@ async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
   return { child, exited, identity, ports };
 }
 
-// Refuse a pin on a port that is not free right now, naming the port and
-// the node — a port taken between a node's first start and its restart
-// behind the seed-list entry it answers for fails the block
-// (`WEB_INTERFACE → The extension → "The verified tip"`,
-// `MESH_INTERFACE → The node endpoint`).
-async function refuseIfPortTaken(port, label) {
-  if (port === null || port === 0) return;
-  if (!(await portIsFree(port))) {
-    throw new Error(`port ${port} is taken — cannot restart ${label} behind its seed-list entry`);
-  }
-}
 
 // A's peer id, read from `NODE_P2P` (the --node-p2p multiaddr, shape
 // `/ip4/.../tcp/<port>/p2p/<peerId>`). A transaction's forward is bought
@@ -9981,22 +9964,22 @@ async function runMeshStepM2(bcx) {
     await stopChild('ap');
     await stopChild('bp');
     // A' and B' restart behind the seed-list entries they answer for, so
-    // each takes back the ports its first start was given. A port taken
-    // between fails the block, naming it.
-    await refuseIfPortTaken(AP_PORTS.http, "A' http");
-    await refuseIfPortTaken(AP_PORTS.admin, "A' admin");
-    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
-    await refuseIfPortTaken(BP_PORTS.http, "B' http");
-    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
-    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
-    await spawnServerNode('ap', nodeEnv({
+    // each pins only what the entry names: the HTTP port the seed list's
+    // `api` carries (`EXTENSION_CHECK_INTERFACE → Addresses`). Admin and
+    // p2p bind on 0 and are read back; B''s bootstrap takes A''s p2p from
+    // the restart, not the first start. A port a pin failed to take
+    // reaches the error through the node's own words: `spawnServerNode`
+    // reads the log tail on an exit before the start lines and raises it.
+    const apSpawn = await spawnServerNode('ap', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
-      http: AP_PORTS.http, admin: AP_PORTS.admin, p2p: AP_PORTS.p2p,
+      http: AP_PORTS.http, admin: 0, p2p: 0,
     }), { withMesh: false });
+    AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
+    AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
     await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath,
       bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
-      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p,
+      http: BP_PORTS.http, admin: 0, p2p: 0,
     }), { withMesh: false });
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
@@ -10054,29 +10037,28 @@ async function runMeshStepM3(bcx) {
     const apLogOff = logOffset(apLog);
     const bpLogOff = logOffset(bpLog);
     // A' and B' restart behind the seed-list entries they answer for, so
-    // each takes back the first-start ports and the mesh identity's
-    // `addrs[0]` the write pass wrote into `notis-nodes` still matches.
-    // A port taken in between fails the block, naming it.
-    await refuseIfPortTaken(AP_PORTS.http, "A' http");
-    await refuseIfPortTaken(AP_PORTS.admin, "A' admin");
-    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
-    await refuseIfPortTaken(AP_PORTS.mesh, "A' mesh");
-    await refuseIfPortTaken(BP_PORTS.http, "B' http");
-    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
-    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
-    await refuseIfPortTaken(BP_PORTS.mesh, "B' mesh");
+    // each pins only what the entry names: the HTTP port the seed list's
+    // `api` carries and, mesh-on, the WebRTC-direct UDP port the entry's
+    // `addrs[0]` names (`EXTENSION_CHECK_INTERFACE → Addresses`). Admin
+    // and p2p bind on 0 and are read back. A port a pin failed to take
+    // reaches the error through the node's own words: `spawnServerNode`
+    // reads the log tail on an exit before the start lines and raises it.
     const apSpawn = await spawnServerNode('ap', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
-      http: AP_PORTS.http, admin: AP_PORTS.admin, p2p: AP_PORTS.p2p, mesh: AP_PORTS.mesh,
+      http: AP_PORTS.http, admin: 0, p2p: 0, mesh: AP_PORTS.mesh,
     }), { withMesh: true });
+    AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
+    AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
     const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
     if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
     // B' bootstraps from A, the same bootstrap A' takes, so B' peers
     // with A directly and relays an admitted write to A at admission.
     const bpSpawn = await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
-      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p, mesh: BP_PORTS.mesh,
+      http: BP_PORTS.http, admin: 0, p2p: 0, mesh: BP_PORTS.mesh,
     }), { withMesh: true });
+    BP_ADMIN_PORT = bpSpawn.ports.admin; BP_P2P_PORT = bpSpawn.ports.p2p;
+    BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
     const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
     if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
     meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
@@ -10210,27 +10192,28 @@ async function runMeshStepM4(bcx) {
     const bpLog = join(SCRATCH, 'bp.log');
     const apM4LogOff = logOffset(apM4Log);
     const bpLogOff = logOffset(bpLog);
-    // A' restarts on a fresh alt HTTP port (bound on 0) with its first-
-    // start p2p port taken back; B' restarts behind its seed-list entry
-    // with every port taken back. No MESH_ROLE — M4 reaches each at its
-    // api base alone. A' still bootstraps from --node-p2p so it stays on
-    // A's chain, and B' takes the same bootstrap so B' peers with A
-    // directly and relays the admitted write to A at admission. A port
-    // taken in between fails the block, naming it.
-    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
-    await refuseIfPortTaken(BP_PORTS.http, "B' http");
-    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
-    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
+    // A' restarts on a fresh alt HTTP port (bound on 0), with admin and
+    // p2p on 0 as well — the seed-list entry names the HTTP port alone,
+    // and M4's relay takes A''s first HTTP port with the alt as its
+    // upstream (`EXTENSION_CHECK_INTERFACE → Addresses`). B' restarts
+    // behind its seed-list entry, pinning the HTTP port only; admin and
+    // p2p bind on 0. Neither node runs with MESH_ROLE — M4 reaches each
+    // at its api base alone. Both bootstrap from --node-p2p so they peer
+    // with A directly and relay an admitted write to A at admission. A
+    // port a pin failed to take reaches the error through the node's own
+    // words.
     const apM4Spawn = await spawnServerNode('ap-m4', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
-      http: 0, admin: 0, p2p: AP_PORTS.p2p,
+      http: 0, admin: 0, p2p: 0,
     }), { withMesh: false });
     AP_PORTS.altHttp = apM4Spawn.ports.http;
     const apAltOrigin = `http://127.0.0.1:${AP_PORTS.altHttp}`;
-    await spawnServerNode('bp', nodeEnv({
+    const bpM4Spawn = await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
-      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p,
+      http: BP_PORTS.http, admin: 0, p2p: 0,
     }), { withMesh: false });
+    BP_ADMIN_PORT = bpM4Spawn.ports.admin; BP_P2P_PORT = bpM4Spawn.ports.p2p;
+    BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
     meshNodes.ap.apHttp = AP_PORTS.altHttp;
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
@@ -10255,11 +10238,9 @@ async function runMeshStepM4(bcx) {
     // The tip relay takes A''s first HTTP port (the one the seed-list
     // entry names) with A''s alt HTTP as upstream — every client read of
     // A''s HTTP base routes through this relay. `hold-posts` holds POST
-    // /posts past REQUEST_TIMEOUT_MS; reads pass through. A port taken
-    // in between — nothing bound A's first HTTP port between the stop
-    // and this listen, since A' itself stopped above — fails the block
-    // naming it.
-    await refuseIfPortTaken(AP_PORTS.http, "A' http (M4 relay)");
+    // /posts past REQUEST_TIMEOUT_MS; reads pass through. A port another
+    // process took in between fails `server.listen` with EADDRINUSE and
+    // the error names the port.
     m4Relay = await startTipRelay(apAltOrigin, AP_PORTS.http);
     m4Relay.mode = 'honest';
     console.log(`[vm] M4 relay up: ${m4Relay.origin} → ${m4Relay.upstream}`);
