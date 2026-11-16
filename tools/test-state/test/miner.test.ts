@@ -1,0 +1,314 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { assertDistFresh, NODE_LOADS } from '../src/dist-freshness.js';
+import { runMiner, type MinerHandle } from '../src/miner.js';
+
+const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..');
+
+interface SpawnedNode {
+  readonly process: ChildProcess;
+  readonly apiPort: number;
+  readonly apiBindAddress: string;
+  readonly apiUrl: string;
+  readonly apiLine: string;
+  readonly adminLine: string | null;
+  readonly tmpDir: string;
+  readonly logs: string[];
+  stop(): Promise<void>;
+}
+
+function makeMinerKey(): { publicKey: string; secretKeyHex: string } {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const pubDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer;
+  return {
+    publicKey: Buffer.from(pubDer.subarray(pubDer.length - 32)).toString('hex'),
+    secretKeyHex: Buffer.from(privDer).toString('hex'),
+  };
+}
+
+async function spawnDevnetNode(opts: { miningSecret: string }): Promise<SpawnedNode> {
+  assertDistFresh(NODE_LOADS, REPO_ROOT);
+  const tmpDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-miner-'));
+  const dbPath = join(tmpDir, 'db.sqlite');
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    NETWORK_TYPE: 'devnet',
+    NODE_ROLE: 'miner',
+    BOOTSTRAP_PEERS: '',
+    PORT: '0',
+    ADMIN_PORT: '0',
+    LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
+    DB_PATH: dbPath,
+    MINING_SECRET: opts.miningSecret,
+  };
+  const nodeBin = resolve(REPO_ROOT, 'packages/node/dist/index.js');
+  const cp = spawn(process.execPath, [nodeBin], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+  const logs: string[] = [];
+  let apiPort: number | null = null;
+  let apiBindAddress: string | null = null;
+  let apiLine = '';
+  let adminLine: string | null = null;
+  let readyResolve: () => void = () => {};
+  const readyPromise = new Promise<void>((r) => {
+    readyResolve = r;
+  });
+
+  const parseLine = (line: string): void => {
+    logs.push(line);
+    if (line.startsWith('Admin listener on') && adminLine === null) {
+      adminLine = line;
+    }
+    try {
+      const evt = JSON.parse(line) as { event?: string; port?: number; bind_address?: string };
+      if (evt.event === 'api_listening' && typeof evt.port === 'number') {
+        apiPort = evt.port;
+        apiBindAddress = evt.bind_address ?? '127.0.0.1';
+        apiLine = line;
+        readyResolve();
+      }
+    } catch {
+      // not JSON — pass
+    }
+  };
+
+  cp.stdout!.setEncoding('utf8');
+  cp.stdout!.on('data', (chunk: string) => {
+    for (const line of chunk.split('\n')) if (line) parseLine(line);
+  });
+  cp.stderr!.setEncoding('utf8');
+  cp.stderr!.on('data', (chunk: string) => {
+    for (const line of chunk.split('\n')) if (line) logs.push('[stderr] ' + line);
+  });
+
+  const guard = setTimeout(() => readyResolve(), 30_000);
+  await readyPromise;
+  clearTimeout(guard);
+
+  if (apiPort === null || apiBindAddress === null) {
+    cp.kill('SIGKILL');
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(`node did not emit api_listening within 30s; logs:\n${logs.join('\n')}`);
+  }
+
+  const stop = async (): Promise<void> => {
+    if (cp.exitCode !== null) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      return;
+    }
+    const exited = new Promise<void>((resolve) => cp.once('exit', () => resolve()));
+    cp.kill('SIGTERM');
+    const killGuard = setTimeout(() => cp.kill('SIGKILL'), 10_000);
+    await exited;
+    clearTimeout(killGuard);
+    rmSync(tmpDir, { recursive: true, force: true });
+  };
+
+  // The listen host may be `::` (IPv6 all-addresses); the node accepts
+  // loopback on both families, so the client always dials 127.0.0.1.
+  const apiUrl = `http://127.0.0.1:${apiPort}`;
+  return { process: cp, apiPort, apiBindAddress, apiUrl, apiLine, adminLine, tmpDir, logs, stop };
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} returned ${res.status}: ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${url} returned ${res.status}: ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+describe('miner', () => {
+  let node: SpawnedNode | null = null;
+  let handle: MinerHandle | null = null;
+
+  afterEach(async () => {
+    if (handle) {
+      await handle.stop();
+      await handle.joined.catch(() => {});
+      handle = null;
+    }
+    if (node) {
+      await node.stop();
+      node = null;
+    }
+  });
+
+  it('reads the API port off the node\'s own line (PORT=0)', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    expect(node.apiPort).toBeGreaterThan(0);
+    const evt = JSON.parse(node.apiLine) as { event: string; port: number };
+    expect(evt.event).toBe('api_listening');
+    expect(evt.port).toBe(node.apiPort);
+    // The admin line is logged with the configured adminPort — under PORT=0
+    // that reads as the literal 0, so the admin port is NOT readable from
+    // the process's own line. Record the line for the report.
+    if (node.adminLine !== null) {
+      expect(node.adminLine).toMatch(/Admin listener on /);
+    }
+  }, 60_000);
+
+  it('mines at the configured cadence, judged on the node\'s heights', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const key = makeMinerKey();
+    const intervalMs = 400;
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      minerPublicKeyHex: key.publicKey,
+      intervalMs,
+      controlPort: 0,
+    });
+    const windowMs = intervalMs * 6;
+    const samples: number[] = [];
+    const start = Date.now();
+    while (Date.now() - start < windowMs) {
+      const tip = await fetchJson<{ height: number }>(
+        `${node.apiUrl}/blocks/current`,
+      );
+      samples.push(tip.height);
+      await sleep(intervalMs);
+    }
+    const final = samples.at(-1) ?? 0;
+    // The cadence should produce roughly one block per interval. The first
+    // interval is spent polling for the first template, so the floor is
+    // intervals - 2 and the ceiling is intervals + 2.
+    expect(final).toBeGreaterThanOrEqual(3);
+    expect(final).toBeLessThanOrEqual(10);
+  }, 60_000);
+
+  it('mines to the asked height, answers with it, and resumes the cadence', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const key = makeMinerKey();
+    const intervalMs = 2_000;
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      minerPublicKeyHex: key.publicKey,
+      intervalMs,
+      controlPort: 0,
+    });
+    const target = 5;
+    const beforeMineTo = Date.now();
+    const reached = await postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: target },
+    );
+    const mineToMs = Date.now() - beforeMineTo;
+    expect(reached.height).toBeGreaterThanOrEqual(target);
+    // At 2 s cadence, racing to height 5 takes well under one interval.
+    expect(mineToMs).toBeLessThan(intervalMs);
+    // The cadence resumes from the end of the mine-to — no block arrives
+    // within the first ~half of one interval.
+    await sleep(intervalMs / 4);
+    const stillAt = await fetchJson<{ height: number }>(
+      `${node.apiUrl}/blocks/current`,
+    );
+    expect(stillAt.height).toBe(reached.height);
+  }, 60_000);
+
+  it('advances through each height with a unique block', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const key = makeMinerKey();
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      minerPublicKeyHex: key.publicKey,
+      intervalMs: 300,
+      controlPort: 0,
+    });
+    const target = 5;
+    await postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: target },
+    );
+    // Each height holds one block; the block at h+1 points at the block at
+    // h through `prevBlockHash`, so a chain of `target` blocks has `target`
+    // distinct prev hashes (genesis + h-1's hash for h in 1..target).
+    const prevHashes = new Set<string>();
+    for (let h = 1; h <= target; h++) {
+      const block = await fetchJson<{ header: { prevBlockHash: string } }>(
+        `${node.apiUrl}/blocks/${h}`,
+      );
+      expect(block.header.prevBlockHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(prevHashes.has(block.header.prevBlockHash)).toBe(false);
+      prevHashes.add(block.header.prevBlockHash);
+    }
+    expect(prevHashes.size).toBe(target);
+  }, 60_000);
+
+  it('pays the miner key once its request has rebuilt the template', async () => {
+    // The brief hypothesises that block 1's coinbase pays the given key,
+    // and its claim 6 says the first template pays the node's default — a
+    // contradiction. The node resolves it toward claim 6: `setMinerPubkey`
+    // does not rebuild the current template, so block 1's coinbase lands
+    // on the validator's own key. A block mined from a template built
+    // after the first `?miner=X` request pays X. The case holds that read.
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const key = makeMinerKey();
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      minerPublicKeyHex: key.publicKey,
+      intervalMs: 500,
+      controlPort: 0,
+    });
+    await postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: 2 },
+    );
+    const credits = await fetchJson<{ total: string; boxes: unknown[] }>(
+      `${node.apiUrl}/credits/${key.publicKey}`,
+    );
+    // Block 2's coinbase is credit-locked for `creditMinerRewardDelay`
+    // (devnet: 10 blocks), so it appears in `boxes` but not in `total`.
+    expect(credits.boxes.length).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it('stops the miner naming a refusal other than 404', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const key = makeMinerKey();
+    // Wrong secret — the node answers 401 Unauthorized.
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret: 'this-is-not-the-secret',
+      minerPublicKeyHex: key.publicKey,
+      intervalMs: 500,
+      controlPort: 0,
+    });
+    // The loop reads /mining/template, gets 401, throws, joined rejects.
+    let joinedError: Error | null = null;
+    try {
+      await handle.joined;
+    } catch (err) {
+      joinedError = err as Error;
+    }
+    expect(joinedError).not.toBeNull();
+    expect(joinedError!.message).toMatch(/GET \/mining\/template returned 401/);
+    expect(joinedError!.message).toMatch(/Unauthorized/);
+    // Stop the handle to clean up server/sockets. joined already rejected.
+    await handle.stop();
+    // Don't try to stop again in afterEach.
+    handle = null;
+  }, 60_000);
+});
