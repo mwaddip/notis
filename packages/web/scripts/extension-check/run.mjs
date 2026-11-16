@@ -99,15 +99,16 @@
 // and what each may hold").
 //
 // Preconditions:
-//  1. `node packages/node/dist/index.js` running as `NETWORK_TYPE=devnet`
-//     with a miner, or `packages/node/scripts/dev.mjs`. Its miner is the
-//     operator's; the harness never signals it.
-//  2. The faucet running against that node with the devnet key (only when
-//     --r-key is given).
-//  3. `promote.mjs` has printed R's public and pkcs8-hex; R's clear file
-//     (`{ pubKeyHex, privKeyBase64 }`) lives in a scratch path outside the
-//     repo and never enters a commit, a log or the REPORT.
-//  4. The extension was built via build-extension.sh with devnet values
+//  1. A devnet stack that `tools/test-state/dist/cli.js up base --dir <run-dir>`
+//     brings up — node A at --node (`up`'s `nodeHttp`), the faucet at --faucet
+//     (`up`'s `faucetOrigin`) and a miner on a steady cadence (6 s by default)
+//     that also answers `POST /mine-to { "height": <n> }` at --miner-control
+//     (`up`'s `minerControlOrigin`). `up`'s `nodeP2p` is --node-p2p for every
+//     block that spawns B; `up`'s `identities` carries R's and S's key files
+//     for --r-key and --s-key. The harness starts no process of that stack
+//     and tears none down; `down --dir <run-dir>` is the state's own stop
+//     (TEST_STATE_INTERFACE → Loading a state).
+//  2. The extension was built via build-extension.sh with devnet values
 //     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
 //     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
 //     at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
@@ -118,10 +119,8 @@
 //     other verified flag. Each `notisId` is read from its node's start
 //     line; the mesh build's addrs[0] is the webrtc-direct multiaddr that
 //     start line names in `multiaddrs`.
-//  5. For --verified-names: a second throwaway S promoted as R is, holding a
-//     name `claim-name.mjs` (beside this file) claimed; S's clear file lives
-//     in a scratch path as R's does, and the harness reads its public key
-//     alone.
+//  3. For --verified-names: `up`'s state holds S with a name claimed —
+//     `base` is one such state (TEST_STATE_INTERFACE → The base state).
 //
 // Modes:
 //   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
@@ -203,6 +202,7 @@
 // Usage:
 //   node scripts/extension-check/run.mjs \
 //     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
+//     [--miner-control <origin>] \
 //     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
@@ -210,6 +210,16 @@
 //     [--mesh --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
 //     [--waiting-only] \
 //     [--public <origin+base> --web-dist <dir>]
+//
+// --miner-control: with it, before each A-height wait whose target is known
+// ahead of the wait, the harness posts `/mine-to` to the stack's miner for
+// that target and then runs the wait as it stands (the wait confirms A's
+// own height). The four asks: the pre-flight A ≥ m + k + 14, step 21's
+// landed + k + 1, step 24's landed + k + 1, and step 29's claimedAtBlock
+// + k. 28b's stale-anchor wait stays on the steady cadence — the step
+// observes A mining past the anchor (WEB_INTERFACE → The extension → "The
+// verified names"). Without the flag every wait runs on the stack's
+// cadence (TEST_STATE_INTERFACE → Blocks during a run).
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -240,6 +250,11 @@ const FAUCET = args.get('faucet') ?? 'http://localhost:3103';
 const EXT_ID = args.get('extension-id') ?? 'kafmnekclgkjnkhnbafdoefnlllboddm';
 const PUBLIC = args.get('public') ?? null;
 const WEB_DIST = args.get('web-dist') ?? null;
+// The stack's miner-control origin — `up`'s `minerControlOrigin`
+// (TEST_STATE_INTERFACE → What a caller reads). Null runs every wait on
+// the stack's steady cadence; a given origin asks for each A-height wait
+// whose target is known ahead of the wait.
+const MINER_CONTROL = args.get('miner-control') ?? null;
 const PASSPHRASE = 'proof-pass';
 
 // The extension's tip verifier asks every node for `/nipopow/proof/<m>/<k>` at
@@ -1661,6 +1676,44 @@ async function waitForHeight(origin, target, ms = 300000, pollMs = 500) {
   });
 }
 
+// Ask the stack's miner-control to mine A to `target` before a wait whose
+// target is known ahead of the wait — the pre-flight A ≥ m + k + 14, step
+// 21's landed + k + 1, step 24's landed + k + 1, step 29's claimedAtBlock
+// + k. The miner answers 200 { height: <reached> } once A's tip is at or
+// past `target` (TEST_STATE_INTERFACE → Blocks during a run → "Mining to
+// a height"). A non-200 answer or a transport failure throws, naming the
+// status and body — recorded by `recordWait` like every other wait
+// (label, cap, elapsed, how it ended). Returns null when MINER_CONTROL
+// is not set, so each call site runs its wait on the stack's cadence as
+// before.
+async function askMineTo(target, label, ms = 15 * 60 * 1000) {
+  if (MINER_CONTROL === null) return null;
+  return recordWait(`askMineTo(${label}, target=${target})`, ms, async () => {
+    const url = `${MINER_CONTROL.replace(/\/+$/, '')}/mine-to`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ height: target }),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      throw new Error(`POST ${url} target=${target} failed: ${e.message ?? e}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    const body = await res.text().catch((e) => `<body unreadable: ${e.message ?? e}>`);
+    if (res.status !== 200) {
+      throw new Error(`POST ${url} target=${target} status=${res.status} body=${body}`);
+    }
+    try { return JSON.parse(body); }
+    catch { throw new Error(`POST ${url} target=${target} answered 200 with non-JSON body: ${body}`); }
+  });
+}
+
 async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
   return recordWait(`waitForHeightsClose(${originA}, ${originB})`, ms, async () => {
     const t0 = Date.now();
@@ -2353,6 +2406,10 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
   // suffix's k headers are well past genesis when a step reads them; a
   // bounded wait names A's height and the target on expiry.
   const aHeightMin = TIP_M + TIP_K + 14;
+  if (MINER_CONTROL !== null) {
+    try { await askMineTo(aHeightMin, 'vt pre-flight A ≥ m+k+14'); }
+    catch (e) { markVerifiedTipNotRun(e.message); return; }
+  }
   const aReady = await waitForHeight(NODE, aHeightMin, 600000);
   if (aReady === null) {
     const hA = await currentHeight(NODE);
@@ -3361,6 +3418,10 @@ async function runFiguresStep21(cx) {
       && youngShape.test(before.figHintText);
 
     const targetH = landedH21 + TIP_K + 1;
+    if (MINER_CONTROL !== null) {
+      try { await askMineTo(targetH, 'step 21 landedH21+TIP_K+1'); }
+      catch (e) { record(21, false, e.message); return; }
+    }
     const wait = await waitForNodeTip(targetH);
     const rate = wait.last !== null
       ? ((wait.last - landedH21) / (wait.elapsedMs / 60000)).toFixed(2)
@@ -3562,6 +3623,10 @@ async function runFiguresStep24(cx) {
         : `proven part ${provenPart} — boxes the post left unspent`;
 
     const targetH24 = landedH24 + TIP_K + 1;
+    if (MINER_CONTROL !== null) {
+      try { await askMineTo(targetH24, 'step 24 landedH24+TIP_K+1'); }
+      catch (e) { record(24, false, e.message); return; }
+    }
     const wait24 = await waitForNodeTip(targetH24);
     const rate24 = wait24.last !== null
       ? ((wait24.last - landedH24) / (wait24.elapsedMs / 60000)).toFixed(2)
@@ -5791,6 +5856,10 @@ async function runNamesStep29(cx, sHeld) {
     // the deadline records the step failed with the heights the wait saw.
     const kDeepTarget = sHeld.claimedAtBlock + TIP_K;
     const kDeepStart = await currentHeight(NODE);
+    if (MINER_CONTROL !== null) {
+      try { await askMineTo(kDeepTarget, 'step 29 claimedAtBlock+TIP_K'); }
+      catch (e) { record(29, false, e.message); return; }
+    }
     const kDeepReached = await waitForHeight(NODE, kDeepTarget, 10 * 60 * 1000);
     if (kDeepReached === null) {
       const kDeepNow = await currentHeight(NODE);
