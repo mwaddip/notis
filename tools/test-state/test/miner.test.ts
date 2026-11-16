@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import {
   createServer,
   type IncomingMessage,
@@ -461,6 +461,31 @@ describe('miner', () => {
     });
     expect(res.status).toBe(400);
   }, 30_000);
+
+  it('the CLI refuses when this member\'s dist is older than its src', () => {
+    // Set tools/test-state/dist/index.js's mtime back an hour, so the
+    // recursive src/ walk reads newer. The refusal names the package
+    // and exits 2. The dist mtime is restored in `finally`.
+    const packageRoot = resolve(REPO_ROOT, 'tools/test-state');
+    const distIndex = join(packageRoot, 'dist/index.js');
+    const distStat = statSync(distIndex);
+    const originalMtimeSec = distStat.mtimeMs / 1000;
+    const originalAtimeSec = distStat.atimeMs / 1000;
+    const olderSec = originalMtimeSec - 3600;
+    try {
+      utimesSync(distIndex, originalAtimeSec, olderSec);
+      const result = spawnSync(
+        process.execPath,
+        [join(packageRoot, 'dist/cli.js'), 'fingerprint', REPO_ROOT],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(2);
+      expect(result.stderr).toMatch(/Stale dist/);
+      expect(result.stderr).toMatch(/tools\/test-state/);
+    } finally {
+      utimesSync(distIndex, originalAtimeSec, originalMtimeSec);
+    }
+  });
 
   it('submits exactly one block per height gained', async () => {
     // A counting proxy in front of the node observes every POST to
