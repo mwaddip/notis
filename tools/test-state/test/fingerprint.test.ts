@@ -8,7 +8,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import { computeFingerprint } from '../src/fingerprint.js';
+import { computeFingerprint, fingerprintInputs } from '../src/fingerprint.js';
 import { NODE_LOADS, FAUCET_LOADS } from '../src/dist-freshness.js';
 
 const T0 = 1_700_000_000;
@@ -18,6 +18,13 @@ const DIST_MTIME = T0 + 10;
 type Overrides = Record<string, string>;
 
 function write(root: string, path: string, content: string, mtime: number): void {
+  const full = join(root, path);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, content);
+  utimesSync(full, mtime, mtime);
+}
+
+function writeBytes(root: string, path: string, content: Buffer, mtime: number): void {
   const full = join(root, path);
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, content);
@@ -93,7 +100,9 @@ describe('fingerprint', () => {
   for (const [label, path] of [
     ['a dist/*.js byte', 'packages/wire/dist/index.js'],
     ['a src/ byte of this member', 'tools/test-state/src/index.ts'],
-    ['a generator script byte', 'packages/web/scripts/promote.mjs'],
+    ['a promote.mjs byte', 'packages/web/scripts/promote.mjs'],
+    ['a claim-name.mjs byte', 'packages/web/scripts/extension-check/claim-name.mjs'],
+    ['a gen-miner-key.mjs byte', 'packages/node/scripts/gen-miner-key.mjs'],
     ['a pnpm-lock.yaml byte', 'pnpm-lock.yaml'],
   ] as const) {
     it(`moves the digest on ${label} changing`, () => {
@@ -114,6 +123,69 @@ describe('fingerprint', () => {
       expect(computeFingerprint(rootA)).toBe(computeFingerprint(rootB));
     });
   }
+
+  it('leaves the digest unmoved when a .d.ts lands under dist/', () => {
+    populate(rootA);
+    populate(rootB, { 'packages/wire/dist/index.d.ts': '// declaration' });
+    expect(computeFingerprint(rootA)).toBe(computeFingerprint(rootB));
+  });
+
+  it('leaves the digest unmoved when a .js.map lands under dist/', () => {
+    populate(rootA);
+    populate(rootB, { 'packages/wire/dist/index.js.map': '{"version":3}' });
+    expect(computeFingerprint(rootA)).toBe(computeFingerprint(rootB));
+  });
+
+  it('lists per-member dist entries in code-unit order', () => {
+    populate(rootA);
+    const member = 'packages/wire';
+    for (const n of ['zzz.js', 'aaa.js', 'mmm.js', 'ccc.js']) {
+      write(rootA, `${member}/dist/${n}`, 'x', DIST_MTIME);
+    }
+    const paths = fingerprintInputs(rootA).map((i) => i.path);
+    const memberDist = paths.filter((p) => p.startsWith(`${member}/dist/`));
+    expect(memberDist).toEqual([...memberDist].sort());
+  });
+
+  it("lists this member's src entries in code-unit order", () => {
+    populate(rootA);
+    const base = 'tools/test-state/src';
+    for (const n of ['zzz.ts', 'aaa.ts', 'mmm.ts', 'ccc.ts']) {
+      write(rootA, `${base}/${n}`, 'x', SRC_MTIME);
+    }
+    const paths = fingerprintInputs(rootA).map((i) => i.path);
+    const selfSrc = paths.filter((p) => p.startsWith(`${base}/`));
+    expect(selfSrc).toEqual([...selfSrc].sort());
+  });
+
+  it('the content-length prefix prevents a boundary collision between neighbouring files', () => {
+    // Tree A holds two extra dist files beside the default index.js; tree
+    // B holds one whose bytes, without a content-length prefix, would
+    // stream the same as A's two. The current digest reads a 4-byte path
+    // length and an 8-byte content length, so the two trees differ.
+    populate(rootA);
+    populate(rootB);
+
+    const dir = 'packages/wire/dist';
+    const pathA = `${dir}/a.js`;
+    const pathB = `${dir}/b.js`;
+    const contentA = Buffer.from('r');
+    const contentB = Buffer.from('s');
+
+    writeBytes(rootA, pathA, contentA, DIST_MTIME);
+    writeBytes(rootA, pathB, contentB, DIST_MTIME);
+
+    // B's one file at a.js carries A's first content followed by the
+    // bytes the digest would read for the second file under a shape with
+    // a path length but no content length: pathLenB, pathB, contentB.
+    const pathBufB = Buffer.from(pathB, 'utf8');
+    const pathLenBBuf = Buffer.alloc(4);
+    pathLenBBuf.writeUInt32BE(pathBufB.length, 0);
+    const bContent = Buffer.concat([contentA, pathLenBBuf, pathBufB, contentB]);
+    writeBytes(rootB, pathA, bContent, DIST_MTIME);
+
+    expect(computeFingerprint(rootA)).not.toBe(computeFingerprint(rootB));
+  });
 
   it('refuses a stale dist of a member on the lists', () => {
     populate(rootA);
