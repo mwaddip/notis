@@ -2,6 +2,12 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -112,6 +118,40 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+interface FakeNode {
+  readonly url: string;
+  stop(): Promise<void>;
+}
+
+async function startFakeNode(handlers: {
+  template?: (req: IncomingMessage, res: ServerResponse) => void;
+  submit?: (req: IncomingMessage, res: ServerResponse) => void;
+  current?: (req: IncomingMessage, res: ServerResponse) => void;
+}): Promise<FakeNode> {
+  const s: HttpServer = createServer((req, res) => {
+    if (req.method === 'GET' && req.url?.startsWith('/mining/template')) {
+      if (handlers.template) return handlers.template(req, res);
+    }
+    if (req.method === 'POST' && req.url?.startsWith('/mining/submit')) {
+      if (handlers.submit) return handlers.submit(req, res);
+    }
+    if (req.method === 'GET' && req.url?.startsWith('/blocks/current')) {
+      if (handlers.current) return handlers.current(req, res);
+    }
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end('{"error":"not found"}');
+  });
+  await new Promise<void>((resolve) =>
+    s.listen(0, '127.0.0.1', () => resolve()),
+  );
+  const bound = s.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${bound.port}`,
+    stop: () => new Promise<void>((resolve) => s.close(() => resolve())),
+  };
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
@@ -124,6 +164,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 
 describe('miner', () => {
   let node: SpawnedNode | null = null;
+  let fake: FakeNode | null = null;
   let handle: MinerHandle | null = null;
 
   afterEach(async () => {
@@ -135,6 +176,10 @@ describe('miner', () => {
     if (node) {
       await node.stop();
       node = null;
+    }
+    if (fake) {
+      await fake.stop();
+      fake = null;
     }
   });
 
@@ -226,11 +271,12 @@ describe('miner', () => {
     // next block lands ≈ one interval later. Without the reset, the next
     // cadence tick is anchored to the pre-mine-to block, so it lands too
     // soon after the mine-to answer.
+    const apiUrl = node.apiUrl;
     const waitForFirstCadenceBlock = async (): Promise<void> => {
       const deadline = Date.now() + intervalMs * 2;
       while (Date.now() < deadline) {
         const tip = await fetchJson<{ height: number }>(
-          `${node.apiUrl}/blocks/current`,
+          `${apiUrl}/blocks/current`,
         );
         if (tip.height >= 1) return;
         await sleep(100);
@@ -328,6 +374,46 @@ describe('miner', () => {
       body: '{not-json',
     });
     expect(res.status).toBe(400);
+  }, 30_000);
+
+  it('stops the miner when submit answers 409, naming the status', async () => {
+    // A local fake node answering `/mining/template` 200 at an easy target
+    // and `/mining/submit` 409. The miner's answer to the node's answer is
+    // what the case holds, so a fake is the right entry.
+    fake = await startFakeNode({
+      template: (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        // powTargetBits = 1024 (4 bits) — solved in ~16 tries on average.
+        res.end(
+          JSON.stringify({
+            header: { height: 1, powTargetBits: 1024 },
+            powPreimage: '00'.repeat(32),
+          }),
+        );
+      },
+      submit: (_req, res) => {
+        res.statusCode = 409;
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"error":"already-committed"}');
+      },
+    });
+    handle = await runMiner({
+      nodeApiUrl: fake.url,
+      miningSecret: 'any',
+      intervalMs: 500,
+      controlPort: 0,
+    });
+    let joinedError: Error | null = null;
+    try {
+      await handle.joined;
+    } catch (err) {
+      joinedError = err as Error;
+    }
+    expect(joinedError).not.toBeNull();
+    expect(joinedError!.message).toMatch(/POST \/mining\/submit returned 409/);
+    expect(joinedError!.message).toMatch(/already-committed/);
+    await handle.stop();
+    handle = null;
   }, 30_000);
 
   it('stops the miner naming a refusal other than 404', async () => {
