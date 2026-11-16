@@ -106,17 +106,21 @@ run time, in a suite, or by no run:**
 |---|---|---|---|
 | `e2e` | node | spawns `packages/node/dist/index.js` for each node of its mesh | at run time |
 | `test-state` | node, faucet | spawns `packages/node/dist/index.js` and `tools/faucet/dist/index.js` for a stack | at run time |
-| `test-state` | `packages/web/scripts/promote.mjs`, `packages/web/scripts/extension-check/claim-name.mjs` | runs both in a generation | at run time |
+| `test-state` | wire, node-reads, avltree, nipopow, consensus | `up` fingerprints the `dist` of every member node and the faucet load | at run time |
+| `test-state` | `packages/web/scripts/promote.mjs`, `packages/web/scripts/promote/` | runs `promote.mjs` in a generation — its suite's `up` of the minimal state among them — which bundles `promote/entry.ts` | at run time |
+| `test-state` | e2e | `promote.mjs`'s bundle runs `tools/e2e/src/`'s identity and transaction builders | at run time |
+| `test-state` | `packages/web/scripts/extension-check/claim-name.mjs` | `up` fingerprints its bytes; the state its suite generates makes no claim, so the suite never runs it | in a suite |
+| `test-state` | nipopow-client | `test/dist-freshness.test.ts` holds the list e2e's runs check to nipopow-client's dependency closure, read from the `package.json` files | in a suite |
 | `net` | `packages/web/scripts/refuse-node-builtins.mjs` | `test/browser-entry.test.ts` imports it | in a suite |
 | `node` | `contracts/CONSTANTS.md` | `test/constants-register.test.ts` makes a case of each row | in a suite |
 | `check` | node | spawns `packages/node/dist/index.js` beside each block's stack, and runs `packages/node/scripts/miner.mjs` | at run time |
 | `check` | test-state | brings up each block's stack through its loader — node, faucet and miner | at run time |
 | `check` | web | builds its hosted page and its extension | at run time |
-| `check` | `packages/web/scripts/extension-check/` | its harness | at run time |
+| `check` | `packages/web/scripts/extension-check/` | its harness, and `claim-name.mjs`, which base's generation runs and which bundles web's `src/` when it runs | at run time |
 
 **The check's harness is not web's code.** No file under web's `src/` or `test/` reads
-`packages/web/scripts/extension-check/`, so a path under it selects what its rows name — the check, and test-state
-for `claim-name.mjs` — and does not reach web.
+`packages/web/scripts/extension-check/`, so a path under it selects what its rows name — the check, and test-state's
+run for `claim-name.mjs` — and does not reach web.
 
 ## The output
 
@@ -140,7 +144,10 @@ order, for a gate script that takes member names. `node:slow` and `check` are no
   absolute path included; a relative path climbing out of its member to a member by name (`../../net/…`); and a path
   joined from segments that names a member's directory. **Each file is read with its whitespace flattened**, so a
   path whose segments stand on separate lines is read whole. A reference that neither a declaration nor a row covers
-  fails the suite, naming its file and line. A path built any other way is outside the scan. **The matrix's own
+  fails the suite, naming its file and line. A path built any other way is outside the scan. **A file a row reads at
+  run time is read by that row's reader as well**: a reference in it is covered by its own member's declarations and
+  rows or by the reader's — `promote/entry.ts`'s names under `tools/e2e/` are test-state's, the harness's names the
+  check's. **The matrix's own
   files are not scanned**: the paths they name are its data, and its own reads are → How a path is placed's.
 - **Every row's reader and what it reads exist** in the tree; a row naming a member or a path the tree lacks fails.
 - **The check's harness stays unread by web**: a reference to `scripts/extension-check/` from a file under web's
