@@ -178,7 +178,8 @@ const WEB_DIST = args.get('web-dist') ?? null;
 // A's `notisId` — the 64-hex key its node prints as `notisId` on its first
 // JSON start line (`up`'s `notisId`, `NET_INTERFACE → The node key`). The
 // seed list the harness writes names this value for A's entry (RLA for the
-// verified and waiting runs, RA for `--light`).
+// writes, links, tip, figures, names and waiting blocks, RA for the light
+// block).
 const NODE_ID = args.get('node-id') ?? null;
 // The stack's miner-control origin — `up`'s `minerControlOrigin`
 // (TEST_STATE_INTERFACE → What a caller reads). Null runs every wait on
@@ -202,8 +203,8 @@ let TIP_K = null;
 // extension page origin's memory: `decodeNipopowProof` and `compareProofs`
 // from `@dagsocial/nipopow`, `verifierProfile` from `@dagsocial/nipopow-
 // client`, `profileFor` from `@dagsocial/types`. Loaded once at start under
-// the same guard TIP_M / TIP_K take, so a run that does not need the
-// verified-tip block pays nothing for these imports.
+// the same guard TIP_M / TIP_K take, so a block that reads no proof pays
+// nothing for these imports.
 let NIPOPOW_DECODE = null;
 let NIPOPOW_COMPARE = null;
 let NIPOPOW_VERIFIER_PROFILE = null;
@@ -387,10 +388,8 @@ class ConfigError extends Error {
 }
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
-// --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
-// (which need no identity — WEB_INTERFACE → The extension → "The verified
-// tip": the corner needs no identity) run on the flag. A given but missing
-// file is still an argument error.
+// `--r-key` names R's clear key file; a file that is not there is an argument
+// error.
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
 // Every block requires `--r-key` — EXTENSION_CHECK_INTERFACE → Blocks: steps
@@ -426,7 +425,7 @@ if (NEEDS_NODE_DIST.has(BLOCK)) {
 }
 if (NEEDS_NODE_P2P.has(BLOCK)) {
   if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error(`--block ${BLOCK} requires --node-p2p <multiaddr> — A's p2p bootstrap for the spawned node, e.g. /ip4/127.0.0.1/tcp/19742`);
+    console.error(`--block ${BLOCK} requires --node-p2p <multiaddr> — A's p2p bootstrap for the spawned node, e.g. /ip4/127.0.0.1/tcp/<port>`);
     process.exit(2);
   }
 }
@@ -837,8 +836,7 @@ async function startWebServer() {
   console.log(`web server: ${webDistAbs} served on ${publicOrigin}${publicBase} (port ${publicPort})`);
 }
 
-// R's clear key is read only when the write steps run. Verified-tip-only mode
-// (--verified-tip without --r-key) skips 1–16, so no wallet identity is imported.
+// R's clear key — every block requires it; steps 1 and 2 import R.
 const R_TEXT = R_KEY ? readFileSync(R_KEY, 'utf8') : null;
 const R_JSON = R_TEXT ? JSON.parse(R_TEXT) : null;
 
@@ -905,11 +903,11 @@ async function launchChromium(extensionDir) {
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
   // Chromium refuses WebRTC connections to 127.0.0.1 unless started with
   // --allow-loopback-in-peer-connection. The flag is a harness switch for
-  // a loopback stage, not a product setting: the --mesh block's A' and B'
+  // a loopback stage, not a product setting: the `mesh` block's A' and B'
   // listen on /ip4/127.0.0.1/udp/<port>/webrtc-direct and the extension
   // dials them over RTCPeerConnection, which the browser blocks without
   // this flag (WEB_INTERFACE → The extension → "The mesh is the extension's
-  // first path"). Added only for a --mesh run, so every other block runs
+  // first path"). Added only for the `mesh` block, so every other block runs
   // on the same browser defaults a reader's browser carries
   // (memory `runs-on-browser-defaults`).
   const meshArgs = MESH ? ['--allow-loopback-in-peer-connection'] : [];
@@ -1148,7 +1146,7 @@ async function findWorker(chromePort = port) {
 // session's `Runtime.evaluate('1+1')` answers within 3 s — `live`,
 // `hung`, or `no-ws`. An extension page gets a `label` comparing its
 // target id against the known `mainPageId` (what `main()` opened and
-// what the block reuses under `--waiting-only`): `main()` for that one,
+// what `main()` opened): `main()` for that one,
 // `block-leftover` for any other. For every page that reads `hung`,
 // `probeHungPage` opens a fresh session, reads `document.visibilityState`
 // if the page answers, runs `Debugger.enable` then `Debugger.pause` and
@@ -1455,8 +1453,7 @@ const vtChildren = new Map(); // name → { child, exited: Promise<void> }
 // `--import`ed through `NODE_OPTIONS`, prepended so a caller-set
 // `NODE_OPTIONS` keeps whatever it adds, and the offset in
 // `DAGSOCIAL_CLOCK_OFFSET_MS`. `--clock-offset-ms` and `--preload`
-// null leaves `env` untouched, so a harness run without them runs on
-// real time as before.
+// absent leave `env` untouched, so the spawns run on real time.
 function augmentEnv(env) {
   const merged = { ...process.env, ...env };
   if (PRELOAD !== null) {
@@ -1674,7 +1671,7 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      from /blocks/current, D's proof, D's blocks. The
 //                      relay's mode stays `honest` under upstream-D: the one
 //                      edit is the upstream swap, not a per-route lie.
-//   `hold-posts`     — the --mesh block's M4 mode: GET /HEAD /OPTIONS pass
+//   `hold-posts`     — the `mesh` block's M4 mode: GET /HEAD /OPTIONS pass
 //                      through verbatim; POST /posts is held — the body
 //                      drained, no response — past the client's
 //                      REQUEST_TIMEOUT_MS, which lets the client's write
@@ -1801,7 +1798,7 @@ async function startTipRelay(upstream, port = 0) {
         relay.log.push({ at, doneAt: Date.now(), method, url, mode: mode0, upstream: null, status: 502 });
         return;
       }
-      // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
+      // `hold-posts` — the `mesh` block's M4 mode: POST /posts is held past
       // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
       // to the next entry (MESH_INTERFACE → The client's node list → "A
       // write goes to one node at a time"). Reads pass through verbatim;
@@ -2280,8 +2277,9 @@ async function bringUpNodeB() {
   B_P2P_PORT = bSpawn.ports.p2p;
   B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
   console.log(`[vt] node B bound: http=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT}`);
-  // The tip and light relays whose upstream is B (RLB for the verified and
-  // waiting runs, RB for `--light`) move to B's new origin on every spawn.
+  // The tip and light relays whose upstream is B (RLB in the tip,
+  // figures, names and waiting blocks, RB in the light block) move to B's
+  // new origin on every spawn.
   if (tipRelays.b !== null && !WAITING) tipRelays.b.upstream = B_ORIGIN;
   if (lightRelays.b !== null) lightRelays.b.upstream = B_ORIGIN;
   return { bDbPath };
@@ -2293,7 +2291,7 @@ async function bringUpNodeB() {
 // one. Waits for the corner to mount and returns the session and the target
 // id; the caller closes both. The `set relays, open fresh, read verdict`
 // sequence is the one the tip block uses for 17a · 19a · 19b · 19c, as
-// `--light` uses `relay.upstream` for L13.
+// the light block uses `relay.upstream` for L13.
 async function openFreshExtensionPage(bcx) {
   const created = await bcx.call('Target.createTarget', {
     url: `chrome-extension://${EXT_ID}/index.html`,
@@ -2336,8 +2334,8 @@ function setTipRelayModes(mode) {
 }
 
 // WEB_INTERFACE → The extension → "The verified tip" — the verified-tip
-// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20 as
-// before); `bcx` is the browser-level session the block opens a fresh
+// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20);
+// `bcx` is the browser-level session the block opens a fresh
 // extension page on for each step whose contract reads a different state
 // after a check (`WEB_INTERFACE → The extension → "The contexts, and what
 // each may hold"`: a page is a reader, so a fresh page is a fresh check).
@@ -3261,9 +3259,8 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
     await runFiguresStep25();
   } finally {
-    // ---- Cleanup — B by its handle, as the tip block does. The tip block's
-    // own cleanup already ran if --verified-tip preceded us; this stops the B
-    // the figures block itself brought up.
+    // ---- Cleanup — B by its handle, as the tip block does. This stops the
+    // B the figures block brought up.
     console.log(`[vf] cleanup: stopping node B by handle`);
     await stopChild('b');
     console.log(`[vf] cleanup done; live children left=${vtChildren.size}`);
@@ -3505,8 +3502,8 @@ async function runFiguresStep24(cx) {
     }
     const preBoxIds = karmaPre.boxIds;
 
-    // Post one root through the composer. The rep policy is silent since
-    // step 9, so no prompt fires — the post lands on submit alone.
+    // Post one root through the composer. The rep policy is silent, so
+    // no prompt fires — the post lands on submit alone.
     const preH24 = await currentHeight(NODE);
     await cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
     await cx.waitFor(`document.querySelector('.composer textarea')`, 'composer for step 24', 10000);
@@ -5187,9 +5184,8 @@ async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
       `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
-  // The names context — R's key and S's name — on both relays. The figures
-  // block already set `rKey`, this reaffirms it in the same lowercase form
-  // and adds S's name for the send arms.
+  // The names context — R's key and S's name — on both relays. This sets
+  // `rKey` in lowercase form and S's name for the send arms.
   for (const r of relays) {
     r.rKey = rKey;
     r.sName = sHeld?.name ?? null;
@@ -6385,7 +6381,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
   if (!tipRelays.a || !tipRelays.b) {
-    markWaitingWritesFail('the tip relays are not up — the waiting-writes block runs under the relays build');
+    markWaitingWritesFail('the tip relays are not up — the waiting block needs them');
     return;
   }
   if (!R_JSON) {
@@ -6434,8 +6430,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // prep page's `postCache.openRemembered()` opens that name's database
   // at load (WEB_INTERFACE → The extension →
   // "A post checked before any tip run names a chain is kept until one does").
-  // With both tip relays honest and D gone (the verified-tip block's
-  // cleanup stops it), the prep page's tip run names A — the chain's
+  // With both tip relays honest and no node D, the prep page's tip run
+  // names A — the chain's
   // name is non-null under `verified` and under `thin` alike, "naming a
   // chain takes a proof that verifies, not a second witness"
   // (→ "The chain's name"), so the seat lands whether the second relay's
@@ -6509,8 +6505,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // Wait for the corner's tip run to settle — the title names a tip once
     // the client's chain is seated. Either shape is acceptable: step 17's
     // "verified across N nodes · tip N" (both relays' upstreams answered)
-    // or step 18's "only one node could be checked · tip N" (B is down
-    // after the verified-tip block's cleanup). Each seats the chain.
+    // or step 18's "only one node could be checked · tip N".
+    // Each seats the chain.
     const reached = await waitForCornerState(
       pCx,
       (c) => (c.ledClass === 'led fresh' || c.ledClass === 'led thin')
@@ -6633,10 +6629,9 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // Make one root post from the composer so the client records a rep
     // waiting view (WEB_INTERFACE → The wallet → "A flow with no
     // waiting view ends as a transport failure", → "The waiting store
-    // keeps every waiting write as a record of its own"): under
-    // `--waiting-only` each run starts from a fresh browser profile
-    // and no earlier step records one; in a full run the earlier
-    // steps do. The composer's 2xx is awaited by the stage line
+    // keeps every waiting write as a record of its own"): the
+    // block starts from a fresh browser profile and no earlier step
+    // records one. The composer's 2xx is awaited by the stage line
     // reading `submitted` on the pending card. Without this view W2's
     // composer stays disabled and its like ends as a transport
     // failure before the waiting arm engages.
@@ -7584,13 +7579,14 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
 // "The resolve", "The post check", "The post cache", "The chain's name").
 // Two relays — RA in front of A, RB in front of B — each with eight modes
 // over the batch route and the list reads (honest, text, drop, hold, hang,
-// list-down, list-replay, down); its own node D on 19820 for L13.
+// list-down, list-replay, down); its own node D, on the ports its spawn
+// binds, for L13.
 // ---------------------------------------------------------------------------
 
 const LIGHT_STEPS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8', 'L9', 'L10', 'L11', 'L12', 'L13', 'L14'];
 
-// The pair of relays set up before the browser launches when --light is given
-// (`setupLightRelays`); each a value shaped as `startRelay` returns.
+// The pair of relays set up before the browser launches for the light
+// block (`setupLightRelays`); each a value shaped as `startRelay` returns.
 const lightRelays = { a: null, b: null };
 
 function markLightNotRun(reason) {
@@ -7865,9 +7861,8 @@ async function startRelay(name, upstream, port = 0) {
 // 2 (reply to reply1) and `reply3` at depth 1 (a sibling of `reply1`, kept
 // for the withdraw arm so L10's shape is unchanged by L12). Posts whichever
 // of them the chain lacks, through the composer. Silent policy and R
-// unlocked are preconditions set by steps 9/10 (where --r-key gave the full
-// 1–16 pass); where either is missing the fixture read reports what is
-// absent and the block skips.
+// unlocked are preconditions; where either is missing the fixture read
+// reports what is absent and the block skips.
 async function ensureLightFixture(cx) {
   const roots = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=1`)
     .then((r) => r.json()).catch(() => null);
@@ -8496,8 +8491,8 @@ async function lightSteps(cx, targetId = 'unknown') {
     aDbName = 'notis.posts.' + aBlock1.toLowerCase();
     console.log(`[vl] A block 1 hash=${aBlock1.slice(0, 12)}…, cache db=${aDbName}`);
 
-    // Reload — the names block may have left the pane off the feed; a
-    // reload returns the first column to the feed. The App's tip verifier
+    // Reload — a reload returns the first column to the feed, whatever
+    // pane an earlier step left. The App's tip verifier
     // re-runs on load, so the corner is reset here too.
     await cx.call('Page.reload');
     await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
@@ -8683,7 +8678,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RB.mode = 'honest';
     // Post a new root through the composer at the feed's `new post`
-    // button; silent policy is in place from step 9.
+    // button; silent policy is in place.
     const CONTENT = `vl-L3-root-${Date.now()}`;
     await cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
     await cx.waitFor(`!!document.querySelector('.composer textarea')`, 'L3 composer', 15000);
@@ -9411,7 +9406,7 @@ async function lightSteps(cx, targetId = 'unknown') {
 }
 
 // ---------------------------------------------------------------------------
-// The --mesh block — M1 · M2 · M3 · M4
+// The `mesh` block — M1 · M2 · M3 · M4
 //
 // The extension's first path is the mesh (`WEB_INTERFACE → The extension →
 // "The mesh is the extension's first path"`, `→ "Nothing retries a
@@ -9449,7 +9444,7 @@ const MESH_STEPS = ['M1', 'M2', 'M3', 'M4', 'M5'];
 let m3Post = null;
 
 // The pair of mesh nodes `setupMeshStack` sets up before the browser
-// launches when --mesh is given. Each holds the DB path (so a restart
+// launches for the `mesh` block. Each holds the DB path (so a restart
 // across steps can be fired by name), the ports the node takes on every
 // restart, and the identity line the mesh-on spawn read. `apHttp` is the
 // HTTP port the node currently listens on — equal to `ports.http` at rest
@@ -11295,7 +11290,7 @@ async function writesSteps(cx2, pageId) {
   await sleep(3000);
   const transfer12b = cx10.events.slice(events12bStart).find((e) =>
     e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
-  // Under --mesh a write goes over the mesh and leaves no HTTP request
+  // In the `mesh` block a write goes over the mesh and leaves no HTTP request
   // behind (WEB_INTERFACE → The extension → "The mesh is the extension's
   // first path"), so no `POST /credits/transfer` reaches the Network
   // domain. The other builds expect the 2xx answer at the API base.
@@ -11348,7 +11343,7 @@ async function writesSteps(cx2, pageId) {
     ? !transferPostSeen12b
     : transfer12b?.params.response.status === 200;
   const transferDetail12b = MESH
-    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false under --mesh — the write goes over the mesh)`
+    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false in the mesh block — the write goes over the mesh)`
     : `transfer=${transfer12b?.params.response.status ?? 'null'}`;
   const rowOk12b = rowAt2xx12b;
   record('12b',
@@ -11587,7 +11582,7 @@ async function linksSteps(cx2, pageId) {
 
   // ------- Step 13 — pref `on the site`, the button arm. The browser-context
   // arm ("13-uncancelled") is the last thing the harness does with the
-  // browser, after the verified-tip block: `Target.createBrowserContext` +
+  // browser: `Target.createBrowserContext` +
   // `Target.disposeBrowserContext` has been observed to freeze the next CDP
   // call in a same-browser session, so the arm sits last where a freeze
   // cannot shadow any other step.
@@ -12226,8 +12221,8 @@ async function linksSteps(cx2, pageId) {
   // names a page some block opened and did not close.
   await diagBeforeThirteenUncancelled(pageId);
 
-  // ------- Step 13-uncancelled — the browser-context arm, last after the
-  // verified-tip block. The extension does not load in a
+  // ------- Step 13-uncancelled — the browser-context arm, last. The
+  // extension does not load in a
   // `Target.createBrowserContext` context (per `--load-extension`'s default
   // profile scope), so the bridge cannot send `arrived` and no `notis.open.`
   // key appears. `Target.disposeBrowserContext` has been observed to freeze
@@ -12360,8 +12355,8 @@ async function main() {
 
   // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
   // The expected first node matches the extension build the run was given —
-  // A' under --mesh (seed list [A', B']), RA under --light (seed list
-  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
+  // A' in the `mesh` block (seed list [A', B']), RA in the `light` block
+  // (seed list [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
   // top refuses any other build.
   const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
   const s1 = await cx.eval(`(() => ({
@@ -12424,8 +12419,7 @@ async function main() {
     const bbcx = await openBrowserSession();
     try {
       await runOneBlock(bbcx);
-      // Every block prints the diag liveness line at its end, as `--light`
-      // and `--mesh` did when they ran alone. `links` prints its own diag
+      // Every block prints the diag liveness line at its end. `links` prints its own diag
       // before `13-uncancelled` on its own path below.
       await diagBeforeThirteenUncancelled(page.id);
     } finally {
@@ -12451,7 +12445,7 @@ async function main() {
 // the extension page, so the extension's seed list `[RA, RB]` reads them
 // from the first paint and `walkSeedList` adopts RA. The relays' upstreams
 // stay reassignable (`relay.upstream`); L13 points them at D. The function
-// is a no-op without `--light`.
+// is a no-op outside the `light` block.
 async function setupLightRelays() {
   if (!LIGHT) return;
   console.log('[vl] bringing up node B before the browser');
@@ -12488,7 +12482,7 @@ async function teardownLightRelays() {
 // them from the first paint. Each relay's `upstream` stays reassignable —
 // the `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the
 // step and back after. `writes`, `links`, `tip`, `figures`, `names` and
-// `waiting` run under this two-relay build; `light` and `mesh` do not.
+// `waiting` blocks stand up these two relays; `light` and `mesh` do not.
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
