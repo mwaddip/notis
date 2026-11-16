@@ -56,7 +56,6 @@ function populate(root: string, overrides: Overrides = {}): void {
     '// claim-name',
     SRC_MTIME,
   ]);
-  files.push(['packages/node/scripts/gen-miner-key.mjs', '// gen-miner-key', SRC_MTIME]);
 
   // The lockfile.
   files.push(['pnpm-lock.yaml', '# lockfile', SRC_MTIME]);
@@ -102,7 +101,6 @@ describe('fingerprint', () => {
     ['a src/ byte of this member', 'tools/test-state/src/index.ts'],
     ['a promote.mjs byte', 'packages/web/scripts/promote.mjs'],
     ['a claim-name.mjs byte', 'packages/web/scripts/extension-check/claim-name.mjs'],
-    ['a gen-miner-key.mjs byte', 'packages/node/scripts/gen-miner-key.mjs'],
     ['a pnpm-lock.yaml byte', 'pnpm-lock.yaml'],
   ] as const) {
     it(`moves the digest on ${label} changing`, () => {

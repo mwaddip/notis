@@ -1,7 +1,9 @@
 // TEST_STATE_INTERFACE → Blocks during a run. One miner per stack, driving
-// one node through `GET /mining/template?miner=<pub>` and
-// `POST /mining/submit`. The PoW predicate is imported from
-// `@dagsocial/validation` — the admission rule and never a copy of it.
+// one node through `GET /mining/template` and `POST /mining/submit`. The
+// miner names no payout key, so every block pays A's own key as a template
+// does without `?miner=` (MINING_INTERFACE → GET /mining/template). The PoW
+// predicate is imported from `@dagsocial/validation` — the admission rule
+// and never a copy of it.
 import { createHash } from 'node:crypto';
 import {
   createServer,
@@ -14,7 +16,6 @@ import { orderingPowTarget, meetsPowTarget } from '@dagsocial/validation';
 export interface MinerConfig {
   readonly nodeApiUrl: string; // `http://127.0.0.1:XXXX` (no trailing slash)
   readonly miningSecret: string; // Bearer secret the node enforces
-  readonly minerPublicKeyHex: string; // `?miner=<pub>` from the first request
   readonly intervalMs: number; // the steady cadence
   readonly controlPort: number; // 0 for an OS-assigned port
   readonly controlHost?: string; // '127.0.0.1' default
@@ -24,7 +25,6 @@ export interface MinerConfig {
 
 export interface MinerHandle {
   readonly controlPort: number;
-  readonly minerPublicKey: string;
   stop(): Promise<void>;
   readonly joined: Promise<void>;
 }
@@ -85,7 +85,7 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   };
 
   async function fetchTemplate(): Promise<TemplateResponse | 'not-ready'> {
-    const u = `${cfg.nodeApiUrl}/mining/template?miner=${cfg.minerPublicKeyHex}`;
+    const u = `${cfg.nodeApiUrl}/mining/template`;
     const res = await fetch(u, { headers });
     if (res.status === 404) return 'not-ready';
     if (!res.ok) {
@@ -240,7 +240,6 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     JSON.stringify({
       event: 'miner_ready',
       controlPort,
-      minerPublicKey: cfg.minerPublicKeyHex,
     }) + '\n',
   );
 
@@ -250,7 +249,6 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
 
   return {
     controlPort,
-    minerPublicKey: cfg.minerPublicKeyHex,
     stop,
     joined,
   };

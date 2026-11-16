@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // TEST_STATE_INTERFACE. CLI with subcommands:
 //   fingerprint [--list] [<repo-root>]  — the 32-byte digest, or the input paths
-//   miner --node-api <url> --mining-secret-path <p> --miner-key-path <p>
+//   miner --node-api <url> --mining-secret-path <p>
 //         [--interval-ms <N>] [--control-port <N>]  — one miner driving one node
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -45,7 +45,7 @@ function usage(): never {
     'usage:\n' +
       '  dagsocial-test-state fingerprint [--list] [<repo-root>]\n' +
       '  dagsocial-test-state miner --node-api <url> --mining-secret-path <path> ' +
-      '--miner-key-path <path> [--interval-ms <N>] [--control-port <N>]',
+      '[--interval-ms <N>] [--control-port <N>]',
   );
   process.exit(2);
 }
@@ -76,10 +76,9 @@ function runFingerprintCmd(args: readonly string[]): void {
 async function runMinerCmd(args: readonly string[]): Promise<void> {
   const nodeApi = readNamedArg(args, '--node-api');
   const miningSecretPath = readNamedArg(args, '--mining-secret-path');
-  const minerKeyPath = readNamedArg(args, '--miner-key-path');
   const intervalMsStr = readNamedArg(args, '--interval-ms') ?? '6000';
   const controlPortStr = readNamedArg(args, '--control-port') ?? '0';
-  if (!nodeApi || !miningSecretPath || !minerKeyPath) usage();
+  if (!nodeApi || !miningSecretPath) usage();
   const intervalMs = Number(intervalMsStr);
   const controlPort = Number(controlPortStr);
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
@@ -91,19 +90,10 @@ async function runMinerCmd(args: readonly string[]): Promise<void> {
     process.exit(2);
   }
   const miningSecret = readFileSync(miningSecretPath, 'utf8').trim();
-  const keyFile = JSON.parse(readFileSync(minerKeyPath, 'utf8')) as {
-    publicKey?: string;
-  };
-  const minerPublicKeyHex = keyFile.publicKey;
-  if (typeof minerPublicKeyHex !== 'string' || !/^[0-9a-f]{64}$/.test(minerPublicKeyHex)) {
-    console.error('miner key file is not { publicKey: 32-byte hex, ... }');
-    process.exit(2);
-  }
 
   const handle = await runMiner({
     nodeApiUrl: nodeApi.replace(/\/+$/, ''),
     miningSecret,
-    minerPublicKeyHex,
     intervalMs,
     controlPort,
   });

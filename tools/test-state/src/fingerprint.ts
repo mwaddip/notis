@@ -8,7 +8,6 @@ import { assertDistFresh, FAUCET_LOADS, NODE_LOADS } from './dist-freshness.js';
 const GENERATOR_SCRIPTS: readonly string[] = [
   'packages/web/scripts/promote.mjs',
   'packages/web/scripts/extension-check/claim-name.mjs',
-  'packages/node/scripts/gen-miner-key.mjs',
 ];
 
 const TEST_STATE_SRC = 'tools/test-state/src';

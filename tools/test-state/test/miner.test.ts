@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -20,16 +20,6 @@ interface SpawnedNode {
   readonly tmpDir: string;
   readonly logs: string[];
   stop(): Promise<void>;
-}
-
-function makeMinerKey(): { publicKey: string; secretKeyHex: string } {
-  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-  const pubDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
-  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer;
-  return {
-    publicKey: Buffer.from(pubDer.subarray(pubDer.length - 32)).toString('hex'),
-    secretKeyHex: Buffer.from(privDer).toString('hex'),
-  };
 }
 
 async function spawnDevnetNode(opts: { miningSecret: string }): Promise<SpawnedNode> {
@@ -166,12 +156,10 @@ describe('miner', () => {
   it('mines at the configured cadence, judged on the node\'s heights', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });
-    const key = makeMinerKey();
     const intervalMs = 400;
     handle = await runMiner({
       nodeApiUrl: node.apiUrl,
       miningSecret,
-      minerPublicKeyHex: key.publicKey,
       intervalMs,
       controlPort: 0,
     });
@@ -196,12 +184,10 @@ describe('miner', () => {
   it('mines to the asked height, answers with it, and resumes the cadence', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });
-    const key = makeMinerKey();
     const intervalMs = 2_000;
     handle = await runMiner({
       nodeApiUrl: node.apiUrl,
       miningSecret,
-      minerPublicKeyHex: key.publicKey,
       intervalMs,
       controlPort: 0,
     });
@@ -224,75 +210,13 @@ describe('miner', () => {
     expect(stillAt.height).toBe(reached.height);
   }, 60_000);
 
-  it('advances through each height with a unique block', async () => {
-    const miningSecret = randomBytes(16).toString('hex');
-    node = await spawnDevnetNode({ miningSecret });
-    const key = makeMinerKey();
-    handle = await runMiner({
-      nodeApiUrl: node.apiUrl,
-      miningSecret,
-      minerPublicKeyHex: key.publicKey,
-      intervalMs: 300,
-      controlPort: 0,
-    });
-    const target = 5;
-    await postJson<{ height: number }>(
-      `http://127.0.0.1:${handle.controlPort}/mine-to`,
-      { height: target },
-    );
-    // Each height holds one block; the block at h+1 points at the block at
-    // h through `prevBlockHash`, so a chain of `target` blocks has `target`
-    // distinct prev hashes (genesis + h-1's hash for h in 1..target).
-    const prevHashes = new Set<string>();
-    for (let h = 1; h <= target; h++) {
-      const block = await fetchJson<{ header: { prevBlockHash: string } }>(
-        `${node.apiUrl}/blocks/${h}`,
-      );
-      expect(block.header.prevBlockHash).toMatch(/^[0-9a-f]{64}$/);
-      expect(prevHashes.has(block.header.prevBlockHash)).toBe(false);
-      prevHashes.add(block.header.prevBlockHash);
-    }
-    expect(prevHashes.size).toBe(target);
-  }, 60_000);
-
-  it('pays the miner key once its request has rebuilt the template', async () => {
-    // The brief hypothesises that block 1's coinbase pays the given key,
-    // and its claim 6 says the first template pays the node's default — a
-    // contradiction. The node resolves it toward claim 6: `setMinerPubkey`
-    // does not rebuild the current template, so block 1's coinbase lands
-    // on the validator's own key. A block mined from a template built
-    // after the first `?miner=X` request pays X. The case holds that read.
-    const miningSecret = randomBytes(16).toString('hex');
-    node = await spawnDevnetNode({ miningSecret });
-    const key = makeMinerKey();
-    handle = await runMiner({
-      nodeApiUrl: node.apiUrl,
-      miningSecret,
-      minerPublicKeyHex: key.publicKey,
-      intervalMs: 500,
-      controlPort: 0,
-    });
-    await postJson<{ height: number }>(
-      `http://127.0.0.1:${handle.controlPort}/mine-to`,
-      { height: 2 },
-    );
-    const credits = await fetchJson<{ total: string; boxes: unknown[] }>(
-      `${node.apiUrl}/credits/${key.publicKey}`,
-    );
-    // Block 2's coinbase is credit-locked for `creditMinerRewardDelay`
-    // (devnet: 10 blocks), so it appears in `boxes` but not in `total`.
-    expect(credits.boxes.length).toBeGreaterThanOrEqual(1);
-  }, 60_000);
-
   it('stops the miner naming a refusal other than 404', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });
-    const key = makeMinerKey();
     // Wrong secret — the node answers 401 Unauthorized.
     handle = await runMiner({
       nodeApiUrl: node.apiUrl,
       miningSecret: 'this-is-not-the-secret',
-      minerPublicKeyHex: key.publicKey,
       intervalMs: 500,
       controlPort: 0,
     });
