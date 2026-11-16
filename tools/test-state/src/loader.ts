@@ -30,6 +30,7 @@ import {
   nodePeerIdFromListenLine,
   notisIdFromKeyFile,
   pathsFor,
+  trackSpawn,
 } from './generator.js';
 
 // The CLI's own path — this member's `dist/cli.js` from either src or dist.
@@ -91,15 +92,21 @@ async function fetchJson<T>(url: string): Promise<T> {
 // Poll a log file for a line that matches. The log is written by a detached
 // subprocess through its own stdout/stderr FDs, so this reader never races
 // with a Node stream — it reads bytes past the last position every 50 ms.
+// It also ends when the process exits, naming the exit code and signal.
 export async function waitForLineInFile(
   path: string,
   match: (line: string) => boolean,
   deadlineMs: number,
   label: string,
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>,
 ): Promise<string> {
   const deadline = Date.now() + deadlineMs;
   let offset = 0;
   let buf = '';
+  let dead: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  void exited.then((r) => {
+    dead = r;
+  });
   while (Date.now() < deadline) {
     try {
       const st = statSync(path);
@@ -120,8 +127,16 @@ export async function waitForLineInFile(
           if (match(line)) return line;
         }
       }
-    } catch {
-      // path may not exist yet
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+      // the file has not been created yet
+    }
+    if (dead !== null) {
+      const d: { code: number | null; signal: NodeJS.Signals | null } = dead;
+      throw new Error(
+        `${label}: process exited (code=${d.code}, signal=${d.signal}) before its line appeared; see ${path}`,
+      );
     }
     await sleep(50);
   }
@@ -243,16 +258,21 @@ export async function up(options: UpOptions): Promise<UpResult> {
       detached: true,
       stdio: ['ignore', nodeStdout, nodeStderr],
     });
+    const nodeTracked = trackSpawn(nodeCp);
     closeSync(nodeStdout);
     closeSync(nodeStderr);
     nodeCp.unref();
     recordProcess(records, 'node', nodeCp.pid!, nodeArgv);
+    writeRecords(runDir, records);
 
     // 6. Read A's API, admin and p2p lines off its log.
     let apiPort: number | null = null;
     let adminPort: number | null = null;
     let peerIdFromLine: string | null = null;
     let p2pPort: number | null = null;
+    // Node readiness includes `api_listening`, the admin line and the
+    // `[net] listening on` line — `up`'s peerId is read from the latter,
+    // so it is never null, and `nodeP2p` carries `/p2p/<peerId>`.
     await waitForLineInFile(
       nodeLog,
       (line) => {
@@ -273,14 +293,20 @@ export async function up(options: UpOptions): Promise<UpResult> {
             peerIdFromLine = parsed.peerId;
           }
         }
-        return apiPort !== null && adminPort !== null;
+        return (
+          apiPort !== null &&
+          adminPort !== null &&
+          peerIdFromLine !== null &&
+          p2pPort !== null
+        );
       },
       60_000,
-      'node (api + admin)',
+      'node (api + admin + p2p)',
+      nodeTracked.exited,
     );
     const nodeHttp = `http://127.0.0.1:${apiPort!}`;
     const nodeAdmin = `http://127.0.0.1:${adminPort!}`;
-    const nodeP2p = p2pPort !== null ? `/ip4/127.0.0.1/tcp/${p2pPort}` : '';
+    const nodeP2p = `/ip4/127.0.0.1/tcp/${p2pPort!}/p2p/${peerIdFromLine!}`;
 
     const status = await fetchJson<{ networkType?: string }>(`${nodeHttp}/status`);
     if (status.networkType !== 'devnet') {
@@ -316,10 +342,12 @@ export async function up(options: UpOptions): Promise<UpResult> {
       detached: true,
       stdio: ['ignore', faucetStdout, faucetStderr],
     });
+    const faucetTracked = trackSpawn(faucetCp);
     closeSync(faucetStdout);
     closeSync(faucetStderr);
     faucetCp.unref();
     recordProcess(records, 'faucet', faucetCp.pid!, faucetArgv);
+    writeRecords(runDir, records);
 
     let faucetPort: number | null = null;
     await waitForLineInFile(
@@ -334,6 +362,7 @@ export async function up(options: UpOptions): Promise<UpResult> {
       },
       30_000,
       'faucet',
+      faucetTracked.exited,
     );
 
     // 8. Spawn the miner as `dist/cli.js miner`.
@@ -364,10 +393,12 @@ export async function up(options: UpOptions): Promise<UpResult> {
       detached: true,
       stdio: ['ignore', minerStdout, minerStderr],
     });
+    const minerTracked = trackSpawn(minerCp);
     closeSync(minerStdout);
     closeSync(minerStderr);
     minerCp.unref();
     recordProcess(records, 'miner', minerCp.pid!, minerArgv);
+    writeRecords(runDir, records);
 
     let minerControlPort: number | null = null;
     await waitForLineInFile(
@@ -386,9 +417,8 @@ export async function up(options: UpOptions): Promise<UpResult> {
       },
       30_000,
       'miner',
+      minerTracked.exited,
     );
-
-    writeRecords(runDir, records);
 
     const notisId = await notisIdFromKeyFile(nodeKeyPath);
     const result: UpResult = {
