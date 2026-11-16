@@ -5813,9 +5813,6 @@ port the public listener bound — `PORT`, or the one the system gave a `PORT` o
 the listener has bound: `net` starts first, and a request over the mesh in that window is answered as a refused
 upstream's is.
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** `config.ts` writes `httpBase` as the string `http://127.0.0.1:<PORT>` at load, so a
-> `PORT` of 0 forwards every request over the mesh to port 0.
-
 **A mesh node prints its identity line** once its addresses are announced and at every change of them: one JSON line,
 `{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses a node list carries and, for a private node, the
 local WebRTC-direct addresses its operator hands over (`MESH_INTERFACE → Discovery → "A node added by hand"`).

@@ -1425,9 +1425,6 @@ interface MeshConfig {
 }
 ```
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** `httpBase` is a `string` fixed at construction, and the endpoint forwards to it from
-> the first request.
-
 **The certificate source is a constructor dependency**, as `PeerStorage` is: `NetNode`'s optional fourth parameter,
 `certificateSource?: (wss, stateDir) => CertificateSource`, answers the secure WebSocket's certificates; absent, the
 node's ACME client over `wss.acmeDirectory` does.

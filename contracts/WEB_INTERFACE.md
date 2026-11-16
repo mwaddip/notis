@@ -143,9 +143,6 @@ that name — never adding to one that stands there. `build-extension.sh` moves 
 `NOTIS_EXTENSION_OUT` names instead, where a caller sets it — the extension check builds there
 (`EXTENSION_CHECK_INTERFACE → Builds`), so a check never touches a release zip in the root.
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** `build-extension.sh` reads no `NOTIS_EXTENSION_OUT`; its zips always land in the
-> repository's root.
-
 **The extension ships beside it, twice.** Each release also carries **`notis-extension-<ver>-chrome.zip`**
 and **`notis-extension-<ver>-firefox.zip`** — the same client built as an extension page (→ The
 extension), each zip a directory holding the bundle, the background script, the prompt page, the icons

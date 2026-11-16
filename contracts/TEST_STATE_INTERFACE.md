@@ -67,8 +67,6 @@ landed. The generator computes none of them.
 
 **`base` is the state the extension check starts from** — what the check's setup builds at every run without one:
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** The generator promotes four members, `R`, `S`, `R2` and `R3`.
-
 - a chain of 60 blocks before the first write, past `m + k + 14`, the height the check's verified-tip block requires
   of A (`m`, `k` — `CONSTANTS → Client defaults`);
 - two members, `R` and `S`, each made by `promote.mjs` on the earned path (`ARCHITECTURE → Membership`): two threads,
