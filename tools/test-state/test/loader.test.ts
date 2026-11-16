@@ -228,6 +228,52 @@ describe('loader', () => {
     rmSync(runDir, { recursive: true, force: true });
   }, 60_000);
 
+  it('the CLI up on a cache miss prints exactly one JSON line on stdout', async () => {
+    // `runMiner` as a library writes nothing to its caller's stdout —
+    // only the CLI `miner` subcommand prints `miner_ready`. The
+    // generator's in-process miner must not leak that line through
+    // the `up` subcommand's stdout, which a caller parses as a single
+    // JSON object.
+    const emptyCache = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-up-stdout-'));
+    try {
+      const runDir = newRunDir('cli-up-stdout');
+      const cliBin = resolve(REPO_ROOT, 'tools/test-state/dist/cli.js');
+      const upRes = spawnSync(
+        process.execPath,
+        [
+          cliBin, 'up', MINIMAL.name,
+          '--dir', runDir,
+          '--http-port', '0',
+          '--admin-port', '0',
+          '--p2p-port', '0',
+          '--faucet-port', '0',
+          '--miner-port', '0',
+          '--interval-ms', '500',
+          '--cache', emptyCache,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(upRes.status, upRes.stderr).toBe(0);
+      // The whole stdout parses as one JSON object — `up`'s answer.
+      // Under the pre-fix shape the in-process miner inside the
+      // generator printed its own `miner_ready` line to stdout, and
+      // the caller's JSON.parse of stdout failed.
+      const parsed = JSON.parse(upRes.stdout);
+      expect(parsed.name).toBe(MINIMAL.name);
+      expect(parsed.nodeHttp).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
+      // `down` through the CLI tears the stack down from a separate
+      // process, reading processes.log.
+      const downRes = spawnSync(
+        process.execPath,
+        [cliBin, 'down', '--dir', runDir],
+        { encoding: 'utf8' },
+      );
+      expect(downRes.status, downRes.stderr).toBe(0);
+    } finally {
+      rmSync(emptyCache, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('the CLI up exits 0 with the stack running; the tip rises; down leaves nothing', async () => {
     // up (CLI) spawns three detached processes and exits with their
     // readiness read from log files. After `up` returns, A's tip still

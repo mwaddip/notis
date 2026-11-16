@@ -315,12 +315,10 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   };
   process.on('SIGTERM', onSigterm);
 
-  process.stdout.write(
-    JSON.stringify({
-      event: 'miner_ready',
-      controlPort,
-    }) + '\n',
-  );
+  // `runMiner` writes nothing to its caller's stdout — the generator and
+  // every other library caller own their own stdout. The `miner_ready`
+  // JSON line belongs to the CLI `miner` subcommand, which prints it
+  // after `runMiner` returns.
 
   const joined = (async () => {
     try {

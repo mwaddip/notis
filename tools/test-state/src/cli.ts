@@ -100,6 +100,12 @@ async function runMinerCmd(args: readonly string[]): Promise<void> {
     intervalMs,
     controlPort,
   });
+  // The `miner_ready` line belongs to the CLI subcommand — a caller
+  // reads it off this process's stdout to know the control port is
+  // bound. `runMiner` as a library writes nothing.
+  process.stdout.write(
+    JSON.stringify({ event: 'miner_ready', controlPort: handle.controlPort }) + '\n',
+  );
   await handle.joined;
 }
 
