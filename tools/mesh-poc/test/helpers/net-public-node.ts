@@ -75,7 +75,7 @@ export async function startNetPublicMesh(options: NetMeshNodeOptions): Promise<N
     network,
     listen: [...listen],
     stateDir: options.stateDir,
-    httpBase: options.upstream,
+    httpBase: () => options.upstream,
     stun: null,
   };
   const config: NetConfig = {

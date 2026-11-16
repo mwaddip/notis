@@ -783,7 +783,7 @@ const meshIdentityPromises = {};
 // it runs". For each `hostile-malformed` / `hostile-invalid`: an `nft nat
 // output` rule in its namespace redirects `127.0.0.1:<nodePort>` to the
 // interposer's port, so the node's own mesh-endpoint forward
-// (`httpBase = http://127.0.0.1:<PORT>`) lands on the interposer. The rule
+// (`httpBase()` answering `http://127.0.0.1:<PORT>`) lands on the interposer. The rule
 // is added BEFORE the node spawns.
 const INTERPOSER_PORT = 7000;
 const hostileUpstreamNames = ['hostile-malformed', 'hostile-invalid'];
