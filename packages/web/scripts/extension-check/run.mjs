@@ -12618,15 +12618,15 @@ async function teardownLightRelays() {
 }
 
 // WEB_INTERFACE → The extension → "The verified tip" — the verified blocks'
-// two relays, RLA in front of A and RLB in front of B, each on its fixed
-// port, start before the browser opens the extension page, so the extension's
-// seed list `[{notisId:<A>, addrs:[], api:RLA}, {notisId:<B>, addrs:[],
-// api:RLB}]` reads them from the first paint and every read it makes passes
-// through one of them. Each relay's `upstream` stays reassignable — the
-// `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the step and
-// back after. The function is a no-op when no verified block runs; the
-// figures and names blocks reach this relay too, since they also run under
-// the two-relay build.
+// two relays, RLA in front of A and RLB in front of B, each on an OS-bound
+// port, start before the browser opens the extension page, so the write
+// pass that writes `notis-nodes` into the copy's shell reads each origin
+// from its `relay.server.address()` and the extension's seed list carries
+// them from the first paint. Each relay's `upstream` stays reassignable —
+// the `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the
+// step and back after. The function is a no-op when no verified block
+// runs; the figures and names blocks reach this relay too, since they
+// also run under the two-relay build.
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
