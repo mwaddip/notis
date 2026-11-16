@@ -52,9 +52,12 @@ export interface MeshConfig {
   readonly stateDir: string;
   /**
    * `MESH_INTERFACE → The node endpoint` — the node's own HTTP API, the
-   * endpoint's upstream. Every mesh `GET` and `POST` is forwarded here.
+   * endpoint's upstream. Read per request: a `null` answer aborts the
+   * mesh stream as a refused upstream does, so the upstream's base can
+   * change between requests, and a request before the upstream has
+   * bound is answered as one whose upstream refused the connection.
    */
-  readonly httpBase: string;
+  readonly httpBase: () => string | null;
   /**
    * `MESH_INTERFACE → The node endpoint` — the deadline the endpoint's
    * upstream `fetch` runs under; the client learns of the abort at its

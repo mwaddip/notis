@@ -146,7 +146,7 @@ describe('mesh — the node endpoint', () => {
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir: dir,
-        httpBase: stub.base,
+        httpBase: () => stub!.base,
         stun: null,
       },
     }), validators);
@@ -273,7 +273,7 @@ describe('mesh — the node endpoint', () => {
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir: dir,
-        httpBase: stub.base,
+        httpBase: () => stub!.base,
         upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
         stun: null,
       },

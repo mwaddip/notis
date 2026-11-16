@@ -87,7 +87,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
         },
       }), validators);
       await n.start();
@@ -107,7 +107,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           stun: { host: '127.0.0.1', port: 3480 },
         },
       }), validators);
@@ -129,7 +129,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           stunServers: ['stun:example.com:3478'],
         },
       }), validators);
@@ -152,7 +152,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           wss: { ip: '127.0.0.1', port: 443, acmeDirectory: '', challengePort: 80 },
         },
       }), validators);
@@ -173,7 +173,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
         },
       }), validators);
@@ -192,7 +192,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/tcp/0'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
         },
       }), validators);
       await n.start();
@@ -210,7 +210,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/dns4/example.com/udp/4001/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
         },
       }), validators);
       await n.start();
@@ -229,7 +229,7 @@ describe('mesh — start-time refusals', () => {
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           announce: ['/dnsaddr/example.com/tcp/1'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
         },
       }), validators);
       await n.start();
@@ -250,7 +250,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           stun: { host: 'stun.example.com', port: 3478 },
         },
       }), validators);
@@ -271,7 +271,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           stun: { host: '127.0.0.1', port: 70_000 },
         },
       }), validators);
@@ -308,7 +308,7 @@ describe('mesh — start-time refusals', () => {
             network: 'devnet',
             listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
             stateDir: dir,
-            httpBase: 'http://127.0.0.1:0',
+            httpBase: () => 'http://127.0.0.1:0',
             stun: { host: '127.0.0.1', port: stunPort },
           },
         }), validators);
@@ -340,7 +340,7 @@ describe('mesh — start-time refusals', () => {
           network: 'devnet',
           listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
           stateDir: dir,
-          httpBase: 'http://127.0.0.1:0',
+          httpBase: () => 'http://127.0.0.1:0',
           wss: { ip: 'example.com', port: 443, acmeDirectory: '', challengePort: 80 },
         },
       }), validators);

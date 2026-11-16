@@ -93,7 +93,7 @@ function meshOn(stateDir: string, httpBase: string): MeshConfig {
     network: 'testnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
-    httpBase,
+    httpBase: () => httpBase,
     stun: null,
   };
 }

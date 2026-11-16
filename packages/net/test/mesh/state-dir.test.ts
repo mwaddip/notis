@@ -53,7 +53,7 @@ function meshFor(stateDir: string): MeshConfig {
     network: 'devnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
-    httpBase: 'http://127.0.0.1:0',
+    httpBase: () => 'http://127.0.0.1:0',
     stun: null,
   };
 }

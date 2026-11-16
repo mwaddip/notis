@@ -19,10 +19,14 @@ import {
 import { REQUEST_TIMEOUT_MS } from '@dagsocial/node-reads';
 
 export function meshEndpoint(
-  httpBase: string,
+  httpBase: () => string | null,
   opts?: { upstreamTimeoutMs?: number },
 ): WebServer {
-  const base = httpBase.replace(/\/+$/, '');
+  // Read once at construction; a later commit reads per request so the
+  // base can change and a `null` answer aborts the stream as a refused
+  // upstream does.
+  const once = httpBase();
+  const base = (once ?? '').replace(/\/+$/, '');
   const upstreamTimeoutMs = opts?.upstreamTimeoutMs ?? REQUEST_TIMEOUT_MS;
   return {
     async inject(info, stream, _connection) {
