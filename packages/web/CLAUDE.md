@@ -446,8 +446,8 @@ intended values and every `href` and `src` is relative — `build-release.sh` ch
 ## The extension — the second build target
 
 ```bash
-bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root
-VITE_NETWORK=devnet VITE_NODES='["http://127.0.0.1:19740","http://127.0.0.1:19770"]' VITE_FAUCET_BASE='http://127.0.0.1:19750/faucet' VITE_PUBLIC='http://localhost:19760/web/' VITE_PUBLIC_ORIGIN='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
+bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root; NOTIS_EXTENSION_OUT where set names another directory
+node packages/web/scripts/extension-check/check.mjs   # the extension check — one command runs every block (--blocks names a subset, --serial runs them in the table's order, --rev builds a detached worktree, --out names the directory)
 ```
 
 `VITE_PUBLIC` falls back to `https://notis.fun/web/` only when it is **unset**; an explicit `VITE_PUBLIC=''` builds
@@ -658,35 +658,47 @@ report or a brief**; a proof uses a scratch file with fake values. `extension/RE
 reviewer builds from: when the pnpm this machine builds with moves, that file moves with it — `submit` refuses
 otherwise.
 
-**The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
-Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
-through the real UI — the composer, the like word, the profile and wallet rows, the prompt window — the eleventh
-the wallet's faucet press asking the browser for the origin and refused, the twelfth in four measured parts (the
-same press granted and the faucet's `$NOTIS` step, a send whose row figure moves to 87.5 at the transfer's 2xx —
-the pending view's spendable sum — and whose payment lands on the faucet's plain `/credits`, a send declined, a
-send after a lock pressed in the profile) — **and, with `--public <origin+base>` and `--web-dist <dir>`, the four steps of links
-into the extension**: the harness serves a web build made for that base itself (`<base>p/<64 hex>` answering the
-shell, a plain page with a same-tab and a `target="_blank"` link), refuses a shell whose `notis-public` or a manifest
-whose one match differs from `--public`, sets the preference through the settings row, and presses with
+**The proof** is `scripts/extension-check/`: `check.mjs` the command and `run.mjs` the harness one block per
+process (`EXTENSION_CHECK_INTERFACE → The command`). `check.mjs` builds the workspace, one web build and one
+extension build once (the extension's zips land under `<out>/ext-zips` through `NOTIS_EXTENSION_OUT`), binds a port
+0 for the hosted page and builds the extension with that public origin (`EXTENSION_CHECK_INTERFACE → Addresses`),
+and spawns one harness per selected block (`run.mjs --block <name>`) — side by side by default, one at a time in the
+table's order with `--serial`. Each block's harness brings up a stack of its own on `base` through
+`tools/test-state/dist/cli.js up base` with every port 0, reads A's HTTP, admin, p2p, faucet origin, miner control
+origin, clock offset, preload path and identity key paths from `up`'s JSON answer, writes its own values into its
+own copy of each build (the shell's `notis-nodes` and `notis-faucet`, the web shell's `notis-api`, the unpacked
+manifest's `host_permissions`), and tears the stack down at the block's end (`EXTENSION_CHECK_INTERFACE → The stack
+a block runs on`). Every node and miner the harness spawns reads the stack's clock through `--clock-offset-ms` and
+`--preload` (`TEST_STATE_INTERFACE → The clock offset`). Headless Chromium runs over raw CDP (the cached Chrome for
+Testing; no Playwright) against the unpacked Chrome build, with `TMPDIR=/tmp` in the harness's environment
+(`EXTENSION_CHECK_INTERFACE → The command`). **The `writes` block** drives steps 1–12 through the real UI — the
+composer, the like word, the profile and wallet rows, the prompt window — the eleventh the wallet's faucet press
+asking the browser for the origin and refused, the twelfth in four measured parts (the same press granted and the
+faucet's `$NOTIS` step, a send whose row figure moves to 87.5 at the transfer's 2xx — the pending view's spendable
+sum — and whose payment lands on the faucet's plain `/credits`, a send declined, a send after a lock pressed in the
+profile). **The `links` block** drives 13–16 and `13-uncancelled` for the four steps of links into the extension, on
+the hosted-page origin the check binds and serves a web build at (`<base>p/<64 hex>` answering the shell, a plain
+page with a same-tab and a `target="_blank"` link); the harness refuses a shell whose `notis-public` or a manifest
+whose one match differs from that origin, sets the preference through the settings row, and presses with
 `Input.dispatchMouseEvent` — the bridge takes an offer only under the browser's user activation. 13 the button
 under `on the site`; 14 the takeover with a workspace tab open, three runs, one after a ≥ 32 s idle — the arriving
 tab destroyed (the event index taken **before** `Target.createTarget`: the tab is gone in tens of milliseconds),
 exactly one extension page left, the static server's request log as the outside measure of how far the hosted page
 got; 15 the takeover with none open, the tab becoming the workspace; 16 left alone — a same-tab link, a reload, back
 from the tab that became the workspace (two backs at one column: the workspace's own screen entry first), and a
-`target="_blank"` link as the control, found by its `openerId`; last, the bridge-less arm in a
-`Target.createBrowserContext` context, where the press switches the hosted page in place. Without the two flags
-13–16 read `NOT RUN`. **With `--verified-tip` (and `--node-dist`, `--miner`, `--scratch`, `--node-p2p`) the
-verified-tip block**, for which the harness owns every node but A — a peer **B** of A, a node **C** that syncs from A
-and is then restarted cut off (an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine
-three blocks of its own, and a fresh isolated **D** — and two switchable **tip relays**, **RLA** in front of A and
-**RLB** in front of B (`RLA_PORT`, `RLB_PORT`), each in one mode the harness sets between steps: `honest` (every
+`target="_blank"` link as the control, found by its `openerId`; `13-uncancelled` the bridge-less arm in a
+`Target.createBrowserContext` context, where the press switches the hosted page in place.
+**The `tip` block** owns every node but A — a peer **B** of A, a node **C** that syncs from A and is then restarted
+cut off (an empty bootstrap and a new listen port — a node with no seed dials nobody) to mine three blocks of its
+own, and a fresh isolated **D** — and two switchable **tip relays**, **RLA** in front of A and **RLB** in front of
+B. Each node, relay and the harness's miner for D binds its ports on 0 and reads them back; the block's own copy of
+the extension shell carries the two relays as `notis-nodes` entries — `{notisId, addrs: [], api: <relay>}`, an entry
+with no `addrs` reached at its API base alone — so every read the extension makes passes through one of them, and
+**a page is a client**: each step sets the relays' modes and then opens a fresh extension page, whose first check
+reads through them. Each relay carries one mode the harness sets between steps on both at once: `honest` (every
 request passed through), `proof-invalid` (one byte of the `/nipopow/proof/` answer flipped), `proof-short` (the proof
 route answered 404 chain-too-short), `upstream-D` (every request passed to D) and, in the mesh block, `hold-posts`.
-The build's `notis-nodes` names the two relays as node entries — `{notisId, addrs: [], api: <relay>}`, an entry with no
-`addrs` reached at its API base alone — so every read the extension makes passes through one of them, and **a page is a
-client**: each step sets the relays' modes and then opens a fresh extension page, whose first check reads through
-them. Each step asserts the rendered corner (the dot's class, the tip span's classes, the `title`): **17a** both relays
+Each step asserts the rendered corner (the dot's class, the tip span's classes, the `title`): **17a** both relays
 `proof-short` — *the chain is too short to check yet · tip N*; **17** *verified across 2 nodes* on a fresh page and
 after two presses, the proof counts reported and not asserted (a check that places every tip asks no proof), none
 unasked in twenty seconds; **17b** thirty presses one second apart under A's live miner, every one `led fresh` and
@@ -697,14 +709,12 @@ D mined just past `m + k + 4` (48), lighter than B and sharing no block with A p
 names a tip off this chain*, the corner's tip B's height or D's, whichever chain the first check seated, the record
 naming which; **19b** D mined past A by 50 — the client seats D's chain, B names a tip off it: `thin · split`, the
 corner's tip D's height; **20** the hosted web build — the first paragraph's title and no `/nipopow/` request in
-twenty seconds or after a press. In a full run the block runs after step 16 on a session opened on the extension page
-live at that moment (step 15 closes the first one), and `13-uncancelled`, the browser-context arm, runs after the
-verified blocks. The extension for it is built with `VITE_NETWORK=devnet` and `VITE_NODES`
-naming the two relays, each `notisId` read from its node's start line; the harness refuses otherwise.
-**With `--verified-figures` as well (it needs `--r-key` and the lifecycle arguments `bringUpNodeB` reads)
-the verified-figures block** runs next, owning a B of its own (a verified tip needs a second verified node) and
-sets the figures lie modes on **both tip relays** at once — every `/nipopow/proof/` answer passed through, so the corner
-stays green — one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
+twenty seconds or after a press.
+**The `figures` block** owns a B of its own (a verified tip needs a second verified node), asks the faucet for R's
+credits through `POST <faucet>/credits` before its steps (R from `base` holds no `$NOTIS`, and step 21 and step 29's
+send need a balance — the preparation waits for the grant to land on R's plain `/credits` on A), and sets the figures
+lie modes on **both tip relays** at once — every `/nipopow/proof/` answer passed through, so the corner stays green —
+one mode at a time: `credits-fake` (a fabricated box on R's first `/credits` page), `credits-foreign` (the
 devnet faucet's largest credit box listed under R), `credits-drop` and `karma-drop` (one box withheld from R's first
 `/credits` or `/karma` page), `credits-drop-tipplus1` (the credits drop, and `/blocks/current` answered one above the
 node's own), `avl-flip` (one byte flipped in every `/api/v1/proof/` and `/api/v1/range/` proof): **21** a send —
@@ -727,11 +737,11 @@ row reading *not checked yet* there, and any silent or honest-looking reading of
 relays set back to `honest` and the balance row silent again; **25** the hosted web
 build — no line and
 no `/api/v1/proof/` or `/api/v1/range/` request. A figures run asks the record, each ledger's range at the two
-heights, and `/blocks/current` — ten requests with the wallet open. ⚠ **The figures block needs a throwaway that has
-not run steps 11–12**: on a key already granted `$NOTIS` the faucet step is not on screen and step 11 times out.
-**With `--verified-names` as well (it needs `--s-key` beside what the figures block needs) the verified-names block**
-runs on a B of its own, a second identity **S** holding a name — S promoted as R is and its name claimed by
-`scripts/extension-check/claim-name.mjs` through the web's own `submitClaimFlow` — and the
+heights, and `/blocks/current` — ten requests with the wallet open.
+**The `names` block** owns a B of its own and reads the second identity **S** from `base` — promoted on the earned
+path and holding the name `Sk5send` claimed by `claim-name.mjs` through the web's own `submitClaimFlow`
+(`TEST_STATE_INTERFACE → The base state`) — asks the faucet for R's credits before its steps (step 29's send needs
+a balance), and sets the
 five **name modes** on both tip relays (`label-rename`, `owner-404`, `owner-fakebox`, `name-owner`, `name-fakebox`,
 every proof passed through verbatim so the corner stays green), each arm on a fresh page read under routed reads — the
 client takes whichever relay its need allows, and the lie is on both: **26** R claims a name through the `username` row — the
@@ -747,16 +757,13 @@ pressed once A has mined past the anchor, so its first check reads `unchecked`, 
 `absent`; **30** the hosted web build — no clay and no `/api/v1/proof/`. **No lie stands in ink** — an honest handle
 may stand beside a clay one, and an omission is the one lie the rule leaves uncaught (27b's header). Each lie arm has
 the relays set back to `honest` and reads the honest state again.
-**The waiting-writes block** (`WEB_INTERFACE → The wallet → "A write no node answers waits"`, `→ "Waiting writes go
+**The `waiting` block** (`WEB_INTERFACE → The wallet → "A write no node answers waits"`, `→ "Waiting writes go
 out at the first answer"`, `→ "A refusal ends what it strands"`, `→ "A waiting write is drawn as pending"`,
-`→ "A page no node answers offers what can wait"`; `→ The extension → "A failed listing draws the cache"`) runs after the three verified blocks in the relays build,
-whenever any of `--verified-{tip,figures,names}` is passed with `--r-key` — the two tip relays stand, and R's identity
-is loaded. `--waiting-only` turns the block over fast: steps 1 and 2 bring up R, the two tip relays come up in front of
-A (RLB's upstream is A too, since B is not needed), steps 3–20 and the three verified blocks read `NOT RUN`, the block
-runs, and the `[diag]` liveness line prints before `13-uncancelled` and the mesh block read `NOT RUN` too. The flag
-needs `--r-key`, refuses combination with `--verified-{tip,figures,names}`, `--light` or `--mesh`, and parses as a
-boolean so steps 3–20 are actually skipped; **a full run is the record**. The relays take a `down` mode beside the
-figures and names modes (every request's connection destroyed, the client reads a transport failure). **Prep**: a
+`→ "A page no node answers offers what can wait"`; `→ The extension → "A failed listing draws the cache"`) runs
+alone after steps 1 and 2 (the seed-list check and R's import — R's identity is loaded) on its own stack and build
+copy: the two tip relays come up in front of A (RLB's upstream is A, since B is not needed). The relays take a
+`down` mode beside the figures and names modes (every request's connection destroyed, the client reads a transport
+failure). **Prep**: a
 64-hex chain name that is not A's block-1 hash and not any chain the run uses is seated in the extension's
 `localStorage['notis.posts.chain']` through the main() page, so the prep page's `postCache.openRemembered()` opens
 that name's database at load (`WEB_INTERFACE → The extension → "A post checked before any tip run names a chain is kept until one does"`).
@@ -791,8 +798,8 @@ refused.* — with no `POST` going out for it. **W5** a fresh page under `down` 
 and asserts what the page offers — the withdraw control enabled on a cached R root in a pane with its confirm row and
 `keep`, the `@profile` window's rep row `—` and no invite form, the cached non-R card's author window with `your vouch`
 reading `—` and no `vouch` word, and the `@wallet` window's balance row `—`; neither relay's log carries a `POST` for
-the step's span. **The `[diag]` liveness line** runs just before `13-uncancelled` (and
-before `13-uncancelled` NOT RUN under `--waiting-only`): for every target `/json/list` reports it names the type, the
+the step's span. **The `[diag]` liveness line** runs just before `13-uncancelled`'s NOT RUN in the block: for every target
+`/json/list` reports it names the type, the
 first 80 chars of URL, and whether a fresh CDP session's `Runtime.evaluate('1+1')` answers within 3 s — `live`, `hung`
 or `no-ws`; an extension page is labelled `main()` when its target id matches the id `main()` opened, and
 `block-leftover` otherwise; every hung page has `Debugger.pause` collect the top 8 frames of its next `Debugger.paused`
@@ -803,15 +810,14 @@ target to leave `/json/list`** — Chrome takes a moment to finish closing after
 later `findExt('index.html')` can return the half-closed page (its CDP session is unresponsive) — bounded at 10 s with
 a `[diag]` log line when a target never leaves; a step that threw past its own close is held by the block's outer
 `try` so the finally runs the teardown and every unrecorded W-step reads FAIL.
-**With `--light` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; `--public` and `--web-dist`
-for its last step; it takes no other verified flag) the light block**, L1–L14, runs alone after steps 1 and 2 (the
-seed-list check and R's import — the only earlier state the block needs); steps 3–16 and `13-uncancelled` read
-NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NOT RUN. **Every
-node entry the extension knows reaches a relay of the harness's own at its API base** (`addrs: []`): `RA` on `:19810`
-in front of node A and `RB` on `:19815` in front of a second node B, started before the browser, so the extension for
-it is built with `VITE_NODES` naming `[{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[], api:RB}]` and the
-harness refuses any other seed list. Each relay passes every request through — every
-`/nipopow/proof/` among them — logs it as it arrives, and lies over `POST /posts/batch` in one mode at a time: `text`
+**The `light` block**, L1–L14, runs alone after steps 1 and 2 (the seed-list check and R's import — the only earlier
+state the block needs) on its own stack and build copy. **Every node entry the extension knows reaches a relay of the
+harness's own at its API base** (`addrs: []`): `RA` in front of node A and `RB` in front of a second node B, each
+bound on a port 0 and started before the browser; the block's copy of the extension shell carries the two as
+`notis-nodes` entries — `[{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[], api:RB}]` — and the harness
+rewrites them into its copy after reading each node's `notisId` from its start line. Each relay passes every request
+through — every `/nipopow/proof/` among them — logs it as it arrives, and lies over `POST /posts/batch` in one mode
+at a time: `text`
 (one row's text swapped), `drop` (no row answered), `hold` (answered at `release()`), `hang` (never answered), and
 beside them `list-down` (the list reads answer 503), `list-replay` (a recorded light page), `down` (every connection
 destroyed), with a switchable upstream. The steps: **L1** a cold feed under `hold` — slots with no text and no control
@@ -828,22 +834,22 @@ reload; **L13** both relays in front of an isolated node **D** on another chain 
 list polled until the delete lands and A's name never opened after the switch (an `indexedDB.open` of a missing database
 creates it), a replayed listing drawing nothing from the first chain's entries; **L14** the hosted web build — no
 `light`, no `tx`, no batch, no database.
-**With `--mesh` (it needs `--r-key`, `--node-dist`, `--miner`, `--scratch`, `--node-p2p`; it takes no verified flag
-and not `--light`) the mesh block**, M1–M5, proves the mesh path in the built extension and runs alone after steps 1
-and 2 (the seed-list check and R's import — the only earlier state the block needs); steps 3–16 and `13-uncancelled`
-read NOT RUN, and the `[diag]` liveness line prints before `13-uncancelled`'s NOT RUN. The harness owns two public
-nodes **A′** and **B′**, spawned from `--node-dist` with
-`MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
-loopback cannot share `STUN_PORT`), A′ bootstrapped off A (`--node-p2p`) and B′ off A′, so they are peers on A's chain
+**The `mesh` block**, M1–M5, proves the mesh path in the built extension and runs alone after steps 1 and 2 (the
+seed-list check and R's import — the only earlier state the block needs) on its own stack and build copy. The
+harness owns two public nodes **A′** and **B′**, spawned with
+`MESH_ROLE=public`, `MESH_LISTEN=/ip4/127.0.0.1/udp/0/webrtc-direct` and `MESH_STUN=off` (two public nodes on one
+loopback cannot share `STUN_PORT`), A′ bootstrapped off A and B′ off A′, so they are peers on A's chain
 and R's rep reaches them. **The setup waits for A′ and B′ each to stand at A's tip within ± 2 before the browser launches** — B′
 bootstraps off A′ and takes on the order of a minute to reach A's chain from a cold start, and each M-step's fresh
 page reads one node of the two the extension's seed list names; a page opened while B′ is still syncing reads one
 verified node and holds that verdict, since the verifier's next run is minutes away. The cap is 180 s and the
-refusal names which node fell short. The extension for it is built with `VITE_NODES` naming `[{notisId:<A′>, addrs:[<A′'s webrtc-direct
-multiaddr>], api:<A′'s HTTP base>}, {notisId:<B′>, …}]` — the multiaddr, certhash and `/p2p/` included, as the node's
-start line gives it — and the harness refuses any other shape, printing the `VITE_NODES` to rebuild with. Chromium
-takes `--allow-loopback-in-peer-connection` on a `--mesh` run: a harness switch for a loopback stage, not a product
-setting, without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step runs on a fresh extension
+refusal names which node fell short. The block's copy of the extension shell carries `notis-nodes` as
+`[{notisId:<A′>, addrs:[<A′'s webrtc-direct multiaddr>], api:<A′'s HTTP base>}, {notisId:<B′>, …}]` — the multiaddr,
+certhash and `/p2p/` included, as the node's start line gives it — written by the harness after it reads each
+identity line, and a `ConfigError` refuses a shape where the expected mesh port is not among the multiaddrs.
+Chromium takes `--allow-loopback-in-peer-connection` on a mesh-block run: a harness switch for a loopback stage,
+not a product setting, without which a browser refuses the `RTCPeerConnection` to 127.0.0.1. Each step runs on a
+fresh extension
 page: **M1** *verified across 2 nodes*, then a refresh of the feed and a press of the corner after the verdict — the
 report text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
 connections are up, go to the API bases and are counted, not asserted); **M2** both nodes restarted without
@@ -860,7 +866,7 @@ consistent copy of A′'s store taken while A′ runs (`sqlite3 <db> ".backup <c
 nulled on the copy — a placeholder `getMissingBodies` returns at D's start under
 `NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has been due"`'s
 `content IS NULL AND withdrawn_at_height IS NULL` — spawned `MESH_ROLE=public`, `NODE_ROLE=miner` with its own
-`MINING_SECRET`, `BOOTSTRAP_PEERS` empty, on ports 19860–63 clear of every other harness child, its own miner at
+`MINING_SECRET`, `BOOTSTRAP_PEERS` empty, every port bound on 0 and read back, its own miner at
 `MINER_PCT=10` so a block lands every few seconds rather than as fast as the CPU allows (every block D mines is
 gossiped to the page which checks each one); the extension reaches D as the reader's own node by writing
 `notis.node.hand` in the extension page's `localStorage` to D's webrtc-direct multiaddr from its identity line and
@@ -884,9 +890,10 @@ answers P's text and D's log holds a `post_received` line naming P with `via` `p
 redial's peer id (`JOURNAL_EVENTS → post_received`); the weaker check that `source` is not D's own peer id lands in
 the detail. The step logs the corner's dot class and title once
 a second from the press until the text lands, and puts D's heights at each read with the seconds between the M5a
-and M5b reads in the step's detail, so the record shows the pace the run had. The two-pass recipe for `VITE_NODES`
-of any block: start the nodes, read each `notisId` (and, for `--mesh`, the multiaddr) from its start line, build the
-extension with them, then run the harness.
+and M5b reads in the step's detail, so the record shows the pace the run had. **The seed list a block carries** is
+the harness's two-pass work: it brings up each node, reads each `notisId` (and, for the mesh block, the multiaddr)
+from its start line, writes the shell's `notis-nodes` into the block's own copy, and verifies the metas round-trip
+before Chromium launches.
 ⚠ **The workspace restores its open windows on every reload, and each restored thread is a resolve of its own**: a
 step that reads the feed alone closes every pane first. ⚠ **The pointer walks**: a page session's second resolve
 starts at the other relay, so a step that holds or hangs it sets both. ⚠ **A list read goes to either relay**: the
@@ -900,30 +907,32 @@ response's `close` while it is not ended.
 by id through the pending record `notis.open.<id>` written from the background's context — the page has no post-id
 hash route. ⚠ **Opening a thread that is already open reads nothing**: a step that needs a read presses the pane's
 `↻`. ⚠ **`GET /blocks/:height` carries no hash** — the harness recomputes block 1's through `blockHash`.
-⚠ **A relays run needs a member that has not run steps 11–12.**
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: a press that reads a node a block behind the other must
 read *verified across 2 nodes*, never the alarm; at about three blocks a second the two reads see different heights,
-under the state's steady cadence they mostly see one. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
-VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <out>`; the
-extension with `VITE_PUBLIC=<--public>`. The stack is `node tools/test-state/dist/cli.js up base --dir <run-dir>
---http-port 19740 --admin-port 19741 --p2p-port 19742 --faucet-port 19750 --miner-port 19751`, whose JSON answer on
-stdout carries `nodeHttp` (A's HTTP, for --node), `nodeP2p` (for every block that spawns B), `faucetOrigin` (for
-`--faucet <faucetOrigin>/faucet`), `minerControlOrigin` (for --miner-control) and `identities` (R's and S's key file
-paths, for --r-key and --s-key); `node tools/test-state/dist/cli.js down --dir <run-dir>` tears it down
-(`TEST_STATE_INTERFACE → Loading a state`). The four promotions and S's name claim are `base`'s own, made once per
-build of the node's runtime by the state's generator and loaded in seconds thereafter
+under the state's steady cadence they mostly see one. **Each block's web build** is `check.mjs`'s one web build,
+written with `VITE_WEB_BASE=/web/` and every other `VITE_*` empty; the block's copy of the web shell takes
+`notis-api` from `up`'s `nodeHttp`. **Each block's extension build** is `check.mjs`'s one extension build, made with
+`VITE_NETWORK=devnet`, `VITE_PUBLIC` the check's public origin and `VITE_FAUCET_BASE` a loopback placeholder; the
+block's copy of the extension shell takes `notis-faucet` from `${up.faucetOrigin}/faucet` and `notis-nodes` from
+the block's own seed list, and the block's copy of the manifest takes the two loopback origins into its
+`host_permissions`. **The stack** is `tools/test-state/dist/cli.js up base --dir <run-dir> --http-port 0
+--admin-port 0 --p2p-port 0 --faucet-port 0 --miner-port 0`, whose JSON answer on stdout carries `nodeHttp` (A's
+HTTP), `nodeP2p` (for every block that spawns B), `notisId` (A's key, written into the block's seed list),
+`faucetOrigin`, `minerControlOrigin`, `clockOffsetMs`, `preloadPath` and `identities` (R's and S's key file paths);
+`down --dir <run-dir>` tears it down (`TEST_STATE_INTERFACE → Loading a state`, `→ What a caller reads`). R and S,
+R and S's two threads each with the faucet's vouch and its likes on both, and S's name `Sk5send` are `base`'s own,
+made once per build of the node's runtime by the state's generator and loaded in seconds thereafter
 (`TEST_STATE_INTERFACE → The base state`, `→ The fingerprint`). The miner mines A on a 6 s steady cadence by default
 and answers `POST /mine-to { "height": <n> }` at `minerControlOrigin`
-(`TEST_STATE_INTERFACE → Blocks during a run`); with --miner-control the harness posts `/mine-to` before each
-A-height wait whose target is known ahead — the pre-flight A ≥ m + k + 14, step 21's landed + k + 1, step 24's
-landed + k + 1, step 29's claimedAtBlock + k — and then runs the wait, which confirms A's own height. 28b's
-stale-anchor wait stays on the cadence: the step observes A mining past the anchor. The harness's own miners —
-the --miner script the verified-tip, light and mesh blocks spawn for their own isolated D, and the mesh block's
-D on `MINER_PCT=10` — are separate from the stack's and are the harness's to start and stop. The faucet runs from
-the tree's `tools/faucet`, and `--faucet` names its origin with the `/faucet` prefix the service routes under. The
-extension is built with devnet values, the faucet's base among them — the harness refuses to run when the built
-shell's `notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
+(`TEST_STATE_INTERFACE → Blocks during a run`); the harness posts `/mine-to` before each A-height wait whose target
+is known ahead — the pre-flight A ≥ m + k + 14, step 21's landed + k + 1, step 24's landed + k + 1, step 29's
+claimedAtBlock + k — and then runs the wait, which confirms A's own height. 28b's stale-anchor wait stays on the
+cadence: the step observes A mining past the anchor. The harness's own miners — a miner the tip, light and mesh
+blocks spawn for their own isolated D, and the mesh block's D on `MINER_PCT=10` — are separate from the stack's and
+are the harness's to start and stop; each takes the stack's clock through the preload. The harness refuses to run
+when the block's copy of the extension shell's `notis-faucet` differs from `${up.faucetOrigin}/faucet`. Step 8 lets
+the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
 `/background.js` (Chrome ships a built-in Hangouts worker first). At start the harness adds the two loopback
 origins to the unpacked manifest's `host_permissions`, since CDP cannot drive the browser's permission dialog —
@@ -945,17 +954,17 @@ resolved with `ss -ltnp`. Never `pkill`, never `pgrep -f`, never a grep over `/p
 `systemctl --user is-active dagsocial-miner` must print `active`, **and no headless Chromium of the run may be left**
 (`rtk proxy ps -eo pid,args`, read for the cached Chrome's path — a smoke run once left one verifying testnet every ten
 minutes for two hours; ⛔ **never a bare `ps`**: the rtk hook rewrites a top-level `ps` to a 32-line `rtk ps`, which
-read 0 Chromium processes while 16 were up). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
-`STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
-throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
-$NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`. ⚠ **`TMPDIR` under the scratchpad breaks the harness's
-Chromium launch**: the harness names Chromium's user data directory under `TMPDIR` and its `SingletonSocket` path
-runs past the 108-byte UNIX socket limit — the process is spawned, DevTools never appears, the run dies before any
-step. Keep `TMPDIR` on a short path (unset, or `/tmp`). ⚠ **The extension build moves its zips into the repo
-root**, where the user's release zips may already sit — a proof build in the main tree would overwrite them, and a
-run's cleanup would then delete them. Build the extension in a throwaway detached worktree (`git worktree add
---detach <scratch path> HEAD`; remove with `git worktree remove --force <path>`), which takes the built zips with
-it and leaves the release ones untouched.
+read 0 Chromium processes while 16 were up). ⚠ Devnet's storage rent period is a hundred blocks: a box that sits
+through it is charged `STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a
+fast pace shows a throwaway's grant shrunk — keep a run short; the stack's faucet reads 100 $NOTIS per credit grant
+and a 250 bond, set by `tools/test-state`'s loader (what step 12a asserts). ⚠ **`TMPDIR` under the scratchpad breaks
+the harness's Chromium launch**: the harness names Chromium's user data directory under `TMPDIR` and its
+`SingletonSocket` path runs past the 108-byte UNIX socket limit — the process is spawned, DevTools never appears,
+the run dies before any step. `check.mjs` sets `TMPDIR=/tmp` on every harness it spawns; a run of `run.mjs` by hand
+needs the same. ⚠ **`build-extension.sh` moves its zips into the repo root unless `NOTIS_EXTENSION_OUT` names another
+directory**, where the user's release zips may already sit. `check.mjs` sets `NOTIS_EXTENSION_OUT` to `<out>/ext-zips`;
+a hand build names its own directory or works in a detached worktree (`git worktree add --detach <scratch path> HEAD`;
+remove with `git worktree remove --force <path>`).
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from
