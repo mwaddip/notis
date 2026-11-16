@@ -79,6 +79,9 @@ block, and a block left out saves little, while iterating only: the full check i
 **Every row that names a path adds its selection**, whichever rule placed the path: `contracts/CONSTANTS.md` is under
 no run by rule 2 and selects node's run by its row.
 
+**The matrix's own suite reads every member**: its scan reads each member's tracked files, and its cases each
+member's `package.json` (→ Tests). So a path rule 3, 4 or 5 places also selects `test-matrix`.
+
 ### Reach
 
 **A reached member selects its own run and reaches every member that reads it**, by a declaration or by a row read at
@@ -96,7 +99,8 @@ run time, in a suite, or by no run:**
 - **in a suite** — a test reads it, so a change there selects the reader's own run and reaches nothing;
 - **by no run** — a file names the path and no run the matrix answers reads it through that name: a file name a
   fixture writes into a directory of its own, a spawn line a test asserts on as text, a spawn in the mesh stage. It
-  selects nothing; it is a row so that → Tests' scan passes the name.
+  selects nothing; it is a row so that → Tests' scan passes the name. **Its reader is the file that holds the name**,
+  and it covers that file's names alone — a name in another file of the same member is read by the scan anew.
 
 | Reader | Reads | How | Read |
 |---|---|---|---|
@@ -105,7 +109,8 @@ run time, in a suite, or by no run:**
 | `test-state` | `packages/web/scripts/promote.mjs`, `packages/web/scripts/extension-check/claim-name.mjs` | runs both in a generation | at run time |
 | `net` | `packages/web/scripts/refuse-node-builtins.mjs` | `test/browser-entry.test.ts` imports it | in a suite |
 | `node` | `contracts/CONSTANTS.md` | `test/constants-register.test.ts` makes a case of each row | in a suite |
-| `check` | node, faucet, test-state | runs their built code, and `packages/node/scripts/miner.mjs` | at run time |
+| `check` | node | spawns `packages/node/dist/index.js` beside each block's stack, and runs `packages/node/scripts/miner.mjs` | at run time |
+| `check` | test-state | brings up each block's stack through its loader — node, faucet and miner | at run time |
 | `check` | web | builds its hosted page and its extension | at run time |
 | `check` | `packages/web/scripts/extension-check/` | its harness | at run time |
 
@@ -128,17 +133,21 @@ order, for a gate script that takes member names. `node:slow` and `check` are no
 
 **The member's suite holds the rows to the tree.**
 
-- **Every cross-member reference is covered.** The suite scans every tracked file of every member — comments and
-  `*.md` files aside — for a reference into another member or to a path at the repo root, in the shapes the rows were
-  found by: a literal path naming `packages/<member>/`, `tools/<member>/` or `contracts/`; a relative path climbing out
-  of its member; and a path joined from segments that names a member's directory. A reference that neither a
-  declaration nor a row covers fails the suite, naming its file and line. A path built any other way is outside the
-  scan.
+- **Every cross-member reference is covered.** The suite scans every tracked file of every member but its own —
+  comments and `*.md` files aside — for a reference into another member or to a path at the repo root, in the shapes
+  the rows were found by: a literal path naming a member's directory or `contracts/`, bare or with a path after it,
+  wherever it stands — after a relative climb (`../../../packages/web/…`, `../../../contracts/…`) or inside an
+  absolute path included; a relative path climbing out of its member to a member by name (`../../net/…`); and a path
+  joined from segments that names a member's directory. **Each file is read with its whitespace flattened**, so a
+  path whose segments stand on separate lines is read whole. A reference that neither a declaration nor a row covers
+  fails the suite, naming its file and line. A path built any other way is outside the scan. **The matrix's own
+  files are not scanned**: the paths they name are its data, and its own reads are → How a path is placed's.
 - **Every row's reader and what it reads exist** in the tree; a row naming a member or a path the tree lacks fails.
 - **The check's harness stays unread by web**: a reference to `scripts/extension-check/` from a file under web's
   `src/` or `test/` fails.
 - **Each rule is held by a case**: a diff for each rule of → How a path is placed, the order between them, each kind of
-  row, and reach through a row.
+  row, reach through a row, and each of the three dependency fields. A case asserts the rule that placed each of its
+  paths, not only the runs, so two rules that select the same runs are told apart.
 
 ## Does NOT own
 
