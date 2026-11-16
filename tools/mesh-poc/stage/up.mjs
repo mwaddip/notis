@@ -763,7 +763,8 @@ if (dnsLogHost) {
 // NODE_INTERFACE → Configuration → "A mesh node prints its identity line" —
 // one node per host: the node reads its `MESH_*` env for the mesh role; its
 // `.mesh` state directory sits beside `DB_PATH`, its mesh endpoint forwards
-// to `http://127.0.0.1:<PORT>`, its identity line is one JSON object on
+// to `http://127.0.0.1:<port>` — the port its public listener bound, the
+// `PORT` the stage sets for the host — its identity line is one JSON object on
 // stdout with `{notisId, peerId, multiaddrs, localAddrs}` reprinted on
 // change. `pids.json` keys `notis:<host>` alone.
 const notisNodeEntry = join(REPO_ROOT, 'packages', 'node', 'dist', 'index.js');
@@ -783,7 +784,8 @@ const meshIdentityPromises = {};
 // it runs". For each `hostile-malformed` / `hostile-invalid`: an `nft nat
 // output` rule in its namespace redirects `127.0.0.1:<nodePort>` to the
 // interposer's port, so the node's own mesh-endpoint forward
-// (`httpBase = http://127.0.0.1:<PORT>`) lands on the interposer. The rule
+// (`httpBase()` answering `http://127.0.0.1:<port>`, the port the node's public
+// listener bound) lands on the interposer. The rule
 // is added BEFORE the node spawns.
 const INTERPOSER_PORT = 7000;
 const hostileUpstreamNames = ['hostile-malformed', 'hostile-invalid'];

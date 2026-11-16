@@ -146,7 +146,7 @@ describe('mesh — the node endpoint', () => {
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir: dir,
-        httpBase: stub.base,
+        httpBase: () => stub!.base,
         stun: null,
       },
     }), validators);
@@ -273,7 +273,7 @@ describe('mesh — the node endpoint', () => {
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir: dir,
-        httpBase: stub.base,
+        httpBase: () => stub!.base,
         upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
         stun: null,
       },
@@ -497,5 +497,106 @@ describe('mesh — the node endpoint', () => {
     expect(r.status).toBe(200);
     expect(stub!.received).toHaveLength(1);
     expect(stub!.received[0]!.contentType).toBe('text/plain; charset="UTF-8"');
+  }, 30_000);
+
+  // MESH_INTERFACE → The node endpoint — the endpoint reads its upstream
+  // per request: a `httpBase` that answers `null` aborts the stream as a
+  // refused upstream does, and a later live answer forwards the next
+  // `GET` on the same node without a restart.
+  it('httpBase answering null aborts the stream, and a later live base forwards the next GET with no restart', async () => {
+    let base: string | null = null;
+    const received: Array<{ method: string; path: string }> = [];
+    const server = createServer((req, res) => {
+      received.push({ method: req.method ?? '', path: req.url ?? '' });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    stub = { server, base: `http://127.0.0.1:${port}`, received: received as unknown as Rec[] };
+    dir = mkdtempSync(join(tmpdir(), 'net-endpoint-'));
+    node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => base,
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    client = await makeClient();
+    const addr = await firstTcpAddr(node);
+    await client.dial(multiaddr(addr));
+    const libp2p = (node as unknown as { libp2p: Libp2p }).libp2p;
+    const serverPeerId = libp2p.peerId.toString();
+    const resourceFor = (p: string): string =>
+      `/p2p/${serverPeerId}/http-path/${encodeURIComponent(p.slice(1))}`;
+    // First GET: `httpBase` answers `null` → the stream aborts. The
+    // client sees a failure, the upstream is not reached.
+    void client!.services.http.fetch(resourceFor('/blocks/current'), { method: 'GET' })
+      .catch(() => undefined);
+    // Give the endpoint a moment to handle the first request and abort.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(received).toHaveLength(0);
+    // Second GET: `httpBase` now answers a live base — the request
+    // forwards. The upstream sees one request, the client gets 200.
+    base = stub.base;
+    const r = await client!.services.http.fetch(resourceFor('/blocks/current'), { method: 'GET' });
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe('{"ok":true}');
+    expect(received).toHaveLength(1);
+  }, 30_000);
+
+  // MESH_INTERFACE → The node endpoint — the endpoint reads its upstream
+  // per request: a base that changes between two requests is read for
+  // each, so the second request lands on the new base's upstream.
+  it('a httpBase that changes between two requests is read for each', async () => {
+    const stub1 = await makeStub((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"from":"first"}');
+    });
+    const stub2 = await makeStub((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"from":"second"}');
+    });
+    let base: string = stub1.base;
+    dir = mkdtempSync(join(tmpdir(), 'net-endpoint-'));
+    node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => base,
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    client = await makeClient();
+    const addr = await firstTcpAddr(node);
+    await client.dial(multiaddr(addr));
+    const libp2p = (node as unknown as { libp2p: Libp2p }).libp2p;
+    const serverPeerId = libp2p.peerId.toString();
+    const resourceFor = (p: string): string =>
+      `/p2p/${serverPeerId}/http-path/${encodeURIComponent(p.slice(1))}`;
+    const r1 = await client!.services.http.fetch(resourceFor('/one'), { method: 'GET' });
+    expect(r1.status).toBe(200);
+    expect(await r1.text()).toBe('{"from":"first"}');
+    base = stub2.base;
+    const r2 = await client!.services.http.fetch(resourceFor('/two'), { method: 'GET' });
+    expect(r2.status).toBe(200);
+    expect(await r2.text()).toBe('{"from":"second"}');
+    expect(stub1.received).toHaveLength(1);
+    expect(stub1.received[0]!.path).toBe('/one');
+    expect(stub2.received).toHaveLength(1);
+    expect(stub2.received[0]!.path).toBe('/two');
+    stub1.server.close();
+    stub2.server.close();
   }, 30_000);
 });

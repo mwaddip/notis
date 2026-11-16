@@ -978,9 +978,9 @@ export class NetNode {
           );
         }
         // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
-        // — the public role's announce holds every listen address
-        // with a concrete port; the WSS listen is appended above
-        // when the initial certificate is held, so it rides along.
+        // — the public role's address options; see
+        // `effectiveAnnounce` for the branch between `announce` (no
+        // port-0 entry) and `appendAnnounce` (any port-0 entry).
         const publicAnnounce = effectiveAnnounce(publicListen, mesh);
         // NET_INTERFACE → Node Lifecycle →
         // "Every connection libp2p opens reaches net's hooks": libp2p is
@@ -997,7 +997,10 @@ export class NetNode {
           datastore: meshDatastore,
           addresses: {
             listen: publicListen,
-            ...(publicAnnounce !== undefined ? { announce: publicAnnounce } : {}),
+            ...(publicAnnounce?.announce !== undefined ? { announce: publicAnnounce.announce } : {}),
+            ...(publicAnnounce?.appendAnnounce !== undefined
+              ? { appendAnnounce: publicAnnounce.appendAnnounce }
+              : {}),
           },
           transports: publicTransports as never,
           connectionEncrypters: [noise()],

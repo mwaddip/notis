@@ -5,7 +5,7 @@
 // circuit-relay server on a public node, DCUtR and the circuit-relay
 // transport on a private, and `@libp2p/http` serving the endpoint.
 // Without `mesh`, nothing of these is added — the plain options stand
-// byte-for-byte as they did (`NET_INTERFACE → The mesh`).
+// (`NET_INTERFACE → The mesh`).
 
 import { webRTC, webRTCDirect } from '@libp2p/webrtc';
 import { autoNATv2 } from '@libp2p/autonat-v2';
@@ -61,32 +61,41 @@ export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
 
 /**
  * `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
- * — the public role's `addresses.announce`. With an explicit
- * `mesh.announce`, that list is announced verbatim; otherwise every
- * entry in `listen` with a concrete port is announced, so libp2p
- * 3.5's `AddressManager` returns the listen addresses as verified
- * from the start (`libp2p/src/address-manager/transport-addresses.ts`
- * would otherwise hold a public IP out until AutoNAT confirms). An
- * entry with `/tcp/0` or `/udp/0` is dropped: the kernel picks the
- * port at bind, so announcing it would be a lie; libp2p 3.5's
- * WebRTC-direct listener splices `/certhash/` onto every announced
- * WebRTC-direct address at read time
- * (`@libp2p/webrtc@7.0.2/src/private-to-public/listener.ts`
- * `updateAnnounceAddrs`, called by `AddressManager.getAddressesWithMetadata`).
- * A `private` role returns `undefined` — `privateAnnounceFilter`
- * carries the private rule, announcing its relay reservations alone.
+ * — the public role's address options. The result names at most one
+ * of `announce` and `appendAnnounce`: libp2p 3.5's `AddressManager`
+ * returns `announce` alone when set and otherwise combines transport
+ * addresses, `appendAnnounce` and observed addresses
+ * (`libp2p/src/address-manager/index.ts` `getAddressesWithMetadata`).
+ *
+ * - `mesh.announce` explicit: announce that list verbatim.
+ * - no port-0 listen entry: announce exactly the listen entries, so a
+ *   public IP among them is announced from the start and does not wait
+ *   on AutoNAT (`transport-addresses.ts` would otherwise hold it out).
+ * - any port-0 listen entry: use `appendAnnounce` for the concrete
+ *   entries and let transport addresses carry the bound port-0 ones.
+ *   On loopback the transport addresses are private, so
+ *   `AddressManager` returns them verified; the WebRTC-direct
+ *   listener's `getAddrs()` carries the certhash. The concrete
+ *   entries in `appendAnnounce` ride the same `updateAnnounceAddrs`
+ *   pass, so webrtc-direct entries pick up their certhash too.
+ * - `private` role: `undefined` — `privateAnnounceFilter` carries the
+ *   private rule, announcing its relay reservations alone.
  */
 export function effectiveAnnounce(
   listen: readonly string[],
   mesh: MeshConfig,
-): string[] | undefined {
+): { announce?: string[]; appendAnnounce?: string[] } | undefined {
   if (mesh.announce !== undefined && mesh.announce.length > 0) {
-    return [...mesh.announce];
+    return { announce: [...mesh.announce] };
   }
   if (mesh.role !== 'public') return undefined;
+  const anyPortZero = listen.some((a) => /\/(tcp|udp)\/0(?:\/|$)/.test(a));
+  if (!anyPortZero) {
+    return { announce: [...listen] };
+  }
   const concrete = listen.filter((a) => !/\/(tcp|udp)\/0(?:\/|$)/.test(a));
   if (concrete.length === 0) return undefined;
-  return concrete;
+  return { appendAnnounce: concrete };
 }
 
 /**

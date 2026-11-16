@@ -19,10 +19,9 @@ import {
 import { REQUEST_TIMEOUT_MS } from '@dagsocial/node-reads';
 
 export function meshEndpoint(
-  httpBase: string,
+  httpBase: () => string | null,
   opts?: { upstreamTimeoutMs?: number },
 ): WebServer {
-  const base = httpBase.replace(/\/+$/, '');
   const upstreamTimeoutMs = opts?.upstreamTimeoutMs ?? REQUEST_TIMEOUT_MS;
   return {
     async inject(info, stream, _connection) {
@@ -33,6 +32,18 @@ export function meshEndpoint(
           await stream.close().catch(() => undefined);
           return;
         }
+        // MESH_INTERFACE → The node endpoint — the base is read per
+        // request; a `null` answer aborts the stream as a refused
+        // upstream does, with no `fetch` attempted. The throw lands in
+        // the catch below, which aborts the libp2p stream with no
+        // answer; `null` names the window before the node's HTTP API
+        // has bound (`NODE_INTERFACE → Configuration → "The node's mesh
+        // endpoint forwards to its own public listener"`).
+        const current = httpBase();
+        if (current === null) {
+          throw new Error('mesh endpoint: the node\'s HTTP API has not bound');
+        }
+        const base = current.replace(/\/+$/, '');
         const url = normalizeUrl(info);
         const init: RequestInit = {
           method,

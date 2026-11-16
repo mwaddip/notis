@@ -54,7 +54,7 @@ function meshOn(stateDir: string): MeshConfig {
     network: 'devnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
-    httpBase: 'http://127.0.0.1:0',
+    httpBase: () => 'http://127.0.0.1:0',
     stun: null,
   };
 }
@@ -175,5 +175,67 @@ describe('mesh — public-role cases', () => {
     // `start()` returns, so the handler's count can be 0 — that is not
     // a defect, the first announce may have already fired.
     expect(id!.multiaddrs.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  // `MESH_INTERFACE → NAT → "A public node announces its listen
+  // addresses from the start"` — a configuration with no port of 0
+  // announces exactly its listen addresses. Loopback and `0.0.0.0`
+  // listen forms both.
+  it('a public node with no port-0 listen announces exactly its listen entries — loopback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-pin-loop-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/19101',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/127.0.0.1/udp/19102/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    nodes.push(node);
+    const libp2p = (node as unknown as { libp2p: { peerId: { toString(): string } } }).libp2p;
+    const peerId = libp2p.peerId.toString();
+    const mas = node.meshIdentity()!.multiaddrs
+      .slice()
+      .map((a) => a.replace(/\/certhash\/[^/]+/, '/certhash/<HASH>'))
+      .sort();
+    expect(mas).toEqual([
+      `/ip4/127.0.0.1/tcp/19101/p2p/${peerId}`,
+      `/ip4/127.0.0.1/udp/19102/webrtc-direct/certhash/<HASH>/p2p/${peerId}`,
+    ]);
+  }, 30_000);
+
+  it('a public node with no port-0 listen announces exactly its listen entries — 0.0.0.0', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'net-mesh-pin-wild-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/0.0.0.0/tcp/19103',
+      mesh: {
+        role: 'public',
+        network: 'devnet',
+        listen: ['/ip4/0.0.0.0/udp/19104/webrtc-direct'],
+        stateDir: dir,
+        httpBase: () => 'http://127.0.0.1:0',
+        stun: null,
+      },
+    }), validators);
+    await node.start();
+    nodes.push(node);
+    const libp2p = (node as unknown as { libp2p: { peerId: { toString(): string } } }).libp2p;
+    const peerId = libp2p.peerId.toString();
+    const mas = node.meshIdentity()!.multiaddrs
+      .slice()
+      .map((a) => a.replace(/\/certhash\/[^/]+/, '/certhash/<HASH>'))
+      .sort();
+    expect(mas).toEqual([
+      `/ip4/0.0.0.0/tcp/19103/p2p/${peerId}`,
+      `/ip4/0.0.0.0/udp/19104/webrtc-direct/certhash/<HASH>/p2p/${peerId}`,
+    ]);
   }, 30_000);
 });

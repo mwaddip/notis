@@ -78,7 +78,7 @@ export interface StateDef {
 export const BASE: StateDef = {
   name: 'base',
   startingHeight: 60,
-  promotions: ['R', 'S', 'R2', 'R3'],
+  promotions: ['R', 'S'],
   claim: { identity: 'S', name: 'Sk5send' },
 };
 
@@ -86,7 +86,7 @@ export const BASE: StateDef = {
 // identity (R) promoted to member on the earned path, and no name
 // claim. Every manifest field a `base` load reads is also written for
 // `minimal`, so the suite exercises the generator's full shape without
-// the four promotions and the claim `base` carries.
+// the second promotion and the claim `base` carries.
 export const MINIMAL: StateDef = {
   name: 'minimal',
   startingHeight: 5,

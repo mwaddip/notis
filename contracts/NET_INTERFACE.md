@@ -1414,14 +1414,14 @@ interface MeshConfig {
   listen: string[]                // the mesh's listen addresses — a public node's WebRTC-direct among them
   announce?: string[]
   stateDir: string                // the WebRTC-direct certificate's datastore, the ACME account and certificate
-  httpBase: string                // the node's public HTTP API on loopback, the endpoint's upstream
+  httpBase: () => string | null   // the node's public HTTP API on loopback, read per request; null until it has bound
   stun?: { host: string; port: number }        // a public node's STUN server
   stunServers?: string[]          // a private node's ICE servers, stun:<ip>:<port> alone
   wss?: { ip: string; port: number; acmeDirectory: string; challengePort: number }  // public alone
   relayRetryBaseMs?: number       // RETRY_BASE_MS when absent
   relayRetryCapMs?: number        // RETRY_CAP_MS when absent
   relayListenTimeoutMs?: number   // one reservation attempt's deadline; RELAY_LISTEN_TIMEOUT_MS when absent
-  upstreamTimeoutMs?: number      // the endpoint's wait on httpBase; REQUEST_TIMEOUT_MS when absent
+  upstreamTimeoutMs?: number      // the endpoint's wait on the upstream; REQUEST_TIMEOUT_MS when absent
 }
 ```
 

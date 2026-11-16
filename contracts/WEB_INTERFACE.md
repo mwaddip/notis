@@ -139,7 +139,9 @@ Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's th
 workflow's linux job runs. Never an installer. `<ver>` is the repository's version, the one the node's
 artifacts carry. **A zip holds one build**: each script assembles its zips in a directory of its own, made empty for
 that run and removed however the run ends, and moves each finished zip into the repository's root over any zip of
-that name — never adding to one that stands there.
+that name — never adding to one that stands there. `build-extension.sh` moves its two into the directory
+`NOTIS_EXTENSION_OUT` names instead, where a caller sets it — the extension check builds there
+(`EXTENSION_CHECK_INTERFACE → Builds`), so a check never touches a release zip in the root.
 
 **The extension ships beside it, twice.** Each release also carries **`notis-extension-<ver>-chrome.zip`**
 and **`notis-extension-<ver>-firefox.zip`** — the same client built as an extension page (→ The

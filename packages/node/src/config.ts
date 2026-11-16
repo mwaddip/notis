@@ -173,10 +173,13 @@ export interface Config {
   /**
    * The mesh a `public` or `private` node runs — `null` with no
    * `MESH_ROLE` (NODE_INTERFACE → Configuration; NET_INTERFACE → The
-   * mesh). `index.ts` passes it as the `NetConfig.mesh` of this
-   * node's `NetNode`, substituting `undefined` for `null`.
+   * mesh). `index.ts` completes it with the `httpBase` function
+   * (NODE_INTERFACE → Configuration → "The node's mesh endpoint
+   * forwards to its own public listener") and passes it as the
+   * `NetConfig.mesh` of this node's `NetNode`, substituting
+   * `undefined` for `null`.
    */
-  mesh: MeshConfig | null;
+  mesh: Omit<MeshConfig, 'httpBase'> | null;
 }
 
 export function loadConfig(): Readonly<Config> {
@@ -190,10 +193,6 @@ export function loadConfig(): Readonly<Config> {
   const decay = decayCfgFor(profile);
 
   const dbPath = process.env['DB_PATH'] ?? 'dagsocial.db';
-  // Named once rather than read twice: `port` reaches the HTTP listener as
-  // `cfg.port` and the mesh's `httpBase` as `http://127.0.0.1:<port>`
-  // (NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards to
-  // its own public listener").
   const port = readWholeNumber('PORT', 3000, { floor: 0, port: true });
 
   const cfg: Config = {
@@ -280,7 +279,6 @@ export function loadConfig(): Readonly<Config> {
       acmeChallengePort: process.env['MESH_ACME_CHALLENGE_PORT'],
       network: profile.networkType,
       dbPath,
-      port,
     }),
   };
 
@@ -622,15 +620,6 @@ function meshStateDirFor(dbPath: string): string {
 }
 
 /**
- * NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards
- * to its own public listener" — `httpBase` is `http://127.0.0.1:<PORT>`,
- * never `ADMIN_PORT`'s listener, and no setting names another.
- */
-function meshHttpBaseFor(port: number): string {
-  return `http://127.0.0.1:${port}`;
-}
-
-/**
  * NODE_INTERFACE → Configuration — a comma-separated list, trimmed
  * and emptied of blanks. Unset or empty yields `[]`.
  */
@@ -761,8 +750,7 @@ function parseMeshConfig(opts: {
   acmeChallengePort: string | undefined;
   network: 'devnet' | 'testnet' | 'mainnet';
   dbPath: string;
-  port: number;
-}): MeshConfig | null {
+}): Omit<MeshConfig, 'httpBase'> | null {
   if (opts.role === undefined) return null;
   if (opts.role !== 'public' && opts.role !== 'private') {
     throw new Error(
@@ -802,12 +790,11 @@ function parseMeshConfig(opts: {
   if (role === 'private' && wss !== undefined) {
     throw new Error('Invalid MESH_WSS — a private node does not serve WSS');
   }
-  const mesh: MeshConfig = {
+  const mesh: Omit<MeshConfig, 'httpBase'> = {
     role,
     network: opts.network,
     listen,
     stateDir: meshStateDirFor(opts.dbPath),
-    httpBase: meshHttpBaseFor(opts.port),
     ...(announce.length > 0 ? { announce } : {}),
     ...(stun !== undefined ? { stun } : {}),
     ...(stunServers.length > 0 ? { stunServers } : {}),

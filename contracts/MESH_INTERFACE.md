@@ -135,8 +135,11 @@ whichever relays it holds.
 **A public node announces its listen addresses from the start.** libp2p holds back a listen address on a public IP
 until a peer confirms it, but an operator who declares a node `public` has said the address is reachable, and a node
 that announced nothing could be found by no one. So a `public` node announces every listen address with a concrete
-port — the WebRTC-direct ones carrying their certificate hash — and prints its identity only once they are announced.
-A `private` node announces its relay reservations alone.
+port from the start — the WebRTC-direct ones carrying their certificate hash — and prints its identity only once they
+are announced; a configuration with no port of 0 announces exactly its listen addresses. **A listen address with a
+port of 0 is announced at the port it bound, as libp2p announces any address it bound** — a loopback or private one at
+once, a public one once a peer confirms it: the operator named no port there, so the declaration of `public` vouches
+for none. A `private` node announces its relay reservations alone.
 
 **Every STUN server is a mesh node named by IP** — `stun:<ip>:<port>`; a client refuses an ICE server named by a
 hostname. Only the relayed WebRTC path uses STUN; WebRTC-direct to a public address needs none. **A client's STUN list
@@ -276,7 +279,10 @@ known key's current addresses.
 A mesh node answers HTTP over libp2p (`@libp2p/http`) by forwarding each `GET` and `POST` to its own public HTTP API on
 loopback — never its admin port — a `POST`'s body and `content-type` as sent, and answering with the upstream's status,
 `content-type` and body bytes as they came. Any other method answers `405`. Every cap the node holds a request to over
-HTTP holds over the mesh the same, `HTTP_BODY_MAX_BYTES` among them.
+HTTP holds over the mesh the same, `HTTP_BODY_MAX_BYTES` among them. **The endpoint forwards to the address its node
+names once its HTTP API has bound** (`NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards to its own
+public listener"`); a request before then is answered as one whose upstream refused the connection — its stream
+aborted.
 
 The client's side is an `HttpFetch` over the mesh URL: `GET` and `POST`, ending at `REQUEST_TIMEOUT_MS` as every read
 does (`CONSTANTS → Client reads`). Every cap a reader holds an answer to over HTTP holds over the mesh the same.

@@ -1,249 +1,172 @@
 #!/usr/bin/env node
-// The extension proof — the twelve steps of WEB_INTERFACE → The extension
-// plus the four links-into-the-extension steps, the verified-tip block
-// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
-// (21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25) and the verified-names block
-// (26 · 29 · 27a–d · 28a–b · 30), each read verbatim, over raw CDP against a
-// live devnet stack. Drives the App's real UI on the extension's own page: the
-// composer, the like word, the profile and wallet windows' rows, and the prompt
-// window found by its `prompt.html?id=` URL. The verified-tip block runs
-// against a second stack the harness owns — node B (server, bootstrapped from
-// A), node D (isolated, its chain mined on demand for 19b heavier than A/B and
-// for 19c lighter than B), and two switchable relays RLA in front of A and RLB
-// in front of B on fixed ports (`RLA_PORT`, `RLB_PORT`), each with a mode the
-// harness sets between steps: `honest` (every request passed through),
-// `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
-// not verify), `proof-short` (the proof route answered 404 chain-too-short,
-// `NODE_INTERFACE → Nipopow`), `upstream-D` (every request passed to D), and
-// `down` (every request's connection ends with no status, so the client reads
-// a transport failure — the mode the waiting-writes block runs under).
-// The build's seed list names the two relays as its two entries, each
-// `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
-// its api alone (`MESH_INTERFACE → The client's node list → "An entry may
-// carry an API base"`), so every read the extension makes passes through one
-// of them. A fresh page is a fresh client (`WEB_INTERFACE → The extension →
-// "The contexts, and what each may hold"`) — each tip-block step opens its
-// own after the relays' modes are set. The verified-figures block brings up
-// a B of its own and, for its six lie arms (22a · 22b · 22c · 22d · 22e · 23),
-// sets each figures mode on both tip relays and opens a fresh page per arm;
-// the verified-names block brings up a B of its own too, and each of its lie
-// arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
-// The waiting-writes block (W1 · W2 · W3 · W4 · W5) runs after the three verified
-// blocks in the relays build — the one whose seed list is RLA and RLB in
-// front of A and B — and covers WEB_INTERFACE → The wallet → "A write no node
-// answers waits", → "Waiting writes go out at the first answer", → "A
-// refusal ends what it strands", → "A waiting write is drawn as pending",
-// and → The extension → "The post cache" → "A failed listing draws the
-// cache". Both relays are in `down` mode for W1, W2 and W4's build-up — a
-// client read reads a transport failure; honest for W3's flush and for W4's
-// final step. W4's outside spend replaces R's karma box through the node's
-// HTTP write path with a withdraw built from `@dagsocial/types`' primitives
-// and signed by the harness's own Node crypto, so the stranded write of the
-// waiting chain is refused at the first flush.
-// The light block
-// (L1 … L14) covers how the extension reads its lists light with ids and the
-// node's word, draws cached posts at once, shows slots for the rest and
-// resolves those through POST /posts/batch across the client's order for an
-// older read (the mesh nodes the need allows, then the API bases of the
-// rest) — WEB_INTERFACE → The extension → "The light read", "The resolve",
-// "The post check", "The post cache", "The chain's name". It runs against
-// two relays the harness owns — RA on 19810 in front of node A, RB on 19815
-// in front of node B — each in one of eight modes at a time (honest, text,
-// drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
-// spawned on 19820.
-// The mesh block (M1 · M2 · M3 · M4 · M5) proves the mesh path in the built
-// extension — WEB_INTERFACE → The extension →
-// "The mesh is the extension's first path",
-// → "Nothing retries a rejection"'s
-// "A send that ends with no answer is no rejection",
-// → "A serving read is answered from it";
-// WEB_INTERFACE → The settings window → "The serve row";
-// MESH_INTERFACE → The client's node list →
-// "A routed read goes to a node its need allows",
-// → "The client's order for a need",
-// → "A write goes to one node at a time";
-// MESH_INTERFACE → Block gossip →
-// "A client that serves answers the nodes it reads";
-// NODE_INTERFACE → Posts DAG →
-// "A serving reader is asked for what has been due";
-// JOURNAL_EVENTS → post_received. The block owns
-// two nodes A' and B' spawned from --node-dist with MESH_ROLE=public,
-// MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off
-// (two public nodes on one loopback cannot share STUN_PORT), both
-// bootstrapped off A (--node-p2p) so they are peers on A's chain. For M5
-// the block also owns an isolated node D — its store a consistent copy of
-// A''s taken while A' runs (`sqlite3 .backup`), with M3's post's text
-// nulled on the copy — spawned MESH_ROLE=public, its own MINING_SECRET and
-// miner, BOOTSTRAP_PEERS empty, reached by the extension as a hand-added
-// node (`notis.node.hand` in the extension page's localStorage, the
-// webrtc-direct multiaddr D's identity line carries); M5 does not answer
-// the disagreement the hand-added node raises.
-// The extension built for --mesh names each node in its seed list as
-// `{notisId, addrs:[<webrtc-direct multiaddr with certhash and /p2p/>],
-// api:<HTTP base>}`, and the harness refuses to run unless the shell's
-// `notis-nodes` carries exactly that shape — printing the VITE_NODES to
-// rebuild with. Chromium takes `--allow-loopback-in-peer-connection` for a
-// --mesh run (a harness switch for a loopback stage, not a product
-// setting): without it a browser refuses the RTCPeerConnection to 127.0.0.1
-// and no mesh connection opens.
+// The extension's proof in a browser — one block per process, selected by
+// --block (EXTENSION_CHECK_INTERFACE → Blocks). The harness drives the built
+// extension in headless Chromium over raw CDP against a devnet stack it does
+// not own, through the App's real UI on the extension page: the composer,
+// the like word, the profile and wallet windows' rows, and the prompt window
+// found by its `prompt.html?id=` URL.
 //
-// The seed list the extension is built with carries two node entries whose
-// addrs are empty and whose api names the harness's own base — RLA and RLB
-// for the verified blocks, RA and RB for --light. An entry with no addrs is
-// reached at its api alone (MESH_INTERFACE → The client's node list → "An
-// entry may carry an API base"); this run keeps every block on HTTP, and the
-// extension's mesh client does no WebRTC dial. Each relay stands in front of
-// one node and the harness switches its mode between steps — no second build
-// is needed, and no settings-row change, since the relay is already on the
-// path (WEB_INTERFACE → The extension → "The verified tip", "The contexts,
-// and what each may hold").
+// Blocks:
+//   writes    1–12                                    (WEB_INTERFACE → The extension)
+//   links     13a, 13, 14, 15, 16, 13-uncancelled     (WEB_INTERFACE → The extension → "Links into the extension")
+//   tip       17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20
+//                                                     (WEB_INTERFACE → The extension → "The verified tip")
+//   figures   21, 24, 22a, 22b, 22c, 22d, 22e, 23, 25 (WEB_INTERFACE → The extension → "The verified figures")
+//   names     26, 29, 27a, 27b, 27c, 27d, 28a, 28b, 30
+//                                                     (WEB_INTERFACE → The extension → "The verified names")
+//   waiting   W1, W2, W3, W4, W5                      (WEB_INTERFACE → The wallet → "A write no node answers waits")
+//   light     L1–L14                                  (WEB_INTERFACE → The extension → "The light read")
+//   mesh      M1–M5                                   (WEB_INTERFACE → The extension → "The mesh is the extension's first path")
 //
-// Preconditions:
-//  1. A devnet stack that `tools/test-state/dist/cli.js up base --dir <run-dir>`
-//     brings up — node A at --node (`up`'s `nodeHttp`), the faucet at
-//     `--faucet <up's faucetOrigin>/faucet` (the faucet runs from the tree's
-//     `tools/faucet`, and `--faucet` names its origin with the `/faucet`
-//     prefix the service routes under) and a miner on a steady cadence (6 s
-//     by default) that also answers `POST /mine-to { "height": <n> }` at
-//     --miner-control (`up`'s `minerControlOrigin`). `up`'s `nodeP2p` is
-//     --node-p2p for every block that spawns B; `up`'s `identities` carries
-//     R's and S's key files for --r-key and --s-key. The harness starts no
-//     process of that stack and tears none down; `down --dir <run-dir>` is
-//     the state's own stop (TEST_STATE_INTERFACE → Loading a state).
-//  2. The extension was built via build-extension.sh with devnet values
-//     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
-//     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
-//     at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
-//     api:RB}] for --light, and at [{notisId:<A'>, addrs:[<A' webrtc-
-//     direct>], api:<A' HTTP base>}, {notisId:<B'>, addrs:[<B' webrtc-
-//     direct>], api:<B' HTTP base>}] for --mesh. The builds differ and a
-//     run takes one; --light and --mesh each refuse combination with any
-//     other verified flag. Each `notisId` is read from its node's start
-//     line; the mesh build's addrs[0] is the webrtc-direct multiaddr that
-//     start line names in `multiaddrs`.
-//  3. For --verified-names: `up`'s state holds S with a name claimed —
-//     `base` is one such state (TEST_STATE_INTERFACE → The base state).
+// Every block runs steps 1 and 2 (the seed-list check and R's import) and
+// then its own steps on R (EXTENSION_CHECK_INTERFACE → Blocks). A step
+// outside the run's block reads `NOT RUN` with the reason naming the block
+// that runs it. An absent or unknown `--block` is refused (exit 2).
 //
-// Modes:
-//   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
-//   --r-key: 1–12 run, then 13–16 with --public and --web-dist (NOT RUN
-//     without them); then each block below runs on its flag, in this order,
-//     and reads NOT RUN by name without it.
-//   --verified-tip: 17a–20.
-//   --verified-figures: 21·24·22a·22b·22c·22d·22e·23·25. The figures run hangs on
-//     a verified tip (WEB_INTERFACE → The extension → "The verified figures"),
-//     which needs a second verified node, so the figures block runs B as the
-//     tip block does; hence --verified-figures requires --node-dist, --scratch
-//     and --node-p2p as well as --r-key (config error at the top otherwise, as
-//     --verified-tip is with its own four).
-//   --verified-names: 26·29·27a–d·28a–b·30. A name check proves against the
-//     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
-//     names"), so the block runs a B of its own and requires what
-//     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
-//   Waiting-writes block: W1·W2·W3·W4·W5 (WEB_INTERFACE → The wallet → "A write
-//     no node answers waits", → "Waiting writes go out at the first answer",
-//     → "A refusal ends what it strands", → "A waiting write is drawn as
-//     pending", → "A page no node answers offers what can wait"; → The
-//     extension → "A failed listing draws the cache"). Runs after the three
-//     verified blocks in the relays build, whenever any of
-//     --verified-{tip,figures,names} is passed with --r-key — the relays are
-//     up and R's identity is loaded. W1 and W2 open one fresh page under
-//     `down` on both relays; W3 presses the corner on the same page with
-//     both relays honest; W4 opens another fresh page under `down`, presses
-//     two root posts from the composer whose builders chain on the rep
-//     queue, replaces R's karma box on the chain through a withdraw the
-//     harness builds and submits, then sets both relays honest; W5 opens a
-//     fresh page under `down` on both relays and asserts the controls a page
-//     no node answers offers — the withdraw control enabled on a cached R
-//     root in a pane, with its confirm row and `keep`, the rep row's `—` and
-//     the invites row with no form, the balance row's `—`, and the `your
-//     vouch` row of a cached non-R card's author window reading `—` with no
-//     `vouch` word — the step writes nothing, and neither relay's log carries
-//     a POST for its span.
-//   --waiting-only: iterate on the waiting-writes block alone. Runs steps
-//     1 and 2 (seed list check and R's import), brings up the two tip
-//     relays in front of A (RLB's upstream is A too, since B is not
-//     needed), skips steps 3–20 and the verified-tip / figures / names
-//     blocks, then runs the waiting-writes block and the [diag]
-//     liveness line, and ends — 13-uncancelled and the mesh block are
-//     recorded NOT RUN. Requires --r-key and refuses combination with
-//     --verified-{tip,figures,names}, --light or --mesh. **The full run
-//     is the record**; this flag is for turning the block over fast
-//     while a defect of it is being tracked down.
-//   --light: L1·L2·L3·L4·L5·L6·L7·L8·L9·L10·L11·L12·L13·L14. The light read,
-//     the resolve, the post check, the post cache and the chain's name
-//     (WEB_INTERFACE → The extension → "The light read", "The resolve", "The
-//     post check", "The post cache", "The chain's name"). Requires --r-key,
-//     --node-dist, --miner, --scratch and --node-p2p (the block owns both
-//     relays and its own isolated D for L13). L14 reads the hosted web build
-//     and reads NOT RUN without --public / --web-dist. Takes an extension
-//     build whose notis-nodes is exactly [RA, RB], not [A, B]; the harness
-//     refuses to run on anything else, and refuses combination with any
-//     --verified-{tip,figures,names} flag.
-//   --mesh: M1·M2·M3·M4·M5. Reads over the mesh, reads at the API base when no
-//     mesh node serves, a write over the mesh, a write with no answer
-//     going to the next node, and a node filling a post's text from a
-//     serving extension — WEB_INTERFACE → The extension →
-//     "The mesh is the extension's first path",
-//     WEB_INTERFACE → The settings window → "The serve row";
-//     MESH_INTERFACE → The client's node list, → Block gossip →
-//     "A client that serves answers the nodes it reads";
-//     NODE_INTERFACE → Posts DAG →
-//     "A serving reader is asked for what has been due".
-//     Requires --r-key, --node-dist, --miner, --scratch and --node-p2p (A'
-//     bootstraps from --node-p2p so A'/B' are peers on A's chain and R's
-//     karma reaches them; --miner mines M5's isolated D). Takes an extension
-//     build whose notis-nodes is exactly
-//     [{notisId:<A'>, addrs:[<A' webrtc-direct>], api:<A' HTTP base>},
-//     {notisId:<B'>, …}]; refuses otherwise, and refuses combination with
-//     --verified-{tip,figures,names} or --light.
-//   20, 25, 30 and L14 read the hosted web build, and read NOT RUN without
-//     --public and --web-dist.
-//   No --r-key and no --verified-tip: every step reads NOT RUN by name.
+// The seed list the harness writes into the copy's shell, by block:
+//   writes, links, tip, figures, names, waiting — [{notisId:A, addrs:[], api:RLA},
+//     {notisId:B, addrs:[], api:RLB}] in front of A and B. RLB's upstream is
+//     A for `waiting` (W4's refusal reads A's pool, so a B behind RLB would
+//     change what the step meets); otherwise RLB starts with no upstream and
+//     `bringUpNodeB` moves it to B's origin on the first spawn. `writes` and
+//     `links` never spawn B, so RLB answers 502 past setup
+//     (`EXTENSION_CHECK_INTERFACE → Addresses`).
+//   light — [{notisId:A, addrs:[], api:RA}, {notisId:B, addrs:[], api:RB}].
+//   mesh — [{notisId:A', addrs:[<A' webrtc-direct>], api:AP_ORIGIN},
+//           {notisId:B', addrs:[<B' webrtc-direct>], api:BP_ORIGIN}], the
+//     multiaddrs each node's identity line carries.
+//
+// Modes on the two tip relays, set between steps on both at once (one at a
+// time):
+//   honest, proof-invalid, proof-short, upstream-D, down (tip, waiting);
+//   credits-fake, credits-foreign, credits-drop, credits-drop-tipplus1,
+//     karma-drop, avl-flip (figures);
+//   label-rename, owner-404, owner-fakebox, name-owner, name-fakebox (names);
+//   and on `light`'s RA/RB: honest, text, drop, hold, hang, list-down,
+//     list-replay, down.
+//
+// Addresses are OS-bound and read back from the process that holds each
+// (EXTENSION_CHECK_INTERFACE → Addresses). One address is the build's:
+// the hosted page's public origin, carried by the extension's background
+// and bridge as built (--public). The `links` block serves the hosted page
+// there; `tip`, `figures`, `names` and `light` serve it on an address of
+// their own under the same base path, and their hosted-page steps (20, 25,
+// 30, L14) open that address.
+//
+// The `figures` and `names` blocks ask the faucet for R's credits through
+// `POST <--faucet>/credits` before their steps — R from `base` holds no
+// $NOTIS, and step 21 (and step 29's send) needs a balance. The preparation
+// asks the stack's miner for the next heights and waits until R's plain
+// `/credits` on A lists a box the grant made, the node's own word; a
+// refusal or missed landing fails the block's steps with the reason.
+//
+// Each block's requirements:
+//   every block            --r-key, --node, --faucet, --extension-dir, --scratch
+//   writes, links, tip,
+//     figures, names,
+//     waiting, light       --node-id (A's notisId, written into the seed list)
+//   links, tip, figures,
+//     names, light         --public, --web-dist (hosted-page step)
+//   tip, light, mesh       --miner (the harness-owned miner)
+//   tip, figures, names,
+//     light, mesh          --node-dist, --node-p2p (spawns a second node)
+//   names                  --s-key (step 29 sends to S's handle)
+//
+// --miner-control: before each A-height wait whose target is known ahead,
+// the harness posts `/mine-to` to the stack's miner for that target and
+// then runs the wait as it stands (the wait confirms A's own height). The
+// four asks: the pre-flight A ≥ m + k + 14, step 21's landed + k + 1,
+// step 24's landed + k + 1, and step 29's claimedAtBlock + k. 28b's
+// anchor-past wait stays on the steady cadence — the step observes A
+// mining past the anchor (WEB_INTERFACE → The extension → "The verified
+// names"). Without the flag every wait runs on the stack's cadence
+// (TEST_STATE_INTERFACE → Blocks during a run).
+//
+// Chromium takes `--allow-loopback-in-peer-connection` on a `--block mesh`
+// run (a harness switch for a loopback stage, not a product setting): a
+// browser refuses the RTCPeerConnection to 127.0.0.1 without it and no
+// mesh connection opens. The `--block mesh` A' and B' listen on
+// `/ip4/127.0.0.1/udp/<port>/webrtc-direct`, and `setupMeshStack`
+// spawns A' and B', reads each node's identity line, and writes the
+// two entries into the copy's shell as `notis-nodes` before Chromium
+// launches (`writeAndVerifyCopyShells` runs after `setupMeshStack`,
+// `EXTENSION_CHECK_INTERFACE → Builds`); the webrtc-direct multiaddr
+// each identity line carries is refused as a `ConfigError` where the
+// expected mesh port is not among them.
 //
 // Usage:
-//   node scripts/extension-check/run.mjs \
-//     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
-//     [--miner-control <origin>] \
-//     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--mesh --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--waiting-only] \
-//     [--public <origin+base> --web-dist <dir>]
-//
-// --miner-control: with it, before each A-height wait whose target is known
-// ahead of the wait, the harness posts `/mine-to` to the stack's miner for
-// that target and then runs the wait as it stands (the wait confirms A's
-// own height). The four asks: the pre-flight A ≥ m + k + 14, step 21's
-// landed + k + 1, step 24's landed + k + 1, and step 29's claimedAtBlock
-// + k. 28b's stale-anchor wait stays on the steady cadence — the step
-// observes A mining past the anchor (WEB_INTERFACE → The extension → "The
-// verified names"). Without the flag every wait runs on the stack's
-// cadence (TEST_STATE_INTERFACE → Blocks during a run).
+//   node packages/web/scripts/extension-check/run.mjs \
+//     --block <writes|links|tip|figures|names|waiting|light|mesh> \
+//     --extension-dir <path> --r-key <path> --node <origin> --faucet <origin> \
+//     --scratch <dir> \
+//     [--node-id <64 hex>] \
+//     [--s-key <path>] \
+//     [--node-dist <path>] [--miner <path>] [--node-p2p <multiaddr>] \
+//     [--public <origin+base> --web-dist <dir>] \
+//     [--miner-control <origin>]
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from 'node:crypto';
 import { computeTxId, txToJson } from '@dagsocial/types';
+import { loadNodeKey } from '@dagsocial/net';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
-// Boolean flags — never consume the next argument. Without this the parser
-// below reads the following flag as the flag's value, and every arg after
-// `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh', 'waiting-only']);
+// The arguments the harness reads. Every `--name` on the command line is
+// matched against this set; anything else is refused before any copy, key
+// or process. `block` is required and validated below; the rest take a
+// value, each with its own meaning read in the sites below.
+const KNOWN_ARGS = new Set([
+  'block',
+  'extension-dir',
+  'r-key',
+  's-key',
+  'node',
+  'faucet',
+  'extension-id',
+  'public',
+  'web-dist',
+  'node-id',
+  'node-dist',
+  'node-p2p',
+  'miner',
+  'miner-control',
+  'scratch',
+  'summary',
+  'clock-offset-ms',
+  'preload',
+]);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
-  if (!arg.startsWith('--')) continue;
+  if (!arg.startsWith('--')) {
+    console.error(`unexpected positional argument: ${arg}`);
+    process.exit(2);
+  }
   const name = arg.slice(2);
-  if (BOOLEAN_FLAGS.has(name)) { args.set(name, true); continue; }
+  if (!KNOWN_ARGS.has(name)) {
+    console.error(`--${name} is not an argument the harness reads — one of: ${[...KNOWN_ARGS].map((n) => '--' + n).join(', ')}`);
+    process.exit(2);
+  }
   args.set(name, process.argv[++i]);
+}
+
+// EXTENSION_CHECK_INTERFACE → Blocks — one required argument naming the
+// block the process runs. An absent or unknown `--block` is refused with
+// the eight names.
+const BLOCKS = ['writes', 'links', 'tip', 'figures', 'names', 'waiting', 'light', 'mesh'];
+const BLOCK = args.get('block') ?? null;
+if (BLOCK === null) {
+  console.error(`--block <name> is required — one of: ${BLOCKS.join(', ')}`);
+  process.exit(2);
+}
+if (!BLOCKS.includes(BLOCK)) {
+  console.error(`--block ${JSON.stringify(BLOCK)} is not one of: ${BLOCKS.join(', ')}`);
+  process.exit(2);
 }
 const EXT_DIR = args.get('extension-dir');
 const R_KEY = args.get('r-key');
@@ -252,6 +175,12 @@ const FAUCET = args.get('faucet') ?? 'http://localhost:3103';
 const EXT_ID = args.get('extension-id') ?? 'kafmnekclgkjnkhnbafdoefnlllboddm';
 const PUBLIC = args.get('public') ?? null;
 const WEB_DIST = args.get('web-dist') ?? null;
+// A's `notisId` — the 64-hex key its node prints as `notisId` on its first
+// JSON start line (`up`'s `notisId`, `NET_INTERFACE → The node key`). The
+// seed list the harness writes names this value for A's entry (RLA for the
+// writes, links, tip, figures, names and waiting blocks, RA for the light
+// block).
+const NODE_ID = args.get('node-id') ?? null;
 // The stack's miner-control origin — `up`'s `minerControlOrigin`
 // (TEST_STATE_INTERFACE → What a caller reads). Null runs every wait on
 // the stack's steady cadence; a given origin asks for each A-height wait
@@ -274,38 +203,41 @@ let TIP_K = null;
 // extension page origin's memory: `decodeNipopowProof` and `compareProofs`
 // from `@dagsocial/nipopow`, `verifierProfile` from `@dagsocial/nipopow-
 // client`, `profileFor` from `@dagsocial/types`. Loaded once at start under
-// the same guard TIP_M / TIP_K take, so a run that does not need the
-// verified-tip block pays nothing for these imports.
+// the same guard TIP_M / TIP_K take, so a block that reads no proof pays
+// nothing for these imports.
 let NIPOPOW_DECODE = null;
 let NIPOPOW_COMPARE = null;
 let NIPOPOW_VERIFIER_PROFILE = null;
 let TYPES_PROFILE_FOR = null;
 
-// The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
-// steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
-// by name, as 13–16 do without --public / --web-dist.
-const VERIFIED_TIP = args.get('verified-tip') === true;
-// The verified-figures block — WEB_INTERFACE → The extension → "The verified
-// figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
-// states read A, and the six lie arms read the two tip relays with their mode
-// set on both. Absent, every step reads NOT RUN by name.
-const VERIFIED_FIGURES = args.get('verified-figures') === true;
-// The verified-names block — WEB_INTERFACE → The extension → "The verified
-// names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
-// to S's handle, the hosted web build. Absent, every step reads NOT RUN by
-// name.
-const VERIFIED_NAMES = args.get('verified-names') === true;
-// The light block — WEB_INTERFACE → The extension → "The light read", "The
-// resolve", "The post check", "The post cache", "The chain's name". Steps L1
-// … L14: a cold feed held, a reload reads the cache, the reader's own post
-// asks no node, the pointer walks the nodes, a node that leaves ids out, a
-// node that lies, a lie no node corrects, no node serves, a node that never
-// answers, a cold thread, a held thread whose listing fails, a withdrawal,
-// another chain and the hosted web build. Two relays — RA in front of A, RB
-// in front of B — each in one of eight modes at a time (honest, text, drop,
-// hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
-// Absent, every step reads NOT RUN by name.
-const LIGHT = args.get('light') === true;
+// Internal aliases of the selected block, used wherever a block-specific
+// branch reads the flag from `BLOCK` (EXTENSION_CHECK_INTERFACE → Blocks).
+const WRITES = BLOCK === 'writes';
+const LINKS = BLOCK === 'links';
+// The tip block — WEB_INTERFACE → The extension → "The verified tip",
+// steps 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
+const VERIFIED_TIP = BLOCK === 'tip';
+// The figures block — WEB_INTERFACE → The extension → "The verified
+// figures", steps 21, 24, 22a, 22b, 22c, 22d, 22e, 23, 25. The six lie
+// arms read the two tip relays with their mode set on both; the honest
+// states read A.
+const VERIFIED_FIGURES = BLOCK === 'figures';
+// The names block — WEB_INTERFACE → The extension → "The verified names",
+// steps 26, 29, 27a–d, 28a, 28b, 30. R claims a name, the row reads it in
+// ink on every surface, a send typed to S's handle, each lie arm on a
+// fresh page, and the hosted web build.
+const VERIFIED_NAMES = BLOCK === 'names';
+// The light block — WEB_INTERFACE → The extension → "The light read",
+// "The resolve", "The post check", "The post cache", "The chain's name".
+// Steps L1–L14: a cold feed held, a reload reads the cache, the reader's
+// own new post asks no node, the pointer walks the nodes, a node that
+// leaves ids out, a node that lies, a lie no node corrects, no node
+// serves, a node that never answers, a cold thread, a held thread whose
+// listing fails, a withdrawal, another chain and the hosted web build.
+// Two relays — RA in front of A, RB in front of B — each in one of eight
+// modes at a time (honest, text, drop, hold, hang, list-down, list-replay,
+// down); its own node D on `DL_HTTP_PORT` for L13.
+const LIGHT = BLOCK === 'light';
 // The mesh block — WEB_INTERFACE → The extension →
 // "The mesh is the extension's first path",
 // → "Nothing retries a rejection"'s
@@ -321,55 +253,79 @@ const LIGHT = args.get('light') === true;
 // NODE_INTERFACE → Posts DAG →
 // "A serving reader is asked for what has been due";
 // JOURNAL_EVENTS → post_received.
-// Steps M1 · M2 · M3 · M4 · M5: reads over the mesh with zero HTTP, reads at
-// the API base when no mesh node serves, a write over the mesh landing on
-// both nodes, a write with no answer going to the next node, and a node
-// filling a post's text from a serving extension. The block owns its own
-// two mesh nodes A' and B' (spawned from NODE_DIST with MESH_ROLE=public,
+// Steps M1–M5: reads over the mesh with zero HTTP, reads at the API base
+// when no mesh node serves, a write over the mesh landing on both nodes,
+// a write with no answer going to the next node, and a node filling a
+// post's text from a serving extension. The block owns its own two mesh
+// nodes A' and B' (spawned from NODE_DIST with MESH_ROLE=public,
 // MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct, MESH_STUN=off; B'
-// bootstrapped from A') and refuses to run unless the extension under check
-// was built with the seed list naming each as `{notisId:<key>,
-// addrs:[<webrtc-direct multiaddr with certhash>], api:<HTTP base>}` — the
-// harness prints the VITE_NODES to rebuild with when the shape disagrees.
-// For M5 the block owns an isolated node D — its store a consistent copy
-// of A''s taken while A' runs, M3's post's text nulled on the copy — with
-// its own MINING_SECRET and miner, no peers, reached by the extension as a
-// hand-added node through `notis.node.hand` in the extension page's
-// localStorage. Absent, every step reads NOT RUN by name.
-const MESH = args.get('mesh') === true;
-// --waiting-only: iterate on the waiting-writes block alone. The harness
-// runs steps 1 and 2 (the seed list check and R's import — the only
-// earlier state the block needs), brings up the two tip relays in front
-// of A (both relays' upstream is A, since B is not needed), skips steps
-// 3–20 and the verified-tip / figures / names blocks, then runs the
-// waiting-writes block (prep · W1 · W2 · W3 · W4 · W5) and the `[diag]`
-// liveness line, and ends — 13-uncancelled and the mesh block read
-// NOT RUN. The full run is the record; this flag is for turning the
-// block over fast while a defect of it is being tracked down.
-const WAITING_ONLY = args.get('waiting-only') === true;
+// bootstrapped from A'); for M5 it owns an isolated node D on a store
+// copied from A' with M3's post's text nulled.
+const MESH = BLOCK === 'mesh';
+// The waiting block — WEB_INTERFACE → The wallet → "A write no node
+// answers waits", → "Waiting writes go out at the first answer", → "A
+// refusal ends what it strands", → "A waiting write is drawn as pending",
+// → "A page no node answers offers what can wait"; → The extension → "A
+// failed listing draws the cache". Steps W1–W5 under the two tip relays
+// in front of A (RLB's upstream is A too, since the block spawns no B):
+// W1 and W2 open one fresh page under `down` on both relays; W3 presses
+// the corner on the same page with both relays `honest`; W4 opens another
+// fresh page under `down`, presses two root posts whose builders chain on
+// the rep queue, replaces R's karma box on the chain through a withdraw
+// the harness builds and submits, then sets both relays `honest`; W5
+// opens a fresh page under `down` on both relays and asserts the controls
+// a page no node answers offers.
+const WAITING = BLOCK === 'waiting';
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
 const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B and for C's first life
-// The harness's own ports for its spawned children (17–20's stack). Kept
-// clear of Chrome's debugger range (19200–19699), the e2e range (11000–12899)
-// and the dagsocial-miner unit's testnet ports.
-const B_HTTP_PORT = 19770;
-const B_ADMIN_PORT = 19771;
-const B_P2P_PORT = 19772;
-const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
-// The verified blocks' two relays — RLA in front of A, RLB in front of B.
-// The extension built for the verified-tip / figures / names runs names these
-// two bases in its seed list (`[{notisId, addrs: [], api: RLA}, {notisId,
-// addrs: [], api: RLB}]`), each entry reached at its api alone
-// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
-// base"`), so every read the extension makes passes through one of them. Each
-// relay carries a mode the harness sets between steps, on both relays at once
-// — the one hostile edit per mode is the one the run meets whichever relay
-// the client routes a read to (WEB_INTERFACE → The extension → "The verified
-// tip", "The verified figures", "The verified names"):
+// EXTENSION_CHECK_INTERFACE → The command — the orchestrator reads the
+// summary object from this path instead of parsing the log.
+const SUMMARY = args.get('summary') ?? null;
+// TEST_STATE_INTERFACE → The clock offset — every node the caller
+// spawns for the run reads the offset, through the preload
+// `--import`ed in `NODE_OPTIONS` and the offset in
+// `DAGSOCIAL_CLOCK_OFFSET_MS`. `augmentEnv` carries both into every
+// node and miner the harness spawns from `NODE_DIST` and
+// `MINER_SCRIPT` (`spawnServerNode`, `spawnDaemon`).
+const CLOCK_OFFSET_RAW = args.get('clock-offset-ms') ?? null;
+const CLOCK_OFFSET_MS = CLOCK_OFFSET_RAW === null ? null : Number(CLOCK_OFFSET_RAW);
+if (CLOCK_OFFSET_RAW !== null && (!Number.isFinite(CLOCK_OFFSET_MS) || !Number.isInteger(CLOCK_OFFSET_MS))) {
+  console.error(`--clock-offset-ms must be an integer, got: ${JSON.stringify(CLOCK_OFFSET_RAW)}`);
+  process.exit(2);
+}
+const PRELOAD = args.get('preload') ?? null;
+if (PRELOAD !== null && !existsSync(PRELOAD)) {
+  console.error(`--preload not found: ${PRELOAD}`);
+  process.exit(2);
+}
+// Every address the harness owns is bound by the OS
+// (`EXTENSION_CHECK_INTERFACE → Addresses`). Each relay listens on port 0
+// and reads its port from `server.address()`; each node spawns with
+// `PORT=0 ADMIN_PORT=0 LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0` and, for a mesh
+// node, `MESH_LISTEN=/ip4/127.0.0.1/udp/0/webrtc-direct`, and its ports
+// are read from its own start lines. The let-bindings below hold the
+// values each first start recorded; a restart behind the seed-list entry
+// the node answers for pins only what the entry names — the HTTP port and
+// (mesh-on) the WebRTC-direct UDP port — and the rest bind on 0 and read
+// back. M4's relay takes A''s first HTTP port while A' moves to a fresh
+// alt HTTP port. A node behind a relay (B behind RLB, every upstream the
+// tip and light relays move to) restarts on 0 and the relay's upstream
+// moves to it. A port a pin fails to take surfaces through the node's own
+// bind failure — `spawnServerNode` reads the log tail on an exit before
+// the start lines and raises it.
+//
+// The two tip relays — RLA in front of A, RLB in front of B. The seed list
+// the harness writes names these two bases, each entry reached at its api
+// alone (`MESH_INTERFACE → The client's node list → "An entry may carry an
+// API base"`). Each relay carries a mode the harness sets between steps, on
+// both relays at once — the one hostile edit per mode is the one the run
+// meets whichever relay the client routes a read to (WEB_INTERFACE → The
+// extension → "The verified tip", "The verified figures", "The verified
+// names"):
 //   `honest`         — none; everything passes to upstream verbatim.
 //   `proof-invalid`  — the `/nipopow/proof/<m>/<k>` answer altered so it does
 //                      not verify (one byte flipped ten from the end), every
@@ -391,176 +347,116 @@ const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 //   `verified` (the arms prove against an anchor), reads the row through
 //   whichever relay the client routes to, and sets both relays back to
 //   `honest` on the way out.
-const RLA_PORT = 19780;
-const RLA_ORIGIN = `http://127.0.0.1:${RLA_PORT}`;
-const RLB_PORT = 19781;
-const RLB_ORIGIN = `http://127.0.0.1:${RLB_PORT}`;
-// Node D — isolated, mined on demand: for 19b the block mines D past A's tip
-// so D's chain is heavier than A/B's, and the client seats D's chain and B's
-// tip reads off it; for 19c the block mines D past m + k + 4 and keeps it
-// below A's height, so D's chain verifies but B's heavier chain seats and D's
-// tip reads off it (WEB_INTERFACE → The extension → "The verified tip").
-const D_HTTP_PORT = 19795;
-const D_ADMIN_PORT = 19796;
-const D_P2P_PORT = 19797;
-const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
-// The light block's two relays — RA in front of A, RB in front of B — each
-// in one of eight modes at a time (honest, text, drop, hold, hang, list-down,
-// list-replay, down); the extension built for the block names them as its
-// seed list, and no other base (WEB_INTERFACE → The extension → "The light
-// read", "The resolve"). Ports clear of the two tip relays (19780, 19781),
-// the figures relay (19785) and D (19795/96/97).
-const RA_PORT = 19810;
-const RA_ORIGIN = `http://127.0.0.1:${RA_PORT}`;
-const RB_PORT = 19815;
-const RB_ORIGIN = `http://127.0.0.1:${RB_PORT}`;
-// The light block's own D — a fresh isolated chain of its own that both
-// relays' upstreams move to for L13.
-const DL_HTTP_PORT = 19820;
-const DL_ADMIN_PORT = 19821;
-const DL_P2P_PORT = 19822;
-const DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
-// The mesh block's two nodes A' and B' — each spawned with
-// MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<AP_MESH_PORT or
-// BP_MESH_PORT>/webrtc-direct, MESH_STUN=off (two public nodes on one
-// loopback cannot share STUN_PORT 3478, and the brief names off). Ports
-// clear of the tip block's (B on 19770-72), the tip relays (19780-81), D
-// (19795-97), the light relays (19810/15) and DL (19820-22). A' and B'
-// are reached by the extension at their HTTP origins directly (the api
-// field of each seed-list entry), and over the mesh at their webrtc-
-// direct addresses (the addrs field of each entry — one address a piece,
-// with certhash and /p2p/<peerId>, read from the start line the node
-// prints — NODE_INTERFACE → Configuration → "A mesh node prints its
-// identity line"). For M4 one node's HTTP is moved aside and a tip relay
-// (startTipRelay) stands in front of its api, in `hold-posts` mode — a
-// read passes through, a POST /posts is held past REQUEST_TIMEOUT_MS so
-// the client's write rule moves the same bytes to the next entry
-// (MESH_INTERFACE → The client's node list → "A write goes to one node
-// at a time").
-const AP_HTTP_PORT = 19830;
-const AP_ADMIN_PORT = 19831;
-const AP_P2P_PORT = 19832;
-const AP_MESH_PORT = 19833;
-const AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
-const BP_HTTP_PORT = 19835;
-const BP_ADMIN_PORT = 19836;
-const BP_P2P_PORT = 19837;
-const BP_MESH_PORT = 19838;
-const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
-// For M4's relay-in-front stage: the alternate HTTP port A' is restarted
-// on so the tip relay can take over AP_HTTP_PORT with A' as its upstream.
-// The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
-// on their own ports — only the HTTP listener is moved.
-const AP_ALT_HTTP_PORT = 19834;
-// M5's isolated node D — a miner with its own MINING_SECRET on a copy of
-// A''s store, BOOTSTRAP_PEERS empty so it peers with no node and no node
-// can give it M3's post's text, reached by the extension as a hand-added
-// node over the mesh:
-//   NODE_INTERFACE → Posts DAG →
-//     "A serving reader is asked for what has been due";
-//   WEB_INTERFACE → The settings window → "The serve row";
-//   WEB_INTERFACE → The extension → "A serving read is answered from it".
-// Ports clear of every other harness child: B (19770–72), the tip relays
-// (19780–81), D for the verified-tip block (19795–97), the light relays
-// (19810/15), DL (19820–22), A' (19830–34) and B' (19835–38).
-const DM5_HTTP_PORT = 19860;
-const DM5_ADMIN_PORT = 19861;
-const DM5_P2P_PORT = 19862;
-const DM5_MESH_PORT = 19863;
-const DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
+let B_HTTP_PORT = null, B_ADMIN_PORT = null, B_P2P_PORT = null, B_ORIGIN = null;
+let RLA_PORT = null, RLA_ORIGIN = null;
+let RLB_PORT = null, RLB_ORIGIN = null;
+// Node D — isolated, mined on demand for the verified-tip block.
+let D_HTTP_PORT = null, D_ADMIN_PORT = null, D_P2P_PORT = null, D_ORIGIN = null;
+// The light block's two relays and its own isolated D for L13.
+let RA_PORT = null, RA_ORIGIN = null;
+let RB_PORT = null, RB_ORIGIN = null;
+let DL_HTTP_PORT = null, DL_ADMIN_PORT = null, DL_P2P_PORT = null, DL_ORIGIN = null;
+// The mesh block's two nodes A' and B'. The ports are read from each node's
+// start line on its first spawn and pinned for every later spawn behind the
+// seed-list entry (M2, M3 and M4); M4 restarts A' on a fresh alt HTTP port
+// and stands a tip relay on A''s first HTTP port with that alt as upstream.
+let AP_HTTP_PORT = null, AP_ADMIN_PORT = null, AP_P2P_PORT = null, AP_MESH_PORT = null;
+let AP_ORIGIN = null;
+let BP_HTTP_PORT = null, BP_ADMIN_PORT = null, BP_P2P_PORT = null, BP_MESH_PORT = null;
+let BP_ORIGIN = null;
+// M5's isolated node D — its ports are read from its start line.
+let DM5_HTTP_PORT = null, DM5_ADMIN_PORT = null, DM5_P2P_PORT = null, DM5_MESH_PORT = null;
+let DM5_ORIGIN = null;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
 // step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
-// The refusal of a setup that runs after the browser has launched:
-// `setupMeshStack` checks the built shell's `notis-nodes` against each node's
-// identity line, and a mismatch is a configuration error, exit code 2 as the
-// pre-launch argument checks exit. The outer try/catch sets `exitCode = 2`, and
-// the teardown, `proc.kill()` and `webServer.close()` the normal end runs close
-// every process the run launched. The pre-launch argument checks exit inline:
-// no process stands to close.
+// The refusal `setupMeshStack` raises after it has spawned A' and B' and
+// read each identity line — a configuration error from the webrtc-direct
+// multiaddr check, exit code 2 as the pre-launch argument checks exit. The
+// outer try/catch sets `exitCode = 2`, and the teardown below the catch
+// (`teardownTipRelays`, `teardownLightRelays`, `teardownMeshStack`) stops
+// every process the setup launched: A' and B' through
+// `teardownMeshStack`'s `stopChild('ap')` / `stopChild('bp')` by the
+// handles `spawnServerNode` recorded at spawn. `proc.kill()` and
+// `webServer.close()` close Chromium and the harness's web server where
+// one has launched.
 class ConfigError extends Error {
   constructor(message) { super(message); this.name = 'ConfigError'; }
 }
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
-// --r-key is optional. Without it, steps 1–16 read NOT RUN by name and 17–20
-// (which need no identity — WEB_INTERFACE → The extension → "The verified
-// tip": the corner needs no identity) run on the flag. A given but missing
-// file is still an argument error.
+// `--r-key` names R's clear key file; a file that is not there is an argument
+// error.
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
-// --verified-tip requires the four lifecycle arguments — the harness owns
-// node B, node D (mined on demand for 19b heavier and 19c lighter), the two
-// tip relays RLA and RLB and every miner it starts; A itself and A's miner
-// are the operator's (WEB_INTERFACE → The extension → "The verified tip").
-if (VERIFIED_TIP) {
+// Every block requires `--r-key` — EXTENSION_CHECK_INTERFACE → Blocks: steps
+// 1 and 2 import R and the block's own steps read against R.
+if (!R_KEY) {
+  console.error(`--r-key <path> is required for every block — the extension check runs on R (EXTENSION_CHECK_INTERFACE → Blocks)`);
+  process.exit(2);
+}
+// `--scratch` is required on every run — the harness copies `--extension-dir`
+// and `--web-dist` into it (EXTENSION_CHECK_INTERFACE → Builds).
+if (!SCRATCH) {
+  console.error('--scratch <dir> is required — the harness copies --extension-dir and --web-dist into it and writes the run\'s values into those copies');
+  process.exit(2);
+}
+if (!existsSync(SCRATCH)) {
+  console.error(`--scratch not found: ${SCRATCH}`);
+  process.exit(2);
+}
+
+// Block-specific lifecycle requirements. The tip, figures, names, light and
+// mesh blocks spawn a second node (`bringUpNodeB` for the first four,
+// `setupMeshStack` for mesh), so each requires `--node-dist` and `--node-p2p`.
+// The tip, light and mesh blocks also start a miner of their own, so each
+// requires `--miner`. `names` requires `--s-key`: step 29 sends to S's handle.
+const NEEDS_NODE_DIST = new Set(['tip', 'figures', 'names', 'light', 'mesh']);
+const NEEDS_NODE_P2P = NEEDS_NODE_DIST;
+const NEEDS_MINER = new Set(['tip', 'light', 'mesh']);
+if (NEEDS_NODE_DIST.has(BLOCK)) {
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-tip requires --node-dist <packages/node/dist/index.js>');
+    console.error(`--block ${BLOCK} requires --node-dist <packages/node/dist/index.js> — the block spawns a second node from it`);
     process.exit(2);
   }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--verified-tip requires --miner <packages/node/scripts/miner.mjs>');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-tip requires --scratch <dir> — a directory the harness owns');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
+}
+if (NEEDS_NODE_P2P.has(BLOCK)) {
   if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-tip requires --node-p2p <multiaddr> — A\'s p2p bootstrap, e.g. /ip4/127.0.0.1/tcp/19742');
+    console.error(`--block ${BLOCK} requires --node-p2p <multiaddr> — A's p2p bootstrap for the spawned node, e.g. /ip4/127.0.0.1/tcp/<port>`);
+    process.exit(2);
+  }
+}
+if (NEEDS_MINER.has(BLOCK)) {
+  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
+    console.error(`--block ${BLOCK} requires --miner <packages/node/scripts/miner.mjs> — the block starts a miner of its own`);
     process.exit(2);
   }
 }
 
-// The pair every block that reads TIP_M / TIP_K takes from the tool it
-// already imports (WEB_INTERFACE → The extension → "The verified tip";
-// CONSTANTS → Client defaults) — the tip block, the figures block and the
-// names block all read them, so the load runs whenever any of the three
-// flags is set. The retired fork comparison (resolveTip + compareProofs,
-// driving 19b's old refused · outworked predicate) is gone — the mesh
-// client's own check settles the chain, and no tool-side comparison is
-// what the verdict reads any more.
-// --light cannot be combined with any of the verified-tip/figures/names blocks:
-// the two builds differ (seed list `[{api:RA,…},{api:RB,…}]` versus
-// `[{api:RLA,…},{api:RLB,…}]`), and a run takes one (WEB_INTERFACE → The
-// extension → "The light read", "The verified tip" — the extension's seed
-// list is the two relay origins; the harness refuses otherwise, and the two
-// builds differ, so a run takes one).
-if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [{api:RA,…},{api:RB,…}] vs [{api:RLA,…},{api:RLB,…}]) and a run takes one');
-  process.exit(2);
+// `--s-key` is required for `names` only — step 29 sends to S's handle and
+// reads S's public key beneath the field and on the prompt. The harness
+// reads that key alone and signs nothing as S.
+let S_PUB = null;
+if (VERIFIED_NAMES) {
+  if (!S_KEY || !existsSync(S_KEY)) {
+    console.error('--block names requires --s-key <path> — S\'s clear file { pubKeyHex, privKeyBase64 }; step 29 sends to S\'s handle');
+    process.exit(2);
+  }
+  S_PUB = JSON.parse(readFileSync(S_KEY, 'utf8')).pubKeyHex ?? null;
+  if (typeof S_PUB !== 'string' || !/^[0-9a-f]{64}$/.test(S_PUB)) {
+    console.error(`--s-key holds no 64-hex pubKeyHex: ${S_KEY}`);
+    process.exit(2);
+  }
 }
 
-// --mesh builds a seed list whose entries carry non-empty addrs (the
-// WebRTC-direct multiaddrs of A' and B') and HTTP api bases of A' and B'
-// (AP_ORIGIN, BP_ORIGIN) — every other block names addrs: [] with relay
-// apis in front. The builds differ and a run takes one.
-if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
-  console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
-  process.exit(2);
-}
-
-// --waiting-only needs --r-key (the block signs with R and reads R's
-// listings) and refuses combination with any of the three verified
-// blocks, --light or --mesh: the flag runs the waiting-writes block
-// alone, under the relays build, in front of A alone — a combined run
-// is the full one and `--waiting-only` is dropped.
-if (WAITING_ONLY && !R_KEY) {
-  console.error('--waiting-only requires --r-key — the waiting-writes block signs with R and reads R\'s listings');
-  process.exit(2);
-}
-if (WAITING_ONLY && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH)) {
-  console.error('--waiting-only cannot be combined with --verified-tip, --verified-figures, --verified-names, --light or --mesh — the flag runs the waiting-writes block alone; a combined run is the full one with the flag dropped');
-  process.exit(2);
-}
-
+// `@dagsocial/nipopow-client`, `@dagsocial/nipopow` and `@dagsocial/types`
+// carry the pair every block that proves against a chain reads (the tip,
+// figures, names and light blocks' verifiers; the mesh block's verifier).
+// The write-only blocks (`writes`, `links`) and the waiting block carry no
+// proof read, so the load is gated on the five that do.
 if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
@@ -576,159 +472,37 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
     const { profileFor } = await import(typesUrl);
     TYPES_PROFILE_FOR = profileFor;
   } catch (e) {
-    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client, @dagsocial/nipopow and @dagsocial/types (DEFAULT_M, DEFAULT_K, verifierProfile, decodeNipopowProof, compareProofs, profileFor; pnpm -r build): ${e.message}`);
+    console.error(`--block ${BLOCK} requires the built @dagsocial/nipopow-client, @dagsocial/nipopow and @dagsocial/types (DEFAULT_M, DEFAULT_K, verifierProfile, decodeNipopowProof, compareProofs, profileFor; pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
 
-// --verified-figures requires --r-key AND the lifecycle args `bringUpNodeB`
-// reads (--node-dist, --scratch, --node-p2p). The figures run hangs on a
-// verified tip (WEB_INTERFACE → The extension → "The verified figures"),
-// which needs a second verified node, so the block runs B as the tip block
-// does — using bringUpNodeB verbatim (SCRATCH, NODE_DIST, NODE_P2P). Step 25
-// uses --public/--web-dist when they are given and reads NOT RUN by name
-// when they are not.
-if (VERIFIED_FIGURES) {
-  if (!R_KEY) {
-    console.error('--verified-figures requires --r-key <path> — R\'s identity is what steps 21 and 24 measure');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-figures requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-figures requires --scratch <dir> — bringUpNodeB writes b.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-figures requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-}
-
-// --verified-names requires what --verified-figures requires, for the same
-// reason — a name check proves against the verified tip's anchor, which needs
-// a second verified node (WEB_INTERFACE → The extension → "The verified
-// names") — and --s-key, S's clear file: step 29 sends to S's handle and reads
-// S's public key beneath the field and on the prompt. The harness reads that
-// key alone and signs nothing as S. Step 30 uses --public/--web-dist when they
-// are given and reads NOT RUN by name when they are not.
-let S_PUB = null;
-if (VERIFIED_NAMES) {
-  if (!R_KEY) {
-    console.error('--verified-names requires --r-key <path> — R claims the name step 26 reads and sends in step 29');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-names requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-names requires --scratch <dir> — bringUpNodeB writes b.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-names requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-  if (!S_KEY || !existsSync(S_KEY)) {
-    console.error('--verified-names requires --s-key <path> — S\'s clear file { pubKeyHex, privKeyBase64 }; step 29 sends to S\'s handle');
-    process.exit(2);
-  }
-  S_PUB = JSON.parse(readFileSync(S_KEY, 'utf8')).pubKeyHex ?? null;
-  if (typeof S_PUB !== 'string' || !/^[0-9a-f]{64}$/.test(S_PUB)) {
-    console.error(`--s-key holds no 64-hex pubKeyHex: ${S_KEY}`);
-    process.exit(2);
-  }
-}
-
-// --light requires --r-key AND the lifecycle args — the block owns both
-// relays (RA in front of A, RB in front of B), the second node B (as the
-// tip and figures blocks do, through bringUpNodeB) and its own isolated
-// node D for L13's another-chain arm. The pattern mirrors --verified-names.
-if (LIGHT) {
-  if (!R_KEY) {
-    console.error('--light requires --r-key <path> — R\'s identity is what the light block reads and signs under');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--light requires --node-dist <packages/node/dist/index.js> — spawns node B and the isolated node D for L13');
-    process.exit(2);
-  }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--light requires --miner <packages/node/scripts/miner.mjs> — mines D past m + k + 4 so its proof verifies');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--light requires --scratch <dir> — the light block writes b.db and d-light.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--light requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-}
-
-// --mesh runs 1–16 against the extension's seed list — the two mesh nodes
-// A' and B' this block owns — and then M1–M4–M5. A' bootstraps from the
-// operator's A over p2p (the --node-p2p multiaddr), so A' and B' are
-// peers on A's chain and R's karma (promoted by the operator on A) is
-// read through them like any other block. --r-key for R's identity,
-// --node-dist for the spawn's entry, --miner for M5's isolated D, --scratch
-// for the two stores (ap.db and bp.db) and D's copy (d-m5.db), --node-p2p
-// for A''s bootstrap peer — the same lifecycle arguments the figures block
-// reads, with --miner added for M5.
-if (MESH) {
-  if (!R_KEY) {
-    console.error('--mesh requires --r-key <path> — R\'s identity is what steps 2–12 import and M3 signs with');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--mesh requires --node-dist <packages/node/dist/index.js> — spawns the two mesh nodes A\' and B\'');
-    process.exit(2);
-  }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--mesh requires --miner <packages/node/scripts/miner.mjs> — M5 mines the isolated D on a store copied from A\'');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--mesh requires --scratch <dir> — the mesh block writes ap.db and bp.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--mesh requires --node-p2p <multiaddr> — A\'s p2p bootstrap for A\', e.g. /ip4/127.0.0.1/tcp/19742 — so A\' syncs A\'s chain and R\'s karma is read through A\'/B\'');
-    process.exit(2);
-  }
-}
-
-// --public and --web-dist come together — pass both or neither. Without them
-// the twelve run as today and steps 13–16 are reported NOT RUN by name
-// (WEB_INTERFACE → The extension → "Links into the extension").
+// `--public` and `--web-dist` come together — pass both or neither — and
+// are required for `links`, `tip`, `figures`, `names` and `light` (their
+// hosted-page steps 13a/13/14/15/16, 20, 25, 30 and L14 open the hosted
+// page; the `links` steps serve it at the build's own origin, the others
+// serve it at an address of their own under the same base path,
+// EXTENSION_CHECK_INTERFACE → Addresses).
+const NEEDS_PUBLIC = new Set(['links', 'tip', 'figures', 'names', 'light']);
 if ((PUBLIC === null) !== (WEB_DIST === null)) {
   console.error('--public and --web-dist come together — pass both or neither');
   process.exit(2);
 }
+if (NEEDS_PUBLIC.has(BLOCK) && PUBLIC === null) {
+  console.error(`--block ${BLOCK} requires --public <origin+base> and --web-dist <dir> — the block has a hosted-page step`);
+  process.exit(2);
+}
+// The build's own public origin (`--public`) stays what the shell check
+// below reads. The `links` block serves at that origin; `tip`, `figures`,
+// `names` and `light` serve on an OS-bound port under the same base path,
+// so each block that reads the hosted page reaches the harness's own
+// server (EXTENSION_CHECK_INTERFACE → Addresses). `publicOrigin`,
+// `publicBase` and `publicPort` are the SERVED location — read from the
+// bound value for every block but `links`, the same as `--public` for
+// `links`.
 let publicOrigin = null;
 let publicBase = null;
 let publicPort = null;
-let webDistAbs = null;
 if (PUBLIC !== null) {
   let u;
   try { u = new URL(PUBLIC); } catch { console.error(`--public must be a URL, got: ${PUBLIC}`); process.exit(2); }
@@ -736,64 +510,66 @@ if (PUBLIC !== null) {
   if (!u.pathname.endsWith('/')) { console.error('--public must end with \'/\''); process.exit(2); }
   if (u.search !== '' || u.hash !== '') { console.error('--public must carry no query or fragment'); process.exit(2); }
   if (u.port === '') { console.error('--public must name a port'); process.exit(2); }
-  publicOrigin = u.origin;
   publicBase = u.pathname;
-  publicPort = Number(u.port);
+  if (LINKS) {
+    publicOrigin = u.origin;
+    publicPort = Number(u.port);
+  } else {
+    // Bound on 0 by `startWebServer`; `publicOrigin` and `publicPort`
+    // are read from `server.address()` after the listen settles.
+    publicOrigin = null;
+    publicPort = 0;
+  }
   if (!existsSync(WEB_DIST)) { console.error(`--web-dist not found: ${WEB_DIST}`); process.exit(2); }
-  webDistAbs = resolve(WEB_DIST);
-  if (!existsSync(join(webDistAbs, 'index.html'))) { console.error(`--web-dist has no index.html: ${webDistAbs}`); process.exit(2); }
+  if (!existsSync(join(resolve(WEB_DIST), 'index.html'))) { console.error(`--web-dist has no index.html: ${resolve(WEB_DIST)}`); process.exit(2); }
 }
 
-// Grant two loopback origins on the *unpacked* manifest — CDP cannot drive the
-// browser's permission dialog, so the App's fetch to the faucet is refused at
-// the network layer even after step 11 stubs `chrome.permissions.request` true.
-// The tracked template (`extension/manifest.template.json`) and the packed
-// release manifest are untouched.
-const MANIFEST_PATH = join(EXT_DIR, 'manifest.json');
-const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
-const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
-manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), ...LOOPBACKS])];
-writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
-console.log(`manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
-
-// The build's faucet base is the shell's `notis-faucet` — WEB_INTERFACE →
-// "The faucet step". prefs.faucet reads it once at load, and the press's
-// permission ask uses that value. A build whose meta does not match --faucet
-// would die at step 11 with no word why, so fail fast here and name it. The
-// check is skipped in verified-tip-only mode (no --r-key) where step 11 does
-// not run.
-const SHELL_PATH = join(EXT_DIR, 'index.html');
-const shellHtml = readFileSync(SHELL_PATH, 'utf8');
-if (R_KEY) {
-  const faucetMetaMatch = shellHtml.match(/<meta[^>]+name="notis-faucet"[^>]+content="([^"]*)"[^>]*>/);
-  const shellFaucet = faucetMetaMatch ? faucetMetaMatch[1] : null;
-  if (shellFaucet !== FAUCET) {
-    console.error(`FAIL: shell notis-faucet="${shellFaucet}" != --faucet="${FAUCET}"`);
-    console.error(`      rebuild with VITE_FAUCET_BASE=${FAUCET} bash packages/web/scripts/build-extension.sh`);
+// `--node-id` is A's `notisId` — the 64-hex key its node prints as
+// `notisId` on its first JSON start line (`NET_INTERFACE → The node key`).
+// The seed list the harness writes names this value for A's entry — the
+// relays-in-front-of-A entry for `writes`, `links`, `tip`, `figures`,
+// `names` and `waiting`; the RA entry for `light`. The mesh block reads
+// A' and B''s `notisId`s from their own identity lines inside
+// `setupMeshStack`, so `--node-id` is not required there.
+if (BLOCK !== 'mesh') {
+  if (NODE_ID === null) {
+    console.error(`--block ${BLOCK} requires --node-id <64 hex> — A's \`notisId\`, the key the seed list names for A's entry; the value is on \`up\`'s first JSON line as \`notisId\``);
     process.exit(2);
   }
-  console.log(`shell notis-faucet=${shellFaucet} matches --faucet`);
+  if (!/^[0-9a-f]{64}$/.test(NODE_ID)) {
+    console.error(`--node-id is not a 64-hex key: ${NODE_ID}`);
+    process.exit(2);
+  }
 }
 
-// The build's network is the shell's `notis-network` — WEB_INTERFACE →
-// The extension → "The verified tip". Every block that reads a verified tip —
-// 17–20, the figures block, the names block, the light block — refuses to run
-// against a bundle whose profile disagrees: an extension built for testnet's
-// profile against a devnet chain would read *no node's proof verified* and a
-// green step would be a lie about the check. The bundle's `notis-nodes` must
-// be exactly the pair the run's build names, in that order — the verified
-// blocks name RLA in front of A, then RLB in front of B; --light names RA,
-// then RB (WEB_INTERFACE → The extension → "The verified tip", "The light
-// read"). Each entry is a node object with `notisId` 64 hex, `addrs` empty,
-// and `api` the base this run serves (MESH_INTERFACE → The client's node
-// list → "An entry may carry an API base"); an entry with no addrs is
-// reached at its api alone, so the relays stay on the path and every read
-// the extension makes passes through one of them. The notisId the shell
-// carries is not checked against a live value here — the invoker baked the
-// key of each api's node into the build before this harness ran — only its
-// shape.
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
-  const networkMetaMatch = shellHtml.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
+// `EXT_DIR_COPY` and `webDistAbs` are the per-run copies the harness writes
+// the shell's values into and serves. The originals at `EXT_DIR` and
+// `WEB_DIST` are read, never written.
+const EXT_DIR_COPY = join(SCRATCH, 'ext');
+rmSync(EXT_DIR_COPY, { force: true, recursive: true });
+cpSync(EXT_DIR, EXT_DIR_COPY, { recursive: true });
+console.log(`extension copy: ${EXT_DIR} → ${EXT_DIR_COPY}`);
+
+let webDistAbs = null;
+if (PUBLIC !== null) {
+  webDistAbs = join(SCRATCH, 'web');
+  rmSync(webDistAbs, { force: true, recursive: true });
+  cpSync(resolve(WEB_DIST), webDistAbs, { recursive: true });
+  console.log(`web copy: ${resolve(WEB_DIST)} → ${webDistAbs}`);
+}
+
+// The shell as the build baked it — read from the original for the two
+// checks the harness keeps: `notis-network` names the network profile the
+// build was made against (every block that reads a verified tip refuses a
+// bundle whose profile disagrees), and `notis-public` is the build's public
+// origin, which the background and the bridge carry as built. The other
+// three metas (`notis-nodes`, `notis-faucet`, `notis-api`) are the run's own
+// values and written into the copy below.
+const shellHtmlOriginal = readFileSync(join(EXT_DIR, 'index.html'), 'utf8');
+const manifestOriginal = JSON.parse(readFileSync(join(EXT_DIR, 'manifest.json'), 'utf8'));
+
+{
+  const networkMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
     console.error(`FAIL: shell notis-network="${shellNetwork}" != "devnet"`);
@@ -801,91 +577,10 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
     process.exit(2);
   }
   console.log(`shell notis-network=${shellNetwork} matches "devnet"`);
-
-  // Vite wraps a `content=` value carrying `"` in single quotes, and one
-  // carrying `'` in double quotes; the meta for notis-nodes is a JSON array
-  // so single-quoted. Match either style.
-  const nodesMetaMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
-  const shellNodesRaw = nodesMetaMatch ? (nodesMetaMatch[1] ?? nodesMetaMatch[2]) : null;
-  let shellNodes = null;
-  try { shellNodes = JSON.parse(shellNodesRaw ?? ''); } catch {}
-  // The two apis this run's build names, in order — the verified blocks name
-  // RLA in front of A and RLB in front of B (`startTipRelay`), the --light
-  // block names the two light relays RA and RB, and --mesh names A' and B'
-  // at their direct HTTP bases (the mesh block reaches each at its base and
-  // over the mesh at the address the seed-list entry names in `addrs`).
-  // The verified blocks' reads pass through RLA / RLB verbatim in `honest`
-  // mode, so steps that do not set another mode see the node's own answers
-  // (WEB_INTERFACE → The extension → "The verified tip"). Mainnet's [] and
-  // testnet's live JSON are not valid here — the run is for a devnet stack
-  // with the harness's own bases.
-  const expectedApis = MESH
-    ? [AP_ORIGIN, BP_ORIGIN]
-    : LIGHT
-      ? [RA_ORIGIN, RB_ORIGIN]
-      : [RLA_ORIGIN, RLB_ORIGIN];
-  const hex64 = /^[0-9a-f]{64}$/;
-  // For --mesh each entry's `addrs` carries exactly one WebRTC-direct
-  // multiaddr naming the node's own mesh listen port, with certhash and
-  // /p2p/<peerId> — the shape libp2p prints. MESH_INTERFACE → Discovery →
-  // "A node added by hand" holds the shape of an address the client dials;
-  // the shell check here reads the port, the webrtc-direct segment, a
-  // certhash and a /p2p/ segment, and leaves the specific certhash and
-  // peerId to the setup's identity-line read (setupMeshStack).
-  const expectedMeshPorts = MESH ? [AP_MESH_PORT, BP_MESH_PORT] : null;
-  const meshAddrOk = (addr, i) => {
-    if (typeof addr !== 'string') return false;
-    const re = new RegExp(
-      `^/ip4/127\\.0\\.0\\.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/[^/]+/p2p/[^/]+$`,
-    );
-    return re.test(addr);
-  };
-  const entryOk = (e, i) => {
-    if (e === null || typeof e !== 'object') return false;
-    if (typeof e.notisId !== 'string' || !hex64.test(e.notisId)) return false;
-    if (typeof e.api !== 'string' || e.api.replace(/\/+$/, '') !== expectedApis[i]) return false;
-    if (!Array.isArray(e.addrs)) return false;
-    if (MESH) {
-      return e.addrs.length === 1 && meshAddrOk(e.addrs[0], i);
-    }
-    return e.addrs.length === 0;
-  };
-  const nodesOk = Array.isArray(shellNodes)
-    && shellNodes.length === expectedApis.length
-    && shellNodes.every(entryOk);
-  if (!nodesOk) {
-    const expectedShape = expectedApis.map((api, i) => ({
-      notisId: '<the api\'s node\'s 64-hex key, from its start line>',
-      addrs: MESH
-        ? [`/ip4/127.0.0.1/udp/${expectedMeshPorts[i]}/webrtc-direct/certhash/<multihash>/p2p/<the api\'s node\'s peerId, from its start line>`]
-        : [],
-      api,
-    }));
-    console.error(`FAIL: shell notis-nodes=${shellNodesRaw} is not the two-node shape this run expects`);
-    console.error(`      rebuild with VITE_NODES set to a JSON array of two entries in this shape, each entry's api in order:`);
-    console.error(`      ${JSON.stringify(expectedShape)}`);
-    console.error(`      each notisId is the 64-hex key its api's node prints as the first JSON line of its start output${MESH ? ', and each addrs[0] is the WebRTC-direct multiaddr that line names in `multiaddrs`' : ''}`);
-    process.exit(2);
-  }
-  const shapeLabel = MESH
-    ? '[{api: A\', addrs: [A\' webrtc-direct], …}, {api: B\', addrs: [B\' webrtc-direct], …}]'
-    : LIGHT
-      ? '[{api: RA, …}, {api: RB, …}]'
-      : '[{api: A, …}, {api: B, …}]';
-  console.log(`shell notis-nodes=${shellNodesRaw} matches ${shapeLabel}`);
 }
 
-// The build's public base is the shell's `notis-public` — WEB_INTERFACE →
-// The extension → "Links into the extension". When --public is passed, the
-// shell must carry it exactly, and the manifest's one content_scripts entry
-// must be the port-less pattern derived from --public (via the module the
-// emitter uses; never a second implementation here — the faucet check's
-// shape, for the same reason). Skipped in verified-tip-only mode (no --r-key),
-// where step 20 uses --public to open the hosted web build served by the
-// harness's static server — the extension's own `notis-public` and bridge
-// have no bearing on that step.
-if (PUBLIC !== null && R_KEY) {
-  const publicMetaMatch = shellHtml.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
+if (PUBLIC !== null) {
+  const publicMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
   const shellPublic = publicMetaMatch ? publicMetaMatch[1] : null;
   if (shellPublic !== PUBLIC) {
     console.error(`FAIL: shell notis-public="${shellPublic}" != --public="${PUBLIC}"`);
@@ -894,7 +589,7 @@ if (PUBLIC !== null && R_KEY) {
   }
   console.log(`shell notis-public=${shellPublic} matches --public`);
   const expectedPattern = matchPatternFor(PUBLIC);
-  const cs = manifest.content_scripts;
+  const cs = manifestOriginal.content_scripts;
   if (!Array.isArray(cs) || cs.length !== 1) {
     console.error(`FAIL: manifest content_scripts must have one entry, got: ${JSON.stringify(cs)}`);
     process.exit(2);
@@ -905,6 +600,155 @@ if (PUBLIC !== null && R_KEY) {
     process.exit(2);
   }
   console.log(`manifest content_scripts[0].matches=${csMatches[0]} matches expected pattern (port-less)`);
+}
+
+// Grant two loopback origins on the copy's manifest — CDP cannot drive the
+// browser's permission dialog, so the App's fetch to the faucet is refused at
+// the network layer even after step 11 stubs `chrome.permissions.request` true.
+// The original `--extension-dir` manifest stays untouched, as does the tracked
+// template (`extension/manifest.template.json`) and the packed release
+// manifest.
+const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
+{
+  const copyManifestPath = join(EXT_DIR_COPY, 'manifest.json');
+  const copyManifest = JSON.parse(readFileSync(copyManifestPath, 'utf8'));
+  copyManifest.host_permissions = [
+    ...new Set([...(copyManifest.host_permissions ?? []), ...LOOPBACKS]),
+  ];
+  writeFileSync(copyManifestPath, JSON.stringify(copyManifest, null, 2) + '\n');
+  // Read back — the guard on the write.
+  const verify = JSON.parse(readFileSync(copyManifestPath, 'utf8'));
+  for (const h of LOOPBACKS) {
+    if (!Array.isArray(verify.host_permissions) || !verify.host_permissions.includes(h)) {
+      console.error(`FAIL: copy manifest host_permissions missing ${h}: ${JSON.stringify(verify.host_permissions)}`);
+      process.exit(2);
+    }
+  }
+  console.log(`copy manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
+}
+
+// Pre-create B's key file at `${SCRATCH}/b.key` for every block whose seed
+// list names B as its second entry — the key its spawn reads
+// (`NET_INTERFACE → The node key`: `loadNodeKey` is the one reader of a key
+// file, and it writes a fresh key where none is). The blocks that spawn B
+// (`tip`, `figures`, `names`, `light`) take the same key on every B of the
+// run; the blocks that do not spawn B (`writes`, `links`, `waiting`) still
+// need `B_NOTIS_ID` for the seed list's second entry. The default derives
+// `b.key` beside `b.db` (`NODE_INTERFACE → Configuration → "The key file is
+// named for the store"`: unset `NODE_KEY_PATH` replaces the db's extension
+// with `.key`), the path `bringUpNodeB`'s spawn takes.
+let B_NOTIS_ID = null;
+if (BLOCK !== 'mesh') {
+  const bKeyPath = join(SCRATCH, 'b.key');
+  let bKp;
+  try { bKp = await loadNodeKey(bKeyPath); }
+  catch (e) {
+    console.error(`FAIL: could not pre-create B's key file at ${bKeyPath}: ${e.message}`);
+    process.exit(2);
+  }
+  B_NOTIS_ID = Buffer.from(bKp.publicKey).toString('hex');
+  console.log(`B key at ${bKeyPath}: notisId=${B_NOTIS_ID}`);
+}
+
+// The seed list the harness writes into the copy's shell. `mesh`'s entries
+// carry A' and B''s `notisId`s and WebRTC-direct multiaddrs, both read from
+// the identity lines; `setupMeshStack` fills them in before the write pass
+// runs. Every other block's entries carry A's and B's `notisId`s with empty
+// `addrs`, so each is reached at its api alone (`MESH_INTERFACE → The
+// client's node list → "An entry may carry an API base"`). The harness
+// writes `notis-faucet` on every run and `notis-api` on every run with
+// `--public`.
+function buildOwnedSeedList() {
+  if (MESH) {
+    // Filled by `setupMeshStack` after it reads each identity line; the
+    // write pass runs after setup, so these are non-null by then.
+    return [
+      { notisId: meshNodes.ap.identity.notisId, addrs: [meshApAddr], api: AP_ORIGIN },
+      { notisId: meshNodes.bp.identity.notisId, addrs: [meshBpAddr], api: BP_ORIGIN },
+    ];
+  }
+  if (LIGHT) {
+    return [
+      { notisId: NODE_ID, addrs: [], api: RA_ORIGIN },
+      { notisId: B_NOTIS_ID, addrs: [], api: RB_ORIGIN },
+    ];
+  }
+  // writes, links, tip, figures, names, waiting — RLA and RLB in front of
+  // A and B. `setupTipRelays` binds each origin before the write pass runs.
+  return [
+    { notisId: NODE_ID, addrs: [], api: RLA_ORIGIN },
+    { notisId: B_NOTIS_ID, addrs: [], api: RLB_ORIGIN },
+  ];
+}
+
+// The webrtc-direct addrs `setupMeshStack` records for A' and B'. Filled in
+// before the write pass runs.
+let meshApAddr = null;
+let meshBpAddr = null;
+
+// Write the run's values into the copy's `index.html` and read them back —
+// `notis-faucet` on every run, `notis-api` on every run with `--public`
+// (web copy only), and `notis-nodes` on runs that own a seed list. Exits 2
+// before Chromium starts on a read-back mismatch, the guard on the write
+// (EXTENSION_CHECK_INTERFACE → Builds).
+function writeShellMeta(html, name, value) {
+  // The build's shell writes a string value in double quotes and a JSON
+  // array in single quotes (Vite's quoting); match either and rewrite as
+  // single-quoted when `value` carries a `"`, else double-quoted.
+  const re = new RegExp(`(<meta[^>]+name="${name}"[^>]+content=)(?:"([^"]*)"|'([^']*)')`);
+  const needsSingle = value.includes('"');
+  const quoted = needsSingle ? `'${value}'` : `"${value}"`;
+  if (!re.test(html)) {
+    throw new Error(`shell has no <meta name="${name}"> to rewrite`);
+  }
+  return html.replace(re, `$1${quoted}`);
+}
+
+function readShellMeta(html, name) {
+  const m = html.match(new RegExp(`<meta[^>]+name="${name}"[^>]+content=(?:"([^"]*)"|'([^']*)')`));
+  return m ? (m[1] ?? m[2]) : null;
+}
+
+function writeAndVerifyCopyShells() {
+  // Extension shell.
+  const extShellPath = join(EXT_DIR_COPY, 'index.html');
+  let html = readFileSync(extShellPath, 'utf8');
+  html = writeShellMeta(html, 'notis-faucet', FAUCET);
+  const ownedNodes = buildOwnedSeedList();
+  if (ownedNodes !== null) {
+    html = writeShellMeta(html, 'notis-nodes', JSON.stringify(ownedNodes));
+  }
+  writeFileSync(extShellPath, html);
+  const verify = readFileSync(extShellPath, 'utf8');
+  const gotFaucet = readShellMeta(verify, 'notis-faucet');
+  if (gotFaucet !== FAUCET) {
+    console.error(`FAIL: copy ext shell notis-faucet="${gotFaucet}" != "${FAUCET}"`);
+    process.exit(2);
+  }
+  if (ownedNodes !== null) {
+    const gotNodes = readShellMeta(verify, 'notis-nodes');
+    if (gotNodes !== JSON.stringify(ownedNodes)) {
+      console.error(`FAIL: copy ext shell notis-nodes=${gotNodes} != ${JSON.stringify(ownedNodes)}`);
+      process.exit(2);
+    }
+    console.log(`copy ext shell notis-nodes rewritten to ${gotNodes}`);
+  }
+  console.log(`copy ext shell notis-faucet rewritten to ${gotFaucet}`);
+
+  // Web shell, when --public is passed.
+  if (webDistAbs !== null) {
+    const webShellPath = join(webDistAbs, 'index.html');
+    let webHtml = readFileSync(webShellPath, 'utf8');
+    webHtml = writeShellMeta(webHtml, 'notis-api', NODE);
+    writeFileSync(webShellPath, webHtml);
+    const webVerify = readFileSync(webShellPath, 'utf8');
+    const gotApi = readShellMeta(webVerify, 'notis-api');
+    if (gotApi !== NODE) {
+      console.error(`FAIL: copy web shell notis-api="${gotApi}" != "${NODE}"`);
+      process.exit(2);
+    }
+    console.log(`copy web shell notis-api rewritten to ${gotApi}`);
+  }
 }
 
 // The web server for --web-dist — WEB_INTERFACE → The extension → "Links into
@@ -974,14 +818,25 @@ async function startWebServer() {
   });
   await new Promise((res, rej) => {
     webServer.on('error', rej);
+    // `links` binds the build's own port (the background reads a tab as a
+    // Notis link by the build's origin, port included); every other block
+    // binds on 0, and reads `publicOrigin` and `publicPort` from the bound
+    // address (EXTENSION_CHECK_INTERFACE → Addresses).
     webServer.listen(publicPort, '127.0.0.1', () => res());
   });
+  if (!LINKS) {
+    const addr = webServer.address();
+    const bound = typeof addr === 'object' && addr !== null ? addr.port : null;
+    if (typeof bound !== 'number' || bound <= 0) {
+      throw new Error(`web server bound on 0 but server.address() returned ${JSON.stringify(addr)}`);
+    }
+    publicPort = bound;
+    publicOrigin = `http://127.0.0.1:${bound}`;
+  }
   console.log(`web server: ${webDistAbs} served on ${publicOrigin}${publicBase} (port ${publicPort})`);
 }
-await startWebServer();
 
-// R's clear key is read only when the write steps run. Verified-tip-only mode
-// (--verified-tip without --r-key) skips 1–16, so no wallet identity is imported.
+// R's clear key — every block requires it; steps 1 and 2 import R.
 const R_TEXT = R_KEY ? readFileSync(R_KEY, 'utf8') : null;
 const R_JSON = R_TEXT ? JSON.parse(R_TEXT) : null;
 
@@ -1045,21 +900,23 @@ const sleep = async (ms) => {
 // data dir, and the single extension it loads at --extension-dir
 // (WEB_INTERFACE → The extension → "The verified tip").
 async function launchChromium(extensionDir) {
-  const chromePort = 19200 + Math.floor(Math.random() * 500);
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
   // Chromium refuses WebRTC connections to 127.0.0.1 unless started with
   // --allow-loopback-in-peer-connection. The flag is a harness switch for
-  // a loopback stage, not a product setting: the --mesh block's A' and B'
+  // a loopback stage, not a product setting: the `mesh` block's A' and B'
   // listen on /ip4/127.0.0.1/udp/<port>/webrtc-direct and the extension
   // dials them over RTCPeerConnection, which the browser blocks without
   // this flag (WEB_INTERFACE → The extension → "The mesh is the extension's
-  // first path"). Added only for a --mesh run, so every other block runs
+  // first path"). Added only for the `mesh` block, so every other block runs
   // on the same browser defaults a reader's browser carries
   // (memory `runs-on-browser-defaults`).
   const meshArgs = MESH ? ['--allow-loopback-in-peer-connection'] : [];
+  // Chromium binds the DevTools port itself: `--remote-debugging-port=0`
+  // has the OS answer the port, and Chrome writes it to the
+  // `DevToolsActivePort` file in the profile directory — the first line.
   const chromeProc = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
-    `--remote-debugging-port=${chromePort}`, `--user-data-dir=${profileDir}`,
+    '--remote-debugging-port=0', `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionDir}`, `--disable-extensions-except=${extensionDir}`,
     ...meshArgs,
     'about:blank',
@@ -1067,23 +924,33 @@ async function launchChromium(extensionDir) {
   chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
   chromeProc.stdout.on('data', () => {});
   return recordWait('launchChromium DevTools up', 200 * 100, async () => {
+    const portFilePath = join(profileDir, 'DevToolsActivePort');
     for (let i = 0; i < 200; i++) {
-      try {
-        const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
-        if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
-      } catch {}
+      if (existsSync(portFilePath)) {
+        try {
+          const firstLine = readFileSync(portFilePath, 'utf8').split('\n')[0];
+          const chromePort = Number(firstLine);
+          if (Number.isFinite(chromePort) && chromePort > 0) {
+            const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
+            if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
+          }
+        } catch {}
+      }
       await sleep(100);
     }
-    throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
+    throw new Error(`chrome DevTools never appeared (DevToolsActivePort not written in ${profileDir})`);
   });
 }
 
-// The Chromium — loaded with the extension at --extension-dir. Every step
-// runs against this instance's DevTools port.
-const primary = await launchChromium(EXT_DIR);
-const proc = primary.proc;
-const port = primary.port;
-const profile = primary.profile;
+// The Chromium — loaded with the copy of the extension that the harness has
+// written the run's values into. The variables are set from the launch below,
+// after `setupTipRelays`, `setupLightRelays` and `setupMeshStack` have run
+// and `writeAndVerifyCopyShells` has written the seed list, so the first
+// paint reads the values the run owns.
+let primary = null;
+let proc = null;
+let port = null;
+let profile = null;
 
 async function browserVersion(chromePort = port) {
   const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
@@ -1177,7 +1044,12 @@ async function openSession(wsUrl) {
 }
 
 const findings = [];
-const record = (step, status, detail) => {
+// `block` names the block the step belongs to (EXTENSION_CHECK_INTERFACE →
+// Blocks). The default is the run's block — steps 1 and 2 belong to every
+// block since every block runs them, so a call from main() leaves the
+// default; the `markXNotRun` functions below pass the block whose steps
+// they are recording out of the run's block.
+const record = (step, status, detail, block = BLOCK) => {
   const s = status === true ? 'PASS' : status === false ? 'FAIL' : status === 'skipped' ? 'SKIPPED' : String(status);
   const now = Date.now();
   const prev = _wR.lastMark === null ? _wR.runStart : _wR.lastMark;
@@ -1199,7 +1071,7 @@ const record = (step, status, detail) => {
     else if (w.endedAtCap) { capMs += w.elapsedMs; capWaits.push({ label: w.label, cap: w.capMs, elapsed: w.elapsedMs }); }
     else conditionMs += w.elapsedMs;
   }
-  findings.push({ step, status: s, detail, wallMs, conditionMs, sleepMs, capMs, capWaits });
+  findings.push({ step, block, status: s, detail, wallMs, conditionMs, sleepMs, capMs, capWaits });
   console.log(`step ${step}: ${s} — ${detail}`);
 };
 
@@ -1274,7 +1146,7 @@ async function findWorker(chromePort = port) {
 // session's `Runtime.evaluate('1+1')` answers within 3 s — `live`,
 // `hung`, or `no-ws`. An extension page gets a `label` comparing its
 // target id against the known `mainPageId` (what `main()` opened and
-// what the block reuses under `--waiting-only`): `main()` for that one,
+// what `main()` opened): `main()` for that one,
 // `block-leftover` for any other. For every page that reads `hung`,
 // `probeHungPage` opens a fresh session, reads `document.visibilityState`
 // if the page answers, runs `Debugger.enable` then `Debugger.pause` and
@@ -1576,10 +1448,29 @@ async function pickOwnLiveRootPostId() {
 // process's own 'exit'.
 const vtChildren = new Map(); // name → { child, exited: Promise<void> }
 
+// TEST_STATE_INTERFACE → The clock offset — every node and miner the
+// harness spawns runs under the run's shifted clock: the preload is
+// `--import`ed through `NODE_OPTIONS`, prepended so a caller-set
+// `NODE_OPTIONS` keeps whatever it adds, and the offset in
+// `DAGSOCIAL_CLOCK_OFFSET_MS`. `--clock-offset-ms` and `--preload`
+// absent leave `env` untouched, so the spawns run on real time.
+function augmentEnv(env) {
+  const merged = { ...process.env, ...env };
+  if (PRELOAD !== null) {
+    const importArg = `--import=${PRELOAD}`;
+    const existing = typeof merged.NODE_OPTIONS === 'string' && merged.NODE_OPTIONS.length > 0 ? merged.NODE_OPTIONS : '';
+    merged.NODE_OPTIONS = existing ? `${importArg} ${existing}` : importArg;
+  }
+  if (CLOCK_OFFSET_MS !== null) {
+    merged.DAGSOCIAL_CLOCK_OFFSET_MS = String(CLOCK_OFFSET_MS);
+  }
+  return merged;
+}
+
 function spawnDaemon(name, entry, env, extraArgs = []) {
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
   const stdio = logPath ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'];
-  const child = spawn(process.execPath, [entry, ...extraArgs], { env: { ...process.env, ...env }, stdio });
+  const child = spawn(process.execPath, [entry, ...extraArgs], { env: augmentEnv(env), stdio });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
     vtChildren.delete(name);
     console.log(`[vt] ${name} exited: code=${code} signal=${sig}`);
@@ -1610,6 +1501,29 @@ async function stopAllChildren() {
   for (const name of [...vtChildren.keys()]) {
     await stopChild(name);
   }
+}
+
+// Read the p2p port and peerId out of a `[net] listening on` line —
+// `/ip4/<host>/tcp/<port>/p2p/<peerId>`. The `tools/test-state` loader
+// reads the same line (its `nodePeerIdFromListenLine`); web declares no
+// dependency on that member, so this is a small local reader.
+function parseNetListenLine(line) {
+  const m = /listening on:\s*\/ip4\/[^/]+\/tcp\/(\d+)\/p2p\/([^\s/]+)/.exec(line);
+  return m ? { port: Number(m[1]), peerId: m[2] } : null;
+}
+
+// Read the mesh (WebRTC-direct) port out of a mesh node's identity
+// `multiaddrs` entry — the one shaped
+// `/ip4/<host>/udp/<port>/webrtc-direct/certhash/<multihash>/p2p/<peerId>`.
+// Returns `null` when the identity carries no such entry.
+function pickMeshPortFromIdentity(identity) {
+  if (identity === null || !Array.isArray(identity.multiaddrs)) return null;
+  for (const a of identity.multiaddrs) {
+    if (typeof a !== 'string') continue;
+    const m = /^\/ip4\/[^/]+\/udp\/(\d+)\/webrtc-direct\//.exec(a);
+    if (m) return Number(m[1]);
+  }
+  return null;
 }
 
 async function currentHeight(origin) {
@@ -1757,7 +1671,7 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 //                      from /blocks/current, D's proof, D's blocks. The
 //                      relay's mode stays `honest` under upstream-D: the one
 //                      edit is the upstream swap, not a per-route lie.
-//   `hold-posts`     — the --mesh block's M4 mode: GET /HEAD /OPTIONS pass
+//   `hold-posts`     — the `mesh` block's M4 mode: GET /HEAD /OPTIONS pass
 //                      through verbatim; POST /posts is held — the body
 //                      drained, no response — past the client's
 //                      REQUEST_TIMEOUT_MS, which lets the client's write
@@ -1821,10 +1735,11 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 // start from. `relay.fakeBox`, `relay.foreignBox`, `relay.droppedCreditsBox`
 // and `relay.droppedKarmaBox` hold the box the figures mode last edited R's
 // listing with — the one the arm asserts the figures line names.
-async function startTipRelay(upstream, port) {
+async function startTipRelay(upstream, port = 0) {
   const relay = {
     server: null,
-    origin: `http://127.0.0.1:${port}`,
+    origin: null,
+    port: null,
     upstream,
     mode: 'honest',
     flips: { total: 0 },
@@ -1871,7 +1786,19 @@ async function startTipRelay(upstream, port) {
         try { req.socket.destroy(); } catch {}
         return;
       }
-      // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
+      // No upstream yet — RLB stands with `upstream === null` before B's
+      // first spawn (`setupTipRelays`), and `bringUpNodeB` moves it to B's
+      // origin on the first spawn. A request that arrives in that window
+      // answers 502 — the same status, the same CORS header and the same
+      // log entry an upstream-connection refusal takes further down the
+      // handler.
+      if (relay.upstream === null) {
+        res.writeHead(502, { 'access-control-allow-origin': '*' });
+        res.end('no upstream');
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: mode0, upstream: null, status: 502 });
+        return;
+      }
+      // `hold-posts` — the `mesh` block's M4 mode: POST /posts is held past
       // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
       // to the next entry (MESH_INTERFACE → The client's node list → "A
       // write goes to one node at a time"). Reads pass through verbatim;
@@ -2085,6 +2012,9 @@ async function startTipRelay(upstream, port) {
     relay.server.on('error', rej);
     relay.server.listen(port, '127.0.0.1', res);
   });
+  const bound = relay.server.address();
+  relay.port = typeof bound === 'object' && bound !== null ? bound.port : port;
+  relay.origin = `http://127.0.0.1:${relay.port}`;
   return relay;
 }
 
@@ -2269,23 +2199,37 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 }
 
 // ---------------------------------------------------------------------------
-// The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20.
+// The blocks' steps and their NOT-RUN markers. Steps 1 and 2 are the
+// seed-list check and R's import, run in every block
+// (EXTENSION_CHECK_INTERFACE → Blocks); each block's own steps follow.
 // ---------------------------------------------------------------------------
 
+// writes — steps 3–12, with step 12 recorded as its four sub-parts (12a–d).
+const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d'];
+// links — 13a, 13, 14, 15, 16, and the browser-context arm 13-uncancelled.
+const LINKS_STEPS = ['13a', 13, 14, 15, 16, '13-uncancelled'];
+// tip — 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19a-both', '19b', '19c', 20];
-// The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e ·
-// 23 · 25, in the order they run (WEB_INTERFACE → The extension → "The
-// verified figures"); 22a · 22b · 22c · 22d · 22e · 23 are the lie arms,
-// read through the figures relay.
+// figures — 21, 24, 22a–e, 23, 25 (WEB_INTERFACE → The extension → "The
+// verified figures"); 22a–e and 23 are the lie arms, read through the
+// figures relay.
 const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', '22c', '22d', '22e', 23, 25];
 const LIE_ARM_STEPS = ['22a', '22b', '22c', '22d', '22e', 23];
 
+function markWritesNotRun(reason) {
+  for (const s of WRITES_STEPS) record(s, 'NOT RUN', reason, 'writes');
+}
+
+function markLinksNotRun(reason) {
+  for (const s of LINKS_STEPS) record(s, 'NOT RUN', reason, 'links');
+}
+
 function markVerifiedTipNotRun(reason) {
-  for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason, 'tip');
 }
 
 function markVerifiedFiguresNotRun(reason) {
-  for (const s of VERIFIED_FIGURES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_FIGURES_STEPS) record(s, 'NOT RUN', reason, 'figures');
 }
 
 // Press the corner and wait for its next verdict — one press, one verifier
@@ -2303,23 +2247,41 @@ async function pressAndReadVerdict(cx, opts = {}) {
 }
 
 // Bring node B up, bootstrapped from A. B's role is server; its store is
-// fresh; it waits for one peer (A) before returning. Answers with the sync
-// heights the caller records.
+// fresh at each start, the key file at `${SCRATCH}/b.key` persists, so
+// every B of a run answers to the same `notisId` the seed list names.
+// B spawns with `PORT=0`, `ADMIN_PORT=0`, `LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0`
+// — a node behind a relay takes new ports on every start, and the relay's
+// upstream moves to them (`EXTENSION_CHECK_INTERFACE → Addresses`). The
+// ports are read back from B's start lines
+// (`api_listening`, `Admin listener on …:<port>`, `[net] listening on:`)
+// and the tip and light relays' upstreams are moved to B's new origin.
 async function bringUpNodeB() {
   const bDbPath = join(SCRATCH, 'b.db');
   for (const suffix of ['', '-shm', '-wal']) {
     try { rmSync(bDbPath + suffix, { force: true }); } catch {}
   }
-  console.log(`[vt] spawning node B: port=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT} db=${bDbPath} bootstrap=${NODE_P2P}`);
-  spawnDaemon('b', NODE_DIST, {
+  console.log(`[vt] spawning node B on OS-bound ports: db=${bDbPath} bootstrap=${NODE_P2P}`);
+  const bSpawn = await spawnServerNode('b', {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'server',
-    PORT: String(B_HTTP_PORT),
-    ADMIN_PORT: String(B_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${B_P2P_PORT}`,
+    PORT: '0',
+    ADMIN_PORT: '0',
+    LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: NODE_P2P,
     DB_PATH: bDbPath,
-  });
+    // The caller reads HTTP (for the API) and admin (for `waitForHealth`
+    // and `waitForPeers`); B's p2p port is not read elsewhere.
+  }, { withMesh: false, waitFor: { p2p: false } });
+  B_HTTP_PORT = bSpawn.ports.http;
+  B_ADMIN_PORT = bSpawn.ports.admin;
+  B_P2P_PORT = bSpawn.ports.p2p;
+  B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
+  console.log(`[vt] node B bound: http=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT}`);
+  // The tip and light relays whose upstream is B (RLB in the tip,
+  // figures, names and waiting blocks, RB in the light block) move to B's
+  // new origin on every spawn.
+  if (tipRelays.b !== null && !WAITING) tipRelays.b.upstream = B_ORIGIN;
+  if (lightRelays.b !== null) lightRelays.b.upstream = B_ORIGIN;
   return { bDbPath };
 }
 
@@ -2329,7 +2291,7 @@ async function bringUpNodeB() {
 // one. Waits for the corner to mount and returns the session and the target
 // id; the caller closes both. The `set relays, open fresh, read verdict`
 // sequence is the one the tip block uses for 17a · 19a · 19b · 19c, as
-// `--light` uses `relay.upstream` for L13.
+// the light block uses `relay.upstream` for L13.
 async function openFreshExtensionPage(bcx) {
   const created = await bcx.call('Target.createTarget', {
     url: `chrome-extension://${EXT_ID}/index.html`,
@@ -2372,8 +2334,8 @@ function setTipRelayModes(mode) {
 }
 
 // WEB_INTERFACE → The extension → "The verified tip" — the verified-tip
-// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20 as
-// before); `bcx` is the browser-level session the block opens a fresh
+// block. `cx` is the main extension page (used for 17 · 17b · 18 · 20);
+// `bcx` is the browser-level session the block opens a fresh
 // extension page on for each step whose contract reads a different state
 // after a check (`WEB_INTERFACE → The extension → "The contexts, and what
 // each may hold"`: a page is a reader, so a fresh page is a fresh check).
@@ -2591,16 +2553,25 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       && readingStopped.tipClass === 'tip mono'
       && /^only one node could be checked · tip \d+$/.test(readingStopped.title ?? '');
 
+    // B behind RLB restarts on OS-bound ports, same key file, same store;
+    // the relay's upstream moves to B's new origin
+    // (`EXTENSION_CHECK_INTERFACE → Addresses`).
     console.log(`[vt] spawning node B again on the same store: ${bDbPath}`);
-    spawnDaemon('b', NODE_DIST, {
+    const bRestart = await spawnServerNode('b', {
       NETWORK_TYPE: 'devnet',
       NODE_ROLE: 'server',
-      PORT: String(B_HTTP_PORT),
-      ADMIN_PORT: String(B_ADMIN_PORT),
-      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${B_P2P_PORT}`,
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
       BOOTSTRAP_PEERS: NODE_P2P,
       DB_PATH: bDbPath,
-    });
+      // HTTP for the API and admin for `waitForPeers`; p2p is not read.
+    }, { withMesh: false, waitFor: { p2p: false } });
+    B_HTTP_PORT = bRestart.ports.http;
+    B_ADMIN_PORT = bRestart.ports.admin;
+    B_P2P_PORT = bRestart.ports.p2p;
+    B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
+    if (tipRelays.b !== null) tipRelays.b.upstream = B_ORIGIN;
     const bBackUp = await waitForHttpUp(B_ORIGIN, 30000);
     const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000) : null;
 
@@ -2699,20 +2670,32 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     try { rmSync(dDbPath + suffix, { force: true }); } catch {}
   }
   const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
-  spawnDaemon('d', NODE_DIST, {
-    NETWORK_TYPE: 'devnet',
-    NODE_ROLE: 'miner',
-    PORT: String(D_HTTP_PORT),
-    ADMIN_PORT: String(D_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
-    BOOTSTRAP_PEERS: '',
-    DB_PATH: dDbPath,
-    MINING_SECRET: dSecret,
-  });
-  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
-    record('19c', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
-    record('19b', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+  console.log(`[vt] spawning node D on OS-bound ports: db=${dDbPath} isolated`);
+  let dSpawnOk = false;
+  try {
+    const dSpawn = await spawnServerNode('d', {
+      NETWORK_TYPE: 'devnet',
+      NODE_ROLE: 'miner',
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
+      BOOTSTRAP_PEERS: '',
+      DB_PATH: dDbPath,
+      MINING_SECRET: dSecret,
+      // The caller reads HTTP alone — D is isolated, admin and p2p are
+      // not read elsewhere.
+    }, { withMesh: false, waitFor: { admin: false, p2p: false } });
+    D_HTTP_PORT = dSpawn.ports.http;
+    D_ADMIN_PORT = dSpawn.ports.admin;
+    D_P2P_PORT = dSpawn.ports.p2p;
+    D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
+    dSpawnOk = await waitForHttpUp(D_ORIGIN, 30000);
+  } catch (e) {
+    console.log(`[vt] node D spawn failed: ${e.message}`);
+  }
+  if (!dSpawnOk) {
+    record('19c', false, `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
+    record('19b', false, `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
   } else {
     console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
@@ -2911,7 +2894,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
 
   // ---- Step 20 — no verifier, on the hosted origin.
   if (PUBLIC === null) {
-    record(20, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(20, false, 'no --public / --web-dist — the hosted origin is not served');
   } else {
     console.log(`[vt] step 20: opening the hosted origin at ${publicOrigin}${publicBase}`);
     const bcx = await openBrowserSession();
@@ -3175,20 +3158,31 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
 
-  // ---- Pre-flight — A is up. The tip block's cleanup (stopAllChildren) stops
-  // B when --verified-tip runs, and a run without --verified-tip never starts
-  // it, so B is always down here. The figures block owns its own B: the tip
-  // block's calls verbatim (bringUpNodeB, waitForHttpUp, waitForPeers,
-  // waitForHeightsClose). Step 25 needs no B and still runs when B does not
-  // come up.
+  // ---- Pre-flight — A is up. The figures block owns its own B:
+  // `bringUpNodeB` spawns it from `--node-dist`, bootstrapped from
+  // `--node-p2p`. Step 25 reads the hosted web build and still runs where
+  // B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node A did not answer /blocks/current at ${NODE}`);
     await runFiguresStep25();
     return;
   }
   const preHeightA = await currentHeight(NODE);
   console.log(`[vf] pre-flight: A height=${preHeightA} at ${NODE}`);
+
+  // ---- Faucet credits for R — step 21's send refuses a balance under 2
+  // $NOTIS, and the block starts from `base`, which grants R none
+  // (EXTENSION_CHECK_INTERFACE → Blocks: "A block prepares what it reads
+  // beyond `base`, itself"). A refusal or a missed landing fails every
+  // step of the block with the reason.
+  const faucetPrep = await prepareFaucetCreditsForR();
+  if (!faucetPrep.ok) {
+    const reason = `faucet credits prep: ${faucetPrep.reason}`;
+    for (const s of VERIFIED_FIGURES_STEPS) record(s, false, reason);
+    return;
+  }
+  console.log(`[vf] faucet credits for R: boxId ${faucetPrep.boxId.slice(0, 12)}…, elapsed=${(faucetPrep.elapsedMs / 1000).toFixed(0)}s`);
 
   // Bring up B — bringUpNodeB wipes b.db and spawns fresh from NODE_DIST,
   // bootstrapped from NODE_P2P. The tip block's cleanup left b.db orphaned
@@ -3199,7 +3193,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   await bringUpNodeB();
   const bUp = await waitForHttpUp(B_ORIGIN, 30000);
   if (!bUp) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B did not come up at ${B_ORIGIN}`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node B did not come up at ${B_ORIGIN}`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -3209,7 +3203,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   const bPeers = await waitForPeers(bAdminOrigin, 1, 60000);
   console.log(`[vf] node B peers_connected=${bPeers}`);
   if (bPeers === null) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -3218,7 +3212,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   if (abSynced === null) {
     const hA = await currentHeight(NODE);
     const hB = await currentHeight(B_ORIGIN);
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -3265,9 +3259,8 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
     // ---- Step 25 — no verifier, no /api/v1/proof/ request on the hosted origin.
     await runFiguresStep25();
   } finally {
-    // ---- Cleanup — B by its handle, as the tip block does. The tip block's
-    // own cleanup already ran if --verified-tip preceded us; this stops the B
-    // the figures block itself brought up.
+    // ---- Cleanup — B by its handle, as the tip block does. This stops the
+    // B the figures block brought up.
     console.log(`[vf] cleanup: stopping node B by handle`);
     await stopChild('b');
     console.log(`[vf] cleanup done; live children left=${vtChildren.size}`);
@@ -3509,8 +3502,8 @@ async function runFiguresStep24(cx) {
     }
     const preBoxIds = karmaPre.boxIds;
 
-    // Post one root through the composer. The rep policy is silent since
-    // step 9, so no prompt fires — the post lands on submit alone.
+    // Post one root through the composer. The rep policy is silent, so
+    // no prompt fires — the post lands on submit alone.
     const preH24 = await currentHeight(NODE);
     await cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
     await cx.waitFor(`document.querySelector('.composer textarea')`, 'composer for step 24', 10000);
@@ -3703,6 +3696,85 @@ async function readNodeKarmaPending() {
   } catch {
     return null;
   }
+}
+
+// Ask the faucet for R's credits through its HTTP route, the one the
+// extension's own faucet step asks (NODE_INTERFACE → Faucet,
+// WEB_INTERFACE → The faucet step): POST <FAUCET>/credits with
+// `{ pubkey: <R> }`. A 202 carries the grant's `boxId`. A pooled transfer
+// lands in the next block, so the helper asks the stack's miner for tip
+// + 1 (`askMineTo`, as the other height waits do) and waits for R's
+// plain `/credits` on A to list a box of that id — the node's own word,
+// never a balance figure moving (a row read as a landing is the trap).
+// Where the grant has not landed by that height, the helper asks for the
+// next tip + 1 and waits again, within the same 180 s bound; the ask is
+// a no-op when `--miner-control` is not set. The grant's
+// `expiresAtHeight` is the transfer's mempool expiry (tip +
+// `MEMPOOL_EXPIRY_BLOCKS` = 720 on devnet), ~720 blocks past devnet's
+// `karmaStaleThresholdBlocks` (500) and seven rent periods (100), so the
+// helper never asks for it — a pre-mine through it would shift R's rep
+// and boxes past what the block's steps expect. Answers
+// `{ ok, boxId?, reason? }`; a refusal or missed landing lets the caller
+// fail every in-block step with the reason. `figures` reads R holding
+// $NOTIS (step 21's send refuses under 2 $NOTIS; the row's figure is the
+// pending view's spendable sum); `names` reads R holding $NOTIS too
+// (step 29 types a send to S's handle and the flow builds a transfer tx
+// on R's spendable boxes).
+async function prepareFaucetCreditsForR() {
+  const rKey = R_JSON?.pubKeyHex;
+  if (typeof rKey !== 'string' || !/^[0-9a-f]{64}$/.test(rKey)) {
+    return { ok: false, reason: 'no --r-key pubKeyHex' };
+  }
+  const url = `${FAUCET.replace(/\/+$/, '')}/credits`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pubkey: rKey }),
+    });
+  } catch (e) {
+    return { ok: false, reason: `POST ${url} failed: ${e?.message ?? String(e)}` };
+  }
+  const bodyText = await res.text().catch(() => '');
+  let answer;
+  try { answer = JSON.parse(bodyText); } catch { answer = bodyText; }
+  if (res.status !== 202) {
+    return { ok: false, reason: `POST ${url} status=${res.status} body=${bodyText.slice(0, 200)}` };
+  }
+  const grantBoxId = typeof answer?.boxId === 'string' && /^[0-9a-f]{64}$/i.test(answer.boxId)
+    ? answer.boxId.toLowerCase() : null;
+  if (grantBoxId === null) {
+    return { ok: false, reason: `POST ${url} 202 carried no 64-hex boxId: ${bodyText.slice(0, 200)}` };
+  }
+  const BOUND_MS = 180000;
+  const t0 = Date.now();
+  const attempts = [];
+  while (Date.now() - t0 < BOUND_MS) {
+    const nowHeight = await currentHeight(NODE);
+    if (typeof nowHeight !== 'number') {
+      return { ok: false, reason: `could not read A's current height; attempts=${JSON.stringify(attempts)}` };
+    }
+    const target = nowHeight + 1;
+    attempts.push({ at: Date.now() - t0, from: nowHeight, to: target });
+    if (MINER_CONTROL !== null) {
+      try { await askMineTo(target, 'faucet credits prep'); }
+      catch (e) { return { ok: false, reason: `askMineTo(${target}) failed: ${e?.message ?? String(e)}; attempts=${JSON.stringify(attempts)}` }; }
+    }
+    // Poll A's plain /credits for the grant's box until either the tip
+    // moves past `target` without a match (another attempt follows) or
+    // the 180 s bound runs out.
+    while (Date.now() - t0 < BOUND_MS) {
+      const c = await readNodeCredits(rKey);
+      if (c !== null && c.boxIds.some((id) => id.toLowerCase() === grantBoxId)) {
+        return { ok: true, boxId: grantBoxId, elapsedMs: Date.now() - t0, attempts };
+      }
+      const h = await currentHeight(NODE);
+      if (typeof h === 'number' && h > target) break;
+      await sleep(2000);
+    }
+  }
+  return { ok: false, reason: `the faucet grant (boxId ${grantBoxId.slice(0, 12)}…) did not land on R's plain /credits within ${((Date.now() - t0) / 1000).toFixed(0)}s; attempts=${JSON.stringify(attempts)}` };
 }
 
 // A key's plain /credits on A — the plain listing's boxes (id, value, locked
@@ -4094,7 +4166,7 @@ async function runFiguresLieArms(cx, bcx) {
   void cx;
   const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
   if (relays.length !== 2) {
-    for (const s of LIE_ARM_STEPS) record(s, 'NOT RUN',
+    for (const s of LIE_ARM_STEPS) record(s, false,
       `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
@@ -4280,7 +4352,7 @@ async function runLieArm(bcx, relays, arm) {
 // reads NOT RUN by name.
 async function runFiguresStep25() {
   if (PUBLIC === null || webDistAbs === null) {
-    record(25, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(25, false, 'no --public / --web-dist — the hosted origin is not served');
     return;
   }
   let bcx = null;
@@ -4368,7 +4440,7 @@ const NAMES_LABEL_STEPS = ['27a', '27b', '27c', '27d'];
 const NAMES_SEND_STEPS = ['28a', '28b'];
 
 function markVerifiedNamesNotRun(reason) {
-  for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason, 'names');
 }
 
 // The page's size for the block — wider than the one-column line, 955px, so
@@ -4580,7 +4652,7 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   // or B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
-    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    for (const s of NAMES_STEPS_ON_B) record(s, false, `node A did not answer /blocks/current at ${NODE}`);
     await runNamesStep30(null);
     return;
   }
@@ -4588,11 +4660,24 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   const sHeld = await usernameOf(NODE, S_PUB);
   console.log(`[vn] S ${S_PUB.slice(0, 8)}… holds ${sHeld === null ? 'no name' : `@${sHeld.name}, box ${sHeld.boxId.slice(0, 12)}…, claimed at block ${sHeld.claimedAtBlock}`}`);
 
+  // ---- Faucet credits for R — step 29's send builds a transfer tx on
+  // R's spendable boxes and the prompt reads them; the block starts from
+  // `base`, which grants R none (EXTENSION_CHECK_INTERFACE → Blocks: "A
+  // block prepares what it reads beyond `base`, itself"). A refusal or a
+  // missed landing fails every step of the block with the reason.
+  const faucetPrep = await prepareFaucetCreditsForR();
+  if (!faucetPrep.ok) {
+    const reason = `faucet credits prep: ${faucetPrep.reason}`;
+    for (const s of VERIFIED_NAMES_STEPS) record(s, false, reason);
+    return;
+  }
+  console.log(`[vn] faucet credits for R: boxId ${faucetPrep.boxId.slice(0, 12)}…, elapsed=${(faucetPrep.elapsedMs / 1000).toFixed(0)}s`);
+
   // ---- B — bringUpNodeB wipes b.db and spawns fresh, bootstrapped from A.
   console.log(`[vn] bringing up node B for the names block`);
   await bringUpNodeB();
   const notRunWithout = async (reason) => {
-    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', reason);
+    for (const s of NAMES_STEPS_ON_B) record(s, false, reason);
     await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
   };
   try {
@@ -5095,13 +5180,12 @@ async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
   void cx;
   const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
   if (relays.length !== 2) {
-    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, 'NOT RUN',
+    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, false,
       `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
-  // The names context — R's key and S's name — on both relays. The figures
-  // block already set `rKey`, this reaffirms it in the same lowercase form
-  // and adds S's name for the send arms.
+  // The names context — R's key and S's name — on both relays. This sets
+  // `rKey` in lowercase form and S's name for the send arms.
   for (const r of relays) {
     r.rKey = rKey;
     r.sName = sHeld?.name ?? null;
@@ -5984,7 +6068,7 @@ async function runNamesStep29(cx, sHeld) {
 // request it made.
 async function runNamesStep30(rName) {
   if (PUBLIC === null || webDistAbs === null) {
-    record(30, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(30, false, 'no --public / --web-dist — the hosted origin is not served');
     return;
   }
   const rKey = R_JSON.pubKeyHex.toLowerCase();
@@ -6156,11 +6240,11 @@ async function runNamesStep30(rName) {
 const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4', 'W5'];
 
 function markWaitingWritesNotRun(reason) {
-  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason, 'waiting');
 }
 
 function markWaitingWritesFail(reason) {
-  for (const s of WAITING_WRITES_STEPS) record(s, false, reason);
+  for (const s of WAITING_WRITES_STEPS) record(s, false, reason, 'waiting');
 }
 
 // A log-filter helper: the entries forwarded to upstream — those the relay
@@ -6297,7 +6381,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
   if (!tipRelays.a || !tipRelays.b) {
-    markWaitingWritesFail('the tip relays are not up — the waiting-writes block runs under the relays build');
+    markWaitingWritesFail('the tip relays are not up — the waiting block needs them');
     return;
   }
   if (!R_JSON) {
@@ -6346,8 +6430,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   // prep page's `postCache.openRemembered()` opens that name's database
   // at load (WEB_INTERFACE → The extension →
   // "A post checked before any tip run names a chain is kept until one does").
-  // With both tip relays honest and D gone (the verified-tip block's
-  // cleanup stops it), the prep page's tip run names A — the chain's
+  // With both tip relays honest and no node D, the prep page's tip run
+  // names A — the chain's
   // name is non-null under `verified` and under `thin` alike, "naming a
   // chain takes a proof that verifies, not a second witness"
   // (→ "The chain's name"), so the seat lands whether the second relay's
@@ -6421,8 +6505,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // Wait for the corner's tip run to settle — the title names a tip once
     // the client's chain is seated. Either shape is acceptable: step 17's
     // "verified across N nodes · tip N" (both relays' upstreams answered)
-    // or step 18's "only one node could be checked · tip N" (B is down
-    // after the verified-tip block's cleanup). Each seats the chain.
+    // or step 18's "only one node could be checked · tip N".
+    // Each seats the chain.
     const reached = await waitForCornerState(
       pCx,
       (c) => (c.ledClass === 'led fresh' || c.ledClass === 'led thin')
@@ -6545,10 +6629,9 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     // Make one root post from the composer so the client records a rep
     // waiting view (WEB_INTERFACE → The wallet → "A flow with no
     // waiting view ends as a transport failure", → "The waiting store
-    // keeps every waiting write as a record of its own"): under
-    // `--waiting-only` each run starts from a fresh browser profile
-    // and no earlier step records one; in a full run the earlier
-    // steps do. The composer's 2xx is awaited by the stage line
+    // keeps every waiting write as a record of its own"): the
+    // block starts from a fresh browser profile and no earlier step
+    // records one. The composer's 2xx is awaited by the stage line
     // reading `submitted` on the pending card. Without this view W2's
     // composer stays disabled and its like ends as a transport
     // failure before the waiting arm engages.
@@ -6625,7 +6708,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4', 'W5']) {
-      record(s, 'NOT RUN', `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
+      record(s, false, `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
     }
     return;
   }
@@ -7496,24 +7579,25 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
 // "The resolve", "The post check", "The post cache", "The chain's name").
 // Two relays — RA in front of A, RB in front of B — each with eight modes
 // over the batch route and the list reads (honest, text, drop, hold, hang,
-// list-down, list-replay, down); its own node D on 19820 for L13.
+// list-down, list-replay, down); its own node D, on the ports its spawn
+// binds, for L13.
 // ---------------------------------------------------------------------------
 
 const LIGHT_STEPS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8', 'L9', 'L10', 'L11', 'L12', 'L13', 'L14'];
 
-// The pair of relays set up before the browser launches when --light is given
-// (`setupLightRelays`); each a value shaped as `startRelay` returns.
+// The pair of relays set up before the browser launches for the light
+// block (`setupLightRelays`); each a value shaped as `startRelay` returns.
 const lightRelays = { a: null, b: null };
 
 function markLightNotRun(reason) {
-  for (const s of LIGHT_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of LIGHT_STEPS) record(s, 'NOT RUN', reason, 'light');
 }
 
 // A pre-L1 failure — the preamble could not stand up the block. Every step
 // reads FAIL with the one reason, so the summary carries fourteen L lines
 // even when the fixture or a prerequisite threw.
 function markLightFail(reason) {
-  for (const s of LIGHT_STEPS) record(s, false, reason);
+  for (const s of LIGHT_STEPS) record(s, false, reason, 'light');
 }
 
 // A relay the harness owns — RA in front of A, RB in front of B. Every
@@ -7562,11 +7646,12 @@ function markLightFail(reason) {
 //                  the client reads is D's (`WEB_INTERFACE → The extension
 //                  → "The chain's name"`, `"The post cache"`). The one
 //                  edit is the upstream swap, not the mode's behaviour.
-async function startRelay(name, upstream, port) {
+async function startRelay(name, upstream, port = 0) {
   const relay = {
     name,
     server: null,
-    origin: `http://127.0.0.1:${port}`,
+    origin: null,
+    port: null,
     upstream,
     mode: 'honest',
     targetId: null,
@@ -7766,6 +7851,9 @@ async function startRelay(name, upstream, port) {
     relay.server.on('error', reject);
     relay.server.listen(port, '127.0.0.1', resolve);
   });
+  const bound = relay.server.address();
+  relay.port = typeof bound === 'object' && bound !== null ? bound.port : port;
+  relay.origin = `http://127.0.0.1:${relay.port}`;
   return relay;
 }
 
@@ -7773,9 +7861,8 @@ async function startRelay(name, upstream, port) {
 // 2 (reply to reply1) and `reply3` at depth 1 (a sibling of `reply1`, kept
 // for the withdraw arm so L10's shape is unchanged by L12). Posts whichever
 // of them the chain lacks, through the composer. Silent policy and R
-// unlocked are preconditions set by steps 9/10 (where --r-key gave the full
-// 1–16 pass); where either is missing the fixture read reports what is
-// absent and the block skips.
+// unlocked are preconditions; where either is missing the fixture read
+// reports what is absent and the block skips.
 async function ensureLightFixture(cx) {
   const roots = await fetch(`${NODE}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=1`)
     .then((r) => r.json()).catch(() => null);
@@ -8293,17 +8380,22 @@ async function bringUpLightD() {
     try { rmSync(dDbPath + suffix, { force: true }); } catch {}
   }
   const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vl] spawning light D at ${DL_ORIGIN} (p2p=${DL_P2P_PORT}, isolated)`);
-  spawnDaemon('d-light', NODE_DIST, {
+  console.log(`[vl] spawning light D on OS-bound ports (isolated)`);
+  const dlSpawn = await spawnServerNode('d-light', {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'miner',
-    PORT: String(DL_HTTP_PORT),
-    ADMIN_PORT: String(DL_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DL_P2P_PORT}`,
+    PORT: '0',
+    ADMIN_PORT: '0',
+    LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: '',
     DB_PATH: dDbPath,
     MINING_SECRET: dSecret,
-  });
+    // HTTP alone — the isolated light D's admin and p2p are not read.
+  }, { withMesh: false, waitFor: { admin: false, p2p: false } });
+  DL_HTTP_PORT = dlSpawn.ports.http;
+  DL_ADMIN_PORT = dlSpawn.ports.admin;
+  DL_P2P_PORT = dlSpawn.ports.p2p;
+  DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
   const up = await waitForHttpUp(DL_ORIGIN, 30000);
   if (!up) return { ok: false, reason: 'light D did not come up' };
   const dPast = TIP_M + TIP_K + 4;
@@ -8399,8 +8491,8 @@ async function lightSteps(cx, targetId = 'unknown') {
     aDbName = 'notis.posts.' + aBlock1.toLowerCase();
     console.log(`[vl] A block 1 hash=${aBlock1.slice(0, 12)}…, cache db=${aDbName}`);
 
-    // Reload — the names block may have left the pane off the feed; a
-    // reload returns the first column to the feed. The App's tip verifier
+    // Reload — a reload returns the first column to the feed, whatever
+    // pane an earlier step left. The App's tip verifier
     // re-runs on load, so the corner is reset here too.
     await cx.call('Page.reload');
     await cx.waitFor(`!!document.querySelector('#feed')`, 'the feed on reload', 60000);
@@ -8586,7 +8678,7 @@ async function lightSteps(cx, targetId = 'unknown') {
     RA.mode = 'honest';
     RB.mode = 'honest';
     // Post a new root through the composer at the feed's `new post`
-    // button; silent policy is in place from step 9.
+    // button; silent policy is in place.
     const CONTENT = `vl-L3-root-${Date.now()}`;
     await cx.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
     await cx.waitFor(`!!document.querySelector('.composer textarea')`, 'L3 composer', 15000);
@@ -9268,7 +9360,7 @@ async function lightSteps(cx, targetId = 'unknown') {
   // `posts/batch`, none carries `tx`; no `notis.posts.` database; no slot
   // and no clay line.
   if (PUBLIC === null || webDistAbs === null) {
-    record('L14', 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record('L14', false, 'no --public / --web-dist — the hosted origin is not served');
   } else {
     let bcx = null;
     let cxH = null;
@@ -9314,7 +9406,7 @@ async function lightSteps(cx, targetId = 'unknown') {
 }
 
 // ---------------------------------------------------------------------------
-// The --mesh block — M1 · M2 · M3 · M4
+// The `mesh` block — M1 · M2 · M3 · M4
 //
 // The extension's first path is the mesh (`WEB_INTERFACE → The extension →
 // "The mesh is the extension's first path"`, `→ "Nothing retries a
@@ -9352,74 +9444,97 @@ const MESH_STEPS = ['M1', 'M2', 'M3', 'M4', 'M5'];
 let m3Post = null;
 
 // The pair of mesh nodes `setupMeshStack` sets up before the browser
-// launches when --mesh is given. Each holds the DB path (so a restart
+// launches for the `mesh` block. Each holds the DB path (so a restart
 // across steps can be fired by name), the ports the node takes on every
 // restart, and the identity line the mesh-on spawn read. `apHttp` is the
 // HTTP port the node currently listens on — equal to `ports.http` at rest
-// and equal to `AP_ALT_HTTP_PORT` during M4 while the M4 relay owns the
-// base port.
+// and equal to `ports.altHttp` during M4 while the M4 relay owns the base
+// port.
 const meshNodes = {
   ap: null, // { identity, ports, dbPath, mesh: boolean, apHttp: number }
   bp: null, // { identity, ports, dbPath, mesh: boolean }
 };
 
 // The M4 relay stood up only during M4 — a `startTipRelay` in front of A'
-// at `AP_HTTP_PORT` with upstream `http://127.0.0.1:AP_ALT_HTTP_PORT`, set
-// to `hold-posts` after a fresh page's tip run has returned verified so
-// the client's first write goes through the held POST.
+// on A''s first HTTP port, with A''s alt HTTP as its upstream, set to
+// `hold-posts` after a fresh page's tip run has returned verified so the
+// client's first write goes through the held POST.
 let m4Relay = null;
 
 function markMeshNotRun(reason) {
-  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason, 'mesh');
 }
 
 function markMeshFail(reason) {
-  for (const s of MESH_STEPS) record(s, false, reason);
+  for (const s of MESH_STEPS) record(s, false, reason, 'mesh');
 }
 
-const AP_PORTS = {
-  http: AP_HTTP_PORT, admin: AP_ADMIN_PORT, p2p: AP_P2P_PORT, mesh: AP_MESH_PORT, altHttp: AP_ALT_HTTP_PORT,
-};
-const BP_PORTS = {
-  http: BP_HTTP_PORT, admin: BP_ADMIN_PORT, p2p: BP_P2P_PORT, mesh: BP_MESH_PORT,
-};
+// The mesh nodes' first-start ports, read back from each spawn's start
+// lines and pinned on every later spawn behind the seed-list entry each
+// node answers for (M2, M3 and M4); M4 restarts A' on a fresh alt HTTP
+// port (bound on 0) and stands a tip relay on A''s first HTTP port with
+// that alt as upstream. Each `altHttp` is set at M4 time; `apHttp` on
+// `meshNodes.ap` names the port A' is listening on right now.
+const AP_PORTS = { http: null, admin: null, p2p: null, mesh: null, altHttp: null };
+const BP_PORTS = { http: null, admin: null, p2p: null, mesh: null };
 
-// The env one mesh node takes — mesh on or off, and (for B') the bootstrap
-// multiaddr naming A''s p2p listen. `httpPort` overrides `ports.http` when
-// the relay-in-front stage moves the node off its base port.
-function meshNodeEnv({ ports, dbPath, withMesh, bootstrap, httpPort }) {
+// The env one node takes — mesh on or off, each port explicit so the
+// caller passes `0` for a first start (OS answers) or the stored
+// first-start value for a restart behind the seed-list entry the node
+// answers for.
+function nodeEnv({ dbPath, bootstrap, http, admin, p2p, mesh }) {
   const env = {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'server',
-    PORT: String(httpPort ?? ports.http),
-    ADMIN_PORT: String(ports.admin),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${ports.p2p}`,
+    PORT: String(http),
+    ADMIN_PORT: String(admin),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${p2p}`,
     DB_PATH: dbPath,
   };
   env.BOOTSTRAP_PEERS = bootstrap ?? '';
-  if (withMesh) {
+  if (mesh !== undefined) {
     env.MESH_ROLE = 'public';
-    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${ports.mesh}/webrtc-direct`;
+    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${mesh}/webrtc-direct`;
     env.MESH_STUN = 'off';
   }
   return env;
 }
 
-// Spawn a mesh-on node and read its identity line (the first JSON line of
-// its stdout with `notisId`, `peerId` and `multiaddrs`) —
-// `NODE_INTERFACE → Configuration → "A mesh node prints its identity
-// line"`. Returns the child, its exit promise, the parsed identity and
-// the ports the spawn used. `spawnDaemon`'s log pipe runs through dynamic
-// import and attaches after a tick; this helper attaches a 'data' listener
-// synchronously after `spawn`, buffers until the identity line arrives,
-// then writes every chunk to the log file (so the identity is in the log
-// too, with no race against the pipe).
-async function spawnMeshNode(name, env, timeoutMs = 60000) {
+// Spawn a node and read every port the OS bound for it from its start
+// lines: `api_listening` (http), `Admin listener on …:<port>` (admin),
+// `[net] listening on: /ip4/…/tcp/<port>/p2p/<peerId>` (p2p), and, for a
+// mesh node, the identity JSON line (notisId, peerId, multiaddrs — one of
+// them carries the mesh port as `/ip4/…/udp/<port>/webrtc-direct/…`).
+// Returns `{ child, exited, identity, ports: { http, admin, p2p, mesh? } }`.
+// `env` carries the ports the node binds — `0` on a first start (the OS
+// answers), the stored first-start value on a restart behind the seed-list
+// entry the node answers for. The `stderr` stream and every stdout chunk
+// land in the log file at `${SCRATCH}/${name}.log`, with no race against a
+// deferred pipe attach — the data listener attaches synchronously after
+// `spawn`.
+// A mesh-on restart with `p2p: 0` and the mesh port pinned never prints a
+// TCP listen line: `@dagsocial/net`'s `effectiveAnnounce`
+// (`packages/net/src/mesh/libp2p-options.ts`) announces only the listen
+// entries with a concrete port once one is concrete, so the TCP listener
+// is bound but not in `[net] listening on:`. The caller passes the ports
+// it reads back in `waitFor`; the wait reads those alone. `http` is always
+// read (every node prints `api_listening`); `p2p` defaults to true for
+// a first start, false where the caller passes `p2p: false` (M3's and
+// M4's restarts read HTTP, admin and mesh, not p2p); `mesh` and
+// `identity` default to `withMesh`.
+async function spawnServerNode(name, env, { withMesh, waitFor }, timeoutMs = 60000) {
+  const need = {
+    http: true,
+    admin: waitFor?.admin ?? true,
+    p2p: waitFor?.p2p ?? true,
+    mesh: waitFor?.mesh ?? withMesh,
+    identity: waitFor?.identity ?? withMesh,
+  };
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
-  const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [NODE_DIST], { env: augmentEnv(env), stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
     vtChildren.delete(name);
-    console.log(`[vm] ${name} exited: code=${code} signal=${sig}`);
+    console.log(`[${withMesh ? 'vm' : 'vt'}] ${name} exited: code=${code} signal=${sig}`);
     res();
   }));
   vtChildren.set(name, { child, exited });
@@ -9431,51 +9546,80 @@ async function spawnMeshNode(name, env, timeoutMs = 60000) {
   }
   let buf = '';
   let identity = null;
-  const identityPromise = new Promise((resolve, reject) => {
+  let httpPort = null;
+  let adminPort = null;
+  let p2pPort = null;
+  let meshPort = null;
+  const have = () =>
+    (!need.http || httpPort !== null)
+    && (!need.admin || adminPort !== null)
+    && (!need.p2p || p2pPort !== null)
+    && (!need.mesh || meshPort !== null)
+    && (!need.identity || identity !== null);
+  const ready = new Promise((resolve, reject) => {
     const to = setTimeout(() => {
-      if (identity === null) reject(new Error(`${name} never printed an identity line within ${timeoutMs}ms`));
+      if (!have()) reject(new Error(
+        `${name} never printed every start line it needs within ${timeoutMs}ms`
+        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'};`
+        + ` needs=${JSON.stringify(need)})`,
+      ));
     }, timeoutMs);
     const onData = (chunk) => {
       const text = chunk.toString('utf8');
       logStream?.write(text);
-      if (identity !== null) return;
       buf += text;
       let idx;
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
+        // `api_listening` JSON event and the identity JSON line — mesh
+        // nodes print both, non-mesh nodes only the first.
         try {
           const parsed = JSON.parse(line);
-          if (typeof parsed?.notisId === 'string'
+          if (parsed?.event === 'api_listening' && typeof parsed.port === 'number') {
+            httpPort = parsed.port;
+          } else if (typeof parsed?.notisId === 'string'
               && typeof parsed?.peerId === 'string'
               && Array.isArray(parsed?.multiaddrs)) {
             identity = parsed;
-            clearTimeout(to);
-            resolve(parsed);
-            return;
+            meshPort = pickMeshPortFromIdentity(parsed);
           }
-        } catch { /* not a JSON identity line, next */ }
+        } catch { /* not JSON */ }
+        const adm = /^Admin listener on [^:]+:([0-9]+)$/.exec(line);
+        if (adm) adminPort = Number(adm[1]);
+        const net = parseNetListenLine(line);
+        if (net !== null) p2pPort = net.port;
+        if (have()) { clearTimeout(to); resolve(); return; }
       }
     };
     child.stdout?.on('data', onData);
     child.on('exit', () => {
       clearTimeout(to);
-      if (identity === null) reject(new Error(`${name} exited before printing an identity line`));
+      if (!have()) {
+        // Read the tail of the log so the rejection carries the node's own
+        // words — a bind failure on a pinned port prints the port there
+        // (`EADDRINUSE` on HTTP or admin, the libp2p listen message on p2p
+        // or mesh), and the caller's `record` names the node. Together they
+        // name both the port and the node without a pre-bind probe.
+        let tail = '';
+        if (logPath) {
+          try { tail = readFileSync(logPath, 'utf8').slice(-4000); } catch {}
+        }
+        reject(new Error(
+          `${name} exited before every start line it needs was printed`
+          + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'};`
+          + ` needs=${JSON.stringify(need)})`
+          + (tail ? `\nlog tail:\n${tail}` : ''),
+        ));
+      }
     });
   });
-  const id = await identityPromise;
-  return { child, exited, identity: id };
+  await ready;
+  const ports = { http: httpPort, admin: adminPort, p2p: p2pPort };
+  if (withMesh) ports.mesh = meshPort;
+  return { child, exited, identity, ports };
 }
 
-// Spawn a mesh-off node — plain `spawnDaemon` and wait for HTTP. The DB
-// path and the node's identity (notisId) are kept across restarts, so a
-// restart without MESH_ROLE leaves every seed-list entry's notisId still
-// matching its node's key.
-async function spawnPlainNode(name, env, httpOrigin, timeoutMs = 60000) {
-  spawnDaemon(name, NODE_DIST, env);
-  const up = await waitForHttpUp(httpOrigin, timeoutMs);
-  if (!up) throw new Error(`${name} did not answer /blocks/current at ${httpOrigin} within ${timeoutMs}ms`);
-}
 
 // A's peer id, read from `NODE_P2P` (the --node-p2p multiaddr, shape
 // `/ip4/.../tcp/<port>/p2p/<peerId>`). A transaction's forward is bought
@@ -9495,7 +9639,7 @@ function nodeP2pPeerId() {
 // Wait for a node's log to carry `[net] outbound handshake with <peerId> on
 // id=<connection id>: ok=true` — the one line `packages/net`'s node writer
 // records when an outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
-// both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
+// both `spawnDaemon` and `spawnServerNode` write to. Returns true on match,
 // false on timeout. A restart appends to the log, so the caller passes
 // the offset into the file where the restart begins — a previous spawn's
 // handshake line is not counted for the current one.
@@ -9621,64 +9765,62 @@ async function setupMeshStack() {
   for (const p of [apDb, apDb + '-shm', apDb + '-wal', bpDb, bpDb + '-shm', bpDb + '-wal']) {
     try { rmSync(p, { force: true }); } catch {}
   }
-  // A' spawns first with mesh, bootstrapped from the operator's A at
-  // --node-p2p so A' is a peer on A's chain and inherits R's karma
-  // (operator-promoted on A); B' bootstraps from A''s p2p listen, so
-  // B' syncs through A' and reaches A's chain too.
-  console.log(`[vm] spawning A': http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT} db=${apDb} bootstrap=${NODE_P2P}`);
-  const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
-    ports: AP_PORTS, dbPath: apDb, withMesh: true, bootstrap: NODE_P2P,
-  }));
-  const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
-  if (!apUp) throw new Error(`A' did not answer /blocks/current at ${AP_ORIGIN}`);
-  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}`);
+  // A' spawns first with mesh on OS-bound ports, bootstrapped from the
+  // operator's A at `--node-p2p` so A' is a peer on A's chain and inherits
+  // R's karma (operator-promoted on A). Every port is read back from A''s
+  // start lines, pinned in `AP_PORTS` and the module-level globals, and
+  // every later spawn of A' behind the seed-list entry takes those ports.
+  console.log(`[vm] spawning A' on OS-bound ports: db=${apDb} bootstrap=${NODE_P2P}`);
+  const apSpawn = await spawnServerNode('ap', nodeEnv({
+    dbPath: apDb, bootstrap: NODE_P2P, http: 0, admin: 0, p2p: 0, mesh: 0,
+  }), { withMesh: true });
+  AP_HTTP_PORT = apSpawn.ports.http;
+  AP_ADMIN_PORT = apSpawn.ports.admin;
+  AP_P2P_PORT = apSpawn.ports.p2p;
+  AP_MESH_PORT = apSpawn.ports.mesh;
+  AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
+  AP_PORTS.http = AP_HTTP_PORT; AP_PORTS.admin = AP_ADMIN_PORT;
+  AP_PORTS.p2p = AP_P2P_PORT; AP_PORTS.mesh = AP_MESH_PORT;
+  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT}`);
   const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
-  console.log(`[vm] spawning B': http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT} db=${bpDb} bootstrap=${bpBootstrap}`);
-  const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
-    ports: BP_PORTS, dbPath: bpDb, withMesh: true, bootstrap: bpBootstrap,
-  }));
-  const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
-  if (!bpUp) throw new Error(`B' did not answer /blocks/current at ${BP_ORIGIN}`);
-  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`);
+  console.log(`[vm] spawning B' on OS-bound ports: db=${bpDb} bootstrap=${bpBootstrap}`);
+  const bpSpawn = await spawnServerNode('bp', nodeEnv({
+    dbPath: bpDb, bootstrap: bpBootstrap, http: 0, admin: 0, p2p: 0, mesh: 0,
+    // HTTP for the API, admin for M3's `waitForPeers`, mesh and identity
+    // for the seed list's webrtc-direct multiaddr; nothing bootstraps from
+    // B', so its p2p port is not read.
+  }), { withMesh: true, waitFor: { p2p: false } });
+  BP_HTTP_PORT = bpSpawn.ports.http;
+  BP_ADMIN_PORT = bpSpawn.ports.admin;
+  BP_P2P_PORT = bpSpawn.ports.p2p;
+  BP_MESH_PORT = bpSpawn.ports.mesh;
+  BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
+  BP_PORTS.http = BP_HTTP_PORT; BP_PORTS.admin = BP_ADMIN_PORT;
+  BP_PORTS.p2p = BP_P2P_PORT; BP_PORTS.mesh = BP_MESH_PORT;
+  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT}`);
   meshNodes.ap = {
     identity: apSpawn.identity, ports: AP_PORTS, dbPath: apDb, mesh: true, apHttp: AP_HTTP_PORT,
   };
   meshNodes.bp = {
     identity: bpSpawn.identity, ports: BP_PORTS, dbPath: bpDb, mesh: true,
   };
-  // The build's shell was shape-checked at the top (`notis-nodes` carries
-  // two entries with one webrtc-direct addr each on the expected ports);
-  // here we validate the identity values — notisId and the addrs[0]
-  // string — against what the nodes actually printed. The invoker baked
-  // these into the build, and a mismatch names the exact rebuild line.
-  const shellMatch = shellHtml.match(/<meta[^>]+name="notis-nodes"[^>]+content=(?:"([^"]*)"|'([^']*)')[^>]*>/);
-  const shellNodesRaw = shellMatch ? (shellMatch[1] ?? shellMatch[2]) : '';
-  let parsed = null;
-  try { parsed = JSON.parse(shellNodesRaw); } catch {}
+  // Each entry's `addrs[0]` is the WebRTC-direct multiaddr the node prints
+  // in its identity line's `multiaddrs` (certhash and /p2p/ included,
+  // `MESH_INTERFACE → Discovery → "A node added by hand"`). The write pass
+  // below carries these into the copy's `notis-nodes`; a missing match is a
+  // `ConfigError` here, before Chromium launches.
   const apAddr = pickWebRtcDirectAddr(apSpawn.identity, AP_MESH_PORT);
   const bpAddr = pickWebRtcDirectAddr(bpSpawn.identity, BP_MESH_PORT);
-  const expected = [
-    { notisId: apSpawn.identity.notisId, addrs: [apAddr], api: AP_ORIGIN },
-    { notisId: bpSpawn.identity.notisId, addrs: [bpAddr], api: BP_ORIGIN },
-  ];
-  const entryMatches = (shell, exp) =>
-    shell !== null && typeof shell === 'object'
-    && typeof shell.notisId === 'string' && shell.notisId.toLowerCase() === exp.notisId.toLowerCase()
-    && Array.isArray(shell.addrs) && shell.addrs.length === 1 && shell.addrs[0] === exp.addrs[0]
-    && typeof shell.api === 'string' && shell.api.replace(/\/+$/, '') === exp.api;
-  const ok = Array.isArray(parsed) && parsed.length === 2
-    && entryMatches(parsed[0], expected[0]) && entryMatches(parsed[1], expected[1]);
-  if (!ok || apAddr === null || bpAddr === null) {
-    // The refusal is a `ConfigError`: the outer try/catch reads it as exit code
-    // 2 and closes the browser, A' and B' through the normal teardown.
+  if (apAddr === null || bpAddr === null) {
     throw new ConfigError(
-      `shell notis-nodes=${shellNodesRaw} does not match the two mesh nodes' identities\n`
-      + `      rebuild with VITE_NODES set exactly to:\n`
-      + `      ${JSON.stringify(expected)}\n`
-      + `      each notisId is the 64-hex key its node prints as "notisId" on its first JSON start line, and each addrs[0] is the WebRTC-direct multiaddr that line names in "multiaddrs"`,
+      `mesh node identity line carried no webrtc-direct multiaddr for the expected port\n`
+      + `      A': port ${AP_MESH_PORT}, got ${apAddr === null ? 'none' : apAddr}; multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}\n`
+      + `      B': port ${BP_MESH_PORT}, got ${bpAddr === null ? 'none' : bpAddr}; multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`,
     );
   }
-  console.log(`[vm] shell notis-nodes matches A' and B''s identities`);
+  meshApAddr = apAddr;
+  meshBpAddr = bpAddr;
+  console.log(`[vm] mesh addrs: A'=${apAddr}, B'=${bpAddr}`);
 
   // Wait for A' and B' each to stand at A's tip within ± 2 before the
   // browser launches, so every M-step's fresh page reads two synced nodes
@@ -9828,13 +9970,30 @@ async function runMeshStepM2(bcx) {
   try {
     await stopChild('ap');
     await stopChild('bp');
-    await spawnPlainNode('ap', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P,
-    }), AP_ORIGIN);
-    await spawnPlainNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+    // A' and B' restart behind the seed-list entries they answer for, so
+    // each pins only what the entry names: the HTTP port the seed list's
+    // `api` carries (`EXTENSION_CHECK_INTERFACE → Addresses`). Admin and
+    // p2p bind on 0 and are read back; B''s bootstrap takes A''s p2p from
+    // the restart, not the first start. A port a pin failed to take
+    // reaches the error through the node's own words: `spawnServerNode`
+    // reads the log tail on an exit before the start lines and raises it.
+    // M2's A' restart reads p2p — B''s restart bootstraps off A''s fresh
+    // p2p port below (the restart binds on 0 since the seed-list entry
+    // names the HTTP port alone). M2 reads neither node's admin — the
+    // step reads the extension corner alone.
+    const apSpawn = await spawnServerNode('ap', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: AP_PORTS.http, admin: 0, p2p: 0,
+    }), { withMesh: false, waitFor: { admin: false } });
+    AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
+    AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
+    await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath,
       bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
-    }), BP_ORIGIN);
+      http: BP_PORTS.http, admin: 0, p2p: 0,
+      // B's restart reads HTTP alone; admin and p2p are not read before
+      // the next restart overwrites them.
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
     page = await openFreshExtensionPage(bcx);
@@ -9890,16 +10049,34 @@ async function runMeshStepM3(bcx) {
     const bpLog = join(SCRATCH, 'bp.log');
     const apLogOff = logOffset(apLog);
     const bpLogOff = logOffset(bpLog);
-    const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
-    }));
+    // A' and B' restart behind the seed-list entries they answer for, so
+    // each pins only what the entry names: the HTTP port the seed list's
+    // `api` carries and, mesh-on, the WebRTC-direct UDP port the entry's
+    // `addrs[0]` names (`EXTENSION_CHECK_INTERFACE → Addresses`). Admin
+    // binds on 0 and is read back for `waitForPeers`; p2p binds on 0 and
+    // is not read — a mesh-on restart with `p2p: 0` and the mesh port
+    // pinned never prints `[net] listening on:` (`@dagsocial/net`'s
+    // `effectiveAnnounce` writes the TCP listen line once its port is
+    // concrete, and the mesh-on branch uses the mesh port alone at that
+    // point). A port a pin failed to take reaches the error through the
+    // node's own words: `spawnServerNode` reads the log tail on an exit
+    // before the start lines and raises it.
+    const apSpawn = await spawnServerNode('ap', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: AP_PORTS.http, admin: 0, p2p: 0, mesh: AP_PORTS.mesh,
+    }), { withMesh: true, waitFor: { p2p: false } });
+    AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
+    AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
     const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
     if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
     // B' bootstraps from A, the same bootstrap A' takes, so B' peers
     // with A directly and relays an admitted write to A at admission.
-    const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: NODE_P2P,
-    }));
+    const bpSpawn = await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
+      http: BP_PORTS.http, admin: 0, p2p: 0, mesh: BP_PORTS.mesh,
+    }), { withMesh: true, waitFor: { p2p: false } });
+    BP_ADMIN_PORT = bpSpawn.ports.admin; BP_P2P_PORT = bpSpawn.ports.p2p;
+    BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
     const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
     if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
     meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
@@ -10019,10 +10196,11 @@ async function runMeshStepM3(bcx) {
 // at a time", and WEB_INTERFACE → The wallet → "Nothing retries a
 // rejection"'s `**A send that ends with no answer is no rejection**`.
 // Both nodes are reached at their api bases alone (`MESH_ROLE` off, as
-// M2); a tip relay at AP_HTTP_PORT, with A' restarted on AP_ALT_HTTP_PORT
-// as its upstream, holds `POST /posts` past REQUEST_TIMEOUT_MS. The
-// client's write rule moves the same bytes to the next entry; the post
-// lands on B' (and, through p2p propagation, on A') once.
+// M2); a tip relay takes A''s first HTTP port with A' restarted on a fresh
+// alt HTTP port as its upstream, and holds `POST /posts` past
+// REQUEST_TIMEOUT_MS. The client's write rule moves the same bytes to the
+// next entry; the post lands on B' (and, through p2p propagation, on A')
+// once.
 async function runMeshStepM4(bcx) {
   let page = null;
   try {
@@ -10032,18 +10210,33 @@ async function runMeshStepM4(bcx) {
     const bpLog = join(SCRATCH, 'bp.log');
     const apM4LogOff = logOffset(apM4Log);
     const bpLogOff = logOffset(bpLog);
-    // A' restarts on its alt HTTP port (p2p and mesh ports unchanged).
-    // No MESH_ROLE — M4 reaches each at its api base alone. A' still
-    // bootstraps from --node-p2p so it stays on A's chain, and B' takes
-    // the same bootstrap so B' peers with A directly and relays the
-    // admitted write to A at admission.
-    await spawnPlainNode('ap-m4', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P, httpPort: AP_ALT_HTTP_PORT,
-    }), `http://127.0.0.1:${AP_ALT_HTTP_PORT}`);
-    await spawnPlainNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false, bootstrap: NODE_P2P,
-    }), BP_ORIGIN);
-    meshNodes.ap.apHttp = AP_ALT_HTTP_PORT;
+    // A' restarts on a fresh alt HTTP port (bound on 0), with admin and
+    // p2p on 0 as well — the seed-list entry names the HTTP port alone,
+    // and M4's relay takes A''s first HTTP port with the alt as its
+    // upstream (`EXTENSION_CHECK_INTERFACE → Addresses`). B' restarts
+    // behind its seed-list entry, pinning the HTTP port only; admin and
+    // p2p bind on 0. Neither node runs with MESH_ROLE — M4 reaches each
+    // at its api base alone. Both bootstrap from --node-p2p so they peer
+    // with A directly and relay an admitted write to A at admission. A
+    // port a pin failed to take reaches the error through the node's own
+    // words.
+    // M4 reads the alt HTTP port alone on A' (the tip relay takes A''s
+    // first HTTP port with the alt as upstream), and the HTTP port on
+    // B' (B' answers at its own seed-list base). Neither node's admin
+    // or p2p is read in M4.
+    const apM4Spawn = await spawnServerNode('ap-m4', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: 0, admin: 0, p2p: 0,
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
+    AP_PORTS.altHttp = apM4Spawn.ports.http;
+    const apAltOrigin = `http://127.0.0.1:${AP_PORTS.altHttp}`;
+    const bpM4Spawn = await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
+      http: BP_PORTS.http, admin: 0, p2p: 0,
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
+    BP_ADMIN_PORT = bpM4Spawn.ports.admin; BP_P2P_PORT = bpM4Spawn.ports.p2p;
+    BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
+    meshNodes.ap.apHttp = AP_PORTS.altHttp;
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
     const aPeerId = nodeP2pPeerId();
@@ -10064,11 +10257,13 @@ async function runMeshStepM4(bcx) {
     if (!apGossipedBlock) throw new Error(`ap-m4 did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
     const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
     if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
-    // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
-    // build's api for A' still names AP_ORIGIN, so every client read of
+    // The tip relay takes A''s first HTTP port (the one the seed-list
+    // entry names) with A''s alt HTTP as upstream — every client read of
     // A''s HTTP base routes through this relay. `hold-posts` holds POST
-    // /posts past REQUEST_TIMEOUT_MS; reads pass through.
-    m4Relay = await startTipRelay(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`, AP_HTTP_PORT);
+    // /posts past REQUEST_TIMEOUT_MS; reads pass through. A port another
+    // process took in between fails `server.listen` with EADDRINUSE and
+    // the error names the port.
+    m4Relay = await startTipRelay(apAltOrigin, AP_PORTS.http);
     m4Relay.mode = 'honest';
     console.log(`[vm] M4 relay up: ${m4Relay.origin} → ${m4Relay.upstream}`);
 
@@ -10108,7 +10303,7 @@ async function runMeshStepM4(bcx) {
         const a = await currentTip(NODE);
         if (a !== null && a.height > 0 && a.hash !== null) {
           const [apTip, bpTip] = await Promise.all([
-            currentTip(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`),
+            currentTip(apAltOrigin),
             currentTip(BP_ORIGIN),
           ]);
           last = { a, apTip, bpTip };
@@ -10146,7 +10341,7 @@ async function runMeshStepM4(bcx) {
       const t0 = Date.now();
       while (Date.now() - t0 < 180000) {
         const [a, b] = await Promise.all([
-          fetch(`http://127.0.0.1:${AP_ALT_HTTP_PORT}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+          fetch(`${apAltOrigin}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
           fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
         ]);
         const inA = Array.isArray(a?.posts) ? a.posts.filter((p) => p?.content === CONTENT).length : 0;
@@ -10248,7 +10443,7 @@ async function runSqliteCmd(args) {
 
 async function runMeshStepM5(cx, bcx) {
   if (m3Post === null) {
-    record('M5', 'NOT RUN',
+    record('M5', false,
       `M3 did not record a pass, so M5 carries no post id or text to copy, null and refill (NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has been due")`);
     return;
   }
@@ -10266,20 +10461,27 @@ async function runMeshStepM5(cx, bcx) {
     await runSqliteCmd([dM5Db, `UPDATE dag_posts SET content = NULL WHERE id = '${P_ID}';`]);
     console.log(`[vm] M5: copied ${meshNodes.ap.dbPath} → ${dM5Db} and nulled content on id=${P_ID.slice(0, 16)}…`);
     const dSecret = randomBytes(32).toString('hex');
-    console.log(`[vm] M5: spawning D: http=${DM5_HTTP_PORT} admin=${DM5_ADMIN_PORT} p2p=${DM5_P2P_PORT} mesh=${DM5_MESH_PORT} db=${dM5Db} isolated (no bootstrap)`);
-    dSpawn = await spawnMeshNode('d-m5', {
+    console.log(`[vm] M5: spawning D on OS-bound ports: db=${dM5Db} isolated (no bootstrap)`);
+    dSpawn = await spawnServerNode('d-m5', {
       NETWORK_TYPE: 'devnet',
       NODE_ROLE: 'miner',
-      PORT: String(DM5_HTTP_PORT),
-      ADMIN_PORT: String(DM5_ADMIN_PORT),
-      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DM5_P2P_PORT}`,
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
       BOOTSTRAP_PEERS: '',
       DB_PATH: dM5Db,
       MINING_SECRET: dSecret,
       MESH_ROLE: 'public',
-      MESH_LISTEN: `/ip4/127.0.0.1/udp/${DM5_MESH_PORT}/webrtc-direct`,
+      MESH_LISTEN: '/ip4/127.0.0.1/udp/0/webrtc-direct',
       MESH_STUN: 'off',
-    });
+      // HTTP for `GET /posts/<P>`, mesh and identity for the hand-added
+      // node's webrtc-direct multiaddr; admin and p2p are not read.
+    }, { withMesh: true, waitFor: { admin: false, p2p: false } });
+    DM5_HTTP_PORT = dSpawn.ports.http;
+    DM5_ADMIN_PORT = dSpawn.ports.admin;
+    DM5_P2P_PORT = dSpawn.ports.p2p;
+    DM5_MESH_PORT = dSpawn.ports.mesh;
+    DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
     const dUp = await waitForHttpUp(DM5_ORIGIN, 60000);
     if (!dUp) throw new Error(`D did not answer at ${DM5_ORIGIN} within 60 s`);
     const dAddr = pickWebRtcDirectAddr(dSpawn.identity, DM5_MESH_PORT);
@@ -10548,349 +10750,83 @@ async function meshSteps(cx, bcx, targetId = 'unknown') {
 // The run.
 // ---------------------------------------------------------------------------
 
-// The three blocks after the links steps, in order, each on its flag and NOT
-// RUN by name without it — reached on every run with --r-key, whether the links
-// steps ran or not. `bcx` is the browser session that opens an extension page
-// where none is live. `opts.skipMesh` keeps the mesh block out — main's
-// --public path runs it after `13-uncancelled` through `runMeshBlock`.
-async function runVerifiedBlocks(bcx, opts = {}) {
-  // The verified-tip block after the 1–16 pass and before the browser-context
-  // arm. 17b's press train runs under A's live miner; 17a sets both tip
-  // relays to `proof-short` and opens a fresh extension page; 19a sets RLA
-  // to `proof-invalid` with RLB honest (then both `proof-invalid`), again
-  // each on a fresh page; 19b mines D past A's tip so the client seats
-  // D's chain and B reads off it; 19c mines D past `m + k + 4` and leaves
-  // it below A's tip so B's chain seats and D reads off it. The main
-  // extension page is the one live at this moment — 16(d)'s bridge
-  // takeover leaves one; where none is open, `Target.createTarget` a
-  // fresh `index.html`, the way the harness opens every other extension
-  // page (WEB_INTERFACE → The extension → "The verified tip"). `bcx`
-  // runs `verifiedTipSteps`' fresh-page openings.
-  if (VERIFIED_TIP) {
-    let vtPage = await findExt('index.html');
-    if (!vtPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vtPage = await findExt('index.html');
-    }
-    if (!vtPage) throw new Error('verified-tip block: no extension page');
-    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
-    await verifiedTipSteps(vtCx, bcx, vtPage.id);
-    try { vtCx.s.close(); } catch {}
-  } else {
-    markVerifiedTipNotRun('no --verified-tip');
+// Open the one extension page the block's steps run on — the page `main()`
+// left (`main()`'s `page.id`), else a fresh `index.html` through the
+// browser-level session. The caller passes `bcx` so the fresh target opens
+// at the right scope (WEB_INTERFACE → The extension → "The contexts, and
+// what each may hold").
+async function openBlockExtensionPage(bcx, label) {
+  let page = await findExt('index.html');
+  if (!page) {
+    await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+    await sleep(2000);
+    page = await findExt('index.html');
   }
+  if (!page) throw new Error(`${label} block: no extension page`);
+  return page;
+}
 
-  // The verified-figures block after the tip block — the tip block's cleanup
-  // stops B, C, D and the lying relay by their handles, so only A is left, and
-  // the figures block brings up a B of its own and the figures relay
-  // (WEB_INTERFACE → The extension → "The verified figures"). It runs on the
-  // extension page live at this moment, or a fresh one where none is open;
-  // storage restores R's identity (envelope in local, seed in session from
-  // step 12d's unlock).
+// Open the run's block's own extension page through `bcx` and run its
+// steps on it (EXTENSION_CHECK_INTERFACE → Blocks). `writes` runs its
+// steps on `main()`'s page and never reaches this; `links` opens the
+// hosted page's targets inline. Called from `main()` after steps 1 and 2
+// for every other block.
+async function runOneBlock(bcx) {
+  if (VERIFIED_TIP) {
+    const vtPage = await openBlockExtensionPage(bcx, 'tip');
+    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
+    try { await verifiedTipSteps(vtCx, bcx, vtPage.id); }
+    finally { try { vtCx.s.close(); } catch {} }
+    return;
+  }
   if (VERIFIED_FIGURES) {
-    let vfPage = await findExt('index.html');
-    if (!vfPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vfPage = await findExt('index.html');
-    }
-    if (!vfPage) throw new Error('verified-figures block: no extension page');
+    const vfPage = await openBlockExtensionPage(bcx, 'figures');
     const vfCx = await openSession(vfPage.webSocketDebuggerUrl);
     // The App's boot needs a moment before the wallet control mounts —
     // main.ts's bootstrapProxy awaits the background's snapshot.
     try {
       await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
     } catch {}
-    await verifiedFiguresSteps(vfCx, bcx, vfPage.id);
-    try { vfCx.s.close(); } catch {}
-  } else {
-    markVerifiedFiguresNotRun('no --verified-figures');
+    try { await verifiedFiguresSteps(vfCx, bcx, vfPage.id); }
+    finally { try { vfCx.s.close(); } catch {} }
+    return;
   }
-
-  // The verified-names block after the figures block — the figures block's
-  // cleanup stops its B, and the names block brings up its own (WEB_INTERFACE
-  // → The extension → "The verified names"). It runs on the extension page live
-  // at this moment, or a fresh one where none is open; storage restores R's
-  // identity, as it does for the figures block.
   if (VERIFIED_NAMES) {
-    let vnPage = await findExt('index.html');
-    if (!vnPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vnPage = await findExt('index.html');
-    }
-    if (!vnPage) throw new Error('verified-names block: no extension page');
+    const vnPage = await openBlockExtensionPage(bcx, 'names');
     const vnCx = await openSession(vnPage.webSocketDebuggerUrl);
-    await verifiedNamesSteps(vnCx, bcx, vnPage.id);
-    try { vnCx.s.close(); } catch {}
-  } else {
-    markVerifiedNamesNotRun('no --verified-names');
+    try { await verifiedNamesSteps(vnCx, bcx, vnPage.id); }
+    finally { try { vnCx.s.close(); } catch {} }
+    return;
   }
-
-  // The waiting-writes block runs after the verified blocks in the relays
-  // build (WEB_INTERFACE → The wallet → "A write no node answers waits";
-  // this file's header → "The waiting-writes block"). It uses the two tip
-  // relays `setupTipRelays` set up and R's identity loaded by steps 2–12;
-  // --light and --mesh builds have a different seed list and run their own
-  // blocks instead, so the waiting-writes block is gated on neither being
-  // set.
-  if (R_KEY && !LIGHT && !MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-    let wPage = await findExt('index.html');
-    if (!wPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      wPage = await findExt('index.html');
-    }
-    if (!wPage) throw new Error('waiting-writes block: no extension page');
+  if (WAITING) {
+    const wPage = await openBlockExtensionPage(bcx, 'waiting');
     const wCx = await openSession(wPage.webSocketDebuggerUrl);
-    await waitingWritesSteps(wCx, bcx, wPage.id);
-    try { wCx.s.close(); } catch {}
-  } else {
-    markWaitingWritesNotRun(LIGHT
-      ? '--light runs its own block; the waiting-writes block is relays-build only'
-      : MESH
-        ? '--mesh runs its own block; the waiting-writes block is relays-build only'
-        : !R_KEY
-          ? 'no --r-key — the waiting-writes block needs R\'s identity'
-          : 'no --verified-tip / --verified-figures / --verified-names — the tip relays are not up');
+    try { await waitingWritesSteps(wCx, bcx, wPage.id); }
+    finally { try { wCx.s.close(); } catch {} }
+    return;
   }
-
-  // The light block runs alone after steps 1–16, on a session of its own.
-  // The two relays (RA, RB) are up from before the browser launched
-  // (`setupLightRelays`); the block owns its own node D on 19820 for L13's
-  // another-chain arm. It runs on the extension page live at this moment,
-  // or a fresh one where none is open; storage restores R's identity.
   if (LIGHT) {
-    let lPage = await findExt('index.html');
-    if (!lPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      lPage = await findExt('index.html');
-    }
-    if (!lPage) throw new Error('light block: no extension page');
+    const lPage = await openBlockExtensionPage(bcx, 'light');
     const lCx = await openSession(lPage.webSocketDebuggerUrl);
-    await lightSteps(lCx, lPage.id);
-    try { lCx.s.close(); } catch {}
-  } else {
-    markLightNotRun('no --light');
+    try { await lightSteps(lCx, lPage.id); }
+    finally { try { lCx.s.close(); } catch {} }
+    return;
   }
-
-  if (!opts.skipMesh) {
-    await runMeshBlock(bcx);
-  }
-}
-
-// The mesh block runs alone after steps 1–16, on a session of its own.
-// Its two nodes A' and B' are up from before the browser launched
-// (`setupMeshStack`); the block owns them end to end. It runs on the
-// extension page live at this moment, or a fresh one where none is open;
-// storage restores R's identity, as the other blocks do. Split out of
-// `runVerifiedBlocks` so main's --public path can run it after
-// `13-uncancelled` — the browser-context arm leaves a CDP state the
-// mesh block's fresh pages do not boot under.
-async function runMeshBlock(bcx) {
   if (MESH) {
-    let mPage = await findExt('index.html');
-    if (!mPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      mPage = await findExt('index.html');
-    }
-    if (!mPage) throw new Error('mesh block: no extension page');
+    const mPage = await openBlockExtensionPage(bcx, 'mesh');
     const mCx = await openSession(mPage.webSocketDebuggerUrl);
-    await meshSteps(mCx, bcx, mPage.id);
-    try { mCx.s.close(); } catch {}
-  } else {
-    markMeshNotRun('no --mesh');
+    try { await meshSteps(mCx, bcx, mPage.id); }
+    finally { try { mCx.s.close(); } catch {} }
+    return;
   }
 }
 
-// The blocks on a run whose links steps end early — no --public, or no root of
-// R's to link to — through a browser session of their own.
-async function runVerifiedBlocksAlone() {
-  const bcx = await openBrowserSession();
-  try {
-    await runVerifiedBlocks(bcx);
-  } finally {
-    try { bcx.s.close(); } catch {}
-  }
-}
-
-async function main() {
-  // Chrome launched with `--load-extension` does not open the extension's
-  // `index.html` on its own; a `Target.createTarget` opens it, and the
-  // page appears in `/json/list` once Chrome finishes attaching the new
-  // target.
-  const bv = await browserVersion();
-  const br = new WebSocket(bv.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
-  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
-  await sleep(2000);
-  br.close();
-  const page = await findExt('index.html');
-  if (!page) throw new Error('no extension page');
-  // Give the page a moment to finish parsing before we attach — main.ts's
-  // top-level `await bootstrapProxy(chrome)` runs before `#feed` gets its
-  // children, but the section element itself is in the initial HTML.
-  await sleep(4000);
-  const cx = await openSession(page.webSocketDebuggerUrl);
-  // Wait longer for the page to be usable; the extension's SW must be ready
-  // for main.ts's bootstrapProxy to return.
-  await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
-  await sleep(2000);
-
-  // With no --r-key the write steps and the links steps read NOT RUN by name;
-  // the verified-tip block (WEB_INTERFACE → The extension → "The verified
-  // tip": the corner needs no identity) runs on the flag alone and reads NOT
-  // RUN without it.
-  if (!R_KEY) {
-    for (const s of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-      record(s, 'NOT RUN', 'no --r-key — the write steps do not run');
-    }
-    for (const s of [13, 14, 15, 16]) {
-      record(s, 'NOT RUN', 'no --r-key — the links steps do not run');
-    }
-    if (VERIFIED_TIP) {
-      // WEB_INTERFACE → The extension → "The verified tip" — the block's
-      // fresh-page openings (17a · 19a · 19b · 19c) ask the browser-level
-      // session for `Target.createTarget`.
-      const vtBcx = await openBrowserSession();
-      try {
-        await verifiedTipSteps(cx, vtBcx, page.id);
-      } finally {
-        try { vtBcx.s.close(); } catch {}
-      }
-    } else {
-      markVerifiedTipNotRun('no --verified-tip');
-    }
-    // The verified-figures block requires --r-key; --verified-figures alone
-    // is a config error caught at the top. Here without --r-key the six steps
-    // read NOT RUN by name — and the names block's three, which require it too.
-    markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
-    markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
-    markLightNotRun('no --r-key — the light block does not run');
-    // The mesh block requires --r-key for M3's signed post; without it,
-    // every step reads NOT RUN by name. --mesh without --r-key is a config
-    // error caught at the top.
-    markMeshNotRun('no --r-key — the mesh block does not run');
-    return;
-  }
-
-  // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
-  // The expected first node matches the extension build the run was given —
-  // A' under --mesh (seed list [A', B']), RA under --light (seed list
-  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
-  // top refuses any other build.
-  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
-  const s1 = await cx.eval(`(() => ({
-    nodes: document.querySelector('meta[name="notis-nodes"]').content,
-    newPost: !!document.querySelector('[data-composer-open="@feed"]'),
-    feedLoaded: document.querySelectorAll('#feed .card').length,
-    feedReport: document.querySelector('#feed .report')?.textContent ?? null,
-  }))()`);
-  record(1, s1.nodes.includes(expectedFirstNode) && s1.newPost === false, `notis-nodes=${s1.nodes}, new-post=${s1.newPost}, feedCards=${s1.feedLoaded}, feedReport=${s1.feedReport}`);
-
-  // --- Step 2 — import R through the profile window's Import row.
-  await cx.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
-  await cx.waitFor(`!!window.__btn('import')`, 'import button');
-  // The App's inspectFile branch takes the file's text via chrome.runtime.sendMessage
-  // through the proxy; the profile then reveals a set-passphrase form. Drive that
-  // by calling importFile through the proxy directly — the seam the reader's file
-  // picker feeds into after inspectFile.
-  const r2 = await cx.eval(`chrome.runtime.sendMessage({ kind: 'importFile', text: ${JSON.stringify(R_TEXT)}, passphrase: ${JSON.stringify(PASSPHRASE)} })`);
-  await sleep(1500);
-  const s2 = await cx.eval(`(async () => {
-    const local = await chrome.storage.local.get(['notis.identity','notis.identity.backedup']);
-    const session = await chrome.storage.session.get(['notis.seed']);
-    const state = await chrome.runtime.sendMessage({ kind: 'state' });
-    const localEnv = local['notis.identity'];
-    const seedHex = session['notis.seed'] ?? '';
-    return {
-      importOk: ${JSON.stringify(r2 ?? null)},
-      state,
-      envelopeSet: typeof localEnv === 'string' && localEnv.length > 0,
-      seedInSession: typeof seedHex === 'string' && seedHex.length === 64,
-      seedFreeLocal: typeof localEnv === 'string' && seedHex.length === 64 && !localEnv.includes(seedHex),
-    };
-  })()`);
-  const pubKeyHex = s2.state?.pubKeyHex;
-  record(2, pubKeyHex === R_JSON.pubKeyHex && s2.envelopeSet && s2.seedInSession && s2.seedFreeLocal,
-    `state.pubKeyHex=${pubKeyHex?.slice(0, 8)}…, envelope in local, seed in session, seed-free local: ${s2.seedFreeLocal}`);
-
-  // Reload so the identity is loaded from storage — proves the proxy's snapshot boot.
-  await cx.call('Page.reload');
-  await sleep(2500);
-  const p2 = await findExt('index.html');
-  const cx2 = await openSession(p2.webSocketDebuggerUrl);
-  await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
-
-  // --waiting-only: iterate on the waiting-writes block alone. Steps 1
-  // and 2 brought up R's identity; everything between here and the
-  // waiting-writes block reads NOT RUN. 13-uncancelled and the mesh
-  // block also read NOT RUN (the flag ends after waiting-writes), and
-  // the [diag] line prints just before 13-uncancelled's NOT RUN.
-  if (WAITING_ONLY) {
-    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
-      record(s, 'NOT RUN', '--waiting-only skips the earlier steps');
-    }
-    markVerifiedTipNotRun('--waiting-only skips the verified-tip block');
-    markVerifiedFiguresNotRun('--waiting-only skips the verified-figures block');
-    markVerifiedNamesNotRun('--waiting-only skips the verified-names block');
-    markLightNotRun('--waiting-only skips the light block');
-    markMeshNotRun('--waiting-only skips the mesh block');
-    const wBcx = await openBrowserSession();
-    try {
-      let wPage = await findExt('index.html');
-      if (!wPage) throw new Error('--waiting-only: no extension page');
-      const wCx = await openSession(wPage.webSocketDebuggerUrl);
-      try { await waitingWritesSteps(wCx, wBcx, wPage.id); } finally { try { wCx.s.close(); } catch {} }
-      // The liveness diagnostic — the same line a full run prints
-      // before 13-uncancelled runs; a --waiting-only run ends after it.
-      // The diag's extension-page labels compare against the id of the
-      // page `main()` opened (same id as `wPage.id`, since findExt
-      // returns the one open one).
-      await diagBeforeThirteenUncancelled(page.id);
-      record('13-uncancelled', 'NOT RUN', '--waiting-only skips the browser-context arm');
-    } finally {
-      try { wBcx.s.close(); } catch {}
-    }
-    return;
-  }
-
-  // --light and --mesh: the block runs on steps 1 and 2 alone — R's identity
-  // loaded, nothing of steps 3–16 below. The block's nodes (the two light
-  // relays for --light; A' and B' for --mesh) are up from before the browser
-  // launched (setupLightRelays / setupMeshStack). The other blocks and
-  // 13-uncancelled read NOT RUN, and the [diag] line prints just before
-  // 13-uncancelled's NOT RUN.
-  if (LIGHT || MESH) {
-    const name = LIGHT ? 'light' : 'mesh';
-    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
-      record(s, 'NOT RUN', `--${name} runs its block alone after step 2`);
-    }
-    markVerifiedTipNotRun(`--${name} runs its block alone`);
-    markVerifiedFiguresNotRun(`--${name} runs its block alone`);
-    markVerifiedNamesNotRun(`--${name} runs its block alone`);
-    markWaitingWritesNotRun(`--${name} is not a relays build — the waiting-writes block is relays-build only`);
-    if (LIGHT) markMeshNotRun('no --mesh');
-    else markLightNotRun('no --light');
-    const bbcx = await openBrowserSession();
-    try {
-      let bPage = await findExt('index.html');
-      if (!bPage) throw new Error(`--${name}: no extension page`);
-      const bCx = await openSession(bPage.webSocketDebuggerUrl);
-      try {
-        if (LIGHT) await lightSteps(bCx, bPage.id);
-        else await meshSteps(bCx, bbcx, bPage.id);
-      } finally { try { bCx.s.close(); } catch {} }
-      await diagBeforeThirteenUncancelled(page.id);
-      record('13-uncancelled', 'NOT RUN', `--${name} runs its block alone`);
-    } finally {
-      try { bbcx.s.close(); } catch {}
-    }
-    return;
-  }
+// `writes` block steps 3–12 on R, run on the page `main()` opens and
+// reloads at step 2 (`cx2`). Steps 3–9 use `cx2`; step 10 reloads and
+// opens `cx10`, which steps 10–12 use. Prints the `[diag]` liveness
+// line at the end (EXTENSION_CHECK_INTERFACE → Blocks).
+async function writesSteps(cx2, pageId) {
+  let cx10 = cx2;
 
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
@@ -11002,8 +10938,17 @@ async function main() {
   }
 
   // --- Step 6 — Post under ask → decline → composer still open with its text,
-  // foot line "post not sent.", karma unchanged, no submission.
-  const karmaBefore6 = Number((await (await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`)).json()).effective ?? 0);
+  // foot line "post not sent.", no `POST /posts` across either tip relay's
+  // log for the span (WEB_INTERFACE → The wallet → "A flow can end before
+  // the node ever sees it: `notSigned`" — the declined post never reaches
+  // a node). The log counts the writes the extension drives through either
+  // relay (RLA, RLB), the `forwardedPostCount` idiom the waiting block
+  // reads. A's plain `/karma/<R>.effective` is left out — step 5's post
+  // lands on A's own cadence, and a landing between the two reads of the
+  // decline window moves `effective` by 5 rep for a reason step 6 does
+  // not make.
+  const relayAIdx6 = tipRelays.a?.log.length ?? 0;
+  const relayBIdx6 = tipRelays.b?.log.length ?? 0;
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
   await cx2.waitFor(`document.querySelector('.composer textarea')`, 'composer for decline');
   const CONTENT6 = 'proof-declined-' + Date.now();
@@ -11024,9 +10969,21 @@ async function main() {
     const composerStill = await cx2.eval(`!!document.querySelector('.composer textarea')`);
     const draftIntact = await cx2.eval(`document.querySelector('.composer textarea')?.value ?? null`);
     const foot = await cx2.eval(`document.querySelector('.composer .karma')?.textContent ?? null`);
-    const karmaAfter6 = Number((await (await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`)).json()).effective ?? 0);
-    record(6, composerStill && draftIntact === CONTENT6 && foot === 'post not sent.' && karmaAfter6 === karmaBefore6,
-      `composer still open (${composerStill}), draft="${draftIntact}", foot="${foot}", karma ${karmaBefore6}→${karmaAfter6}`);
+    // Count forwarded `POST /posts` across either relay for the span —
+    // the span starts at the index captured before the composer opened and
+    // ends with this read. A control: the span before (every forwarded
+    // `POST /posts` since setup through the previous index) carries at
+    // least one entry — step 3's and step 5's posts both went through.
+    const relayAPosts6 = (tipRelays.a?.log ?? []).slice(relayAIdx6);
+    const relayBPosts6 = (tipRelays.b?.log ?? []).slice(relayBIdx6);
+    const forwardedPostsStep6 = forwardedPostCount({ log: relayAPosts6 }, '/posts')
+      + forwardedPostCount({ log: relayBPosts6 }, '/posts');
+    const controlAPosts = (tipRelays.a?.log ?? []).slice(0, relayAIdx6);
+    const controlBPosts = (tipRelays.b?.log ?? []).slice(0, relayBIdx6);
+    const controlPostsPrior = forwardedPostCount({ log: controlAPosts }, '/posts')
+      + forwardedPostCount({ log: controlBPosts }, '/posts');
+    record(6, composerStill && draftIntact === CONTENT6 && foot === 'post not sent.' && forwardedPostsStep6 === 0 && controlPostsPrior >= 1,
+      `composer still open (${composerStill}), draft="${draftIntact}", foot="${foot}", forwarded POST /posts across step 6's span=${forwardedPostsStep6} (control: prior forwarded POST /posts=${controlPostsPrior})`);
     cxp.s.close();
   } else {
     record(6, false, 'no prompt target for decline');
@@ -11158,7 +11115,7 @@ async function main() {
   await cx2.call('Page.reload');
   await sleep(3000);
   const p10 = await findExt('index.html');
-  let cx10 = await openSession(p10.webSocketDebuggerUrl);
+  cx10 = await openSession(p10.webSocketDebuggerUrl);
   await cx10.waitFor(`document.querySelector('#feed')`, 'feed after reload');
   await sleep(1500);
   const state10 = await cx10.eval(`chrome.runtime.sendMessage({ kind: 'state' })`);
@@ -11333,7 +11290,7 @@ async function main() {
   await sleep(3000);
   const transfer12b = cx10.events.slice(events12bStart).find((e) =>
     e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
-  // Under --mesh a write goes over the mesh and leaves no HTTP request
+  // In the `mesh` block a write goes over the mesh and leaves no HTTP request
   // behind (WEB_INTERFACE → The extension → "The mesh is the extension's
   // first path"), so no `POST /credits/transfer` reaches the Network
   // domain. The other builds expect the 2xx answer at the API base.
@@ -11386,7 +11343,7 @@ async function main() {
     ? !transferPostSeen12b
     : transfer12b?.params.response.status === 200;
   const transferDetail12b = MESH
-    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false under --mesh — the write goes over the mesh)`
+    ? `POST /credits/transfer over HTTP=${transferPostSeen12b} (expect false in the mesh block — the write goes over the mesh)`
     : `transfer=${transfer12b?.params.response.status ?? 'null'}`;
   const rowOk12b = rowAt2xx12b;
   record('12b',
@@ -11531,21 +11488,19 @@ async function main() {
     lockedSession12d === null && unlockMounted12d && noConfirmLocked12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && noConfirmSecond12d && !!prompt12dSecond,
     `session empty=${lockedSession12d === null}, unlock under form=${unlockMounted12d}, no .pf-confirm under lock=${noConfirmLocked12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send .card-unlock absent=${!unlockMounted12dSecond}, second-send .pf-confirm absent=${noConfirmSecond12d}, second-send prompt seen=${!!prompt12dSecond}`);
 
-  // -------------------------------------------------------------------------
-  // Steps 13–16 — WEB_INTERFACE → The extension → "Links into the extension".
-  // Without --public and --web-dist the four are reported NOT RUN by name,
-  // never PASS, never silently absent.
-  // -------------------------------------------------------------------------
-  if (PUBLIC === null) {
-    record('13a', 'NOT RUN', 'no --public / --web-dist — the harness serves no hosted origin');
-    record(13, 'NOT RUN', 'no --public / --web-dist — the harness serves no hosted origin');
-    record(14, 'NOT RUN', 'no --public / --web-dist');
-    record(15, 'NOT RUN', 'no --public / --web-dist');
-    record(16, 'NOT RUN', 'no --public / --web-dist');
-    await runVerifiedBlocksAlone();
-    return;
-  }
+  // The writes block ends here — every block prints the `[diag]` line at
+  // its end (EXTENSION_CHECK_INTERFACE → Blocks).
+  await diagBeforeThirteenUncancelled(pageId);
+  return;
+}
 
+// `links` block steps 13a, 13–16, the `[diag]` liveness line and
+// `13-uncancelled` on R, run on the page `main()` opens and reloads
+// at step 2 (`cx2`, aliased as `cx10` where each site reads). The
+// function opens the browser-level session its targets open through
+// and closes it at the end (EXTENSION_CHECK_INTERFACE → Blocks).
+async function linksSteps(cx2, pageId) {
+  const cx10 = cx2;
   const postId = await pickOwnRootPostId();
   if (postId === null) {
     record('13a', false, 'no confirmed root post authored by R — nothing to link to');
@@ -11553,7 +11508,7 @@ async function main() {
     record(14, false, 'no confirmed root post authored by R');
     record(15, false, 'no confirmed root post authored by R');
     record(16, false, 'no confirmed root post authored by R');
-    await runVerifiedBlocksAlone();
+    record('13-uncancelled', false, 'no confirmed root post authored by R');
     return;
   }
   console.log(`steps 13-16 link target = <public>p/${postId.slice(0, 8)}…`);
@@ -11627,7 +11582,7 @@ async function main() {
 
   // ------- Step 13 — pref `on the site`, the button arm. The browser-context
   // arm ("13-uncancelled") is the last thing the harness does with the
-  // browser, after the verified-tip block: `Target.createBrowserContext` +
+  // browser: `Target.createBrowserContext` +
   // `Target.disposeBrowserContext` has been observed to freeze the next CDP
   // call in a same-browser session, so the arm sits last where a freeze
   // cannot shadow any other step.
@@ -12259,21 +12214,15 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  // The verified blocks run before `13-uncancelled`, with the mesh block
-  // held back — it runs after the arm. A browser-context arm's CDP state
-  // can shadow a subsequent step's fresh page, so the mesh block's
-  // fresh-page openings sit after it.
-  await runVerifiedBlocks(bcx, { skipMesh: true });
-
   // The diag line prints just before 13-uncancelled runs. See
   // `diagBeforeThirteenUncancelled`'s comment for its shape and for the
   // hung-page stack line that follows when a page reads `hung`. The
   // page id is `main()`'s initial extension page, so `block-leftover`
   // names a page some block opened and did not close.
-  await diagBeforeThirteenUncancelled(page.id);
+  await diagBeforeThirteenUncancelled(pageId);
 
-  // ------- Step 13-uncancelled — the browser-context arm, last after the
-  // verified-tip block. The extension does not load in a
+  // ------- Step 13-uncancelled — the browser-context arm, last. The
+  // extension does not load in a
   // `Target.createBrowserContext` context (per `--load-extension`'s default
   // profile scope), so the bridge cannot send `arrived` and no `notis.open.`
   // key appears. `Target.disposeBrowserContext` has been observed to freeze
@@ -12297,8 +12246,8 @@ async function main() {
           && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)
           && typeof t.webSocketDebuggerUrl === 'string');
         // main()'s id first when it still stands, else the browser's order.
-        const mainFirst = indexes.find((t) => t.id === page.id);
-        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== page.id)] : indexes;
+        const mainFirst = indexes.find((t) => t.id === pageId);
+        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== pageId)] : indexes;
       } catch { return []; }
     })();
     const probeAnswers = async (wsUrl) => {
@@ -12378,12 +12327,117 @@ async function main() {
     }
   }
 
-  // The mesh block runs after `13-uncancelled` — the arm's browser-context
-  // CDP state can shadow a subsequent fresh page, and the mesh block's
-  // steps each open one of their own.
-  await runMeshBlock(bcx);
-
   try { bcx.s.close(); } catch {}
+}
+
+async function main() {
+  // Chrome launched with `--load-extension` does not open the extension's
+  // `index.html` on its own; a `Target.createTarget` opens it, and the
+  // page appears in `/json/list` once Chrome finishes attaching the new
+  // target.
+  const bv = await browserVersion();
+  const br = new WebSocket(bv.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
+  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
+  await sleep(2000);
+  br.close();
+  const page = await findExt('index.html');
+  if (!page) throw new Error('no extension page');
+  // Give the page a moment to finish parsing before we attach — main.ts's
+  // top-level `await bootstrapProxy(chrome)` runs before `#feed` gets its
+  // children, but the section element itself is in the initial HTML.
+  await sleep(4000);
+  const cx = await openSession(page.webSocketDebuggerUrl);
+  // Wait longer for the page to be usable; the extension's SW must be ready
+  // for main.ts's bootstrapProxy to return.
+  await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
+  await sleep(2000);
+
+  // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
+  // The expected first node matches the extension build the run was given —
+  // A' in the `mesh` block (seed list [A', B']), RA in the `light` block
+  // (seed list [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
+  // top refuses any other build.
+  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
+  const s1 = await cx.eval(`(() => ({
+    nodes: document.querySelector('meta[name="notis-nodes"]').content,
+    newPost: !!document.querySelector('[data-composer-open="@feed"]'),
+    feedLoaded: document.querySelectorAll('#feed .card').length,
+    feedReport: document.querySelector('#feed .report')?.textContent ?? null,
+  }))()`);
+  record(1, s1.nodes.includes(expectedFirstNode) && s1.newPost === false, `notis-nodes=${s1.nodes}, new-post=${s1.newPost}, feedCards=${s1.feedLoaded}, feedReport=${s1.feedReport}`);
+
+  // --- Step 2 — import R through the profile window's Import row.
+  await cx.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
+  await cx.waitFor(`!!window.__btn('import')`, 'import button');
+  // The App's inspectFile branch takes the file's text via chrome.runtime.sendMessage
+  // through the proxy; the profile then reveals a set-passphrase form. Drive that
+  // by calling importFile through the proxy directly — the seam the reader's file
+  // picker feeds into after inspectFile.
+  const r2 = await cx.eval(`chrome.runtime.sendMessage({ kind: 'importFile', text: ${JSON.stringify(R_TEXT)}, passphrase: ${JSON.stringify(PASSPHRASE)} })`);
+  await sleep(1500);
+  const s2 = await cx.eval(`(async () => {
+    const local = await chrome.storage.local.get(['notis.identity','notis.identity.backedup']);
+    const session = await chrome.storage.session.get(['notis.seed']);
+    const state = await chrome.runtime.sendMessage({ kind: 'state' });
+    const localEnv = local['notis.identity'];
+    const seedHex = session['notis.seed'] ?? '';
+    return {
+      importOk: ${JSON.stringify(r2 ?? null)},
+      state,
+      envelopeSet: typeof localEnv === 'string' && localEnv.length > 0,
+      seedInSession: typeof seedHex === 'string' && seedHex.length === 64,
+      seedFreeLocal: typeof localEnv === 'string' && seedHex.length === 64 && !localEnv.includes(seedHex),
+    };
+  })()`);
+  const pubKeyHex = s2.state?.pubKeyHex;
+  record(2, pubKeyHex === R_JSON.pubKeyHex && s2.envelopeSet && s2.seedInSession && s2.seedFreeLocal,
+    `state.pubKeyHex=${pubKeyHex?.slice(0, 8)}…, envelope in local, seed in session, seed-free local: ${s2.seedFreeLocal}`);
+
+  // Reload so the identity is loaded from storage — proves the proxy's snapshot boot.
+  await cx.call('Page.reload');
+  await sleep(2500);
+  const p2 = await findExt('index.html');
+  const cx2 = await openSession(p2.webSocketDebuggerUrl);
+  await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
+
+  // Every block runs steps 1 and 2 above and then its own steps on R
+  // (EXTENSION_CHECK_INTERFACE → Blocks). A step outside the run's block
+  // reads NOT RUN with the reason naming the block that runs it.
+  if (!WRITES) markWritesNotRun('the writes block runs it');
+  if (!LINKS) markLinksNotRun('the links block runs it');
+  if (!VERIFIED_TIP) markVerifiedTipNotRun('the tip block runs it');
+  if (!VERIFIED_FIGURES) markVerifiedFiguresNotRun('the figures block runs it');
+  if (!VERIFIED_NAMES) markVerifiedNamesNotRun('the names block runs it');
+  if (!WAITING) markWaitingWritesNotRun('the waiting block runs it');
+  if (!LIGHT) markLightNotRun('the light block runs it');
+  if (!MESH) markMeshNotRun('the mesh block runs it');
+
+  // The blocks whose steps run on their own fresh session. `writes` and
+  // `links` run on the `cx2` page below.
+  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING || LIGHT || MESH) {
+    const bbcx = await openBrowserSession();
+    try {
+      await runOneBlock(bbcx);
+      // Every block prints the diag liveness line at its end. `links` prints its own diag
+      // before `13-uncancelled` on its own path below.
+      await diagBeforeThirteenUncancelled(page.id);
+    } finally {
+      try { bbcx.s.close(); } catch {}
+    }
+    return;
+  }
+
+  // Dispatch the writes and links blocks like every other block: each
+  // has its own steps function called from here after steps 1 and 2.
+  if (WRITES) {
+    await writesSteps(cx2, page.id);
+    return;
+  }
+  if (LINKS) {
+    await linksSteps(cx2, page.id);
+    return;
+  }
 }
 
 // WEB_INTERFACE → The extension → "The light read" — bring up B, then the
@@ -12391,7 +12445,7 @@ async function main() {
 // the extension page, so the extension's seed list `[RA, RB]` reads them
 // from the first paint and `walkSeedList` adopts RA. The relays' upstreams
 // stay reassignable (`relay.upstream`); L13 points them at D. The function
-// is a no-op without `--light`.
+// is a no-op outside the `light` block.
 async function setupLightRelays() {
   if (!LIGHT) return;
   console.log('[vl] bringing up node B before the browser');
@@ -12401,10 +12455,12 @@ async function setupLightRelays() {
   const bUp = await waitForHttpUp(B_ORIGIN, 60000);
   if (!bUp) throw new Error(`node B\'s HTTP /blocks/current never answered at ${B_ORIGIN}`);
   console.log(`[vl] B up at ${B_ORIGIN}`);
-  const ra = await startRelay('RA', NODE.replace(/\/+$/, ''), RA_PORT);
-  const rb = await startRelay('RB', B_ORIGIN, RB_PORT);
+  const ra = await startRelay('RA', NODE.replace(/\/+$/, ''), 0);
+  const rb = await startRelay('RB', B_ORIGIN, 0);
   lightRelays.a = ra;
   lightRelays.b = rb;
+  RA_PORT = ra.port; RA_ORIGIN = ra.origin;
+  RB_PORT = rb.port; RB_ORIGIN = rb.origin;
   console.log(`[vl] RA up at ${ra.origin} → ${ra.upstream}; RB up at ${rb.origin} → ${rb.upstream}`);
 }
 
@@ -12419,29 +12475,35 @@ async function teardownLightRelays() {
 }
 
 // WEB_INTERFACE → The extension → "The verified tip" — the verified blocks'
-// two relays, RLA in front of A and RLB in front of B, each on its fixed
-// port, start before the browser opens the extension page, so the extension's
-// seed list `[{notisId:<A>, addrs:[], api:RLA}, {notisId:<B>, addrs:[],
-// api:RLB}]` reads them from the first paint and every read it makes passes
-// through one of them. Each relay's `upstream` stays reassignable — the
-// `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the step and
-// back after. The function is a no-op when no verified block runs; the
-// figures and names blocks reach this relay too, since they also run under
-// the two-relay build.
+// two relays, RLA in front of A and RLB in front of B, each on an OS-bound
+// port, start before the browser opens the extension page, so the write
+// pass that writes `notis-nodes` into the copy's shell reads each origin
+// from its `relay.server.address()` and the extension's seed list carries
+// them from the first paint. Each relay's `upstream` stays reassignable —
+// the `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the
+// step and back after. `writes`, `links`, `tip`, `figures`, `names` and
+// `waiting` blocks stand up these two relays; `light` and `mesh` do not.
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
-  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY)) return;
-  // The verified blocks run RLB in front of B; under --waiting-only B is
-  // not needed, so RLB's upstream is A too. The seed list the extension
-  // was built with still names both bases, and the client reads both —
-  // every read reaches A either way, and the corner's tip run can
-  // verify with two nodes answering the same chain.
-  const rlbUpstream = WAITING_ONLY ? NODE.replace(/\/+$/, '') : B_ORIGIN;
-  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
-  const rlb = await startTipRelay(rlbUpstream, RLB_PORT);
+  if (LIGHT || MESH) return;
+  // Each relay binds on port 0, the OS answers the port, and the relay's
+  // `origin` names it; the globals the rest of the harness reads
+  // (`RLA_ORIGIN`, `RLB_ORIGIN`) and the seed list the write pass carries
+  // into the copy are set from the bound value. `waiting` keeps RLB in
+  // front of A (W4's refusal reads A's pool, so a B behind RLB would
+  // change what the step meets); every other block's RLB has no upstream
+  // until `bringUpNodeB` moves it to B's origin on the first spawn — a
+  // request that arrives in that window answers 502 with the
+  // `access-control-allow-origin: *` header the handler carries on every
+  // answer. `writes` and `links` never spawn B, so RLB answers 502 past
+  // setup; the client's reads fall to RLA.
+  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), 0);
+  const rlb = await startTipRelay(WAITING ? NODE.replace(/\/+$/, '') : null, 0);
   tipRelays.a = rla;
   tipRelays.b = rlb;
+  RLA_PORT = rla.port; RLA_ORIGIN = rla.origin;
+  RLB_PORT = rlb.port; RLB_ORIGIN = rlb.origin;
   console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);
 }
 
@@ -12450,18 +12512,57 @@ async function teardownTipRelays() {
   if (tipRelays.b) { closeRelay(tipRelays.b); tipRelays.b = null; }
 }
 
+// EXTENSION_CHECK_INTERFACE → The command — "Whatever ends a check stops
+// everything it started". On SIGTERM or SIGINT the harness runs the same
+// teardown its normal end runs — tip, light and mesh teardowns, every
+// node and miner the block spawned through `stopAllChildren` (the tip,
+// figures and names blocks spawn B, C, D and D's miner into
+// `vtChildren`; the tip and figures and names blocks' own cleanup runs
+// at the block's own end, which a throw past that point skips), Chromium
+// through `proc.kill()`, the web server closed — and exits. A second
+// signal during the teardown exits at once.
+let signalEnding = false;
+async function endOnSignal(signal) {
+  if (signalEnding) process.exit(130);
+  signalEnding = true;
+  console.error(`run: ${signal} received, tearing down`);
+  try { await teardownTipRelays(); } catch {}
+  try { await teardownLightRelays(); } catch {}
+  try { await teardownMeshStack(); } catch {}
+  try { await stopAllChildren(); } catch {}
+  if (proc !== null) { try { proc.kill(); } catch {} }
+  if (webServer) { try { await new Promise((r) => webServer.close(() => r())); } catch {} }
+  process.exit(130);
+}
+process.on('SIGTERM', endOnSignal);
+process.on('SIGINT', endOnSignal);
+
 let exitCode = 0;
 try {
+  // The nodes an entry names and every key the harness owns come up first;
+  // then the seed list is written into the copy and read back; then Chromium
+  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds). A `ConfigError`
+  // from `setupMeshStack` raises after A' and B' have spawned and printed
+  // their identity lines, so the two nodes stand at the throw. The catch
+  // sets `exitCode = 2` and the teardown after the catch
+  // (`teardownMeshStack` / `teardownTipRelays` / `teardownLightRelays`)
+  // stops every process the setup launched, A' and B' included.
   await setupTipRelays();
   await setupLightRelays();
   await setupMeshStack();
+  writeAndVerifyCopyShells();
+  primary = await launchChromium(EXT_DIR_COPY);
+  proc = primary.proc;
+  port = primary.port;
+  profile = primary.profile;
+  await startWebServer();
   await main();
 } catch (e) {
   // `ConfigError` is the setup's refusal of a build whose values do not match
-  // what the harness owns — the pre-launch argument checks' exit code 2, from
-  // a check that runs after the browser launched. The teardown below still
-  // runs, then `proc.kill()` and `webServer.close()` close the child
-  // Chromium and the harness's own web server.
+  // what the harness owns — the pre-launch argument checks' exit code 2. The
+  // teardown below still runs, then `proc.kill()` and `webServer.close()`
+  // close the child Chromium and the harness's own web server (when a launch
+  // has happened).
   if (e instanceof ConfigError) {
     console.error(`FAIL: ${e.message}`);
     exitCode = 2;
@@ -12473,16 +12574,28 @@ try {
 await teardownTipRelays();
 await teardownLightRelays();
 await teardownMeshStack();
+// The tip, figures and names blocks spawn B, C, D and D's miner into
+// `vtChildren` and run `stopAllChildren` at the block's own end; a
+// throw out of the block past that point reaches the outer `catch` and
+// leaves them. The normal end stops them the same way the signal
+// teardown does.
+await stopAllChildren();
 
-console.log('\n=== SUMMARY ===');
-for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.detail}`);
+console.log(`\n=== SUMMARY (block=${BLOCK}) ===`);
+for (const r of findings) console.log(`  step ${r.step} [${r.block}]: ${r.status} — ${r.detail}`);
 const pass = findings.filter((f) => f.status === 'PASS').length;
 const fail = findings.filter((f) => f.status === 'FAIL').length;
 const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 // One measurement per top-level step. Step 12's sub-parts (12a…12d) collapse
 // into step 12; the summary line reads what WEB_INTERFACE → The extension asks.
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
-console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
+// The run's block holds the steps whose outcomes gate the exit code
+// (EXTENSION_CHECK_INTERFACE → The command → "The exit code": 0 when every
+// step of the block passed, 1 when any failed).
+const inBlock = findings.filter((f) => f.block === BLOCK);
+const inBlockPass = inBlock.filter((f) => f.status === 'PASS').length;
+const inBlockNonPass = inBlock.length - inBlockPass;
+console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED); block ${BLOCK}: ${inBlockPass} PASS of ${inBlock.length}`);
 // The waits block — per-step wall, time in condition-ended waits, time in
 // fixed sleeps, and one line per wait that ended at its cap, with its label
 // and elapsed. Then one line per run: wall, cap-ended, fixed-sleep totals.
@@ -12502,12 +12615,17 @@ for (const f of findings) {
   }
 }
 console.log(`[waits] === run totals === wall ${fmtSecs(totalWall)}s · cap-ended ${fmtSecs(totalCap)}s · fixed sleeps ${fmtSecs(totalSleep)}s`);
-console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
-// A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
-// is a run that recorded step failures, which is exit code 1 only when the
-// outer catch did not already set a higher one.
-if (fail > 0 && exitCode === 0) exitCode = 1;
+const summaryJson = { block: BLOCK, measured, pass, fail, skipped, findings };
+console.log(JSON.stringify(summaryJson, null, 2));
+// EXTENSION_CHECK_INTERFACE → The command — the orchestrator reads the
+// summary object from `--summary` instead of parsing the log.
+if (SUMMARY !== null) writeFileSync(SUMMARY, JSON.stringify(summaryJson, null, 2));
+// A `ConfigError` the outer catch set `exitCode = 2` for stands. Otherwise
+// the exit code is 0 only when every step of the block passed; any in-block
+// step that did not pass (NOT RUN, FAIL, SKIPPED) is exit 1
+// (EXTENSION_CHECK_INTERFACE → The command → "The exit code").
+if (inBlockNonPass > 0 && exitCode === 0) exitCode = 1;
 
-proc.kill();
+if (proc !== null) proc.kill();
 if (webServer) await new Promise((r) => webServer.close(() => r()));
 process.exit(exitCode);

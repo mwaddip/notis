@@ -198,7 +198,7 @@ async function startWssNode(
         network: 'devnet',
         listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
         stateDir,
-        httpBase,
+        httpBase: () => httpBase,
         stun: null,
         wss: { ip: '127.0.0.1', port: 0, acmeDirectory: 'about:blank', challengePort: 0 },
       },

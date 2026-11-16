@@ -78,7 +78,7 @@ function publicMeshOn(stateDir: string, httpBase: string): MeshConfig {
     network: 'devnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
-    httpBase,
+    httpBase: () => httpBase,
     stun: null,
   };
 }
@@ -89,7 +89,7 @@ function privateMeshOn(stateDir: string, httpBase: string): MeshConfig {
     network: 'devnet',
     listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
     stateDir,
-    httpBase,
+    httpBase: () => httpBase,
     stun: null,
     // Faster retry so the reservation lands inside the suite timeout.
     relayRetryBaseMs: 50,
