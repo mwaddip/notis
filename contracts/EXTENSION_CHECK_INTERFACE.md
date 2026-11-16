@@ -74,7 +74,8 @@ steps read the hosted web build alone — 20, 25, 30, L14 — serves it on an ad
 
 **A check builds once**: the workspace (`pnpm -r build`, for the node, the faucet and `tools/test-state` its stacks
 run), one web build for the hosted page, and one extension build — `VITE_NETWORK=devnet`, its public origin the
-check's. The extension's zips go to the check's own directory, never the repo root.
+check's. The extension's zips go to the check's own directory, never the repo root (`NOTIS_EXTENSION_OUT`,
+`WEB_INTERFACE → The client is served from the node's own origin → "A zip holds one build"`).
 
 **Each block writes its own values into its own copy of each build**, before Chromium loads it: the extension shell's
 `notis-nodes` — the block's relays, or for `mesh` its nodes with their WebRTC-direct addresses — and `notis-faucet`,
