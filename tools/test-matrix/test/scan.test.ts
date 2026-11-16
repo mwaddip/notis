@@ -26,7 +26,6 @@ const declaresByMember = new Map<string, Set<string>>(
   members.map((m) => [m.name, new Set(m.reads)]),
 );
 
-const CHECK_HARNESS_PREFIX = 'packages/web/scripts/extension-check/';
 const MATRIX_DIR = 'tools/test-matrix/';
 
 function gitLsFiles(dir: string): string[] {
@@ -36,8 +35,7 @@ function gitLsFiles(dir: string): string[] {
   return out.split('\0').filter((s) => s !== '');
 }
 
-function readerOf(file: string): string | null {
-  if (file.startsWith(CHECK_HARNESS_PREFIX)) return 'check';
+function ownerOf(file: string): string | null {
   let best: Member | null = null;
   for (const m of members) {
     const prefix = `${m.dir}/`;
@@ -132,7 +130,7 @@ interface Reference {
 }
 
 function scanFile(file: string, content: string): Reference[] {
-  const owner = readerOf(file);
+  const owner = ownerOf(file);
   if (owner === null) return [];
   const { flat, lineAt } = buildFlat(content);
   const refs: Reference[] = [];
@@ -201,22 +199,56 @@ function scanFile(file: string, content: string): Reference[] {
   return refs;
 }
 
-function isCovered(ref: Reference, owner: string, rows: readonly Row[]): boolean {
+function rowReads(row: Row, member: string | null, path: string | null): boolean {
+  if (member !== null && row.reads === member) return true;
+  if (path !== null) {
+    if (row.reads === path) return true;
+    if (row.reads.endsWith('/') && path.startsWith(row.reads)) return true;
+  }
+  return false;
+}
+
+// TEST_MATRIX_INTERFACE → Tests: a file a run-time row names (its path
+// exact, or under a dir row) is read by the row's reader as well, so a
+// reference in it is covered by its own member's declarations and rows
+// or by the reader's. A by-no-run row covers a reference only when the
+// reference's file is the row's reader.
+function readersOfFile(file: string, rows: readonly Row[]): Set<string> {
+  const readers = new Set<string>();
+  const owner = ownerOf(file);
+  if (owner !== null) readers.add(owner);
+  for (const row of rows) {
+    if (row.kind !== 'run time') continue;
+    if (memberNames.has(row.reads)) continue;
+    const covers = row.reads.endsWith('/')
+      ? file.startsWith(row.reads)
+      : row.reads === file;
+    if (covers) readers.add(row.reader);
+  }
+  return readers;
+}
+
+function coveredByReader(ref: Reference, reader: string, rows: readonly Row[]): boolean {
   if (ref.member !== null) {
-    const declares = declaresByMember.get(owner);
+    const declares = declaresByMember.get(reader);
     if (declares !== undefined && declares.has(ref.member)) return true;
   }
   for (const row of rows) {
-    if (row.kind === 'by no run') {
-      if (row.reader !== ref.file) continue;
-    } else {
-      if (row.reader !== owner) continue;
-    }
-    if (ref.member !== null && row.reads === ref.member) return true;
-    if (ref.path !== null) {
-      if (row.reads === ref.path) return true;
-      if (row.reads.endsWith('/') && ref.path.startsWith(row.reads)) return true;
-    }
+    if (row.kind === 'by no run') continue;
+    if (row.reader !== reader) continue;
+    if (rowReads(row, ref.member, ref.path)) return true;
+  }
+  return false;
+}
+
+function isCovered(ref: Reference, rows: readonly Row[]): boolean {
+  for (const reader of readersOfFile(ref.file, rows)) {
+    if (coveredByReader(ref, reader, rows)) return true;
+  }
+  for (const row of rows) {
+    if (row.kind !== 'by no run') continue;
+    if (row.reader !== ref.file) continue;
+    if (rowReads(row, ref.member, ref.path)) return true;
   }
   return false;
 }
@@ -240,10 +272,10 @@ function collectUncovered(): UncoveredHit[] {
       } catch {
         continue;
       }
-      const owner = readerOf(file);
+      const owner = ownerOf(file);
       if (owner === null) continue;
       for (const ref of scanFile(file, content)) {
-        if (isCovered(ref, owner, ROWS)) continue;
+        if (isCovered(ref, ROWS)) continue;
         uncovered.push({
           file: ref.file,
           lineno: ref.lineno,
