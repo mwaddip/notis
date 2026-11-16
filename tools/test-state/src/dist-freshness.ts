@@ -76,7 +76,7 @@ export function assertDistFresh(members: readonly string[], root: string = REPO_
     const list = stale.map((s) => `  - ${s}`).join('\n');
     const names = members.map((m) => basename(m)).join(' ');
     throw new Error(
-      `Stale dist — rebuild before running the mesh suite:\n${list}\n` +
+      `Stale dist — rebuild before continuing:\n${list}\n` +
         `Run: for p in ${names}; do pnpm --filter @dagsocial/$p build; done`,
     );
   }

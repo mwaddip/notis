@@ -100,7 +100,7 @@ describe('dist freshness', () => {
       'tools/unbuilt-tool',
     ];
     expect(refusal(members, root).split('\n')).toEqual([
-      'Stale dist — rebuild before running the mesh suite:',
+      'Stale dist — rebuild before continuing:',
       '  - @dagsocial/stale (packages/stale): src/ newer than dist/index.js',
       '  - @dagsocial/unbuilt (packages/unbuilt): dist/index.js missing',
       '  - @dagsocial/stale-tool (tools/stale-tool): src/ newer than dist/index.js',
