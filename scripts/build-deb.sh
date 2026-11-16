@@ -49,6 +49,9 @@ cp "$REPO_ROOT/packages/node/scripts/dagsocial-node.service" \
    "$STAGING/usr/lib/systemd/system/dagsocial-node.service"
 cp "$REPO_ROOT/tools/faucet/scripts/dagsocial-faucet.service" \
    "$STAGING/usr/lib/systemd/system/dagsocial-faucet.service"
+# `packages/node/scripts/dagsocial-miner.service` is the reference miner
+# unit an operator copies in and fills (NODE_INTERFACE → The packaged node
+# → "File modes are the operator's"); the .deb does not ship it.
 
 # ---------------------------------------------------------------------------
 # 5. Default environment file
