@@ -210,6 +210,59 @@ describe('miner', () => {
     expect(stillAt.height).toBe(reached.height);
   }, 60_000);
 
+  it('resumes the cadence one interval after the mine-to answers, judged on node heights', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const intervalMs = 2_000;
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      intervalMs,
+      controlPort: 0,
+    });
+    // Wait for the natural cadence to produce one block, then a bit more
+    // so that mine-to arrives roughly half an interval after it. Under the
+    // real impl, the cadence resets from the moment mine-to ends and the
+    // next block lands ≈ one interval later. Without the reset, the next
+    // cadence tick is anchored to the pre-mine-to block, so it lands too
+    // soon after the mine-to answer.
+    const waitForFirstCadenceBlock = async (): Promise<void> => {
+      const deadline = Date.now() + intervalMs * 2;
+      while (Date.now() < deadline) {
+        const tip = await fetchJson<{ height: number }>(
+          `${node.apiUrl}/blocks/current`,
+        );
+        if (tip.height >= 1) return;
+        await sleep(100);
+      }
+      throw new Error('no cadence block within 2 intervals');
+    };
+    await waitForFirstCadenceBlock();
+    await sleep(intervalMs * 0.5);
+    const reached = await postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: 5 },
+    );
+    const answerAt = Date.now();
+    const resumeHeight = reached.height + 1;
+    const deadline = answerAt + intervalMs * 2;
+    let observedAt: number | null = null;
+    while (Date.now() < deadline) {
+      const tip = await fetchJson<{ height: number }>(
+        `${node.apiUrl}/blocks/current`,
+      );
+      if (tip.height >= resumeHeight) {
+        observedAt = Date.now();
+        break;
+      }
+      await sleep(50);
+    }
+    expect(observedAt).not.toBeNull();
+    const elapsed = observedAt! - answerAt;
+    expect(elapsed).toBeGreaterThanOrEqual(intervalMs * 0.8);
+    expect(elapsed).toBeLessThanOrEqual(intervalMs * 1.5);
+  }, 60_000);
+
   it('answers two concurrent mine-to requests each with its own height', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });
