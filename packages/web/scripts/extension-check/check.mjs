@@ -465,22 +465,37 @@ if (SERIAL) {
 }
 
 // EXTENSION_CHECK_INTERFACE → The command — one line per block as it ends,
-// the summary last. The record reads from the harness's own summary
-// object (`measured`, `pass`, `fail`, `skipped`); a block whose harness
-// never wrote a summary reads with 0 and the harness's exit code.
+// the summary last. The harness's top-level `measured`/`pass`/`fail`/
+// `skipped` count every finding in the run — the forty-odd steps outside
+// the block read `NOT RUN` and reach the totals — so the block's line and
+// the exit gate read the block's own findings alone, taken from the
+// summary's `findings` array against the summary's `block`. A block
+// whose harness never wrote a summary reads *no summary*, naming why.
+function inBlockFindings(summary) {
+  return summary.findings.filter((f) => f.block === summary.block);
+}
+function blockPassed(r) {
+  if (r.summary === null) return false;
+  if (r.code !== 0) return false;
+  const own = inBlockFindings(r.summary);
+  if (own.length === 0) return false;
+  return own.every((f) => f.status === 'PASS');
+}
 function blockLine(r) {
   const wallSecs = (r.wallMs / 1000).toFixed(1);
   if (r.summary !== null) {
-    const { measured, pass, fail, skipped } = r.summary;
-    const notRun = measured - pass - fail - skipped;
-    return `[block ${r.block}] ${pass}/${measured} pass, ${fail} fail, ${notRun} not run (${wallSecs}s)`;
+    const own = inBlockFindings(r.summary);
+    const pass = own.filter((f) => f.status === 'PASS').length;
+    const fail = own.filter((f) => f.status === 'FAIL').length;
+    const other = own.length - pass - fail;
+    return `[block ${r.block}] ${pass}/${own.length} pass, ${fail} fail, ${other} other (${wallSecs}s)`;
   }
   const why = r.upError ?? `harness exit ${r.code}`;
   return `[block ${r.block}] no summary — ${why} (${wallSecs}s)`;
 }
 
 const checkWallSecs = ((Date.now() - checkStart) / 1000).toFixed(1);
-const anyFail = results.some((r) => r.summary === null || r.summary.fail > 0 || r.summary.pass < r.summary.measured);
+const anyFail = results.some((r) => !blockPassed(r));
 let exitCode = anyFail ? 1 : 0;
 // A refusal that landed in a block's `up` (exit code 2 from the harness,
 // no summary written) is exit 1 for the check, not 2 — a refusal before
