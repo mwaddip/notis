@@ -2,7 +2,7 @@ import { describe, it, afterAll, expect } from 'vitest';
 import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, waitHeight } from '../src/miner.js';
 import { getBlock, getBlockCurrent } from '../src/http.js';
-import { clockOffsetNodeOptions } from '../src/node-process.js';
+import { clockOffsetNodeOptions } from '@dagsocial/test-state';
 import type { NodeProcess } from '../src/node-process.js';
 import { NETWORK_PROFILES } from '@dagsocial/types';
 import { blockWork } from '@dagsocial/validation';
@@ -188,7 +188,7 @@ describe('fork root', () => {
     const SIXTEEN_HOURS_MS = 16 * 60 * 60 * 1000;
     const L_FIRST = await mesh.addNode([], {
       NODE_OPTIONS: clockOffsetNodeOptions(),
-      DAGSOCIAL_E2E_CLOCK_OFFSET_MS: String(-SIXTEEN_HOURS_MS),
+      DAGSOCIAL_CLOCK_OFFSET_MS: String(-SIXTEEN_HOURS_MS),
     });
     await mine(L_FIRST, mesh.miningSecret, 1);
     await waitHeight([L_FIRST], 1);

@@ -53,9 +53,9 @@ running the built artefact, which loads `wire`, `types`, `validation`, `net`, `a
 from *their* `dist`; the light-client test spawns `tools/nipopow-client/dist/index.js`, and the holdings chapter imports
 its library (`dist/lib.js`), which load `wire`, `types`, `validation`, `avltree`, `nipopow`, `consensus` and
 `node-reads` the same way. Before either spawns, setup stats each
-`dist/index.js` that process loads (`NODE_LOADS`, `NIPOPOW_CLIENT_LOADS` in `src/dist-freshness.ts`)
+`dist/index.js` that process loads (`NODE_LOADS`, `NIPOPOW_CLIENT_LOADS`, from `@dagsocial/test-state`)
 against the newest file under that package's `src/` and fails the run naming each stale package with
-its path, and a command that builds every package it checked. `test/dist-freshness.test.ts` holds each
+its path, and a command that builds every package it checked. `tools/test-state/test/dist-freshness.test.ts` holds each
 list equal to its entry's workspace dependency closure, read from the manifests, and in build order.
 A `git checkout` that touches `src` makes `dist` read stale by mtime even when the content is
 identical; the refusal is loud and the remedy is the build. A false-fresh is impossible.

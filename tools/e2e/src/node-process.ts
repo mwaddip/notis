@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { pathToFileURL } from 'url';
 import { resolve } from 'path';
 import { httpPort, adminPort, p2pPort } from './ports.js';
 
@@ -13,18 +12,6 @@ const NODE_ENTRY = resolve(
   'dist',
   'index.js',
 );
-
-// MINING_INTERFACE → Difficulty Schedule — the preload a caller passes to shift
-// `Date.now()` on this process, so the block creator's `createdAt` stamp sits
-// where the caller places it. Lives in `src/`; built dists do not read it.
-export const CLOCK_OFFSET_PRELOAD = resolve(
-  import.meta.dirname,
-  'clock-offset-preload.mjs',
-);
-
-export function clockOffsetNodeOptions(): string {
-  return `--import=${pathToFileURL(CLOCK_OFFSET_PRELOAD).href}`;
-}
 
 export interface NodeProcessOptions {
   fileIndex: number;

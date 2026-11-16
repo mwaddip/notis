@@ -10,6 +10,7 @@
   "dependencies": {
     "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/nipopow-client": "workspace:*",
+    "@dagsocial/test-state": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*"
   },
