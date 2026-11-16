@@ -909,8 +909,8 @@ VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vit
 extension with `VITE_PUBLIC=<--public>`. The stack is `node tools/test-state/dist/cli.js up base --dir <run-dir>
 --http-port 19740 --admin-port 19741 --p2p-port 19742 --faucet-port 19750 --miner-port 19751`, whose JSON answer on
 stdout carries `nodeHttp` (A's HTTP, for --node), `nodeP2p` (for every block that spawns B), `faucetOrigin` (for
---faucet), `minerControlOrigin` (for --miner-control) and `identities` (R's and S's key file paths, for --r-key and
---s-key); `node tools/test-state/dist/cli.js down --dir <run-dir>` tears it down
+`--faucet <faucetOrigin>/faucet`), `minerControlOrigin` (for --miner-control) and `identities` (R's and S's key file
+paths, for --r-key and --s-key); `node tools/test-state/dist/cli.js down --dir <run-dir>` tears it down
 (`TEST_STATE_INTERFACE → Loading a state`). The four promotions and S's name claim are `base`'s own, made once per
 build of the node's runtime by the state's generator and loaded in seconds thereafter
 (`TEST_STATE_INTERFACE → The base state`, `→ The fingerprint`). The miner mines A on a 6 s steady cadence by default
@@ -920,9 +920,10 @@ A-height wait whose target is known ahead — the pre-flight A ≥ m + k + 14, s
 landed + k + 1, step 29's claimedAtBlock + k — and then runs the wait, which confirms A's own height. 28b's
 stale-anchor wait stays on the cadence: the step observes A mining past the anchor. The harness's own miners —
 the --miner script the verified-tip, light and mesh blocks spawn for their own isolated D, and the mesh block's
-D on `MINER_PCT=10` — are separate from the stack's and are the harness's to start and stop. The extension is
-built with devnet values, the faucet's base among them — the harness refuses to run when the built shell's
-`notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
+D on `MINER_PCT=10` — are separate from the stack's and are the harness's to start and stop. The faucet runs from
+the tree's `tools/faucet`, and `--faucet` names its origin with the `/faucet` prefix the service routes under. The
+extension is built with devnet values, the faucet's base among them — the harness refuses to run when the built
+shell's `notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
 `/background.js` (Chrome ships a built-in Hangouts worker first). At start the harness adds the two loopback
 origins to the unpacked manifest's `host_permissions`, since CDP cannot drive the browser's permission dialog —

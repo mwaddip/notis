@@ -100,14 +100,16 @@
 //
 // Preconditions:
 //  1. A devnet stack that `tools/test-state/dist/cli.js up base --dir <run-dir>`
-//     brings up — node A at --node (`up`'s `nodeHttp`), the faucet at --faucet
-//     (`up`'s `faucetOrigin`) and a miner on a steady cadence (6 s by default)
-//     that also answers `POST /mine-to { "height": <n> }` at --miner-control
-//     (`up`'s `minerControlOrigin`). `up`'s `nodeP2p` is --node-p2p for every
-//     block that spawns B; `up`'s `identities` carries R's and S's key files
-//     for --r-key and --s-key. The harness starts no process of that stack
-//     and tears none down; `down --dir <run-dir>` is the state's own stop
-//     (TEST_STATE_INTERFACE → Loading a state).
+//     brings up — node A at --node (`up`'s `nodeHttp`), the faucet at
+//     `--faucet <up's faucetOrigin>/faucet` (the faucet runs from the tree's
+//     `tools/faucet`, and `--faucet` names its origin with the `/faucet`
+//     prefix the service routes under) and a miner on a steady cadence (6 s
+//     by default) that also answers `POST /mine-to { "height": <n> }` at
+//     --miner-control (`up`'s `minerControlOrigin`). `up`'s `nodeP2p` is
+//     --node-p2p for every block that spawns B; `up`'s `identities` carries
+//     R's and S's key files for --r-key and --s-key. The harness starts no
+//     process of that stack and tears none down; `down --dir <run-dir>` is
+//     the state's own stop (TEST_STATE_INTERFACE → Loading a state).
 //  2. The extension was built via build-extension.sh with devnet values
 //     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
 //     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
