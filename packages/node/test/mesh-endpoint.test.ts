@@ -1,8 +1,8 @@
 // NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards
 // to its own public listener" — the mesh node answers HTTP over
-// libp2p by forwarding to `http://127.0.0.1:<PORT>`
-// (`MESH_INTERFACE → The node endpoint`). The reader dials the node
-// over WebRTC-direct, runs `readerHandshake` on an open connection
+// libp2p by forwarding to `http://127.0.0.1:<port>`, the port its public
+// listener bound (`MESH_INTERFACE → The node endpoint`). The reader dials
+// the node over WebRTC-direct, runs `readerHandshake` on an open connection
 // and reads through `meshFetchOverConnection`; every answer's status,
 // `content-type` and body bytes equal the direct HTTP answer's.
 
