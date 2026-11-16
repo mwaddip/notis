@@ -10,12 +10,14 @@ import {
   cpSync,
   existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { NETWORK_PROFILES } from '@dagsocial/types';
 import { allowlistedEnv } from './env.js';
 import { writeState, type Manifest } from './cache.js';
 import { computeFingerprint } from './fingerprint.js';
@@ -23,18 +25,49 @@ import { runMiner, type MinerHandle } from './miner.js';
 
 // The devnet faucet key is public by design (`ARCHITECTURE → Genesis`). It
 // rides the generator so the faucet it spawns signs with the pair the
-// `NETWORK_PROFILES.devnet.faucetPublicKey` names.
+// `NETWORK_PROFILES.devnet.faucetPublicKey` names. The one helper the
+// generator and the loader share, so both check the key against the
+// `@dagsocial/types` profile on every load.
 const DEVNET_FAUCET_PKCS8_HEX =
   '302e020100300506032b6570042204204504541a393fe199a143e47fbf10cb32ef7ef349eecd2f0997a310487b03abf4';
 
-function devnetFaucetIdentity(): { publicKeyHex: string; secretKeyHex: string } {
+export function devnetFaucet(): { publicKeyHex: string; secretKeyHex: string } {
   const der = Buffer.from(DEVNET_FAUCET_PKCS8_HEX, 'hex');
   const priv = createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
   const pubDer = createPublicKey(priv).export({ format: 'der', type: 'spki' }) as Buffer;
-  return {
-    publicKeyHex: pubDer.subarray(-32).toString('hex'),
-    secretKeyHex: DEVNET_FAUCET_PKCS8_HEX,
-  };
+  const publicKeyHex = pubDer.subarray(-32).toString('hex');
+  const expected = NETWORK_PROFILES.devnet.faucetPublicKey;
+  if (publicKeyHex !== expected) {
+    throw new Error(
+      `devnet faucet key mismatch: derived ${publicKeyHex}, ` +
+        `NETWORK_PROFILES.devnet.faucetPublicKey = ${expected}`,
+    );
+  }
+  return { publicKeyHex, secretKeyHex: DEVNET_FAUCET_PKCS8_HEX };
+}
+
+// NET_INTERFACE → The node key. The notisId is the 32-byte Ed25519 public
+// key derived from the key file's seed. The key file is the PKCS8 DER:
+// 16-byte prefix + 32-byte seed.
+export function notisIdFromKeyFile(path: string): string {
+  const bytes = readFileSync(path);
+  if (bytes.length !== 48) {
+    throw new Error(`node key at ${path} is ${bytes.length} bytes, expected 48`);
+  }
+  const seed = bytes.subarray(16);
+  const pub = ed25519.getPublicKey(new Uint8Array(seed));
+  return Buffer.from(pub).toString('hex');
+}
+
+// NET_INTERFACE → The node key. The `[net] listening on` line carries
+// `/ip4/<ip>/tcp/<port>/p2p/<peerId>`; the peerId is libp2p's identity
+// multihash over the key.
+export function nodePeerIdFromListenLine(line: string): { port: number; peerId: string } | null {
+  // Example:
+  //   [net] listening on: /ip4/127.0.0.1/tcp/41011/p2p/12D3KooWSi2667…
+  const m = /\/ip4\/[0-9.]+\/tcp\/([0-9]+)\/p2p\/([A-Za-z0-9]+)/.exec(line);
+  if (!m) return null;
+  return { port: Number(m[1]), peerId: m[2]! };
 }
 
 export interface StateRecipe {
@@ -52,12 +85,12 @@ export const BASE: StateRecipe = {
 };
 
 // A test-only small state the suite uses. The brief's "if `base` is too slow
-// for the suite, use a smaller one" shape: mine to 5, one promotion, no
-// claim.
+// for the suite, use a smaller one" shape: mine to 5, one promotion
+// (`promote.mjs` for R), no claim.
 export const MINIMAL: StateRecipe = {
   name: 'minimal',
   startingHeight: 5,
-  promotions: [],
+  promotions: ['R'],
   claim: null,
 };
 
@@ -282,7 +315,7 @@ export async function generate(
     writeFileSync(miningSecretPath, miningSecret, { mode: 0o600 });
     chmodSync(miningSecretPath, 0o600);
 
-    const faucetKey = devnetFaucetIdentity();
+    const faucetKey = devnetFaucet();
     const faucetKeyPath = join(scratchDir, 'faucet.key');
     writeFileSync(faucetKeyPath, faucetKey.secretKeyHex, { mode: 0o600 });
     chmodSync(faucetKeyPath, 0o600);
@@ -317,7 +350,9 @@ export async function generate(
 
     let apiPort: number | null = null;
     let adminPort: number | null = null;
-    // api_listening is the JSON event; the admin line prints after fix eef0eee3.
+    let peerIdFromLine: string | null = null;
+    // api_listening is the JSON event; the admin line prints after fix
+    // eef0eee3; the `[net] listening on:` line carries the libp2p peer id.
     await waitForLine(
       nodeCp,
       (line) => {
@@ -325,17 +360,20 @@ export async function generate(
           const ev = JSON.parse(line) as { event?: string; port?: number };
           if (ev.event === 'api_listening' && typeof ev.port === 'number') {
             apiPort = ev.port;
-            return apiPort !== null && adminPort !== null;
           }
         } catch {
           // non-JSON
         }
         const adm = /^Admin listener on [^:]+:([0-9]+)$/.exec(line);
         if (adm) adminPort = Number(adm[1]);
-        return apiPort !== null && adminPort !== null;
+        if (line.startsWith('[net] listening on:')) {
+          const parsed = nodePeerIdFromListenLine(line);
+          if (parsed) peerIdFromLine = parsed.peerId;
+        }
+        return apiPort !== null && adminPort !== null && peerIdFromLine !== null;
       },
       60_000,
-      'node (api + admin)',
+      'node (api + admin + p2p)',
     );
     writeFileSync(nodeLog, nodeLogStream.join(''));
 
@@ -480,26 +518,33 @@ export async function generate(
           const tipBlock = await fetchJson<{ header: { createdAt: number } }>(
             `${apiBase}/blocks/${tip.height}`,
           );
-          const statusAgain = await fetchJson<{ notisId?: string; peerId?: string }>(
-            `${apiBase}/status`,
-          );
           const identityRows = [];
           for (const ident of identities) {
             const karma = await fetchJson<{
               memberSinceBlock?: number | null;
               member?: boolean;
             }>(`${apiBase}/karma/${ident.pubKeyHex}`);
+            // NODE_INTERFACE → Posts. `GET /posts?author=` answers
+            // `{ posts, next, pending, pendingCount }`; `posts` is the
+            // confirmed rows.
             const authored = await fetchJson<{
-              items?: ReadonlyArray<{ id: string }>;
+              posts?: ReadonlyArray<{ id: string }>;
             }>(`${apiBase}/posts?author=${ident.pubKeyHex}&limit=50`);
             identityRows.push({
               label: ident.label,
               pubKeyHex: ident.pubKeyHex,
               memberSinceBlock: karma.memberSinceBlock ?? null,
-              postIds: (authored.items ?? []).map((p) => p.id),
+              postIds: (authored.posts ?? []).map((p) => p.id),
             });
           }
 
+          // G2: notisId is the node key's public half (`loadNodeKey`'s
+          // seed-derived publicKey); peerId is libp2p's identity from the
+          // `[net] listening on` line. `/status` carries neither.
+          const notisId = notisIdFromKeyFile(nodeKeyPath);
+          if (peerIdFromLine === null) {
+            throw new Error('node did not print a `[net] listening on` line with a peerId');
+          }
           const manifest: Manifest = {
             name: recipe.name,
             fingerprint,
@@ -508,8 +553,8 @@ export async function generate(
               hash: tip.hash,
               createdAt: tipBlock.header.createdAt,
             },
-            notisId: statusAgain.notisId ?? null,
-            peerId: statusAgain.peerId ?? null,
+            notisId,
+            peerId: peerIdFromLine,
             identities: identityRows,
             claim: claimed,
           };
@@ -524,29 +569,41 @@ export async function generate(
             processRecords.map((r) => JSON.stringify(r)).join('\n') + '\n',
           );
 
-          // 8. Stop miner, faucet, A.
+          // 8. Stop miner, faucet, A. `endProcess` awaits the exit event,
+          //    so no further wait is needed — A's SIGTERM handler closes
+          //    the store before exit, and a `-wal` or `-shm` beside the
+          //    store afterwards is a failure (claim 1 as a guard).
           await miner.stop();
           await miner.joined.catch(() => {});
           await endProcess(faucetCp);
           await endProcess(nodeCp);
-          // Give A a moment to flush the WAL.
-          await sleep(50);
 
-          // 9. Write to the cache. The state's files: the store, the node key,
-          //    the mesh state (where one exists), each identity key, the manifest.
+          if (!existsSync(dbPath)) {
+            throw new Error(`generator: the store ${dbPath} is missing after A exited`);
+          }
+          if (!existsSync(nodeKeyPath)) {
+            throw new Error(`generator: the node key ${nodeKeyPath} is missing after A exited`);
+          }
+          for (const suffix of ['-wal', '-shm']) {
+            const leftover = dbPath + suffix;
+            if (existsSync(leftover)) {
+              throw new Error(
+                `generator: ${leftover} is beside the store after A's clean stop`,
+              );
+            }
+          }
+
+          // 9. Write to the cache. The state's files: the store, the node
+          //    key, the mesh state (where one exists), each identity key,
+          //    the manifest. `.mesh` is a directory on a mesh node.
           const stageDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-stage-${recipe.name}-`));
           try {
-            // Copy only the files a load needs; leave logs and secrets in the
-            // scratch.
-            const stageFiles = [
-              { src: dbPath, dst: join(stageDir, 'dagsocial.db') },
-              { src: nodeKeyPath, dst: join(stageDir, 'dagsocial.key') },
-            ];
-            for (const { src, dst } of stageFiles) {
-              if (existsSync(src)) cpSync(src, dst);
-            }
+            cpSync(dbPath, join(stageDir, 'dagsocial.db'));
+            cpSync(nodeKeyPath, join(stageDir, 'dagsocial.key'));
             const meshPath = dbPath.replace(/\.db$/, '.mesh');
-            if (existsSync(meshPath)) cpSync(meshPath, join(stageDir, 'dagsocial.mesh'));
+            if (existsSync(meshPath)) {
+              cpSync(meshPath, join(stageDir, 'dagsocial.mesh'), { recursive: true });
+            }
             for (const ident of identities) {
               cpSync(ident.keyFile, join(stageDir, `${ident.label}.key`));
               chmodSync(join(stageDir, `${ident.label}.key`), 0o600);
@@ -554,9 +611,14 @@ export async function generate(
             writeFileSync(join(stageDir, 'manifest.json'), JSON.stringify(manifest));
 
             const cached = writeState(options.cacheRoot, fingerprint, recipe.name, stageDir);
+            // G4: scratch stays on failure; on success remove it below.
+            rmSync(stageDir, { recursive: true, force: true });
+            rmSync(scratchDir, { recursive: true, force: true });
             return { manifest, fingerprint, cachePath: cached.dir };
           } finally {
-            rmSync(stageDir, { recursive: true, force: true });
+            if (existsSync(stageDir)) {
+              rmSync(stageDir, { recursive: true, force: true });
+            }
           }
         } finally {
           // Miner stop may already have been called; guard.
@@ -572,7 +634,13 @@ export async function generate(
     } finally {
       if (nodeCp.exitCode === null) await endProcess(nodeCp);
     }
-  } finally {
-    rmSync(scratchDir, { recursive: true, force: true });
+  } catch (err) {
+    // G4: keep the scratch directory on failure and name it. A's log,
+    // the pool (`<scratchDir>/dagsocial.db` through `sqlite3 -readonly`)
+    // and the scripts' logs sit under it for a reader to inspect.
+    const message = (err as Error).message ?? String(err);
+    throw new Error(
+      `generation of ${recipe.name} failed; scratch kept at ${scratchDir}\n${message}`,
+    );
   }
 }

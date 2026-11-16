@@ -55,7 +55,7 @@ export {
 export {
   up,
   down,
-  probePort,
+  pickFreePort,
   type UpOptions,
   type UpPorts,
   type UpResult,
