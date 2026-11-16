@@ -1,227 +1,104 @@
 #!/usr/bin/env node
-// The extension proof — the twelve steps of WEB_INTERFACE → The extension
-// plus the four links-into-the-extension steps, the verified-tip block
-// (17a · 17 · 17b · 18 · 19a · 19b · 19c · 20), the verified-figures block
-// (21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25) and the verified-names block
-// (26 · 29 · 27a–d · 28a–b · 30), each read verbatim, over raw CDP against a
-// live devnet stack. Drives the App's real UI on the extension's own page: the
-// composer, the like word, the profile and wallet windows' rows, and the prompt
-// window found by its `prompt.html?id=` URL. The verified-tip block runs
-// against a second stack the harness owns — node B (server, bootstrapped from
-// A), node D (isolated, its chain mined on demand for 19b heavier than A/B and
-// for 19c lighter than B), and two switchable relays RLA in front of A and RLB
-// in front of B on fixed ports (`RLA_PORT`, `RLB_PORT`), each with a mode the
-// harness sets between steps: `honest` (every request passed through),
-// `proof-invalid` (the `/nipopow/proof/` answer altered one byte so it does
-// not verify), `proof-short` (the proof route answered 404 chain-too-short,
-// `NODE_INTERFACE → Nipopow`), `upstream-D` (every request passed to D), and
-// `down` (every request's connection ends with no status, so the client reads
-// a transport failure — the mode the waiting-writes block runs under).
-// The build's seed list names the two relays as its two entries, each
-// `{notisId, addrs: [], api: <relay>}` — an entry with no addrs is reached at
-// its api alone (`MESH_INTERFACE → The client's node list → "An entry may
-// carry an API base"`), so every read the extension makes passes through one
-// of them. A fresh page is a fresh client (`WEB_INTERFACE → The extension →
-// "The contexts, and what each may hold"`) — each tip-block step opens its
-// own after the relays' modes are set. The verified-figures block brings up
-// a B of its own and, for its six lie arms (22a · 22b · 22c · 22d · 22e · 23),
-// sets each figures mode on both tip relays and opens a fresh page per arm;
-// the verified-names block brings up a B of its own too, and each of its lie
-// arms (27a–d · 28a–b) sets its name mode on both tip relays the same way.
-// The waiting-writes block (W1 · W2 · W3 · W4 · W5) runs after the three verified
-// blocks in the relays build — the one whose seed list is RLA and RLB in
-// front of A and B — and covers WEB_INTERFACE → The wallet → "A write no node
-// answers waits", → "Waiting writes go out at the first answer", → "A
-// refusal ends what it strands", → "A waiting write is drawn as pending",
-// and → The extension → "The post cache" → "A failed listing draws the
-// cache". Both relays are in `down` mode for W1, W2 and W4's build-up — a
-// client read reads a transport failure; honest for W3's flush and for W4's
-// final step. W4's outside spend replaces R's karma box through the node's
-// HTTP write path with a withdraw built from `@dagsocial/types`' primitives
-// and signed by the harness's own Node crypto, so the stranded write of the
-// waiting chain is refused at the first flush.
-// The light block
-// (L1 … L14) covers how the extension reads its lists light with ids and the
-// node's word, draws cached posts at once, shows slots for the rest and
-// resolves those through POST /posts/batch across the client's order for an
-// older read (the mesh nodes the need allows, then the API bases of the
-// rest) — WEB_INTERFACE → The extension → "The light read", "The resolve",
-// "The post check", "The post cache", "The chain's name". It runs against
-// two relays the harness owns — RA on 19810 in front of node A, RB on 19815
-// in front of node B — each in one of eight modes at a time (honest, text,
-// drop, hold, hang, list-down, list-replay, down); its own node D (L13) is
-// spawned on 19820.
-// The mesh block (M1 · M2 · M3 · M4 · M5) proves the mesh path in the built
-// extension — WEB_INTERFACE → The extension →
-// "The mesh is the extension's first path",
-// → "Nothing retries a rejection"'s
-// "A send that ends with no answer is no rejection",
-// → "A serving read is answered from it";
-// WEB_INTERFACE → The settings window → "The serve row";
-// MESH_INTERFACE → The client's node list →
-// "A routed read goes to a node its need allows",
-// → "The client's order for a need",
-// → "A write goes to one node at a time";
-// MESH_INTERFACE → Block gossip →
-// "A client that serves answers the nodes it reads";
-// NODE_INTERFACE → Posts DAG →
-// "A serving reader is asked for what has been due";
-// JOURNAL_EVENTS → post_received. The block owns
-// two nodes A' and B' spawned from --node-dist with MESH_ROLE=public,
-// MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct and MESH_STUN=off
-// (two public nodes on one loopback cannot share STUN_PORT), both
-// bootstrapped off A (--node-p2p) so they are peers on A's chain. For M5
-// the block also owns an isolated node D — its store a consistent copy of
-// A''s taken while A' runs (`sqlite3 .backup`), with M3's post's text
-// nulled on the copy — spawned MESH_ROLE=public, its own MINING_SECRET and
-// miner, BOOTSTRAP_PEERS empty, reached by the extension as a hand-added
-// node (`notis.node.hand` in the extension page's localStorage, the
-// webrtc-direct multiaddr D's identity line carries); M5 does not answer
-// the disagreement the hand-added node raises.
-// The extension built for --mesh names each node in its seed list as
-// `{notisId, addrs:[<webrtc-direct multiaddr with certhash and /p2p/>],
-// api:<HTTP base>}`, and the harness refuses to run unless the shell's
-// `notis-nodes` carries exactly that shape — printing the VITE_NODES to
-// rebuild with. Chromium takes `--allow-loopback-in-peer-connection` for a
-// --mesh run (a harness switch for a loopback stage, not a product
-// setting): without it a browser refuses the RTCPeerConnection to 127.0.0.1
-// and no mesh connection opens.
+// The extension's proof in a browser — one block per process, selected by
+// --block (EXTENSION_CHECK_INTERFACE → Blocks). The harness drives the built
+// extension in headless Chromium over raw CDP against a devnet stack it does
+// not own, through the App's real UI on the extension page: the composer,
+// the like word, the profile and wallet windows' rows, and the prompt window
+// found by its `prompt.html?id=` URL.
 //
-// The seed list the extension is built with carries two node entries whose
-// addrs are empty and whose api names the harness's own base — RLA and RLB
-// for the verified blocks, RA and RB for --light. An entry with no addrs is
-// reached at its api alone (MESH_INTERFACE → The client's node list → "An
-// entry may carry an API base"); this run keeps every block on HTTP, and the
-// extension's mesh client does no WebRTC dial. Each relay stands in front of
-// one node and the harness switches its mode between steps — no second build
-// is needed, and no settings-row change, since the relay is already on the
-// path (WEB_INTERFACE → The extension → "The verified tip", "The contexts,
-// and what each may hold").
+// Blocks:
+//   writes    1–12                                    (WEB_INTERFACE → The extension)
+//   links     13a, 13, 14, 15, 16, 13-uncancelled     (WEB_INTERFACE → The extension → "Links into the extension")
+//   tip       17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20
+//                                                     (WEB_INTERFACE → The extension → "The verified tip")
+//   figures   21, 24, 22a, 22b, 22c, 22d, 22e, 23, 25 (WEB_INTERFACE → The extension → "The verified figures")
+//   names     26, 29, 27a, 27b, 27c, 27d, 28a, 28b, 30
+//                                                     (WEB_INTERFACE → The extension → "The verified names")
+//   waiting   W1, W2, W3, W4, W5                      (WEB_INTERFACE → The wallet → "A write no node answers waits")
+//   light     L1–L14                                  (WEB_INTERFACE → The extension → "The light read")
+//   mesh      M1–M5                                   (WEB_INTERFACE → The extension → "The mesh is the extension's first path")
 //
-// Preconditions:
-//  1. A devnet stack that `tools/test-state/dist/cli.js up base --dir <run-dir>`
-//     brings up — node A at --node (`up`'s `nodeHttp`), the faucet at
-//     `--faucet <up's faucetOrigin>/faucet` (the faucet runs from the tree's
-//     `tools/faucet`, and `--faucet` names its origin with the `/faucet`
-//     prefix the service routes under) and a miner on a steady cadence (6 s
-//     by default) that also answers `POST /mine-to { "height": <n> }` at
-//     --miner-control (`up`'s `minerControlOrigin`). `up`'s `nodeP2p` is
-//     --node-p2p for every block that spawns B; `up`'s `identities` carries
-//     R's and S's key files for --r-key and --s-key. The harness starts no
-//     process of that stack and tears none down; `down --dir <run-dir>` is
-//     the state's own stop (TEST_STATE_INTERFACE → Loading a state).
-//  2. The extension was built via build-extension.sh with devnet values
-//     — VITE_NODES points at [{notisId:<A>, addrs:[], api:RLA},
-//     {notisId:<B>, addrs:[], api:RLB}] for --verified-{tip,figures,names},
-//     at [{notisId:<A>, addrs:[], api:RA}, {notisId:<B>, addrs:[],
-//     api:RB}] for --light, and at [{notisId:<A'>, addrs:[<A' webrtc-
-//     direct>], api:<A' HTTP base>}, {notisId:<B'>, addrs:[<B' webrtc-
-//     direct>], api:<B' HTTP base>}] for --mesh. The builds differ and a
-//     run takes one; --light and --mesh each refuse combination with any
-//     other verified flag. Each `notisId` is read from its node's start
-//     line; the mesh build's addrs[0] is the webrtc-direct multiaddr that
-//     start line names in `multiaddrs`.
-//  3. For --verified-names: `up`'s state holds S with a name claimed —
-//     `base` is one such state (TEST_STATE_INTERFACE → The base state).
+// Every block runs steps 1 and 2 (the seed-list check and R's import) and
+// then its own steps on R (EXTENSION_CHECK_INTERFACE → Blocks). A step
+// outside the run's block reads `NOT RUN` with the reason naming the block
+// that runs it. An absent or unknown `--block` is refused (exit 2).
 //
-// Modes:
-//   --verified-tip alone: 1–16 read NOT RUN, 17a–20 run.
-//   --r-key: 1–12 run, then 13–16 with --public and --web-dist (NOT RUN
-//     without them); then each block below runs on its flag, in this order,
-//     and reads NOT RUN by name without it.
-//   --verified-tip: 17a–20.
-//   --verified-figures: 21·24·22a·22b·22c·22d·22e·23·25. The figures run hangs on
-//     a verified tip (WEB_INTERFACE → The extension → "The verified figures"),
-//     which needs a second verified node, so the figures block runs B as the
-//     tip block does; hence --verified-figures requires --node-dist, --scratch
-//     and --node-p2p as well as --r-key (config error at the top otherwise, as
-//     --verified-tip is with its own four).
-//   --verified-names: 26·29·27a–d·28a–b·30. A name check proves against the
-//     verified tip's anchor (WEB_INTERFACE → The extension → "The verified
-//     names"), so the block runs a B of its own and requires what
-//     --verified-figures requires, and --s-key: 28 and 29 send to S's handle.
-//   Waiting-writes block: W1·W2·W3·W4·W5 (WEB_INTERFACE → The wallet → "A write
-//     no node answers waits", → "Waiting writes go out at the first answer",
-//     → "A refusal ends what it strands", → "A waiting write is drawn as
-//     pending", → "A page no node answers offers what can wait"; → The
-//     extension → "A failed listing draws the cache"). Runs after the three
-//     verified blocks in the relays build, whenever any of
-//     --verified-{tip,figures,names} is passed with --r-key — the relays are
-//     up and R's identity is loaded. W1 and W2 open one fresh page under
-//     `down` on both relays; W3 presses the corner on the same page with
-//     both relays honest; W4 opens another fresh page under `down`, presses
-//     two root posts from the composer whose builders chain on the rep
-//     queue, replaces R's karma box on the chain through a withdraw the
-//     harness builds and submits, then sets both relays honest; W5 opens a
-//     fresh page under `down` on both relays and asserts the controls a page
-//     no node answers offers — the withdraw control enabled on a cached R
-//     root in a pane, with its confirm row and `keep`, the rep row's `—` and
-//     the invites row with no form, the balance row's `—`, and the `your
-//     vouch` row of a cached non-R card's author window reading `—` with no
-//     `vouch` word — the step writes nothing, and neither relay's log carries
-//     a POST for its span.
-//   --waiting-only: iterate on the waiting-writes block alone. Runs steps
-//     1 and 2 (seed list check and R's import), brings up the two tip
-//     relays in front of A (RLB's upstream is A too, since B is not
-//     needed), skips steps 3–20 and the verified-tip / figures / names
-//     blocks, then runs the waiting-writes block and the [diag]
-//     liveness line, and ends — 13-uncancelled and the mesh block are
-//     recorded NOT RUN. Requires --r-key and refuses combination with
-//     --verified-{tip,figures,names}, --light or --mesh. **The full run
-//     is the record**; this flag is for turning the block over fast
-//     while a defect of it is being tracked down.
-//   --light: L1·L2·L3·L4·L5·L6·L7·L8·L9·L10·L11·L12·L13·L14. The light read,
-//     the resolve, the post check, the post cache and the chain's name
-//     (WEB_INTERFACE → The extension → "The light read", "The resolve", "The
-//     post check", "The post cache", "The chain's name"). Requires --r-key,
-//     --node-dist, --miner, --scratch and --node-p2p (the block owns both
-//     relays and its own isolated D for L13). L14 reads the hosted web build
-//     and reads NOT RUN without --public / --web-dist. Takes an extension
-//     build whose notis-nodes is exactly [RA, RB], not [A, B]; the harness
-//     refuses to run on anything else, and refuses combination with any
-//     --verified-{tip,figures,names} flag.
-//   --mesh: M1·M2·M3·M4·M5. Reads over the mesh, reads at the API base when no
-//     mesh node serves, a write over the mesh, a write with no answer
-//     going to the next node, and a node filling a post's text from a
-//     serving extension — WEB_INTERFACE → The extension →
-//     "The mesh is the extension's first path",
-//     WEB_INTERFACE → The settings window → "The serve row";
-//     MESH_INTERFACE → The client's node list, → Block gossip →
-//     "A client that serves answers the nodes it reads";
-//     NODE_INTERFACE → Posts DAG →
-//     "A serving reader is asked for what has been due".
-//     Requires --r-key, --node-dist, --miner, --scratch and --node-p2p (A'
-//     bootstraps from --node-p2p so A'/B' are peers on A's chain and R's
-//     karma reaches them; --miner mines M5's isolated D). Takes an extension
-//     build whose notis-nodes is exactly
-//     [{notisId:<A'>, addrs:[<A' webrtc-direct>], api:<A' HTTP base>},
-//     {notisId:<B'>, …}]; refuses otherwise, and refuses combination with
-//     --verified-{tip,figures,names} or --light.
-//   20, 25, 30 and L14 read the hosted web build, and read NOT RUN without
-//     --public and --web-dist.
-//   No --r-key and no --verified-tip: every step reads NOT RUN by name.
+// The seed list the harness writes into the copy's shell, by block:
+//   writes, links, tip, figures, names, waiting — [{notisId:A, addrs:[], api:RLA},
+//     {notisId:B, addrs:[], api:RLB}] in front of A and B. RLB's upstream is
+//     A for `waiting` (W4's refusal reads A's pool, so a B behind RLB would
+//     change what the step meets); otherwise RLB starts with no upstream and
+//     `bringUpNodeB` moves it to B's origin on the first spawn. `writes` and
+//     `links` never spawn B, so RLB answers 502 past setup
+//     (`EXTENSION_CHECK_INTERFACE → Addresses`).
+//   light — [{notisId:A, addrs:[], api:RA}, {notisId:B, addrs:[], api:RB}].
+//   mesh — [{notisId:A', addrs:[<A' webrtc-direct>], api:AP_ORIGIN},
+//           {notisId:B', addrs:[<B' webrtc-direct>], api:BP_ORIGIN}], the
+//     multiaddrs each node's identity line carries.
+//
+// Modes on the two tip relays, set between steps on both at once (one at a
+// time):
+//   honest, proof-invalid, proof-short, upstream-D, down (tip, waiting);
+//   credits-fake, credits-foreign, credits-drop, credits-drop-tipplus1,
+//     karma-drop, avl-flip (figures);
+//   label-rename, owner-404, owner-fakebox, name-owner, name-fakebox (names);
+//   and on `light`'s RA/RB: honest, text, drop, hold, hang, list-down,
+//     list-replay, down.
+//
+// Addresses are OS-bound and read back from the process that holds each
+// (EXTENSION_CHECK_INTERFACE → Addresses). One address is the build's:
+// the hosted page's public origin, carried by the extension's background
+// and bridge as built (--public). The `links` block serves the hosted page
+// there; `tip`, `figures`, `names` and `light` serve it on an address of
+// their own under the same base path, and their hosted-page steps (20, 25,
+// 30, L14) open that address.
+//
+// The `figures` and `names` blocks ask the faucet for R's credits through
+// `POST <--faucet>/credits` before their steps — R from `base` holds no
+// $NOTIS, and step 21 (and step 29's send) needs a balance. The preparation
+// asks the stack's miner for the next heights and waits until R's plain
+// `/credits` on A lists a box the grant made, the node's own word; a
+// refusal or missed landing fails the block's steps with the reason.
+//
+// Each block's requirements:
+//   every block            --r-key, --node, --faucet, --extension-dir, --scratch
+//   writes, links, tip,
+//     figures, names,
+//     waiting, light       --node-id (A's notisId, written into the seed list)
+//   links, tip, figures,
+//     names, light         --public, --web-dist (hosted-page step)
+//   tip, light, mesh       --miner (the harness-owned miner)
+//   tip, figures, names,
+//     light, mesh          --node-dist, --node-p2p (spawns a second node)
+//   names                  --s-key (step 29 sends to S's handle)
+//
+// --miner-control: before each A-height wait whose target is known ahead,
+// the harness posts `/mine-to` to the stack's miner for that target and
+// then runs the wait as it stands (the wait confirms A's own height). The
+// four asks: the pre-flight A ≥ m + k + 14, step 21's landed + k + 1,
+// step 24's landed + k + 1, and step 29's claimedAtBlock + k. 28b's
+// anchor-past wait stays on the steady cadence — the step observes A
+// mining past the anchor (WEB_INTERFACE → The extension → "The verified
+// names"). Without the flag every wait runs on the stack's cadence
+// (TEST_STATE_INTERFACE → Blocks during a run).
+//
+// Chromium takes `--allow-loopback-in-peer-connection` on a `--block mesh`
+// run (a harness switch for a loopback stage, not a product setting): a
+// browser refuses the RTCPeerConnection to 127.0.0.1 without it and no
+// mesh connection opens. The `--block mesh` A' and B' listen on
+// `/ip4/127.0.0.1/udp/<port>/webrtc-direct`, and `setupMeshStack` checks
+// the built shell's `notis-nodes` against each node's identity line.
 //
 // Usage:
-//   node scripts/extension-check/run.mjs \
-//     --extension-dir <path> [--r-key <path>] --node <origin> --faucet <origin> \
-//     [--miner-control <origin>] \
-//     [--verified-tip --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--verified-figures --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--verified-names --s-key <path> --node-dist <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--light --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--mesh --node-dist <path> --miner <path> --scratch <dir> --node-p2p <multiaddr>] \
-//     [--waiting-only] \
-//     [--public <origin+base> --web-dist <dir>]
-//
-// --miner-control: with it, before each A-height wait whose target is known
-// ahead of the wait, the harness posts `/mine-to` to the stack's miner for
-// that target and then runs the wait as it stands (the wait confirms A's
-// own height). The four asks: the pre-flight A ≥ m + k + 14, step 21's
-// landed + k + 1, step 24's landed + k + 1, and step 29's claimedAtBlock
-// + k. 28b's stale-anchor wait stays on the steady cadence — the step
-// observes A mining past the anchor (WEB_INTERFACE → The extension → "The
-// verified names"). Without the flag every wait runs on the stack's
-// cadence (TEST_STATE_INTERFACE → Blocks during a run).
+//   node packages/web/scripts/extension-check/run.mjs \
+//     --block <writes|links|tip|figures|names|waiting|light|mesh> \
+//     --extension-dir <path> --r-key <path> --node <origin> --faucet <origin> \
+//     --scratch <dir> \
+//     [--node-id <64 hex>] \
+//     [--s-key <path>] \
+//     [--node-dist <path>] [--miner <path>] [--node-p2p <multiaddr>] \
+//     [--public <origin+base> --web-dist <dir>] \
+//     [--miner-control <origin>]
 
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -234,17 +111,26 @@ import { computeTxId, txToJson } from '@dagsocial/types';
 import { loadNodeKey } from '@dagsocial/net';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
-// Boolean flags — never consume the next argument. Without this the parser
-// below reads the following flag as the flag's value, and every arg after
-// `--verified-tip` shifts by one silently.
-const BOOLEAN_FLAGS = new Set(['verified-tip', 'verified-figures', 'verified-names', 'light', 'mesh', 'waiting-only']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (!arg.startsWith('--')) continue;
   const name = arg.slice(2);
-  if (BOOLEAN_FLAGS.has(name)) { args.set(name, true); continue; }
   args.set(name, process.argv[++i]);
+}
+
+// EXTENSION_CHECK_INTERFACE → Blocks — one required argument naming the
+// block the process runs. An absent or unknown `--block` is refused with
+// the eight names.
+const BLOCKS = ['writes', 'links', 'tip', 'figures', 'names', 'waiting', 'light', 'mesh'];
+const BLOCK = args.get('block') ?? null;
+if (BLOCK === null) {
+  console.error(`--block <name> is required — one of: ${BLOCKS.join(', ')}`);
+  process.exit(2);
+}
+if (!BLOCKS.includes(BLOCK)) {
+  console.error(`--block ${JSON.stringify(BLOCK)} is not one of: ${BLOCKS.join(', ')}`);
+  process.exit(2);
 }
 const EXT_DIR = args.get('extension-dir');
 const R_KEY = args.get('r-key');
@@ -287,31 +173,34 @@ let NIPOPOW_COMPARE = null;
 let NIPOPOW_VERIFIER_PROFILE = null;
 let TYPES_PROFILE_FOR = null;
 
-// The verified-tip block — WEB_INTERFACE → The extension → "The verified tip",
-// steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20. Absent, they read NOT RUN
-// by name, as 13–16 do without --public / --web-dist.
-const VERIFIED_TIP = args.get('verified-tip') === true;
-// The verified-figures block — WEB_INTERFACE → The extension → "The verified
-// figures", steps 21 · 24 · 22a · 22b · 22c · 22d · 22e · 23 · 25: the honest
-// states read A, and the six lie arms read the two tip relays with their mode
-// set on both. Absent, every step reads NOT RUN by name.
-const VERIFIED_FIGURES = args.get('verified-figures') === true;
-// The verified-names block — WEB_INTERFACE → The extension → "The verified
-// names", steps 26 · 29 · 30: a claimed name in ink on every surface, a send
-// to S's handle, the hosted web build. Absent, every step reads NOT RUN by
-// name.
-const VERIFIED_NAMES = args.get('verified-names') === true;
-// The light block — WEB_INTERFACE → The extension → "The light read", "The
-// resolve", "The post check", "The post cache", "The chain's name". Steps L1
-// … L14: a cold feed held, a reload reads the cache, the reader's own post
-// asks no node, the pointer walks the nodes, a node that leaves ids out, a
-// node that lies, a lie no node corrects, no node serves, a node that never
-// answers, a cold thread, a held thread whose listing fails, a withdrawal,
-// another chain and the hosted web build. Two relays — RA in front of A, RB
-// in front of B — each in one of eight modes at a time (honest, text, drop,
-// hold, hang, list-down, list-replay, down); its own node D on 19820 for L13.
-// Absent, every step reads NOT RUN by name.
-const LIGHT = args.get('light') === true;
+// Internal aliases of the selected block, used wherever a block-specific
+// branch reads the flag from `BLOCK` (EXTENSION_CHECK_INTERFACE → Blocks).
+const WRITES = BLOCK === 'writes';
+const LINKS = BLOCK === 'links';
+// The tip block — WEB_INTERFACE → The extension → "The verified tip",
+// steps 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
+const VERIFIED_TIP = BLOCK === 'tip';
+// The figures block — WEB_INTERFACE → The extension → "The verified
+// figures", steps 21, 24, 22a, 22b, 22c, 22d, 22e, 23, 25. The six lie
+// arms read the two tip relays with their mode set on both; the honest
+// states read A.
+const VERIFIED_FIGURES = BLOCK === 'figures';
+// The names block — WEB_INTERFACE → The extension → "The verified names",
+// steps 26, 29, 27a–d, 28a, 28b, 30. R claims a name, the row reads it in
+// ink on every surface, a send typed to S's handle, each lie arm on a
+// fresh page, and the hosted web build.
+const VERIFIED_NAMES = BLOCK === 'names';
+// The light block — WEB_INTERFACE → The extension → "The light read",
+// "The resolve", "The post check", "The post cache", "The chain's name".
+// Steps L1–L14: a cold feed held, a reload reads the cache, the reader's
+// own new post asks no node, the pointer walks the nodes, a node that
+// leaves ids out, a node that lies, a lie no node corrects, no node
+// serves, a node that never answers, a cold thread, a held thread whose
+// listing fails, a withdrawal, another chain and the hosted web build.
+// Two relays — RA in front of A, RB in front of B — each in one of eight
+// modes at a time (honest, text, drop, hold, hang, list-down, list-replay,
+// down); its own node D on `DL_HTTP_PORT` for L13.
+const LIGHT = BLOCK === 'light';
 // The mesh block — WEB_INTERFACE → The extension →
 // "The mesh is the extension's first path",
 // → "Nothing retries a rejection"'s
@@ -327,32 +216,32 @@ const LIGHT = args.get('light') === true;
 // NODE_INTERFACE → Posts DAG →
 // "A serving reader is asked for what has been due";
 // JOURNAL_EVENTS → post_received.
-// Steps M1 · M2 · M3 · M4 · M5: reads over the mesh with zero HTTP, reads at
-// the API base when no mesh node serves, a write over the mesh landing on
-// both nodes, a write with no answer going to the next node, and a node
-// filling a post's text from a serving extension. The block owns its own
-// two mesh nodes A' and B' (spawned from NODE_DIST with MESH_ROLE=public,
+// Steps M1–M5: reads over the mesh with zero HTTP, reads at the API base
+// when no mesh node serves, a write over the mesh landing on both nodes,
+// a write with no answer going to the next node, and a node filling a
+// post's text from a serving extension. The block owns its own two mesh
+// nodes A' and B' (spawned from NODE_DIST with MESH_ROLE=public,
 // MESH_LISTEN=/ip4/127.0.0.1/udp/<port>/webrtc-direct, MESH_STUN=off; B'
-// bootstrapped from A') and refuses to run unless the extension under check
-// was built with the seed list naming each as `{notisId:<key>,
-// addrs:[<webrtc-direct multiaddr with certhash>], api:<HTTP base>}` — the
-// harness prints the VITE_NODES to rebuild with when the shape disagrees.
-// For M5 the block owns an isolated node D — its store a consistent copy
-// of A''s taken while A' runs, M3's post's text nulled on the copy — with
-// its own MINING_SECRET and miner, no peers, reached by the extension as a
-// hand-added node through `notis.node.hand` in the extension page's
-// localStorage. Absent, every step reads NOT RUN by name.
-const MESH = args.get('mesh') === true;
-// --waiting-only: iterate on the waiting-writes block alone. The harness
-// runs steps 1 and 2 (the seed list check and R's import — the only
-// earlier state the block needs), brings up the two tip relays in front
-// of A (both relays' upstream is A, since B is not needed), skips steps
-// 3–20 and the verified-tip / figures / names blocks, then runs the
-// waiting-writes block (prep · W1 · W2 · W3 · W4 · W5) and the `[diag]`
-// liveness line, and ends — 13-uncancelled and the mesh block read
-// NOT RUN. The full run is the record; this flag is for turning the
-// block over fast while a defect of it is being tracked down.
-const WAITING_ONLY = args.get('waiting-only') === true;
+// bootstrapped from A'); for M5 it owns an isolated node D on a store
+// copied from A' with M3's post's text nulled.
+const MESH = BLOCK === 'mesh';
+// The waiting block — WEB_INTERFACE → The wallet → "A write no node
+// answers waits", → "Waiting writes go out at the first answer", → "A
+// refusal ends what it strands", → "A waiting write is drawn as pending",
+// → "A page no node answers offers what can wait"; → The extension → "A
+// failed listing draws the cache". Steps W1–W5 under the two tip relays
+// in front of A (RLB's upstream is A too, since the block spawns no B):
+// W1 and W2 open one fresh page under `down` on both relays; W3 presses
+// the corner on the same page with both relays `honest`; W4 opens another
+// fresh page under `down`, presses two root posts whose builders chain on
+// the rep queue, replaces R's karma box on the chain through a withdraw
+// the harness builds and submits, then sets both relays `honest`; W5
+// opens a fresh page under `down` on both relays and asserts the controls
+// a page no node answers offers.
+const WAITING = BLOCK === 'waiting';
+// A second name for the same value, kept because sites inside the file
+// read it under this name.
+const WAITING_ONLY = WAITING;
 // S's clear file — its public key is the recipient step 29 expects.
 const S_KEY = args.get('s-key') ?? null;
 const NODE_DIST = args.get('node-dist') ?? null;
@@ -430,13 +319,16 @@ let DM5_ORIGIN = null;
 // step 28a.
 const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
 
-// The refusal of a setup that runs after the browser has launched:
-// `setupMeshStack` checks the built shell's `notis-nodes` against each node's
-// identity line, and a mismatch is a configuration error, exit code 2 as the
-// pre-launch argument checks exit. The outer try/catch sets `exitCode = 2`, and
-// the teardown, `proc.kill()` and `webServer.close()` the normal end runs close
-// every process the run launched. The pre-launch argument checks exit inline:
-// no process stands to close.
+// The refusal `setupMeshStack` raises after it has spawned A' and B' and
+// read each identity line — a configuration error from the webrtc-direct
+// multiaddr check, exit code 2 as the pre-launch argument checks exit. The
+// outer try/catch sets `exitCode = 2`, and the teardown below the catch
+// (`teardownTipRelays`, `teardownLightRelays`, `teardownMeshStack`) stops
+// every process the setup launched: A' and B' through
+// `teardownMeshStack`'s `stopChild('ap')` / `stopChild('bp')` by the
+// handles `spawnServerNode` recorded at spawn. `proc.kill()` and
+// `webServer.close()` close Chromium and the harness's web server where
+// one has launched.
 class ConfigError extends Error {
   constructor(message) { super(message); this.name = 'ConfigError'; }
 }
@@ -448,75 +340,71 @@ if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir')
 // file is still an argument error.
 if (R_KEY && !existsSync(R_KEY)) { console.error(`--r-key not found: ${R_KEY}`); process.exit(2); }
 
-// --verified-tip requires the four lifecycle arguments — the harness owns
-// node B, node D (mined on demand for 19b heavier and 19c lighter), the two
-// tip relays RLA and RLB and every miner it starts; A itself and A's miner
-// are the operator's (WEB_INTERFACE → The extension → "The verified tip").
-if (VERIFIED_TIP) {
+// Every block requires `--r-key` — EXTENSION_CHECK_INTERFACE → Blocks: steps
+// 1 and 2 import R and the block's own steps read against R.
+if (!R_KEY) {
+  console.error(`--r-key <path> is required for every block — the extension check runs on R (EXTENSION_CHECK_INTERFACE → Blocks)`);
+  process.exit(2);
+}
+// `--scratch` is required on every run — the harness copies `--extension-dir`
+// and `--web-dist` into it (EXTENSION_CHECK_INTERFACE → Builds).
+if (!SCRATCH) {
+  console.error('--scratch <dir> is required — the harness copies --extension-dir and --web-dist into it and writes the run\'s values into those copies');
+  process.exit(2);
+}
+if (!existsSync(SCRATCH)) {
+  console.error(`--scratch not found: ${SCRATCH}`);
+  process.exit(2);
+}
+
+// Block-specific lifecycle requirements. The tip, figures, names, light and
+// mesh blocks spawn a second node (`bringUpNodeB` for the first four,
+// `setupMeshStack` for mesh), so each requires `--node-dist` and `--node-p2p`.
+// The tip, light and mesh blocks also start a miner of their own, so each
+// requires `--miner`. `names` requires `--s-key`: step 29 sends to S's handle.
+const NEEDS_NODE_DIST = new Set(['tip', 'figures', 'names', 'light', 'mesh']);
+const NEEDS_NODE_P2P = NEEDS_NODE_DIST;
+const NEEDS_MINER = new Set(['tip', 'light', 'mesh']);
+if (NEEDS_NODE_DIST.has(BLOCK)) {
   if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-tip requires --node-dist <packages/node/dist/index.js>');
+    console.error(`--block ${BLOCK} requires --node-dist <packages/node/dist/index.js> — the block spawns a second node from it`);
     process.exit(2);
   }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--verified-tip requires --miner <packages/node/scripts/miner.mjs>');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-tip requires --scratch <dir> — a directory the harness owns');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
+}
+if (NEEDS_NODE_P2P.has(BLOCK)) {
   if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-tip requires --node-p2p <multiaddr> — A\'s p2p bootstrap, e.g. /ip4/127.0.0.1/tcp/19742');
+    console.error(`--block ${BLOCK} requires --node-p2p <multiaddr> — A's p2p bootstrap for the spawned node, e.g. /ip4/127.0.0.1/tcp/19742`);
+    process.exit(2);
+  }
+}
+if (NEEDS_MINER.has(BLOCK)) {
+  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
+    console.error(`--block ${BLOCK} requires --miner <packages/node/scripts/miner.mjs> — the block starts a miner of its own`);
     process.exit(2);
   }
 }
 
-// The pair every block that reads TIP_M / TIP_K takes from the tool it
-// already imports (WEB_INTERFACE → The extension → "The verified tip";
-// CONSTANTS → Client defaults) — the tip block, the figures block and the
-// names block all read them, so the load runs whenever any of the three
-// flags is set. The retired fork comparison (resolveTip + compareProofs,
-// driving 19b's old refused · outworked predicate) is gone — the mesh
-// client's own check settles the chain, and no tool-side comparison is
-// what the verdict reads any more.
-// --light cannot be combined with any of the verified-tip/figures/names blocks:
-// the two builds differ (seed list `[{api:RA,…},{api:RB,…}]` versus
-// `[{api:RLA,…},{api:RLB,…}]`), and a run takes one (WEB_INTERFACE → The
-// extension → "The light read", "The verified tip" — the extension's seed
-// list is the two relay origins; the harness refuses otherwise, and the two
-// builds differ, so a run takes one).
-if (LIGHT && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-  console.error('--light cannot be combined with --verified-tip, --verified-figures or --verified-names — the extension builds differ (seed list [{api:RA,…},{api:RB,…}] vs [{api:RLA,…},{api:RLB,…}]) and a run takes one');
-  process.exit(2);
+// `--s-key` is required for `names` only — step 29 sends to S's handle and
+// reads S's public key beneath the field and on the prompt. The harness
+// reads that key alone and signs nothing as S.
+let S_PUB = null;
+if (VERIFIED_NAMES) {
+  if (!S_KEY || !existsSync(S_KEY)) {
+    console.error('--block names requires --s-key <path> — S\'s clear file { pubKeyHex, privKeyBase64 }; step 29 sends to S\'s handle');
+    process.exit(2);
+  }
+  S_PUB = JSON.parse(readFileSync(S_KEY, 'utf8')).pubKeyHex ?? null;
+  if (typeof S_PUB !== 'string' || !/^[0-9a-f]{64}$/.test(S_PUB)) {
+    console.error(`--s-key holds no 64-hex pubKeyHex: ${S_KEY}`);
+    process.exit(2);
+  }
 }
 
-// --mesh builds a seed list whose entries carry non-empty addrs (the
-// WebRTC-direct multiaddrs of A' and B') and HTTP api bases of A' and B'
-// (AP_ORIGIN, BP_ORIGIN) — every other block names addrs: [] with relay
-// apis in front. The builds differ and a run takes one.
-if (MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT)) {
-  console.error('--mesh cannot be combined with --verified-tip, --verified-figures, --verified-names or --light — the extension builds differ (seed list [{notisId,addrs:[<webrtc-direct>],api:<node HTTP>},{…}] vs [{notisId,addrs:[],api:<relay>},{…}]) and a run takes one');
-  process.exit(2);
-}
-
-// --waiting-only needs --r-key (the block signs with R and reads R's
-// listings) and refuses combination with any of the three verified
-// blocks, --light or --mesh: the flag runs the waiting-writes block
-// alone, under the relays build, in front of A alone — a combined run
-// is the full one and `--waiting-only` is dropped.
-if (WAITING_ONLY && !R_KEY) {
-  console.error('--waiting-only requires --r-key — the waiting-writes block signs with R and reads R\'s listings');
-  process.exit(2);
-}
-if (WAITING_ONLY && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH)) {
-  console.error('--waiting-only cannot be combined with --verified-tip, --verified-figures, --verified-names, --light or --mesh — the flag runs the waiting-writes block alone; a combined run is the full one with the flag dropped');
-  process.exit(2);
-}
-
+// `@dagsocial/nipopow-client`, `@dagsocial/nipopow` and `@dagsocial/types`
+// carry the pair every block that proves against a chain reads (the tip,
+// figures, names and light blocks' verifiers; the mesh block's verifier).
+// The write-only blocks (`writes`, `links`) and the waiting block carry no
+// proof read, so the load is gated on the five that do.
 if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   try {
     const clientUrl = import.meta.resolve('@dagsocial/nipopow-client');
@@ -532,153 +420,24 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
     const { profileFor } = await import(typesUrl);
     TYPES_PROFILE_FOR = profileFor;
   } catch (e) {
-    console.error(`--verified-{tip,figures,names}, --light and --mesh require the built @dagsocial/nipopow-client, @dagsocial/nipopow and @dagsocial/types (DEFAULT_M, DEFAULT_K, verifierProfile, decodeNipopowProof, compareProofs, profileFor; pnpm -r build): ${e.message}`);
+    console.error(`--block ${BLOCK} requires the built @dagsocial/nipopow-client, @dagsocial/nipopow and @dagsocial/types (DEFAULT_M, DEFAULT_K, verifierProfile, decodeNipopowProof, compareProofs, profileFor; pnpm -r build): ${e.message}`);
     process.exit(2);
   }
 }
 
-// --verified-figures requires --r-key AND the lifecycle args `bringUpNodeB`
-// reads (--node-dist, --scratch, --node-p2p). The figures run hangs on a
-// verified tip (WEB_INTERFACE → The extension → "The verified figures"),
-// which needs a second verified node, so the block runs B as the tip block
-// does — using bringUpNodeB verbatim (SCRATCH, NODE_DIST, NODE_P2P). Step 25
-// uses --public/--web-dist when they are given and reads NOT RUN by name
-// when they are not.
-if (VERIFIED_FIGURES) {
-  if (!R_KEY) {
-    console.error('--verified-figures requires --r-key <path> — R\'s identity is what steps 21 and 24 measure');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-figures requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-figures requires --scratch <dir> — bringUpNodeB writes b.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-figures requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-}
-
-// --verified-names requires what --verified-figures requires, for the same
-// reason — a name check proves against the verified tip's anchor, which needs
-// a second verified node (WEB_INTERFACE → The extension → "The verified
-// names") — and --s-key, S's clear file: step 29 sends to S's handle and reads
-// S's public key beneath the field and on the prompt. The harness reads that
-// key alone and signs nothing as S. Step 30 uses --public/--web-dist when they
-// are given and reads NOT RUN by name when they are not.
-let S_PUB = null;
-if (VERIFIED_NAMES) {
-  if (!R_KEY) {
-    console.error('--verified-names requires --r-key <path> — R claims the name step 26 reads and sends in step 29');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--verified-names requires --node-dist <packages/node/dist/index.js> — bringUpNodeB spawns B from it');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--verified-names requires --scratch <dir> — bringUpNodeB writes b.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--verified-names requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-  if (!S_KEY || !existsSync(S_KEY)) {
-    console.error('--verified-names requires --s-key <path> — S\'s clear file { pubKeyHex, privKeyBase64 }; step 29 sends to S\'s handle');
-    process.exit(2);
-  }
-  S_PUB = JSON.parse(readFileSync(S_KEY, 'utf8')).pubKeyHex ?? null;
-  if (typeof S_PUB !== 'string' || !/^[0-9a-f]{64}$/.test(S_PUB)) {
-    console.error(`--s-key holds no 64-hex pubKeyHex: ${S_KEY}`);
-    process.exit(2);
-  }
-}
-
-// --light requires --r-key AND the lifecycle args — the block owns both
-// relays (RA in front of A, RB in front of B), the second node B (as the
-// tip and figures blocks do, through bringUpNodeB) and its own isolated
-// node D for L13's another-chain arm. The pattern mirrors --verified-names.
-if (LIGHT) {
-  if (!R_KEY) {
-    console.error('--light requires --r-key <path> — R\'s identity is what the light block reads and signs under');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--light requires --node-dist <packages/node/dist/index.js> — spawns node B and the isolated node D for L13');
-    process.exit(2);
-  }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--light requires --miner <packages/node/scripts/miner.mjs> — mines D past m + k + 4 so its proof verifies');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--light requires --scratch <dir> — the light block writes b.db and d-light.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--light requires --node-p2p <multiaddr> — A\'s p2p bootstrap for B, e.g. /ip4/127.0.0.1/tcp/19742');
-    process.exit(2);
-  }
-}
-
-// --mesh runs 1–16 against the extension's seed list — the two mesh nodes
-// A' and B' this block owns — and then M1–M4–M5. A' bootstraps from the
-// operator's A over p2p (the --node-p2p multiaddr), so A' and B' are
-// peers on A's chain and R's karma (promoted by the operator on A) is
-// read through them like any other block. --r-key for R's identity,
-// --node-dist for the spawn's entry, --miner for M5's isolated D, --scratch
-// for the two stores (ap.db and bp.db) and D's copy (d-m5.db), --node-p2p
-// for A''s bootstrap peer — the same lifecycle arguments the figures block
-// reads, with --miner added for M5.
-if (MESH) {
-  if (!R_KEY) {
-    console.error('--mesh requires --r-key <path> — R\'s identity is what steps 2–12 import and M3 signs with');
-    process.exit(2);
-  }
-  if (!NODE_DIST || !existsSync(NODE_DIST)) {
-    console.error('--mesh requires --node-dist <packages/node/dist/index.js> — spawns the two mesh nodes A\' and B\'');
-    process.exit(2);
-  }
-  if (!MINER_SCRIPT || !existsSync(MINER_SCRIPT)) {
-    console.error('--mesh requires --miner <packages/node/scripts/miner.mjs> — M5 mines the isolated D on a store copied from A\'');
-    process.exit(2);
-  }
-  if (!SCRATCH) {
-    console.error('--mesh requires --scratch <dir> — the mesh block writes ap.db and bp.db there');
-    process.exit(2);
-  }
-  if (!existsSync(SCRATCH)) {
-    console.error(`--scratch not found: ${SCRATCH}`);
-    process.exit(2);
-  }
-  if (!NODE_P2P || !NODE_P2P.startsWith('/ip4/')) {
-    console.error('--mesh requires --node-p2p <multiaddr> — A\'s p2p bootstrap for A\', e.g. /ip4/127.0.0.1/tcp/19742 — so A\' syncs A\'s chain and R\'s karma is read through A\'/B\'');
-    process.exit(2);
-  }
-}
-
-// --public and --web-dist come together — pass both or neither. Without them
-// the twelve run as today and steps 13–16 are reported NOT RUN by name
-// (WEB_INTERFACE → The extension → "Links into the extension").
+// `--public` and `--web-dist` come together — pass both or neither — and
+// are required for `links`, `tip`, `figures`, `names` and `light` (their
+// hosted-page steps 13a/13/14/15/16, 20, 25, 30 and L14 open the hosted
+// page; the `links` steps serve it at the build's own origin, the others
+// serve it at an address of their own under the same base path,
+// EXTENSION_CHECK_INTERFACE → Addresses).
+const NEEDS_PUBLIC = new Set(['links', 'tip', 'figures', 'names', 'light']);
 if ((PUBLIC === null) !== (WEB_DIST === null)) {
   console.error('--public and --web-dist come together — pass both or neither');
+  process.exit(2);
+}
+if (NEEDS_PUBLIC.has(BLOCK) && PUBLIC === null) {
+  console.error(`--block ${BLOCK} requires --public <origin+base> and --web-dist <dir> — the block has a hosted-page step`);
   process.exit(2);
 }
 let publicOrigin = null;
@@ -698,28 +457,16 @@ if (PUBLIC !== null) {
   if (!existsSync(join(resolve(WEB_DIST), 'index.html'))) { console.error(`--web-dist has no index.html: ${resolve(WEB_DIST)}`); process.exit(2); }
 }
 
-// The harness copies `--extension-dir` and `--web-dist` into `--scratch` and
-// loads, serves and edits only the copies; the given directories are read,
-// never written (EXTENSION_CHECK_INTERFACE → Builds). So `--scratch` is always
-// required, on every run.
-if (!SCRATCH) {
-  console.error('--scratch <dir> is required — the harness copies --extension-dir and --web-dist into it and writes the run\'s values into those copies');
-  process.exit(2);
-}
-if (!existsSync(SCRATCH)) {
-  console.error(`--scratch not found: ${SCRATCH}`);
-  process.exit(2);
-}
-
-// A run whose seed list the harness owns (the verified and waiting runs, and
-// --light) names A's `notisId` for A's entry: the 64-hex key its node prints
-// as `notisId` on its first JSON start line (`NET_INTERFACE → The node key`).
-// --mesh reads A' and B''s `notisId`s from their own identity lines
-// (`setupMeshStack`), so --node-id is not read there and a plain run with no
-// block flag leaves the shell's `notis-nodes` as the build baked it.
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || WAITING_ONLY) {
+// `--node-id` is A's `notisId` — the 64-hex key its node prints as
+// `notisId` on its first JSON start line (`NET_INTERFACE → The node key`).
+// The seed list the harness writes names this value for A's entry — the
+// relays-in-front-of-A entry for `writes`, `links`, `tip`, `figures`,
+// `names` and `waiting`; the RA entry for `light`. The mesh block reads
+// A' and B''s `notisId`s from their own identity lines inside
+// `setupMeshStack`, so `--node-id` is not required there.
+if (BLOCK !== 'mesh') {
   if (NODE_ID === null) {
-    console.error('--node-id <64 hex> is required — A\'s `notisId`, the key the seed list names for A\'s entry; the value is on `up`\'s first JSON line as `notisId`');
+    console.error(`--block ${BLOCK} requires --node-id <64 hex> — A's \`notisId\`, the key the seed list names for A's entry; the value is on \`up\`'s first JSON line as \`notisId\``);
     process.exit(2);
   }
   if (!/^[0-9a-f]{64}$/.test(NODE_ID)) {
@@ -754,7 +501,7 @@ if (PUBLIC !== null) {
 const shellHtmlOriginal = readFileSync(join(EXT_DIR, 'index.html'), 'utf8');
 const manifestOriginal = JSON.parse(readFileSync(join(EXT_DIR, 'manifest.json'), 'utf8'));
 
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
+{
   const networkMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-network"[^>]+content="([^"]*)"[^>]*>/);
   const shellNetwork = networkMetaMatch ? networkMetaMatch[1] : null;
   if (shellNetwork !== 'devnet') {
@@ -765,7 +512,7 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || MESH) {
   console.log(`shell notis-network=${shellNetwork} matches "devnet"`);
 }
 
-if (PUBLIC !== null && R_KEY) {
+if (PUBLIC !== null) {
   const publicMetaMatch = shellHtmlOriginal.match(/<meta[^>]+name="notis-public"[^>]+content="([^"]*)"[^>]*>/);
   const shellPublic = publicMetaMatch ? publicMetaMatch[1] : null;
   if (shellPublic !== PUBLIC) {
@@ -813,19 +560,18 @@ const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
   console.log(`copy manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
 }
 
-// Pre-create B's key file at `${SCRATCH}/b.key`, so every B of a run — the
-// one `setupLightRelays` spawns, and the one `verifiedTipSteps` /
-// `verifiedFiguresSteps` / `verifiedNamesSteps` spawn — reads the same key
+// Pre-create B's key file at `${SCRATCH}/b.key` for every block whose seed
+// list names B as its second entry — the key its spawn reads
 // (`NET_INTERFACE → The node key`: `loadNodeKey` is the one reader of a key
-// file, and it writes a fresh key where none is). `bringUpNodeB` wipes the
-// store at each spawn and never the key, so the key persists across every B
-// in the run — and the entry the seed list names for B carries its public
-// key as `notisId`, read here before the seed list is written. The default
-// derives `b.key` beside `b.db` (`NODE_INTERFACE → Configuration → "The key
-// file is named for the store"`: unset `NODE_KEY_PATH` replaces the db's
-// extension with `.key`), the path `bringUpNodeB`'s spawn takes.
+// file, and it writes a fresh key where none is). The blocks that spawn B
+// (`tip`, `figures`, `names`, `light`) take the same key on every B of the
+// run; the blocks that do not spawn B (`writes`, `links`, `waiting`) still
+// need `B_NOTIS_ID` for the seed list's second entry. The default derives
+// `b.key` beside `b.db` (`NODE_INTERFACE → Configuration → "The key file is
+// named for the store"`: unset `NODE_KEY_PATH` replaces the db's extension
+// with `.key`), the path `bringUpNodeB`'s spawn takes.
 let B_NOTIS_ID = null;
-if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || WAITING_ONLY) {
+if (BLOCK !== 'mesh') {
   const bKeyPath = join(SCRATCH, 'b.key');
   let bKp;
   try { bKp = await loadNodeKey(bKeyPath); }
@@ -837,15 +583,14 @@ if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || LIGHT || WAITING_ONLY)
   console.log(`B key at ${bKeyPath}: notisId=${B_NOTIS_ID}`);
 }
 
-// The seed list the harness writes into the copy's shell for a run that owns
-// one. `--mesh`'s entries carry A' and B''s `notisId`s and WebRTC-direct
-// multiaddrs, both read from the identity lines; `setupMeshStack` fills them
-// in before the write pass runs. The relays' entries carry A's and B's
-// `notisId`s with empty `addrs`, so each is reached at its api alone
-// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
-// base"`). A run with no block flag leaves `notis-nodes` as the build baked
-// it; the harness still writes `notis-faucet` on every run and `notis-api`
-// on every run with `--public`.
+// The seed list the harness writes into the copy's shell. `mesh`'s entries
+// carry A' and B''s `notisId`s and WebRTC-direct multiaddrs, both read from
+// the identity lines; `setupMeshStack` fills them in before the write pass
+// runs. Every other block's entries carry A's and B's `notisId`s with empty
+// `addrs`, so each is reached at its api alone (`MESH_INTERFACE → The
+// client's node list → "An entry may carry an API base"`). The harness
+// writes `notis-faucet` on every run and `notis-api` on every run with
+// `--public`.
 function buildOwnedSeedList() {
   if (MESH) {
     // Filled by `setupMeshStack` after it reads each identity line; the
@@ -861,13 +606,12 @@ function buildOwnedSeedList() {
       { notisId: B_NOTIS_ID, addrs: [], api: RB_ORIGIN },
     ];
   }
-  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY) {
-    return [
-      { notisId: NODE_ID, addrs: [], api: RLA_ORIGIN },
-      { notisId: B_NOTIS_ID, addrs: [], api: RLB_ORIGIN },
-    ];
-  }
-  return null;
+  // writes, links, tip, figures, names, waiting — RLA and RLB in front of
+  // A and B. `setupTipRelays` binds each origin before the write pass runs.
+  return [
+    { notisId: NODE_ID, addrs: [], api: RLA_ORIGIN },
+    { notisId: B_NOTIS_ID, addrs: [], api: RLB_ORIGIN },
+  ];
 }
 
 // The webrtc-direct addrs `setupMeshStack` records for A' and B'. Filled in
@@ -2352,16 +2096,30 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 }
 
 // ---------------------------------------------------------------------------
-// The verified-tip block — steps 17a · 17 · 17b · 18 · 19a · 19b · 19c · 20.
+// The blocks' steps and their NOT-RUN markers. Steps 1 and 2 are the
+// seed-list check and R's import, run in every block
+// (EXTENSION_CHECK_INTERFACE → Blocks); each block's own steps follow.
 // ---------------------------------------------------------------------------
 
+// writes — steps 3–12, with step 12 recorded as its four sub-parts (12a–d).
+const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d'];
+// links — 13a, 13, 14, 15, 16, and the browser-context arm 13-uncancelled.
+const LINKS_STEPS = ['13a', 13, 14, 15, 16, '13-uncancelled'];
+// tip — 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
 const VERIFIED_TIP_STEPS = ['17a', 17, '17b', 18, '19a', '19a-both', '19b', '19c', 20];
-// The verified-figures block — steps 21 · 24 · 22a · 22b · 22c · 22d · 22e ·
-// 23 · 25, in the order they run (WEB_INTERFACE → The extension → "The
-// verified figures"); 22a · 22b · 22c · 22d · 22e · 23 are the lie arms,
-// read through the figures relay.
+// figures — 21, 24, 22a–e, 23, 25 (WEB_INTERFACE → The extension → "The
+// verified figures"); 22a–e and 23 are the lie arms, read through the
+// figures relay.
 const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', '22c', '22d', '22e', 23, 25];
 const LIE_ARM_STEPS = ['22a', '22b', '22c', '22d', '22e', 23];
+
+function markWritesNotRun(reason) {
+  for (const s of WRITES_STEPS) record(s, 'NOT RUN', reason);
+}
+
+function markLinksNotRun(reason) {
+  for (const s of LINKS_STEPS) record(s, 'NOT RUN', reason);
+}
 
 function markVerifiedTipNotRun(reason) {
   for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
@@ -10743,172 +10501,76 @@ async function meshSteps(cx, bcx, targetId = 'unknown') {
 // The run.
 // ---------------------------------------------------------------------------
 
-// The three blocks after the links steps, in order, each on its flag and NOT
-// RUN by name without it — reached on every run with --r-key, whether the links
-// steps ran or not. `bcx` is the browser session that opens an extension page
-// where none is live. `opts.skipMesh` keeps the mesh block out — main's
-// --public path runs it after `13-uncancelled` through `runMeshBlock`.
-async function runVerifiedBlocks(bcx, opts = {}) {
-  // The verified-tip block after the 1–16 pass and before the browser-context
-  // arm. 17b's press train runs under A's live miner; 17a sets both tip
-  // relays to `proof-short` and opens a fresh extension page; 19a sets RLA
-  // to `proof-invalid` with RLB honest (then both `proof-invalid`), again
-  // each on a fresh page; 19b mines D past A's tip so the client seats
-  // D's chain and B reads off it; 19c mines D past `m + k + 4` and leaves
-  // it below A's tip so B's chain seats and D reads off it. The main
-  // extension page is the one live at this moment — 16(d)'s bridge
-  // takeover leaves one; where none is open, `Target.createTarget` a
-  // fresh `index.html`, the way the harness opens every other extension
-  // page (WEB_INTERFACE → The extension → "The verified tip"). `bcx`
-  // runs `verifiedTipSteps`' fresh-page openings.
-  if (VERIFIED_TIP) {
-    let vtPage = await findExt('index.html');
-    if (!vtPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vtPage = await findExt('index.html');
-    }
-    if (!vtPage) throw new Error('verified-tip block: no extension page');
-    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
-    await verifiedTipSteps(vtCx, bcx, vtPage.id);
-    try { vtCx.s.close(); } catch {}
-  } else {
-    markVerifiedTipNotRun('no --verified-tip');
+// Open the one extension page the block's steps run on — the page `main()`
+// left (`main()`'s `page.id`), else a fresh `index.html` through the
+// browser-level session. The caller passes `bcx` so the fresh target opens
+// at the right scope (WEB_INTERFACE → The extension → "The contexts, and
+// what each may hold").
+async function openBlockExtensionPage(bcx, label) {
+  let page = await findExt('index.html');
+  if (!page) {
+    await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
+    await sleep(2000);
+    page = await findExt('index.html');
   }
+  if (!page) throw new Error(`${label} block: no extension page`);
+  return page;
+}
 
-  // The verified-figures block after the tip block — the tip block's cleanup
-  // stops B, C, D and the lying relay by their handles, so only A is left, and
-  // the figures block brings up a B of its own and the figures relay
-  // (WEB_INTERFACE → The extension → "The verified figures"). It runs on the
-  // extension page live at this moment, or a fresh one where none is open;
-  // storage restores R's identity (envelope in local, seed in session from
-  // step 12d's unlock).
+// The per-block dispatcher called after steps 1 and 2 for every block whose
+// own steps run on a fresh session. `bcx` is the browser session the
+// fresh-page openings ask. `writes` runs its steps on `main()`'s page and
+// calls this only through its diag prefix; `links` opens the hosted page's
+// targets inline. Kept as `runVerifiedBlocks` because the identifier reads
+// in several sites, and the body is a one-block dispatcher under
+// EXTENSION_CHECK_INTERFACE → Blocks.
+async function runVerifiedBlocks(bcx) {
+  if (VERIFIED_TIP) {
+    const vtPage = await openBlockExtensionPage(bcx, 'tip');
+    const vtCx = await openSession(vtPage.webSocketDebuggerUrl);
+    try { await verifiedTipSteps(vtCx, bcx, vtPage.id); }
+    finally { try { vtCx.s.close(); } catch {} }
+    return;
+  }
   if (VERIFIED_FIGURES) {
-    let vfPage = await findExt('index.html');
-    if (!vfPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vfPage = await findExt('index.html');
-    }
-    if (!vfPage) throw new Error('verified-figures block: no extension page');
+    const vfPage = await openBlockExtensionPage(bcx, 'figures');
     const vfCx = await openSession(vfPage.webSocketDebuggerUrl);
     // The App's boot needs a moment before the wallet control mounts —
     // main.ts's bootstrapProxy awaits the background's snapshot.
     try {
       await vfCx.waitFor(`!!document.querySelector('[aria-label="open wallet"]')`, 'header wallet control 25', 30000);
     } catch {}
-    await verifiedFiguresSteps(vfCx, bcx, vfPage.id);
-    try { vfCx.s.close(); } catch {}
-  } else {
-    markVerifiedFiguresNotRun('no --verified-figures');
+    try { await verifiedFiguresSteps(vfCx, bcx, vfPage.id); }
+    finally { try { vfCx.s.close(); } catch {} }
+    return;
   }
-
-  // The verified-names block after the figures block — the figures block's
-  // cleanup stops its B, and the names block brings up its own (WEB_INTERFACE
-  // → The extension → "The verified names"). It runs on the extension page live
-  // at this moment, or a fresh one where none is open; storage restores R's
-  // identity, as it does for the figures block.
   if (VERIFIED_NAMES) {
-    let vnPage = await findExt('index.html');
-    if (!vnPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      vnPage = await findExt('index.html');
-    }
-    if (!vnPage) throw new Error('verified-names block: no extension page');
+    const vnPage = await openBlockExtensionPage(bcx, 'names');
     const vnCx = await openSession(vnPage.webSocketDebuggerUrl);
-    await verifiedNamesSteps(vnCx, bcx, vnPage.id);
-    try { vnCx.s.close(); } catch {}
-  } else {
-    markVerifiedNamesNotRun('no --verified-names');
+    try { await verifiedNamesSteps(vnCx, bcx, vnPage.id); }
+    finally { try { vnCx.s.close(); } catch {} }
+    return;
   }
-
-  // The waiting-writes block runs after the verified blocks in the relays
-  // build (WEB_INTERFACE → The wallet → "A write no node answers waits";
-  // this file's header → "The waiting-writes block"). It uses the two tip
-  // relays `setupTipRelays` set up and R's identity loaded by steps 2–12;
-  // --light and --mesh builds have a different seed list and run their own
-  // blocks instead, so the waiting-writes block is gated on neither being
-  // set.
-  if (R_KEY && !LIGHT && !MESH && (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES)) {
-    let wPage = await findExt('index.html');
-    if (!wPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      wPage = await findExt('index.html');
-    }
-    if (!wPage) throw new Error('waiting-writes block: no extension page');
+  if (WAITING) {
+    const wPage = await openBlockExtensionPage(bcx, 'waiting');
     const wCx = await openSession(wPage.webSocketDebuggerUrl);
-    await waitingWritesSteps(wCx, bcx, wPage.id);
-    try { wCx.s.close(); } catch {}
-  } else {
-    markWaitingWritesNotRun(LIGHT
-      ? '--light runs its own block; the waiting-writes block is relays-build only'
-      : MESH
-        ? '--mesh runs its own block; the waiting-writes block is relays-build only'
-        : !R_KEY
-          ? 'no --r-key — the waiting-writes block needs R\'s identity'
-          : 'no --verified-tip / --verified-figures / --verified-names — the tip relays are not up');
+    try { await waitingWritesSteps(wCx, bcx, wPage.id); }
+    finally { try { wCx.s.close(); } catch {} }
+    return;
   }
-
-  // The light block runs alone after steps 1–16, on a session of its own.
-  // The two relays (RA, RB) are up from before the browser launched
-  // (`setupLightRelays`); the block owns its own node D on 19820 for L13's
-  // another-chain arm. It runs on the extension page live at this moment,
-  // or a fresh one where none is open; storage restores R's identity.
   if (LIGHT) {
-    let lPage = await findExt('index.html');
-    if (!lPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      lPage = await findExt('index.html');
-    }
-    if (!lPage) throw new Error('light block: no extension page');
+    const lPage = await openBlockExtensionPage(bcx, 'light');
     const lCx = await openSession(lPage.webSocketDebuggerUrl);
-    await lightSteps(lCx, lPage.id);
-    try { lCx.s.close(); } catch {}
-  } else {
-    markLightNotRun('no --light');
+    try { await lightSteps(lCx, lPage.id); }
+    finally { try { lCx.s.close(); } catch {} }
+    return;
   }
-
-  if (!opts.skipMesh) {
-    await runMeshBlock(bcx);
-  }
-}
-
-// The mesh block runs alone after steps 1–16, on a session of its own.
-// Its two nodes A' and B' are up from before the browser launched
-// (`setupMeshStack`); the block owns them end to end. It runs on the
-// extension page live at this moment, or a fresh one where none is open;
-// storage restores R's identity, as the other blocks do. Split out of
-// `runVerifiedBlocks` so main's --public path can run it after
-// `13-uncancelled` — the browser-context arm leaves a CDP state the
-// mesh block's fresh pages do not boot under.
-async function runMeshBlock(bcx) {
   if (MESH) {
-    let mPage = await findExt('index.html');
-    if (!mPage) {
-      await bcx.call('Target.createTarget', { url: `chrome-extension://${EXT_ID}/index.html` });
-      await sleep(2000);
-      mPage = await findExt('index.html');
-    }
-    if (!mPage) throw new Error('mesh block: no extension page');
+    const mPage = await openBlockExtensionPage(bcx, 'mesh');
     const mCx = await openSession(mPage.webSocketDebuggerUrl);
-    await meshSteps(mCx, bcx, mPage.id);
-    try { mCx.s.close(); } catch {}
-  } else {
-    markMeshNotRun('no --mesh');
-  }
-}
-
-// The blocks on a run whose links steps end early — no --public, or no root of
-// R's to link to — through a browser session of their own.
-async function runVerifiedBlocksAlone() {
-  const bcx = await openBrowserSession();
-  try {
-    await runVerifiedBlocks(bcx);
-  } finally {
-    try { bcx.s.close(); } catch {}
+    try { await meshSteps(mCx, bcx, mPage.id); }
+    finally { try { mCx.s.close(); } catch {} }
+    return;
   }
 }
 
@@ -10934,43 +10596,6 @@ async function main() {
   // for main.ts's bootstrapProxy to return.
   await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
   await sleep(2000);
-
-  // With no --r-key the write steps and the links steps read NOT RUN by name;
-  // the verified-tip block (WEB_INTERFACE → The extension → "The verified
-  // tip": the corner needs no identity) runs on the flag alone and reads NOT
-  // RUN without it.
-  if (!R_KEY) {
-    for (const s of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-      record(s, 'NOT RUN', 'no --r-key — the write steps do not run');
-    }
-    for (const s of [13, 14, 15, 16]) {
-      record(s, 'NOT RUN', 'no --r-key — the links steps do not run');
-    }
-    if (VERIFIED_TIP) {
-      // WEB_INTERFACE → The extension → "The verified tip" — the block's
-      // fresh-page openings (17a · 19a · 19b · 19c) ask the browser-level
-      // session for `Target.createTarget`.
-      const vtBcx = await openBrowserSession();
-      try {
-        await verifiedTipSteps(cx, vtBcx, page.id);
-      } finally {
-        try { vtBcx.s.close(); } catch {}
-      }
-    } else {
-      markVerifiedTipNotRun('no --verified-tip');
-    }
-    // The verified-figures block requires --r-key; --verified-figures alone
-    // is a config error caught at the top. Here without --r-key the six steps
-    // read NOT RUN by name — and the names block's three, which require it too.
-    markVerifiedFiguresNotRun('no --r-key — the verified-figures block does not run');
-    markVerifiedNamesNotRun('no --r-key — the verified-names block does not run');
-    markLightNotRun('no --r-key — the light block does not run');
-    // The mesh block requires --r-key for M3's signed post; without it,
-    // every step reads NOT RUN by name. --mesh without --r-key is a config
-    // error caught at the top.
-    markMeshNotRun('no --r-key — the mesh block does not run');
-    return;
-  }
 
   // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
   // The expected first node matches the extension build the run was given —
@@ -11020,75 +10645,47 @@ async function main() {
   const cx2 = await openSession(p2.webSocketDebuggerUrl);
   await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
 
-  // --waiting-only: iterate on the waiting-writes block alone. Steps 1
-  // and 2 brought up R's identity; everything between here and the
-  // waiting-writes block reads NOT RUN. 13-uncancelled and the mesh
-  // block also read NOT RUN (the flag ends after waiting-writes), and
-  // the [diag] line prints just before 13-uncancelled's NOT RUN.
-  if (WAITING_ONLY) {
-    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
-      record(s, 'NOT RUN', '--waiting-only skips the earlier steps');
-    }
-    markVerifiedTipNotRun('--waiting-only skips the verified-tip block');
-    markVerifiedFiguresNotRun('--waiting-only skips the verified-figures block');
-    markVerifiedNamesNotRun('--waiting-only skips the verified-names block');
-    markLightNotRun('--waiting-only skips the light block');
-    markMeshNotRun('--waiting-only skips the mesh block');
-    const wBcx = await openBrowserSession();
-    try {
-      let wPage = await findExt('index.html');
-      if (!wPage) throw new Error('--waiting-only: no extension page');
-      const wCx = await openSession(wPage.webSocketDebuggerUrl);
-      try { await waitingWritesSteps(wCx, wBcx, wPage.id); } finally { try { wCx.s.close(); } catch {} }
-      // The liveness diagnostic — the same line a full run prints
-      // before 13-uncancelled runs; a --waiting-only run ends after it.
-      // The diag's extension-page labels compare against the id of the
-      // page `main()` opened (same id as `wPage.id`, since findExt
-      // returns the one open one).
-      await diagBeforeThirteenUncancelled(page.id);
-      record('13-uncancelled', 'NOT RUN', '--waiting-only skips the browser-context arm');
-    } finally {
-      try { wBcx.s.close(); } catch {}
-    }
-    return;
+  // Every block runs steps 1 and 2 above and then its own steps on R
+  // (EXTENSION_CHECK_INTERFACE → Blocks). A step outside the run's block
+  // reads NOT RUN with the reason naming the block that runs it.
+  if (!WRITES) {
+    for (const s of WRITES_STEPS) record(s, 'NOT RUN', 'the writes block runs it');
   }
+  if (!LINKS) {
+    for (const s of LINKS_STEPS) record(s, 'NOT RUN', 'the links block runs it');
+  }
+  if (!VERIFIED_TIP) markVerifiedTipNotRun('the tip block runs it');
+  if (!VERIFIED_FIGURES) markVerifiedFiguresNotRun('the figures block runs it');
+  if (!VERIFIED_NAMES) markVerifiedNamesNotRun('the names block runs it');
+  if (!WAITING) markWaitingWritesNotRun('the waiting block runs it');
+  if (!LIGHT) markLightNotRun('the light block runs it');
+  if (!MESH) markMeshNotRun('the mesh block runs it');
 
-  // --light and --mesh: the block runs on steps 1 and 2 alone — R's identity
-  // loaded, nothing of steps 3–16 below. The block's nodes (the two light
-  // relays for --light; A' and B' for --mesh) are up from before the browser
-  // launched (setupLightRelays / setupMeshStack). The other blocks and
-  // 13-uncancelled read NOT RUN, and the [diag] line prints just before
-  // 13-uncancelled's NOT RUN.
-  if (LIGHT || MESH) {
-    const name = LIGHT ? 'light' : 'mesh';
-    for (const s of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) {
-      record(s, 'NOT RUN', `--${name} runs its block alone after step 2`);
-    }
-    markVerifiedTipNotRun(`--${name} runs its block alone`);
-    markVerifiedFiguresNotRun(`--${name} runs its block alone`);
-    markVerifiedNamesNotRun(`--${name} runs its block alone`);
-    markWaitingWritesNotRun(`--${name} is not a relays build — the waiting-writes block is relays-build only`);
-    if (LIGHT) markMeshNotRun('no --mesh');
-    else markLightNotRun('no --light');
+  // The blocks whose steps run on their own fresh session. `writes` and
+  // `links` run on the `cx2` page below.
+  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING || LIGHT || MESH) {
     const bbcx = await openBrowserSession();
     try {
-      let bPage = await findExt('index.html');
-      if (!bPage) throw new Error(`--${name}: no extension page`);
-      const bCx = await openSession(bPage.webSocketDebuggerUrl);
-      try {
-        if (LIGHT) await lightSteps(bCx, bPage.id);
-        else await meshSteps(bCx, bbcx, bPage.id);
-      } finally { try { bCx.s.close(); } catch {} }
+      await runVerifiedBlocks(bbcx);
+      // Every block prints the diag liveness line at its end, as `--light`
+      // and `--mesh` did when they ran alone. `links` prints its own diag
+      // before `13-uncancelled` on its own path below.
       await diagBeforeThirteenUncancelled(page.id);
-      record('13-uncancelled', 'NOT RUN', `--${name} runs its block alone`);
     } finally {
       try { bbcx.s.close(); } catch {}
     }
     return;
   }
 
+  // The `writes` and `links` blocks run inline on `cx2`. `writes` runs
+  // steps 3–12 below and ends; `links` skips to 13a, read on the page
+  // steps 1 and 2 leave (`cx10`, read under the alias each site uses),
+  // followed by the `[diag]` line and `13-uncancelled`.
+  let cx10 = cx2;
+
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
+  if (WRITES) {
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
   await cx2.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
   const CONTENT = 'proof-thread-' + Date.now();
@@ -11353,7 +10950,7 @@ async function main() {
   await cx2.call('Page.reload');
   await sleep(3000);
   const p10 = await findExt('index.html');
-  let cx10 = await openSession(p10.webSocketDebuggerUrl);
+  cx10 = await openSession(p10.webSocketDebuggerUrl);
   await cx10.waitFor(`document.querySelector('#feed')`, 'feed after reload');
   await sleep(1500);
   const state10 = await cx10.eval(`chrome.runtime.sendMessage({ kind: 'state' })`);
@@ -11726,20 +11323,17 @@ async function main() {
     lockedSession12d === null && unlockMounted12d && noConfirmLocked12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && noConfirmSecond12d && !!prompt12dSecond,
     `session empty=${lockedSession12d === null}, unlock under form=${unlockMounted12d}, no .pf-confirm under lock=${noConfirmLocked12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send .card-unlock absent=${!unlockMounted12dSecond}, second-send .pf-confirm absent=${noConfirmSecond12d}, second-send prompt seen=${!!prompt12dSecond}`);
 
+  // The writes block ends here — every block prints the `[diag]` line at
+  // its end (EXTENSION_CHECK_INTERFACE → Blocks).
+  await diagBeforeThirteenUncancelled(page.id);
+  return;
+  } // end if (WRITES)
+
   // -------------------------------------------------------------------------
   // Steps 13–16 — WEB_INTERFACE → The extension → "Links into the extension".
-  // Without --public and --web-dist the four are reported NOT RUN by name,
-  // never PASS, never silently absent.
+  // The links block runs them on the page steps 1 and 2 leave (`cx10 = cx2`
+  // above) and ends with the `[diag]` line and `13-uncancelled`.
   // -------------------------------------------------------------------------
-  if (PUBLIC === null) {
-    record('13a', 'NOT RUN', 'no --public / --web-dist — the harness serves no hosted origin');
-    record(13, 'NOT RUN', 'no --public / --web-dist — the harness serves no hosted origin');
-    record(14, 'NOT RUN', 'no --public / --web-dist');
-    record(15, 'NOT RUN', 'no --public / --web-dist');
-    record(16, 'NOT RUN', 'no --public / --web-dist');
-    await runVerifiedBlocksAlone();
-    return;
-  }
 
   const postId = await pickOwnRootPostId();
   if (postId === null) {
@@ -11748,7 +11342,7 @@ async function main() {
     record(14, false, 'no confirmed root post authored by R');
     record(15, false, 'no confirmed root post authored by R');
     record(16, false, 'no confirmed root post authored by R');
-    await runVerifiedBlocksAlone();
+    record('13-uncancelled', false, 'no confirmed root post authored by R');
     return;
   }
   console.log(`steps 13-16 link target = <public>p/${postId.slice(0, 8)}…`);
@@ -12454,12 +12048,6 @@ async function main() {
     try { if (cx15) cx15.s.close(); } catch {}
   }
 
-  // The verified blocks run before `13-uncancelled`, with the mesh block
-  // held back — it runs after the arm. A browser-context arm's CDP state
-  // can shadow a subsequent step's fresh page, so the mesh block's
-  // fresh-page openings sit after it.
-  await runVerifiedBlocks(bcx, { skipMesh: true });
-
   // The diag line prints just before 13-uncancelled runs. See
   // `diagBeforeThirteenUncancelled`'s comment for its shape and for the
   // hung-page stack line that follows when a page reads `hung`. The
@@ -12573,11 +12161,6 @@ async function main() {
     }
   }
 
-  // The mesh block runs after `13-uncancelled` — the arm's browser-context
-  // CDP state can shadow a subsequent fresh page, and the mesh block's
-  // steps each open one of their own.
-  await runMeshBlock(bcx);
-
   try { bcx.s.close(); } catch {}
 }
 
@@ -12622,22 +12205,23 @@ async function teardownLightRelays() {
 // from its `relay.server.address()` and the extension's seed list carries
 // them from the first paint. Each relay's `upstream` stays reassignable —
 // the `upstream-D` mode of 19b and 19c points RLA at `D_ORIGIN` for the
-// step and back after. The function is a no-op when no verified block
-// runs; the figures and names blocks reach this relay too, since they
-// also run under the two-relay build.
+// step and back after. `writes`, `links`, `tip`, `figures`, `names` and
+// `waiting` run under this two-relay build; `light` and `mesh` do not.
 const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
-  if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY)) return;
+  if (LIGHT || MESH) return;
   // Each relay binds on port 0, the OS answers the port, and the relay's
   // `origin` names it; the globals the rest of the harness reads
   // (`RLA_ORIGIN`, `RLB_ORIGIN`) and the seed list the write pass carries
-  // into the copy are set from the bound value. Under `--waiting-only` B
-  // is not needed, so RLB's upstream is A; otherwise its upstream is left
-  // null before B comes up, and `bringUpNodeB` moves it to B's origin on
-  // the first spawn — a request that arrives in that window answers 502
-  // with the `access-control-allow-origin: *` header the handler carries
-  // on every answer.
+  // into the copy are set from the bound value. `waiting` keeps RLB in
+  // front of A (W4's refusal reads A's pool, so a B behind RLB would
+  // change what the step meets); every other block's RLB has no upstream
+  // until `bringUpNodeB` moves it to B's origin on the first spawn — a
+  // request that arrives in that window answers 502 with the
+  // `access-control-allow-origin: *` header the handler carries on every
+  // answer. `writes` and `links` never spawn B, so RLB answers 502 past
+  // setup; the client's reads fall to RLA.
   const rla = await startTipRelay(NODE.replace(/\/+$/, ''), 0);
   const rlb = await startTipRelay(WAITING_ONLY ? NODE.replace(/\/+$/, '') : null, 0);
   tipRelays.a = rla;
@@ -12656,9 +12240,12 @@ let exitCode = 0;
 try {
   // The nodes an entry names and every key the harness owns come up first;
   // then the seed list is written into the copy and read back; then Chromium
-  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds). A refusal during
-  // setup — a `ConfigError` from `setupMeshStack` — fires before the browser
-  // launches, so no process stands to close.
+  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds). A `ConfigError`
+  // from `setupMeshStack` raises after A' and B' have spawned and printed
+  // their identity lines, so the two nodes stand at the throw. The catch
+  // sets `exitCode = 2` and the teardown after the catch
+  // (`teardownMeshStack` / `teardownTipRelays` / `teardownLightRelays`)
+  // stops every process the setup launched, A' and B' included.
   await setupTipRelays();
   await setupLightRelays();
   await setupMeshStack();
