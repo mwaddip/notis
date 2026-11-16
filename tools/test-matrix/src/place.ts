@@ -123,6 +123,12 @@ export function place(
     for (const r of everyRunList) add(r, path, rule);
   }
 
+  // TEST_MATRIX_INTERFACE → How a path is placed: a path rule 3, 4 or 5
+  // places also selects test-matrix, the matrix's suite reads every member.
+  function selectMatrix(path: string): void {
+    if (memberNames.has('test-matrix')) add('test-matrix', path, 'matrix');
+  }
+
   interface TreeHit {
     member: string;
     dir: TreeDir;
@@ -182,6 +188,7 @@ export function place(
     }
     if (matchRule3(path)) {
       applyRows(path);
+      selectMatrix(path);
       continue;
     }
     const hit = matchRule4(path);
@@ -192,12 +199,14 @@ export function place(
         add('node:slow', path, rule);
       }
       applyRows(path);
+      selectMatrix(path);
       continue;
     }
     const name = memberOf(path);
     if (name !== null) {
       reachFrom(name, path, 'reach');
       applyRows(path);
+      selectMatrix(path);
       continue;
     }
     everyRun(path, 'other');

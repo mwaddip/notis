@@ -114,7 +114,7 @@ describe('a row read in a suite adds the reader alone', () => {
     ).toEqual(['node']);
   });
 
-  it.fails('refuse-node-builtins.mjs selects web, check, mesh-poc, net and test-matrix', () => {
+  it('refuse-node-builtins.mjs selects web, check, mesh-poc, net and test-matrix', () => {
     const p = 'packages/web/scripts/refuse-node-builtins.mjs';
     const result = place([p], workspace, ROWS);
     const web = result.selected.find((s) => s.run === 'web');
@@ -150,7 +150,7 @@ describe('rule order', () => {
 });
 
 describe("the check's harness", () => {
-  it.fails('extension-check/run.mjs selects check and test-matrix', () => {
+  it('extension-check/run.mjs selects check and test-matrix', () => {
     const p = 'packages/web/scripts/extension-check/run.mjs';
     const result = place([p], workspace, ROWS);
     const check = result.selected.find((s) => s.run === 'check');
@@ -162,7 +162,7 @@ describe("the check's harness", () => {
     ).toEqual(['check', 'test-matrix']);
   });
 
-  it.fails('extension-check/claim-name.mjs selects check, e2e, test-matrix and test-state', () => {
+  it('extension-check/claim-name.mjs selects check, e2e, test-matrix and test-state', () => {
     const p = 'packages/web/scripts/extension-check/claim-name.mjs';
     const result = place([p], workspace, ROWS);
     const check = result.selected.find((s) => s.run === 'check');
@@ -176,7 +176,7 @@ describe("the check's harness", () => {
 });
 
 describe('a member test tree', () => {
-  it.fails('packages/node/test/x.ts selects node and test-matrix', () => {
+  it('packages/node/test/x.ts selects node and test-matrix', () => {
     const p = 'packages/node/test/x.ts';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -188,7 +188,7 @@ describe('a member test tree', () => {
     ).toEqual(['node', 'test-matrix']);
   });
 
-  it.fails('packages/node/slow/x.ts selects node, node:slow and test-matrix', () => {
+  it('packages/node/slow/x.ts selects node, node:slow and test-matrix', () => {
     const p = 'packages/node/slow/x.ts';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -198,7 +198,7 @@ describe('a member test tree', () => {
     ).toEqual(['node', 'node:slow', 'test-matrix']);
   });
 
-  it.fails('packages/node/shadow/x.ts selects node and test-matrix', () => {
+  it('packages/node/shadow/x.ts selects node and test-matrix', () => {
     const p = 'packages/node/shadow/x.ts';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -208,7 +208,7 @@ describe('a member test tree', () => {
     ).toEqual(['node', 'test-matrix']);
   });
 
-  it.fails('packages/node/bench/x.ts selects node and test-matrix', () => {
+  it('packages/node/bench/x.ts selects node and test-matrix', () => {
     const p = 'packages/node/bench/x.ts';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -218,7 +218,7 @@ describe('a member test tree', () => {
     ).toEqual(['node', 'test-matrix']);
   });
 
-  it.fails('packages/web/test/x.ts selects web and test-matrix', () => {
+  it('packages/web/test/x.ts selects web and test-matrix', () => {
     const p = 'packages/web/test/x.ts';
     const result = place([p], workspace, ROWS);
     const web = result.selected.find((s) => s.run === 'web');
@@ -228,7 +228,7 @@ describe('a member test tree', () => {
     ).toEqual(['test-matrix', 'web']);
   });
 
-  it.fails('tools/e2e/test/x.ts selects e2e and test-matrix', () => {
+  it('tools/e2e/test/x.ts selects e2e and test-matrix', () => {
     const p = 'tools/e2e/test/x.ts';
     const result = place([p], workspace, ROWS);
     const e2e = result.selected.find((s) => s.run === 'e2e');
@@ -240,7 +240,7 @@ describe('a member test tree', () => {
 });
 
 describe('reach', () => {
-  it.fails('reach from packages/web/src/x.ts', () => {
+  it('reach from packages/web/src/x.ts', () => {
     const p = 'packages/web/src/x.ts';
     const result = place([p], workspace, ROWS);
     const web = result.selected.find((s) => s.run === 'web');
@@ -252,7 +252,7 @@ describe('reach', () => {
     ).toEqual(['check', 'mesh-poc', 'test-matrix', 'web']);
   });
 
-  it.fails('reach from packages/node/src/x.ts', () => {
+  it('reach from packages/node/src/x.ts', () => {
     const p = 'packages/node/src/x.ts';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -262,7 +262,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'node', 'node:slow', 'test-matrix', 'test-state']);
   });
 
-  it.fails('reach from packages/node/scripts/miner.mjs', () => {
+  it('reach from packages/node/scripts/miner.mjs', () => {
     const p = 'packages/node/scripts/miner.mjs';
     const result = place([p], workspace, ROWS);
     const node = result.selected.find((s) => s.run === 'node');
@@ -272,7 +272,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'node', 'node:slow', 'test-matrix', 'test-state']);
   });
 
-  it.fails('reach from tools/faucet/src/x.ts', () => {
+  it('reach from tools/faucet/src/x.ts', () => {
     const p = 'tools/faucet/src/x.ts';
     const result = place([p], workspace, ROWS);
     const faucet = result.selected.find((s) => s.run === 'faucet');
@@ -282,7 +282,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'faucet', 'test-matrix', 'test-state']);
   });
 
-  it.fails('reach from tools/e2e/src/x.ts', () => {
+  it('reach from tools/e2e/src/x.ts', () => {
     const p = 'tools/e2e/src/x.ts';
     const result = place([p], workspace, ROWS);
     const e2e = result.selected.find((s) => s.run === 'e2e');
@@ -302,7 +302,7 @@ describe('reach', () => {
     ).toEqual(['test-matrix']);
   });
 
-  it.fails('reach from packages/types/src/x.ts', () => {
+  it('reach from packages/types/src/x.ts', () => {
     const p = 'packages/types/src/x.ts';
     const result = place([p], workspace, ROWS);
     const types = result.selected.find((s) => s.run === 'types');
@@ -312,7 +312,7 @@ describe('reach', () => {
     ).toEqual(TYPES_REACH);
   });
 
-  it.fails('reach from packages/wire/src/x.ts', () => {
+  it('reach from packages/wire/src/x.ts', () => {
     const p = 'packages/wire/src/x.ts';
     const result = place([p], workspace, ROWS);
     const wire = result.selected.find((s) => s.run === 'wire');
@@ -336,7 +336,7 @@ describe('any other path', () => {
 });
 
 describe("the first path to select a run names its rule", () => {
-  it.fails('web via a test tree, node among the members left out', () => {
+  it('web via a test tree, node among the members left out', () => {
     const result = place(
       ['packages/web/test/a.test.ts', 'packages/web/src/b.ts'],
       workspace,

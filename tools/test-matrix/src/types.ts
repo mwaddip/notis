@@ -40,6 +40,7 @@ export type Rule =
   | 'bench/'
   | 'reach'
   | 'other'
+  | 'matrix'
   | 'row at run time'
   | 'row in a suite'
   | 'row by no run';
