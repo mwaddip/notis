@@ -31,6 +31,36 @@ export {
   type MinerHandle,
 } from './miner.js';
 
+export {
+  allowlistedEnv,
+  SPAWN_ENV_ALLOWLIST,
+} from './env.js';
+
+export {
+  computeClockOffsetMs,
+  nodeOptionsForPreload,
+} from './clock-offset.js';
+
+export {
+  generate,
+  pathsFor,
+  RECIPES,
+  BASE,
+  MINIMAL,
+  type GenerateOptions,
+  type GenerateResult,
+  type StateRecipe,
+} from './generator.js';
+
+export {
+  up,
+  down,
+  probePort,
+  type UpOptions,
+  type UpPorts,
+  type UpResult,
+} from './loader.js';
+
 // TEST_STATE_INTERFACE → The clock offset. The barrel lives in src/ at test
 // time (vitest's alias) and in dist/ at runtime (the package's main); both
 // are one directory below the package root, so `..` lands on the package
