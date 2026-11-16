@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { computeTxId, computePostId, decodeTx, encodeTx } from '@dagsocial/types';
 import { checkPosts } from '@dagsocial/nipopow-client';
 import { createMesh, type Mesh } from '../src/mesh.js';
-import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '../src/dist-freshness.js';
+import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '@dagsocial/test-state';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';

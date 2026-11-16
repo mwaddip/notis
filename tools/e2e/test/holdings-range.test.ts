@@ -1,6 +1,6 @@
 import { describe, it, afterAll, expect } from 'vitest';
 import { createMesh, type Mesh } from '../src/mesh.js';
-import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '../src/dist-freshness.js';
+import { assertDistFresh, NIPOPOW_CLIENT_LOADS } from '@dagsocial/test-state';
 import { confirm, mine, waitHeight } from '../src/miner.js';
 import { DEVNET_BACKER_A, DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
