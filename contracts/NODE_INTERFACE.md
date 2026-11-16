@@ -5807,8 +5807,14 @@ operator to hand to whoever lists the node.
 certificate (`NET_INTERFACE → The mesh`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses a
 node list names.
 
-**The node's mesh endpoint forwards to its own public listener**: `httpBase` is `http://127.0.0.1:<PORT>`, never
-`ADMIN_PORT`'s listener, and no setting names another (`MESH_INTERFACE → The node endpoint`).
+**The node's mesh endpoint forwards to its own public listener**: `httpBase` answers `http://127.0.0.1:<port>`, the
+port the public listener bound — `PORT`, or the one the system gave a `PORT` of 0 — read off the bound socket, never
+`ADMIN_PORT`'s listener, and no setting names another (`MESH_INTERFACE → The node endpoint`). It answers `null` until
+the listener has bound: `net` starts first, and a request over the mesh in that window is answered as a refused
+upstream's is.
+
+> ⚠ **AHEAD OF CODE (2026-11-16).** `config.ts` writes `httpBase` as the string `http://127.0.0.1:<PORT>` at load, so a
+> `PORT` of 0 forwards every request over the mesh to port 0.
 
 **A mesh node prints its identity line** once its addresses are announced and at every change of them: one JSON line,
 `{ "notisId", "peerId", "multiaddrs", "localAddrs" }` — the addresses a node list carries and, for a private node, the
