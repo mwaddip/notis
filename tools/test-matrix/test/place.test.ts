@@ -161,7 +161,7 @@ describe("the check's harness", () => {
     ).toEqual(['check', 'test-matrix']);
   });
 
-  it.fails('extension-check/claim-name.mjs selects check, test-matrix and test-state', () => {
+  it('extension-check/claim-name.mjs selects check, test-matrix and test-state', () => {
     const p = 'packages/web/scripts/extension-check/claim-name.mjs';
     const result = place([p], workspace, ROWS);
     const check = result.selected.find((s) => s.run === 'check');
@@ -283,7 +283,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'faucet', 'test-matrix', 'test-state']);
   });
 
-  it.fails('reach from tools/e2e/src/x.ts', () => {
+  it('reach from tools/e2e/src/x.ts', () => {
     const p = 'tools/e2e/src/x.ts';
     const result = place([p], workspace, ROWS);
     const e2e = result.selected.find((s) => s.run === 'e2e');
@@ -293,7 +293,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'test-matrix', 'test-state']);
   });
 
-  it.fails('reach from packages/web/scripts/promote/entry.ts, web by its path and test-state by its row', () => {
+  it('reach from packages/web/scripts/promote/entry.ts, web by its path and test-state by its row', () => {
     const p = 'packages/web/scripts/promote/entry.ts';
     const result = place([p], workspace, ROWS);
     const web = result.selected.find((s) => s.run === 'web');
@@ -307,7 +307,7 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'mesh-poc', 'test-matrix', 'test-state', 'web']);
   });
 
-  it.fails('reach from tools/nipopow-client/package.json, test-state via the in-a-suite row', () => {
+  it('reach from tools/nipopow-client/package.json, test-state via the in-a-suite row', () => {
     const p = 'tools/nipopow-client/package.json';
     const result = place([p], workspace, ROWS);
     const nc = result.selected.find((s) => s.run === 'nipopow-client');

@@ -28,15 +28,63 @@ export const ROWS: readonly Row[] = [
   },
   {
     reader: 'test-state',
+    reads: 'wire',
+    how: 'up fingerprints the dist of every member node and the faucet load',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'node-reads',
+    how: 'up fingerprints the dist of every member node and the faucet load',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'avltree',
+    how: 'up fingerprints the dist of every member node and the faucet load',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'nipopow',
+    how: 'up fingerprints the dist of every member node and the faucet load',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'consensus',
+    how: 'up fingerprints the dist of every member node and the faucet load',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
     reads: 'packages/web/scripts/promote.mjs',
-    how: 'runs both in a generation',
+    how: "runs promote.mjs in a generation — its suite's up of the minimal state among them — which bundles promote/entry.ts",
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'packages/web/scripts/promote/',
+    how: "runs promote.mjs in a generation — its suite's up of the minimal state among them — which bundles promote/entry.ts",
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'e2e',
+    how: "promote.mjs's bundle runs tools/e2e/src/'s identity and transaction builders",
     kind: 'run time',
   },
   {
     reader: 'test-state',
     reads: 'packages/web/scripts/extension-check/claim-name.mjs',
-    how: 'runs both in a generation',
-    kind: 'run time',
+    how: 'up fingerprints its bytes; the state its suite generates makes no claim, so the suite never runs it',
+    kind: 'in a suite',
+  },
+  {
+    reader: 'test-state',
+    reads: 'nipopow-client',
+    how: "test/dist-freshness.test.ts holds the list e2e's runs check to nipopow-client's dependency closure, read from the package.json files",
+    kind: 'in a suite',
   },
   {
     reader: 'net',
@@ -71,63 +119,11 @@ export const ROWS: readonly Row[] = [
   {
     reader: 'check',
     reads: 'packages/web/scripts/extension-check/',
-    how: 'its harness',
+    how: "its harness, and claim-name.mjs, which base's generation runs and which bundles web's src/ when it runs",
     kind: 'run time',
   },
 
   // Beyond the contract table: the scan's rows.
-
-  // test-state's fingerprint walks each member's dist/*.{js,mjs} at run
-  // time (src/fingerprint.ts over NODE_LOADS and FAUCET_LOADS, listed in
-  // src/dist-freshness.ts). The names in dist-freshness.ts are these.
-  // net, types and validation are declared and need no row; node and
-  // faucet are covered by the contract table.
-  {
-    reader: 'test-state',
-    reads: 'wire',
-    how: 'src/dist-freshness.ts names it in NODE_LOADS and FAUCET_LOADS; src/fingerprint.ts walks the dist',
-    kind: 'run time',
-  },
-  {
-    reader: 'test-state',
-    reads: 'node-reads',
-    how: 'src/dist-freshness.ts names it in NODE_LOADS and FAUCET_LOADS; src/fingerprint.ts walks the dist',
-    kind: 'run time',
-  },
-  {
-    reader: 'test-state',
-    reads: 'avltree',
-    how: 'src/dist-freshness.ts names it in NODE_LOADS; src/fingerprint.ts walks the dist',
-    kind: 'run time',
-  },
-  {
-    reader: 'test-state',
-    reads: 'nipopow',
-    how: 'src/dist-freshness.ts names it in NODE_LOADS; src/fingerprint.ts walks the dist',
-    kind: 'run time',
-  },
-  {
-    reader: 'test-state',
-    reads: 'consensus',
-    how: 'src/dist-freshness.ts names it in NODE_LOADS; src/fingerprint.ts walks the dist',
-    kind: 'run time',
-  },
-
-  // dist-freshness.ts also names tools/nipopow-client in
-  // NIPOPOW_CLIENT_LOADS, a list e2e passes to assertDistFresh —
-  // test-state's own runs never read it.
-  {
-    reader: 'tools/test-state/src/dist-freshness.ts',
-    reads: 'nipopow-client',
-    how: 'names tools/nipopow-client in NIPOPOW_CLIENT_LOADS',
-    kind: 'by no run',
-  },
-  {
-    reader: 'tools/test-state/test/dist-freshness.test.ts',
-    reads: 'nipopow-client',
-    how: 'names tools/nipopow-client as a workspace entry whose dist-freshness list is checked',
-    kind: 'by no run',
-  },
 
   // test-state's test/fingerprint.test.ts writes fixture names into a
   // directory of its own.
@@ -135,12 +131,6 @@ export const ROWS: readonly Row[] = [
     reader: 'tools/test-state/test/fingerprint.test.ts',
     reads: 'web',
     how: 'writes packages/web/src/foo.ts as a fixture, and labels packages/web/src',
-    kind: 'by no run',
-  },
-  {
-    reader: 'tools/test-state/test/fingerprint.test.ts',
-    reads: 'e2e',
-    how: 'writes tools/e2e/src/foo.ts as a fixture, and labels tools/e2e/src',
     kind: 'by no run',
   },
   {
@@ -185,20 +175,13 @@ export const ROWS: readonly Row[] = [
     kind: 'by no run',
   },
 
-  // web's two entry scripts re-export from tools/e2e/src/ for vite to
-  // bundle into Node scripts. web's own suite does not read these at run
-  // time; test-state spawns the built promote.mjs, so an e2e change
-  // reaches the stack through the build, not through these files.
+  // web's docs-screens entry re-exports tools/e2e/src for vite to bundle;
+  // the bundle is run by hand (a docs capture), not by any matrix-answered
+  // run.
   {
     reader: 'packages/web/scripts/docs-screens/entry.ts',
     reads: 'e2e',
-    how: 're-exports tools/e2e/src/{identities,tx/*}.ts for the screens bundle',
-    kind: 'by no run',
-  },
-  {
-    reader: 'packages/web/scripts/promote/entry.ts',
-    reads: 'e2e',
-    how: 're-exports tools/e2e/src/{identities,tx/*}.ts for the promote bundle',
+    how: 're-exports tools/e2e/src/{identities,tx/*}.ts for the screens bundle, run by hand',
     kind: 'by no run',
   },
 ];

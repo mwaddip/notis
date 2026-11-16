@@ -100,6 +100,18 @@ export function place(
     }
   }
 
+  // TEST_MATRIX_INTERFACE → The rows → "in a suite": a change in the target
+  // member selects the reader's own run and reaches nothing. Fires when a
+  // member is reached (rule 5), not when a test-tree path (rule 4) adds it.
+  const inASuiteMemberReadersOf = new Map<string, Row[]>();
+  for (const row of rows) {
+    if (row.kind === 'in a suite' && memberNames.has(row.reads)) {
+      const list = inASuiteMemberReadersOf.get(row.reads) ?? [];
+      list.push(row);
+      inASuiteMemberReadersOf.set(row.reads, list);
+    }
+  }
+
   function reachFrom(start: string, path: string, rule: Rule): void {
     const reached = new Set<string>();
     const queue: string[] = [];
@@ -116,6 +128,9 @@ export function place(
     for (const r of reached) {
       add(r, path, rule);
       if (r === 'node') add('node:slow', path, rule);
+      for (const row of inASuiteMemberReadersOf.get(r) ?? []) {
+        add(row.reader, path, 'row in a suite');
+      }
     }
   }
 
