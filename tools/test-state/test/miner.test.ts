@@ -145,6 +145,49 @@ interface FakeNode {
   stop(): Promise<void>;
 }
 
+interface CountingProxy {
+  readonly url: string;
+  submissionCount(): number;
+  stop(): Promise<void>;
+}
+
+async function startCountingProxy(targetUrl: string): Promise<CountingProxy> {
+  let count = 0;
+  const server: HttpServer = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = Buffer.concat(chunks);
+    const forwarded = await fetch(`${targetUrl}${req.url ?? '/'}`, {
+      method: req.method,
+      headers: req.headers as Record<string, string>,
+      body:
+        req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
+    });
+    if (req.method === 'POST' && req.url?.startsWith('/mining/submit')) {
+      count++;
+    }
+    res.statusCode = forwarded.status;
+    forwarded.headers.forEach((v, k) => {
+      if (k.toLowerCase() === 'content-encoding') return;
+      res.setHeader(k, v);
+    });
+    const data = Buffer.from(await forwarded.arrayBuffer());
+    res.end(data);
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, '127.0.0.1', () => resolve()),
+  );
+  const bound = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${bound.port}`,
+    submissionCount: () => count,
+    stop: () => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
 async function startFakeNode(handlers: {
   template?: (req: IncomingMessage, res: ServerResponse) => void;
   submit?: (req: IncomingMessage, res: ServerResponse) => void;
@@ -404,6 +447,33 @@ describe('miner', () => {
       body: '{not-json',
     });
     expect(res.status).toBe(400);
+  }, 30_000);
+
+  it('submits exactly one block per height gained', async () => {
+    // A counting proxy in front of the node observes every POST to
+    // /mining/submit. Over a mine-to of N blocks, the miner submits N
+    // times; a loop that double-submits would count 2N.
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    const proxy = await startCountingProxy(node.apiUrl);
+    try {
+      handle = await runMiner({
+        nodeApiUrl: proxy.url,
+        miningSecret,
+        intervalMs: 300,
+        controlPort: 0,
+      });
+      const target = 5;
+      await postJson<{ height: number }>(
+        `http://127.0.0.1:${handle.controlPort}/mine-to`,
+        { height: target },
+      );
+      // A small window to let any extra submit flush through the proxy.
+      await sleep(100);
+      expect(proxy.submissionCount()).toBe(target);
+    } finally {
+      await proxy.stop();
+    }
   }, 30_000);
 
   it('the CLI miner exits 0 on SIGTERM during template polling', async () => {
