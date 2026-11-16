@@ -267,6 +267,48 @@ describe('loader', () => {
     activeUps.delete(runDir);
   }, 120_000);
 
+  it('processes.log on disk lists every spawn as it happens', async () => {
+    // A port the faucet cannot bind makes `up` throw partway through
+    // startup. Writing `processes.log` after each spawn means a cross-
+    // -process `down` from any process still finds every record it
+    // started.
+    const held = await (async () => {
+      const { createServer } = await import('node:net');
+      return new Promise<{ port: number; close: () => Promise<void> }>((resolve, reject) => {
+        const s = createServer();
+        s.once('error', reject);
+        s.listen(0, '127.0.0.1', () => {
+          const addr = s.address() as { port: number };
+          resolve({
+            port: addr.port,
+            close: () => new Promise<void>((r) => s.close(() => r())),
+          });
+        });
+      });
+    })();
+    try {
+      const runDir = newRunDir('records-per-spawn');
+      await expect(
+        up({
+          stateName: MINIMAL.name,
+          runDir,
+          repoRoot: REPO_ROOT,
+          cacheRoot: sharedCache!.dir,
+          ports: {
+            http: 0, admin: 0, p2p: 0, faucet: held.port, miner: 0,
+          },
+          intervalMs: 500,
+        }),
+      ).rejects.toThrow();
+      // `up` threw, but processes.log on disk names the node — a
+      // cross-process `down` reads it.
+      const log = readFileSync(join(runDir, 'processes.log'), 'utf8');
+      expect(log).toMatch(/"label":"node"/);
+    } finally {
+      await held.close();
+    }
+  }, 60_000);
+
   it('up with an unavailable faucet port stops the node before throwing', async () => {
     // L2: a port the faucet cannot bind makes `up` throw partway; the
     // node already started is stopped before the throw reaches the
