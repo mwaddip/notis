@@ -993,7 +993,12 @@ async function openSession(wsUrl) {
 }
 
 const findings = [];
-const record = (step, status, detail) => {
+// `block` names the block the step belongs to (EXTENSION_CHECK_INTERFACE →
+// Blocks). The default is the run's block — steps 1 and 2 belong to every
+// block since every block runs them, so a call from main() leaves the
+// default; the `markXNotRun` functions below pass the block whose steps
+// they are recording out of the run's block.
+const record = (step, status, detail, block = BLOCK) => {
   const s = status === true ? 'PASS' : status === false ? 'FAIL' : status === 'skipped' ? 'SKIPPED' : String(status);
   const now = Date.now();
   const prev = _wR.lastMark === null ? _wR.runStart : _wR.lastMark;
@@ -1015,7 +1020,7 @@ const record = (step, status, detail) => {
     else if (w.endedAtCap) { capMs += w.elapsedMs; capWaits.push({ label: w.label, cap: w.capMs, elapsed: w.elapsedMs }); }
     else conditionMs += w.elapsedMs;
   }
-  findings.push({ step, status: s, detail, wallMs, conditionMs, sleepMs, capMs, capWaits });
+  findings.push({ step, block, status: s, detail, wallMs, conditionMs, sleepMs, capMs, capWaits });
   console.log(`step ${step}: ${s} — ${detail}`);
 };
 
@@ -2142,19 +2147,19 @@ const VERIFIED_FIGURES_STEPS = [21, 24, '22a', '22b', '22c', '22d', '22e', 23, 2
 const LIE_ARM_STEPS = ['22a', '22b', '22c', '22d', '22e', 23];
 
 function markWritesNotRun(reason) {
-  for (const s of WRITES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of WRITES_STEPS) record(s, 'NOT RUN', reason, 'writes');
 }
 
 function markLinksNotRun(reason) {
-  for (const s of LINKS_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of LINKS_STEPS) record(s, 'NOT RUN', reason, 'links');
 }
 
 function markVerifiedTipNotRun(reason) {
-  for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_TIP_STEPS) record(s, 'NOT RUN', reason, 'tip');
 }
 
 function markVerifiedFiguresNotRun(reason) {
-  for (const s of VERIFIED_FIGURES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_FIGURES_STEPS) record(s, 'NOT RUN', reason, 'figures');
 }
 
 // Press the corner and wait for its next verdict — one press, one verifier
@@ -4349,7 +4354,7 @@ const NAMES_LABEL_STEPS = ['27a', '27b', '27c', '27d'];
 const NAMES_SEND_STEPS = ['28a', '28b'];
 
 function markVerifiedNamesNotRun(reason) {
-  for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of VERIFIED_NAMES_STEPS) record(s, 'NOT RUN', reason, 'names');
 }
 
 // The page's size for the block — wider than the one-column line, 955px, so
@@ -6150,11 +6155,11 @@ async function runNamesStep30(rName) {
 const WAITING_WRITES_STEPS = ['W1', 'W2', 'W3', 'W4', 'W5'];
 
 function markWaitingWritesNotRun(reason) {
-  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of WAITING_WRITES_STEPS) record(s, 'NOT RUN', reason, 'waiting');
 }
 
 function markWaitingWritesFail(reason) {
-  for (const s of WAITING_WRITES_STEPS) record(s, false, reason);
+  for (const s of WAITING_WRITES_STEPS) record(s, false, reason, 'waiting');
 }
 
 // A log-filter helper: the entries forwarded to upstream — those the relay
@@ -7500,14 +7505,14 @@ const LIGHT_STEPS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8', 'L9', 'L10'
 const lightRelays = { a: null, b: null };
 
 function markLightNotRun(reason) {
-  for (const s of LIGHT_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of LIGHT_STEPS) record(s, 'NOT RUN', reason, 'light');
 }
 
 // A pre-L1 failure — the preamble could not stand up the block. Every step
 // reads FAIL with the one reason, so the summary carries fourteen L lines
 // even when the fixture or a prerequisite threw.
 function markLightFail(reason) {
-  for (const s of LIGHT_STEPS) record(s, false, reason);
+  for (const s of LIGHT_STEPS) record(s, false, reason, 'light');
 }
 
 // A relay the harness owns — RA in front of A, RB in front of B. Every
@@ -9372,11 +9377,11 @@ const meshNodes = {
 let m4Relay = null;
 
 function markMeshNotRun(reason) {
-  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason);
+  for (const s of MESH_STEPS) record(s, 'NOT RUN', reason, 'mesh');
 }
 
 function markMeshFail(reason) {
-  for (const s of MESH_STEPS) record(s, false, reason);
+  for (const s of MESH_STEPS) record(s, false, reason, 'mesh');
 }
 
 // The mesh nodes' first-start ports, read back from each spawn's start
@@ -12394,15 +12399,21 @@ await teardownTipRelays();
 await teardownLightRelays();
 await teardownMeshStack();
 
-console.log('\n=== SUMMARY ===');
-for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.detail}`);
+console.log(`\n=== SUMMARY (block=${BLOCK}) ===`);
+for (const r of findings) console.log(`  step ${r.step} [${r.block}]: ${r.status} — ${r.detail}`);
 const pass = findings.filter((f) => f.status === 'PASS').length;
 const fail = findings.filter((f) => f.status === 'FAIL').length;
 const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
 // One measurement per top-level step. Step 12's sub-parts (12a…12d) collapse
 // into step 12; the summary line reads what WEB_INTERFACE → The extension asks.
 const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
-console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
+// The run's block holds the steps whose outcomes gate the exit code
+// (EXTENSION_CHECK_INTERFACE → The command → "The exit code": 0 when every
+// step of the block passed, 1 when any failed).
+const inBlock = findings.filter((f) => f.block === BLOCK);
+const inBlockPass = inBlock.filter((f) => f.status === 'PASS').length;
+const inBlockNonPass = inBlock.length - inBlockPass;
+console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED); block ${BLOCK}: ${inBlockPass} PASS of ${inBlock.length}`);
 // The waits block — per-step wall, time in condition-ended waits, time in
 // fixed sleeps, and one line per wait that ended at its cap, with its label
 // and elapsed. Then one line per run: wall, cap-ended, fixed-sleep totals.
@@ -12422,11 +12433,12 @@ for (const f of findings) {
   }
 }
 console.log(`[waits] === run totals === wall ${fmtSecs(totalWall)}s · cap-ended ${fmtSecs(totalCap)}s · fixed sleeps ${fmtSecs(totalSleep)}s`);
-console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
-// A `ConfigError` the outer catch set `exitCode = 2` for stands — `fail > 0`
-// is a run that recorded step failures, which is exit code 1 only when the
-// outer catch did not already set a higher one.
-if (fail > 0 && exitCode === 0) exitCode = 1;
+console.log(JSON.stringify({ block: BLOCK, measured, pass, fail, skipped, findings }, null, 2));
+// A `ConfigError` the outer catch set `exitCode = 2` for stands. Otherwise
+// the exit code is 0 only when every step of the block passed; any in-block
+// step that did not pass (NOT RUN, FAIL, SKIPPED) is exit 1
+// (EXTENSION_CHECK_INTERFACE → The command → "The exit code").
+if (inBlockNonPass > 0 && exitCode === 0) exitCode = 1;
 
 if (proc !== null) proc.kill();
 if (webServer) await new Promise((r) => webServer.close(() => r()));
