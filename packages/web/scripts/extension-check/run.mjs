@@ -2199,7 +2199,9 @@ async function bringUpNodeB() {
     LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: NODE_P2P,
     DB_PATH: bDbPath,
-  }, { withMesh: false });
+    // The caller reads HTTP (for the API) and admin (for `waitForHealth`
+    // and `waitForPeers`); B's p2p port is not read elsewhere.
+  }, { withMesh: false, waitFor: { p2p: false } });
   B_HTTP_PORT = bSpawn.ports.http;
   B_ADMIN_PORT = bSpawn.ports.admin;
   B_P2P_PORT = bSpawn.ports.p2p;
@@ -2492,7 +2494,8 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
       BOOTSTRAP_PEERS: NODE_P2P,
       DB_PATH: bDbPath,
-    }, { withMesh: false });
+      // HTTP for the API and admin for `waitForPeers`; p2p is not read.
+    }, { withMesh: false, waitFor: { p2p: false } });
     B_HTTP_PORT = bRestart.ports.http;
     B_ADMIN_PORT = bRestart.ports.admin;
     B_P2P_PORT = bRestart.ports.p2p;
@@ -2608,7 +2611,9 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       BOOTSTRAP_PEERS: '',
       DB_PATH: dDbPath,
       MINING_SECRET: dSecret,
-    }, { withMesh: false });
+      // The caller reads HTTP alone — D is isolated, admin and p2p are
+      // not read elsewhere.
+    }, { withMesh: false, waitFor: { admin: false, p2p: false } });
     D_HTTP_PORT = dSpawn.ports.http;
     D_ADMIN_PORT = dSpawn.ports.admin;
     D_P2P_PORT = dSpawn.ports.p2p;
@@ -8306,7 +8311,8 @@ async function bringUpLightD() {
     BOOTSTRAP_PEERS: '',
     DB_PATH: dDbPath,
     MINING_SECRET: dSecret,
-  }, { withMesh: false });
+    // HTTP alone — the isolated light D's admin and p2p are not read.
+  }, { withMesh: false, waitFor: { admin: false, p2p: false } });
   DL_HTTP_PORT = dlSpawn.ports.http;
   DL_ADMIN_PORT = dlSpawn.ports.admin;
   DL_P2P_PORT = dlSpawn.ports.p2p;
@@ -9427,7 +9433,24 @@ function nodeEnv({ dbPath, bootstrap, http, admin, p2p, mesh }) {
 // land in the log file at `${SCRATCH}/${name}.log`, with no race against a
 // deferred pipe attach — the data listener attaches synchronously after
 // `spawn`.
-async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
+// A mesh-on restart with `p2p: 0` and the mesh port pinned never prints a
+// TCP listen line: `@dagsocial/net`'s `effectiveAnnounce`
+// (`packages/net/src/mesh/libp2p-options.ts`) announces only the listen
+// entries with a concrete port once one is concrete, so the TCP listener
+// is bound but not in `[net] listening on:`. The caller passes the ports
+// it reads back in `waitFor`; the wait reads those alone. `http` is always
+// read (every node prints `api_listening`); `p2p` defaults to true for
+// a first start, false where the caller passes `p2p: false` (M3's and
+// M4's restarts read HTTP, admin and mesh, not p2p); `mesh` and
+// `identity` default to `withMesh`.
+async function spawnServerNode(name, env, { withMesh, waitFor }, timeoutMs = 60000) {
+  const need = {
+    http: true,
+    admin: waitFor?.admin ?? true,
+    p2p: waitFor?.p2p ?? true,
+    mesh: waitFor?.mesh ?? withMesh,
+    identity: waitFor?.identity ?? withMesh,
+  };
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
   const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
@@ -9449,15 +9472,17 @@ async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
   let p2pPort = null;
   let meshPort = null;
   const have = () =>
-    httpPort !== null
-    && adminPort !== null
-    && p2pPort !== null
-    && (!withMesh || (identity !== null && meshPort !== null));
+    (!need.http || httpPort !== null)
+    && (!need.admin || adminPort !== null)
+    && (!need.p2p || p2pPort !== null)
+    && (!need.mesh || meshPort !== null)
+    && (!need.identity || identity !== null);
   const ready = new Promise((resolve, reject) => {
     const to = setTimeout(() => {
       if (!have()) reject(new Error(
-        `${name} never printed every start line within ${timeoutMs}ms`
-        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`,
+        `${name} never printed every start line it needs within ${timeoutMs}ms`
+        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'};`
+        + ` needs=${JSON.stringify(need)})`,
       ));
     }, timeoutMs);
     const onData = (chunk) => {
@@ -9502,17 +9527,17 @@ async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
           try { tail = readFileSync(logPath, 'utf8').slice(-4000); } catch {}
         }
         reject(new Error(
-          `${name} exited before every start line was printed`
-          + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`
+          `${name} exited before every start line it needs was printed`
+          + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'};`
+          + ` needs=${JSON.stringify(need)})`
           + (tail ? `\nlog tail:\n${tail}` : ''),
         ));
       }
     });
   });
   await ready;
-  const ports = withMesh
-    ? { http: httpPort, admin: adminPort, p2p: p2pPort, mesh: meshPort }
-    : { http: httpPort, admin: adminPort, p2p: p2pPort };
+  const ports = { http: httpPort, admin: adminPort, p2p: p2pPort };
+  if (withMesh) ports.mesh = meshPort;
   return { child, exited, identity, ports };
 }
 
@@ -9682,7 +9707,10 @@ async function setupMeshStack() {
   console.log(`[vm] spawning B' on OS-bound ports: db=${bpDb} bootstrap=${bpBootstrap}`);
   const bpSpawn = await spawnServerNode('bp', nodeEnv({
     dbPath: bpDb, bootstrap: bpBootstrap, http: 0, admin: 0, p2p: 0, mesh: 0,
-  }), { withMesh: true });
+    // HTTP for the API, admin for M3's `waitForPeers`, mesh and identity
+    // for the seed list's webrtc-direct multiaddr; nothing bootstraps from
+    // B', so its p2p port is not read.
+  }), { withMesh: true, waitFor: { p2p: false } });
   BP_HTTP_PORT = bpSpawn.ports.http;
   BP_ADMIN_PORT = bpSpawn.ports.admin;
   BP_P2P_PORT = bpSpawn.ports.p2p;
@@ -9870,17 +9898,23 @@ async function runMeshStepM2(bcx) {
     // the restart, not the first start. A port a pin failed to take
     // reaches the error through the node's own words: `spawnServerNode`
     // reads the log tail on an exit before the start lines and raises it.
+    // M2's A' restart reads p2p — B''s restart bootstraps off A''s fresh
+    // p2p port below (the restart binds on 0 since the seed-list entry
+    // names the HTTP port alone). M2 reads neither node's admin — the
+    // step reads the extension corner alone.
     const apSpawn = await spawnServerNode('ap', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
       http: AP_PORTS.http, admin: 0, p2p: 0,
-    }), { withMesh: false });
+    }), { withMesh: false, waitFor: { admin: false } });
     AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
     AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
     await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath,
       bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
       http: BP_PORTS.http, admin: 0, p2p: 0,
-    }), { withMesh: false });
+      // B's restart reads HTTP alone; admin and p2p are not read before
+      // the next restart overwrites them.
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
     page = await openFreshExtensionPage(bcx);
@@ -9940,13 +9974,18 @@ async function runMeshStepM3(bcx) {
     // each pins only what the entry names: the HTTP port the seed list's
     // `api` carries and, mesh-on, the WebRTC-direct UDP port the entry's
     // `addrs[0]` names (`EXTENSION_CHECK_INTERFACE → Addresses`). Admin
-    // and p2p bind on 0 and are read back. A port a pin failed to take
-    // reaches the error through the node's own words: `spawnServerNode`
-    // reads the log tail on an exit before the start lines and raises it.
+    // binds on 0 and is read back for `waitForPeers`; p2p binds on 0 and
+    // is not read — a mesh-on restart with `p2p: 0` and the mesh port
+    // pinned never prints `[net] listening on:` (`@dagsocial/net`'s
+    // `effectiveAnnounce` writes the TCP listen line once its port is
+    // concrete, and the mesh-on branch uses the mesh port alone at that
+    // point). A port a pin failed to take reaches the error through the
+    // node's own words: `spawnServerNode` reads the log tail on an exit
+    // before the start lines and raises it.
     const apSpawn = await spawnServerNode('ap', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
       http: AP_PORTS.http, admin: 0, p2p: 0, mesh: AP_PORTS.mesh,
-    }), { withMesh: true });
+    }), { withMesh: true, waitFor: { p2p: false } });
     AP_ADMIN_PORT = apSpawn.ports.admin; AP_P2P_PORT = apSpawn.ports.p2p;
     AP_PORTS.admin = AP_ADMIN_PORT; AP_PORTS.p2p = AP_P2P_PORT;
     const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
@@ -9956,7 +9995,7 @@ async function runMeshStepM3(bcx) {
     const bpSpawn = await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
       http: BP_PORTS.http, admin: 0, p2p: 0, mesh: BP_PORTS.mesh,
-    }), { withMesh: true });
+    }), { withMesh: true, waitFor: { p2p: false } });
     BP_ADMIN_PORT = bpSpawn.ports.admin; BP_P2P_PORT = bpSpawn.ports.p2p;
     BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
     const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
@@ -10102,16 +10141,20 @@ async function runMeshStepM4(bcx) {
     // with A directly and relay an admitted write to A at admission. A
     // port a pin failed to take reaches the error through the node's own
     // words.
+    // M4 reads the alt HTTP port alone on A' (the tip relay takes A''s
+    // first HTTP port with the alt as upstream), and the HTTP port on
+    // B' (B' answers at its own seed-list base). Neither node's admin
+    // or p2p is read in M4.
     const apM4Spawn = await spawnServerNode('ap-m4', nodeEnv({
       dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
       http: 0, admin: 0, p2p: 0,
-    }), { withMesh: false });
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
     AP_PORTS.altHttp = apM4Spawn.ports.http;
     const apAltOrigin = `http://127.0.0.1:${AP_PORTS.altHttp}`;
     const bpM4Spawn = await spawnServerNode('bp', nodeEnv({
       dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
       http: BP_PORTS.http, admin: 0, p2p: 0,
-    }), { withMesh: false });
+    }), { withMesh: false, waitFor: { admin: false, p2p: false } });
     BP_ADMIN_PORT = bpM4Spawn.ports.admin; BP_P2P_PORT = bpM4Spawn.ports.p2p;
     BP_PORTS.admin = BP_ADMIN_PORT; BP_PORTS.p2p = BP_P2P_PORT;
     meshNodes.ap.apHttp = AP_PORTS.altHttp;
@@ -10352,7 +10395,9 @@ async function runMeshStepM5(cx, bcx) {
       MESH_ROLE: 'public',
       MESH_LISTEN: '/ip4/127.0.0.1/udp/0/webrtc-direct',
       MESH_STUN: 'off',
-    }, { withMesh: true });
+      // HTTP for `GET /posts/<P>`, mesh and identity for the hand-added
+      // node's webrtc-direct multiaddr; admin and p2p are not read.
+    }, { withMesh: true, waitFor: { admin: false, p2p: false } });
     DM5_HTTP_PORT = dSpawn.ports.http;
     DM5_ADMIN_PORT = dSpawn.ports.admin;
     DM5_P2P_PORT = dSpawn.ports.p2p;
