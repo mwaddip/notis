@@ -7,11 +7,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createPrivateKey, createPublicKey, randomBytes } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
   mkdtempSync,
+  openSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -203,6 +206,44 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Write each chunk the child emits on stdout and stderr to `logPath` as it
+// arrives, so a work directory kept on a failure reads A's output up to the
+// moment the failure fired. `waitForLine` still attaches its own `data`
+// listener for the readiness line; Node emits each chunk to every listener.
+export function streamChildToLog(cp: ChildProcess, logPath: string): void {
+  const fd = openSync(logPath, 'a');
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    try {
+      closeSync(fd);
+    } catch {
+      // already closed
+    }
+  };
+  cp.stdout?.setEncoding('utf8');
+  cp.stdout?.on('data', (chunk: string | Buffer) => {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+    try {
+      writeSync(fd, bytes);
+    } catch {
+      // the log was closed; a late chunk from the child after exit is
+      // dropped rather than crashing the process
+    }
+  });
+  cp.stderr?.setEncoding('utf8');
+  cp.stderr?.on('data', (chunk: string | Buffer) => {
+    const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    try {
+      writeSync(fd, Buffer.from('[stderr] ' + s, 'utf8'));
+    } catch {
+      // see above
+    }
+  });
+  cp.once('exit', close);
+}
+
 interface PromoteOutput {
   readonly label: string;
   readonly pubKeyHex: string;
@@ -373,11 +414,7 @@ export async function generate(
     const processRecords: ProcessRecord[] = [
       { pid: nodeCp.pid!, argv: [process.execPath, paths.nodeBin], started: Date.now() },
     ];
-    const nodeLogStream: string[] = [];
-    nodeCp.stdout!.setEncoding('utf8');
-    nodeCp.stdout!.on('data', (chunk: string) => nodeLogStream.push(chunk));
-    nodeCp.stderr!.setEncoding('utf8');
-    nodeCp.stderr!.on('data', (chunk: string) => nodeLogStream.push('[stderr] ' + chunk));
+    streamChildToLog(nodeCp, nodeLog);
 
     let apiPort: number | null = null;
     let adminPort: number | null = null;
@@ -406,7 +443,6 @@ export async function generate(
       60_000,
       'node (api + admin + p2p)',
     );
-    writeFileSync(nodeLog, nodeLogStream.join(''));
 
     const apiBase = `http://127.0.0.1:${apiPort!}`;
 
@@ -439,11 +475,7 @@ export async function generate(
       });
       const faucetTracked = trackSpawn(faucetCp);
       processRecords.push({ pid: faucetCp.pid!, argv: [process.execPath, paths.faucetBin], started: Date.now() });
-      const faucetLogStream: string[] = [];
-      faucetCp.stdout!.setEncoding('utf8');
-      faucetCp.stdout!.on('data', (chunk: string) => faucetLogStream.push(chunk));
-      faucetCp.stderr!.setEncoding('utf8');
-      faucetCp.stderr!.on('data', (chunk: string) => faucetLogStream.push('[stderr] ' + chunk));
+      streamChildToLog(faucetCp, faucetLog);
 
       // The faucet prints: `faucet listening on <port> as <key> against devnet at <url>`.
       let faucetPort: number | null = null;
@@ -460,7 +492,6 @@ export async function generate(
         30_000,
         'faucet',
       );
-      writeFileSync(faucetLog, faucetLogStream.join(''));
       const faucetBase = `http://127.0.0.1:${faucetPort!}`;
 
       try {
