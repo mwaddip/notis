@@ -155,10 +155,9 @@ async function waitForLine(
 
 // A spawned child's exit event with the fact (`code`, `signal`) the handler
 // receives. Captured AT SPAWN, so a child that dies before the first
-// `endProcess` call has its exit already resolved — `cp.exitCode` is null
-// for a signal-killed child, and `cp.once('exit', …)` registered after the
-// event never fires (TRAPS → "awaitExit waits forever on a signal-killed
-// child, whose exitCode is null").
+// `endProcess` call has its exit already resolved: a child killed by a
+// signal has a null `exitCode`, and an `exit` listener added after the
+// event never fires.
 interface TrackedProcess {
   readonly cp: ChildProcess;
   readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
