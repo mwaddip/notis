@@ -359,16 +359,21 @@ const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
 const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B and for C's first life
-// Every address the harness owns is bound by the OS: each relay listens on
-// port 0 and reads its port from `server.address()`, each node spawns with
-// `PORT=0`, `ADMIN_PORT=0`, `LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0` and, for a
-// mesh node, `MESH_LISTEN=/ip4/127.0.0.1/udp/0/webrtc-direct`, and its ports
-// are read from its own start lines. The constants below are the values each
-// first start recorded; a restart "behind a seed-list entry" takes the same
-// values (A' and B' across M2, M3 and M4; M4's relay takes A''s first HTTP
-// port), and a port taken in between fails the block naming the port. A node
-// behind a relay (B behind RLB, every upstream the tip and light relays move
-// to) restarts on 0 and the relay's upstream moves to it.
+// Every address the harness owns is bound by the OS
+// (`EXTENSION_CHECK_INTERFACE → Addresses`). Each relay listens on port 0
+// and reads its port from `server.address()`; each node spawns with
+// `PORT=0 ADMIN_PORT=0 LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0` and, for a mesh
+// node, `MESH_LISTEN=/ip4/127.0.0.1/udp/0/webrtc-direct`, and its ports
+// are read from its own start lines. The let-bindings below hold the
+// values each first start recorded; a restart behind the seed-list entry
+// the node answers for pins only what the entry names — the HTTP port and
+// (mesh-on) the WebRTC-direct UDP port — and the rest bind on 0 and read
+// back. M4's relay takes A''s first HTTP port while A' moves to a fresh
+// alt HTTP port. A node behind a relay (B behind RLB, every upstream the
+// tip and light relays move to) restarts on 0 and the relay's upstream
+// moves to it. A port a pin fails to take surfaces through the node's own
+// bind failure — `spawnServerNode` reads the log tail on an exit before
+// the start lines and raises it.
 //
 // The two tip relays — RLA in front of A, RLB in front of B. The seed list
 // the harness writes names these two bases, each entry reached at its api
@@ -2385,8 +2390,8 @@ async function pressAndReadVerdict(cx, opts = {}) {
 // every B of a run answers to the same `notisId` the seed list names.
 // B spawns with `PORT=0`, `ADMIN_PORT=0`, `LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0`
 // — a node behind a relay takes new ports on every start, and the relay's
-// upstream moves to them (`WEB_INTERFACE → The extension → "The verified
-// tip"`). The ports are read back from B's start lines
+// upstream moves to them (`EXTENSION_CHECK_INTERFACE → Addresses`). The
+// ports are read back from B's start lines
 // (`api_listening`, `Admin listener on …:<port>`, `[net] listening on:`)
 // and the tip and light relays' upstreams are moved to B's new origin.
 async function bringUpNodeB() {
@@ -2685,8 +2690,8 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       && /^only one node could be checked · tip \d+$/.test(readingStopped.title ?? '');
 
     // B behind RLB restarts on OS-bound ports, same key file, same store;
-    // the relay's upstream moves to B's new origin (`WEB_INTERFACE → The
-    // extension → "The verified tip"`).
+    // the relay's upstream moves to B's new origin
+    // (`EXTENSION_CHECK_INTERFACE → Addresses`).
     console.log(`[vt] spawning node B again on the same store: ${bDbPath}`);
     const bRestart = await spawnServerNode('b', {
       NETWORK_TYPE: 'devnet',
@@ -12631,7 +12636,8 @@ async function setupTipRelays() {
   // is not needed, so RLB's upstream is A; otherwise its upstream is left
   // null before B comes up, and `bringUpNodeB` moves it to B's origin on
   // the first spawn — a request that arrives in that window answers 502
-  // as a relay whose upstream refuses the connection answers today.
+  // with the `access-control-allow-origin: *` header the handler carries
+  // on every answer.
   const rla = await startTipRelay(NODE.replace(/\/+$/, ''), 0);
   const rlb = await startTipRelay(WAITING_ONLY ? NODE.replace(/\/+$/, '') : null, 0);
   tipRelays.a = rla;
@@ -12650,10 +12656,9 @@ let exitCode = 0;
 try {
   // The nodes an entry names and every key the harness owns come up first;
   // then the seed list is written into the copy and read back; then Chromium
-  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds: "The copy is whole
-  // before Chromium loads it"). A refusal during setup — a `ConfigError`
-  // from `setupMeshStack` — fires before the browser launches, so no
-  // process stands to close.
+  // loads the copy (EXTENSION_CHECK_INTERFACE → Builds). A refusal during
+  // setup — a `ConfigError` from `setupMeshStack` — fires before the browser
+  // launches, so no process stands to close.
   await setupTipRelays();
   await setupLightRelays();
   await setupMeshStack();
