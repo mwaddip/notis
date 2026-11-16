@@ -27,11 +27,33 @@ set -euo pipefail
 #                      mainnet, or empty (a build with no verifier). Unset
 #                      takes testnet; an explicit empty value stays empty
 #                      (WEB_INTERFACE → "The three later tags").
+#   NOTIS_EXTENSION_OUT    absolute directory the two zips move into; unset
+#                      leaves them in the repository's root
+#                      (WEB_INTERFACE → The client is served from the node's
+#                      own origin → "A zip holds one build").
 #   NOTIS_EXTENSION_KEY    Chrome extension public key for a stable id
 # ---------------------------------------------------------------------------
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO_ROOT"
+
+# NOTIS_EXTENSION_OUT, when set, is the absolute directory the two zips move
+# into. The empty string is the same as unset: the zips land in the
+# repository's root. A set non-absolute path, or an absolute path that is not
+# a directory, is refused, naming the value (WEB_INTERFACE → The client is
+# served from the node's own origin → "A zip holds one build").
+OUT_DIR="$REPO_ROOT"
+if [ -n "${NOTIS_EXTENSION_OUT:-}" ]; then
+  case "$NOTIS_EXTENSION_OUT" in
+    /*) ;;
+    *) echo "FAIL: NOTIS_EXTENSION_OUT must be an absolute path, got: $NOTIS_EXTENSION_OUT"; exit 1 ;;
+  esac
+  if [ ! -d "$NOTIS_EXTENSION_OUT" ]; then
+    echo "FAIL: NOTIS_EXTENSION_OUT is not a directory: $NOTIS_EXTENSION_OUT"
+    exit 1
+  fi
+  OUT_DIR="$NOTIS_EXTENSION_OUT"
+fi
 
 VERSION=$(node -p "require('./package.json').version")
 STAGE=$(mktemp -d)
@@ -320,19 +342,20 @@ NO_UPDATE_NOTIFIER=1 ./node_modules/.bin/web-ext lint --source-dir "$FIREFOX_DIR
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
-# Zip. `zip -r -X` — no extended attributes. Each zip moves to the
-# repository's root with `mv -f`, so a zip of that name standing there is
-# replaced — never added to (WEB_INTERFACE → The client is served from the
-# node's own origin → "A zip holds one build").
+# Zip. `zip -r -X` — no extended attributes. Each zip moves to `OUT_DIR` with
+# `mv -f`, so a zip of that name standing there is replaced — never added to
+# (WEB_INTERFACE → The client is served from the node's own origin → "A zip
+# holds one build"). `OUT_DIR` is `NOTIS_EXTENSION_OUT` where it was set, else
+# the repository's root.
 # ---------------------------------------------------------------------------
 cd "$STAGE"
 CHROME_ZIP="notis-extension-${VERSION}-chrome.zip"
 FIREFOX_ZIP="notis-extension-${VERSION}-firefox.zip"
 (cd chrome && zip -r -X "$STAGE/$CHROME_ZIP" .)
 (cd firefox && zip -r -X "$STAGE/$FIREFOX_ZIP" .)
-mv -f "$STAGE/$CHROME_ZIP" "$REPO_ROOT/$CHROME_ZIP"
-mv -f "$STAGE/$FIREFOX_ZIP" "$REPO_ROOT/$FIREFOX_ZIP"
-cd "$REPO_ROOT"
+mv -f "$STAGE/$CHROME_ZIP" "$OUT_DIR/$CHROME_ZIP"
+mv -f "$STAGE/$FIREFOX_ZIP" "$OUT_DIR/$FIREFOX_ZIP"
+cd "$OUT_DIR"
 
 echo "==> Done: $CHROME_ZIP and $FIREFOX_ZIP"
 for z in "$CHROME_ZIP" "$FIREFOX_ZIP"; do
