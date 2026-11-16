@@ -116,7 +116,7 @@ describe(`NODE_INTERFACE → Configuration → "The node's mesh endpoint forward
       network: 'testnet',
       listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
       stateDir: dir,
-      httpBase: baseUrl,
+      httpBase: () => baseUrl,
       stun: null,
     };
     node = new NetNode(

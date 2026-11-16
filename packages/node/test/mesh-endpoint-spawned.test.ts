@@ -172,7 +172,7 @@ describe('NODE_INTERFACE → Configuration → "The node\'s mesh endpoint forwar
     expect(result.ok).toBe(true);
   }
 
-  it.fails('GET /blocks/current — the mesh answer equals the direct answer when PORT names a fixed port', async () => {
+  it('GET /blocks/current — the mesh answer equals the direct answer when PORT names a fixed port', async () => {
     const fixedPort = await pickFreePort();
     const spawned = await startNode(String(fixedPort), 'node-mesh-spawned-fixed-');
     children.push(spawned.child); dirs.push(spawned.dir);
@@ -190,7 +190,7 @@ describe('NODE_INTERFACE → Configuration → "The node\'s mesh endpoint forwar
     expect(Buffer.compare(Buffer.from(meshBuf), Buffer.from(directBuf))).toBe(0);
   }, 90_000);
 
-  it.fails('GET /blocks/current — the mesh answer equals the direct answer when PORT is 0', async () => {
+  it('GET /blocks/current — the mesh answer equals the direct answer when PORT is 0', async () => {
     const spawned = await startNode('0', 'node-mesh-spawned-port-zero-');
     children.push(spawned.child); dirs.push(spawned.dir);
     expect(spawned.apiPort).toBeGreaterThan(0);

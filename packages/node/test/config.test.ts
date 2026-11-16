@@ -1314,9 +1314,13 @@ describe('config', () => {
     });
 
     // NODE_INTERFACE → Configuration → "The node's mesh endpoint
-    // forwards to its own public listener": `httpBase` is
-    // `http://127.0.0.1:<PORT>`, never `ADMIN_PORT`'s listener.
-    it('httpBase names PORT, not ADMIN_PORT', async () => {
+    // forwards to its own public listener": `httpBase` answers the
+    // port the public listener bound, read off the bound socket in
+    // `index.ts`; the loaded configuration names no address the
+    // process learns after load, so `mesh` carries no `httpBase` and
+    // neither `PORT` nor `ADMIN_PORT` reaches a string at config
+    // load.
+    it('the loaded mesh carries no httpBase — neither PORT nor ADMIN_PORT names a base at load', async () => {
       process.env['PORT'] = '8080';
       process.env['ADMIN_PORT'] = '8081';
       process.env['MESH_ROLE'] = 'public';
@@ -1324,7 +1328,9 @@ describe('config', () => {
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
       const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
-      expect(mesh['httpBase']).toBe('http://127.0.0.1:8080');
+      expect('httpBase' in mesh).toBe(false);
+      expect(JSON.stringify(mesh)).not.toContain('8080');
+      expect(JSON.stringify(mesh)).not.toContain('8081');
     });
 
     // MESH_INTERFACE → NAT — "A private node ... takes a relay

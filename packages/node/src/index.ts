@@ -49,6 +49,17 @@ import { initBackfill, readerArrived } from './services/backfill.js';
 
 const startTime = Date.now();
 
+// NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards to
+// its own public listener": `httpBase` answers `http://127.0.0.1:<port>`,
+// the port the public listener bound — read off the socket once
+// `listenPublic`'s server is listening, `null` before. `net.start()` runs
+// before `listenPublic`, so a request over the mesh in that window is
+// answered as one whose upstream refused the connection (its stream
+// aborted).
+let apiBoundPort: number | null = null;
+const meshHttpBase = (): string | null =>
+  apiBoundPort === null ? null : `http://127.0.0.1:${apiBoundPort}`;
+
 // NODE_INTERFACE → "An unhandled rejection is logged, and the node keeps running":
 // one process-level handler receives every promise rejection nothing else
 // handled — the corrupt-state family is fail-stop, every other reason is
@@ -169,8 +180,11 @@ const net = new NetNode(
     syncRequestTimeoutMs: config.syncRequestTimeoutMs,
     // NODE_INTERFACE → Configuration. `null` from `loadConfig` with
     // no `MESH_ROLE`; `NetConfig.mesh` is optional, absent making the
-    // node TCP-only (NET_INTERFACE → The mesh).
-    ...(config.mesh !== null ? { mesh: config.mesh } : {}),
+    // node TCP-only (NET_INTERFACE → The mesh). `httpBase` is built
+    // here, not at config load, so it can close over the bound port
+    // (NODE_INTERFACE → Configuration → "The node's mesh endpoint
+    // forwards to its own public listener").
+    ...(config.mesh !== null ? { mesh: { ...config.mesh, httpBase: meshHttpBase } } : {}),
   },
   netValidators(),
   peerStorage,
@@ -363,6 +377,7 @@ server.on('listening', () => {
   // inside its own listening callback. Both events report the same read, so a
   // dual-stack host cannot get two answers to one question.
   const bound = server.address() as { address: string; port: number };
+  apiBoundPort = bound.port;
   emitApiListening(bound.address, bound.port);
   emitServerReady(
     `${bound.address}:${bound.port}`,
