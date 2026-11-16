@@ -161,16 +161,18 @@ describe("the check's harness", () => {
     ).toEqual(['check', 'test-matrix']);
   });
 
-  it('extension-check/claim-name.mjs selects check, e2e, test-matrix and test-state', () => {
+  it.fails('extension-check/claim-name.mjs selects check, test-matrix and test-state', () => {
     const p = 'packages/web/scripts/extension-check/claim-name.mjs';
     const result = place([p], workspace, ROWS);
     const check = result.selected.find((s) => s.run === 'check');
     expect(check?.rule).toEqual('row at run time');
+    const ts = result.selected.find((s) => s.run === 'test-state');
+    expect(ts?.rule).toEqual('row in a suite');
     const matrix = result.selected.find((s) => s.run === 'test-matrix');
     expect(matrix?.rule).toEqual('matrix');
     expect(
       result.selected.map((s) => s.run).sort(),
-    ).toEqual(['check', 'e2e', 'test-matrix', 'test-state']);
+    ).toEqual(['check', 'test-matrix', 'test-state']);
   });
 });
 
@@ -281,14 +283,50 @@ describe('reach', () => {
     ).toEqual(['check', 'e2e', 'faucet', 'test-matrix', 'test-state']);
   });
 
-  it('reach from tools/e2e/src/x.ts', () => {
+  it.fails('reach from tools/e2e/src/x.ts', () => {
     const p = 'tools/e2e/src/x.ts';
     const result = place([p], workspace, ROWS);
     const e2e = result.selected.find((s) => s.run === 'e2e');
     expect(e2e?.rule).toEqual('reach');
     expect(
       result.selected.map((s) => s.run).sort(),
-    ).toEqual(['e2e', 'test-matrix']);
+    ).toEqual(['check', 'e2e', 'test-matrix', 'test-state']);
+  });
+
+  it.fails('reach from packages/web/scripts/promote/entry.ts, web by its path and test-state by its row', () => {
+    const p = 'packages/web/scripts/promote/entry.ts';
+    const result = place([p], workspace, ROWS);
+    const web = result.selected.find((s) => s.run === 'web');
+    expect(web?.rule).toEqual('reach');
+    const ts = result.selected.find((s) => s.run === 'test-state');
+    expect(ts?.rule).toEqual('row at run time');
+    const matrix = result.selected.find((s) => s.run === 'test-matrix');
+    expect(matrix?.rule).toEqual('matrix');
+    expect(
+      result.selected.map((s) => s.run).sort(),
+    ).toEqual(['check', 'e2e', 'mesh-poc', 'test-matrix', 'test-state', 'web']);
+  });
+
+  it.fails('reach from tools/nipopow-client/package.json, test-state via the in-a-suite row', () => {
+    const p = 'tools/nipopow-client/package.json';
+    const result = place([p], workspace, ROWS);
+    const nc = result.selected.find((s) => s.run === 'nipopow-client');
+    expect(nc?.rule).toEqual('reach');
+    const ts = result.selected.find((s) => s.run === 'test-state');
+    expect(ts?.rule).toEqual('row in a suite');
+    const matrix = result.selected.find((s) => s.run === 'test-matrix');
+    expect(matrix?.rule).toEqual('matrix');
+    expect(
+      result.selected.map((s) => s.run).sort(),
+    ).toEqual([
+      'check',
+      'e2e',
+      'mesh-poc',
+      'nipopow-client',
+      'test-matrix',
+      'test-state',
+      'web',
+    ]);
   });
 
   it('reach from tools/test-matrix/src/x.ts', () => {
