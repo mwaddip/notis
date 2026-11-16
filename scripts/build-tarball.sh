@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# build-tarball.sh — package the node as a zero-dependency linux-x64 tarball:
-# the built app, a production node_modules (better-sqlite3 carries every platform's prebuild; nothing builds it),
-# and a bundled Node runtime, with run.sh (server) and run-miner.sh (miner)
-# launchers defaulting to testnet. No system Node required to run it.
+# build-tarball.sh — package the node as a linux-x64 tarball for a host with
+# Node ≥ 24 on PATH: the bundled app under app/, run.sh (server) and
+# run-miner.sh (miner) launchers that default to testnet. No faucet rides.
 #
-# Requires (build host): node (>=22), pnpm, rsync, curl, tar.
+# Requires (build host): node (>=24), pnpm, tar.
 # Output: notis-node-<version>-linux-x64.tar.gz in the repo root.
 # ---------------------------------------------------------------------------
 
@@ -15,74 +14,70 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION=$(node -p "require('./package.json').version")
-NODE_VER="v$(node -p 'process.versions.node')"   # bundle the runtime we build with
 PKG="notis-node-${VERSION}-linux-x64"
 STAGE=$(mktemp -d)
 APP="$STAGE/$PKG"
-mkdir -p "$APP/bin"
+mkdir -p "$APP"
 
-echo "==> Building $PKG.tar.gz (Node $NODE_VER)"
+echo "==> Building $PKG.tar.gz"
+
+# ---------------------------------------------------------------------------
+# 1. Build all workspace packages
+# ---------------------------------------------------------------------------
 pnpm build
 
 # ---------------------------------------------------------------------------
-# 1. App tree + production node_modules — scripts/package-excludes.txt is
-#    the one exclude list, shared with build-deb.sh and
-#    windows/build-bundle.ps1.
+# 2. Bundle the node and miner-consolidate into $APP/app (no faucet)
+#    (NODE_INTERFACE → "The packages carry the node as one bundle, beside
+#    the native modules it loads.").
 # ---------------------------------------------------------------------------
-echo "==> Assembling app tree"
-rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
-  "$REPO_ROOT/" "$APP/app/"
-
-echo "==> Installing production dependencies"
-(
-  cd "$APP/app"
-  pnpm approve-builds cbor-extract esbuild 2>&1 | tail -3 || true
-  pnpm install --prod --frozen-lockfile 2>&1 | tail -5
-)
-
-for d in types validation wire nipopow consensus net node; do
-  [ -d "$APP/app/packages/$d/dist" ] || { echo "  ✗ packages/$d missing dist/ — build failed"; exit 1; }
-done
-[ -d "$APP/app/tools/faucet/dist" ] || echo "  (note: tools/faucet dist absent — not needed by the node)"
+node "$REPO_ROOT/scripts/bundle-node.mjs" --out "$APP/app"
 
 # ---------------------------------------------------------------------------
-# 2. Bundle the official Node linux-x64 runtime
-# ---------------------------------------------------------------------------
-echo "==> Downloading Node $NODE_VER runtime"
-# The runtime is taken from nodejs.org as served, with no checksum (NODE_INTERFACE → The packaged node).
-curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.xz" | tar -xJ -C "$STAGE"
-cp "$STAGE/node-${NODE_VER}-linux-x64/bin/node" "$APP/bin/node"
-chmod +x "$APP/bin/node"
-
-# ---------------------------------------------------------------------------
-# 3. Launchers
+# 3. Launchers — the system's node on PATH, Node ≥ 24 (NODE_INTERFACE →
+#    "The .deb and the tarball run the system's Node; the Windows installer
+#    carries its own.").
 # ---------------------------------------------------------------------------
 cat > "$APP/run.sh" <<'RUNEOF'
 #!/usr/bin/env bash
-# Notis testnet node (server). No system Node needed.
+# Notis testnet node (server). Needs Node ≥ 24 on PATH.
+set -e
 cd "$(dirname "$0")"
+VER=$(node -p 'process.versions.node' 2>/dev/null || true)
+MAJOR=${VER%%.*}
+if [ -z "$VER" ] || [ "$MAJOR" -lt 24 ] 2>/dev/null; then
+  echo "run.sh: Node ≥ 24 required on PATH; found '${VER:-none}'." >&2
+  exit 1
+fi
 export NETWORK_TYPE=testnet PORT=3000
 export DB_PATH="./data/notis.db"; mkdir -p ./data
-exec ./bin/node ./app/packages/node/dist/index.js
+exec node ./app/dist/node.js
 RUNEOF
 
 cat > "$APP/run-miner.sh" <<'MINEREOF'
 #!/usr/bin/env bash
-# Notis testnet node + miner loop. Ctrl-C / close to stop mining.
+# Notis testnet node + miner loop. Needs Node ≥ 24 on PATH.
+set -e
 cd "$(dirname "$0")"
+VER=$(node -p 'process.versions.node' 2>/dev/null || true)
+MAJOR=${VER%%.*}
+if [ -z "$VER" ] || [ "$MAJOR" -lt 24 ] 2>/dev/null; then
+  echo "run-miner.sh: Node ≥ 24 required on PATH; found '${VER:-none}'." >&2
+  exit 1
+fi
 export NETWORK_TYPE=testnet PORT=3000
 export DB_PATH="./data/notis.db"; mkdir -p ./data
 # MINING_INTERFACE → Consolidation — the key file is the one source the miner
 # reads; `gen-miner-key.mjs` writes it where `MINER_KEY_PATH` names.
-./bin/node ./app/packages/node/scripts/gen-miner-key.mjs ./data/miner-key.json > /dev/null
+node ./app/scripts/gen-miner-key.mjs ./data/miner-key.json > /dev/null
 export MINER_KEY_PATH="./data/miner-key.json"
-export MINING_SECRET="$(./bin/node -e "console.log(require('crypto').randomUUID())")"
+export MINING_SECRET="$(node -e "console.log(require('crypto').randomUUID())")"
 export NODE_ROLE=miner MINER_PCT="${MINER_PCT:-25}"
-./bin/node ./app/packages/node/dist/index.js &
+node ./app/dist/node.js &
 NODE_PID=$!
 trap 'kill $NODE_PID 2>/dev/null || true' EXIT
 sleep 2
-NODE_URL=http://localhost:3000 ./bin/node ./app/packages/node/scripts/miner.mjs
+NODE_URL=http://localhost:3000 node ./app/scripts/miner.mjs
 MINEREOF
 
 chmod +x "$APP/run.sh" "$APP/run-miner.sh"

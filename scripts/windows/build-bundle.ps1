@@ -1,11 +1,11 @@
 # build-bundle.ps1 — package the node as a win-x64 installer.
 #
-# Mirrors scripts/build-tarball.sh for Windows: builds the workspace, stages a
-# self-contained app tree with a production node_modules (better-sqlite3
-# carries every platform's prebuild; nothing builds it), bundles the
-# official node.exe, adds the three .cmd launchers, and wraps it all with Inno
-# Setup. Run on windows-latest after `pnpm install --frozen-lockfile`.
+# `pnpm build`, download the official node.exe into $Stage\node, then run
+# `node scripts\bundle-node.mjs --out $Stage\app --node-exe $Stage\node\node.exe`
+# so the bundler's start check runs under the runtime the installer carries.
+# The launchers and Inno Setup follow.
 #
+# Requires (build host): node (>=24), pnpm, Inno Setup 6.
 # Output: notis-node-<version>-win-x64-setup.exe in the repo root.
 
 $ErrorActionPreference = 'Stop'
@@ -13,52 +13,37 @@ $RepoRoot = (Resolve-Path "$PSScriptRoot\..\..").Path
 Set-Location $RepoRoot
 
 $Version = (& node -p "require('./package.json').version").Trim()
-$NodeVer = "v$((& node -p 'process.versions.node').Trim())"   # bundle the runtime we build with
+$NodeVer = "v$((& node -p 'process.versions.node').Trim())"
 $Temp    = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 $Stage   = Join-Path $Temp "notis-stage"
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
-New-Item -ItemType Directory -Force -Path "$Stage\app", "$Stage\node" | Out-Null
+New-Item -ItemType Directory -Force -Path "$Stage\node" | Out-Null
 
 Write-Host "==> Building workspace"
 & pnpm build
 
-# --- 1. App tree (robocopy; 0-7 are success, >=8 is failure) -----------------
-# scripts/package-excludes.txt is the one exclude list, shared with
-# build-deb.sh and build-tarball.sh. A bare name goes to /XD and /XF as it
-# stands; an entry starting with '/' names one path from the repo root and goes
-# to /XD only, as the full path under $RepoRoot.
-Write-Host "==> Staging app tree"
-$Entries = @(Get-Content (Join-Path $PSScriptRoot '..\package-excludes.txt') |
-  Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
-$ExcludeNames = @($Entries | Where-Object { -not $_.StartsWith('/') })
-$ExcludeDirs = @($ExcludeNames) + @($Entries | Where-Object { $_.StartsWith('/') } |
-  ForEach-Object { Join-Path $RepoRoot $_.Substring(1).Replace('/', '\') })
-& robocopy $RepoRoot "$Stage\app" /E /NFL /NDL /NJH /NJS /NP /XD $ExcludeDirs /XF $ExcludeNames | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
-$global:LASTEXITCODE = 0
-
-# --- 2. Production node_modules (better-sqlite3 carries its prebuilds) -------------
-Write-Host "==> Installing production dependencies"
-Push-Location "$Stage\app"
-& pnpm approve-builds cbor-extract esbuild 2>&1 | Out-Null
-& pnpm install --prod --frozen-lockfile
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "pnpm install --prod failed" }
-Pop-Location
-if (-not (Test-Path "$Stage\app\packages\node\dist\index.js")) { throw "node dist/ missing — build failed" }
-
-# --- 3. Bundle the official Node win-x64 runtime -----------------------------
+# --- 1. Bundle the official Node win-x64 runtime -----------------------------
 Write-Host "==> Downloading Node $NodeVer win-x64"
 $Zip = Join-Path $Temp "node.zip"
-# The runtime is taken from nodejs.org as served, with no checksum (NODE_INTERFACE → The packaged node).
+# The runtime is taken from nodejs.org as served, with no checksum
+# (NODE_INTERFACE → The packaged node).
 Invoke-WebRequest -Uri "https://nodejs.org/dist/$NodeVer/node-$NodeVer-win-x64.zip" -OutFile $Zip
 Expand-Archive -Path $Zip -DestinationPath (Join-Path $Temp "nodert") -Force
 Copy-Item (Join-Path $Temp "nodert\node-$NodeVer-win-x64\node.exe") "$Stage\node\node.exe"
 
-# --- 4. Launchers ------------------------------------------------------------
+# --- 2. Bundle the node and miner-consolidate into $Stage\app ---------------
+# (NODE_INTERFACE → "The packages carry the node as one bundle, beside the
+# native modules it loads."). No faucet: the Windows installer ships no
+# faucet unit. The bundler's start check runs under the carried node.exe.
+Write-Host "==> Bundling into $Stage\app"
+& node "$RepoRoot\scripts\bundle-node.mjs" --out "$Stage\app" --node-exe "$Stage\node\node.exe"
+if ($LASTEXITCODE -ne 0) { throw "bundle-node.mjs failed ($LASTEXITCODE)" }
+
+# --- 3. Launchers ------------------------------------------------------------
 Write-Host "==> Copying launchers"
 Copy-Item "$PSScriptRoot\launch-node.cmd", "$PSScriptRoot\launch-miner.cmd" $Stage
 
-# --- 5. Inno Setup installer -------------------------------------------------
+# --- 4. Inno Setup installer -------------------------------------------------
 Write-Host "==> Running Inno Setup"
 $ISCC = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $ISCC)) { $ISCC = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }

@@ -4,7 +4,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # build-deb.sh — package dagsocial-node as a .deb
 #
-# Requires: node (>=22), pnpm, dpkg-deb, rsync
+# Requires: node (>=24), pnpm, dpkg-deb
 # Output:   dagsocial-node_<version>_amd64.deb in the repo root
 # ---------------------------------------------------------------------------
 
@@ -35,60 +35,26 @@ mkdir -p "$STAGING/usr/lib/systemd/system"
 mkdir -p "$STAGING/DEBIAN"
 
 # ---------------------------------------------------------------------------
-# 3. Copy project files — scripts/package-excludes.txt is the one exclude
-#    list, shared with build-tarball.sh and windows/build-bundle.ps1.
+# 3. Bundle the node, miner-consolidate and faucet into $APP_DIR
+#    (NODE_INTERFACE → "The packages carry the node as one bundle, beside
+#    the native modules it loads."). The script refuses a missing dist
+#    itself, so no second check runs here.
 # ---------------------------------------------------------------------------
-rsync -a --exclude-from="$REPO_ROOT/scripts/package-excludes.txt" \
-  "$REPO_ROOT/" "$APP_DIR/"
-
-# ---------------------------------------------------------------------------
-# 4. Install production dependencies only
-# ---------------------------------------------------------------------------
-echo "==> Installing production dependencies..."
-cd "$APP_DIR"
-# Approve the native module builds (pnpm v11 gate, harmless on v10); better-sqlite3 ships its prebuilds and is not built
-pnpm approve-builds cbor-extract esbuild 2>&1 | tail -3 || true
-pnpm install --prod --frozen-lockfile 2>&1 | tail -5
-
-# pnpm workspaces link local packages via symlinks — ensure they resolve.
-# The rsync above copies the working tree, so a dist/ present here is one the
-# build produced; this loop is what turns a missing one into a failed package
-# rather than a daemon that will not start.
-# The seven protocol packages the node loads, plus `avltree` (the node) and
-# `node-reads` (the faucet) — the two shipped processes load every one of
-# these at start, so a missing dist is a release that will not start.
-for pkg in types validation wire nipopow consensus net node avltree node-reads; do
-  if [ -d "$APP_DIR/packages/$pkg/dist" ]; then
-    echo "  ✓ packages/$pkg"
-  else
-    echo "  ✗ packages/$pkg missing dist/ — build may have failed"
-    exit 1
-  fi
-done
-
-# Named separately because the loop above is keyed on packages/$pkg and the
-# faucet lives under tools/. This is the only build-time signal that its dist
-# exists: without it a faucet that failed to build still ships, and the first
-# sign is a systemd unit pointing at a file that is not there.
-if [ -d "$APP_DIR/tools/faucet/dist" ]; then
-  echo "  ✓ tools/faucet"
-else
-  echo "  ✗ tools/faucet missing dist/ — build may have failed"
-  exit 1
-fi
-
-cd "$REPO_ROOT"
+node "$REPO_ROOT/scripts/bundle-node.mjs" --out "$APP_DIR" --faucet
 
 # ---------------------------------------------------------------------------
-# 5. Systemd unit
+# 4. Systemd units
 # ---------------------------------------------------------------------------
 cp "$REPO_ROOT/packages/node/scripts/dagsocial-node.service" \
    "$STAGING/usr/lib/systemd/system/dagsocial-node.service"
 cp "$REPO_ROOT/tools/faucet/scripts/dagsocial-faucet.service" \
    "$STAGING/usr/lib/systemd/system/dagsocial-faucet.service"
+# `packages/node/scripts/dagsocial-miner.service` is the reference miner
+# unit an operator copies in and fills (NODE_INTERFACE → The packaged node
+# → "File modes are the operator's"); the .deb does not ship it.
 
 # ---------------------------------------------------------------------------
-# 6. Default environment file
+# 5. Default environment file
 # ---------------------------------------------------------------------------
 # The env files ship at the build's default mode (NODE_INTERFACE → The packaged node).
 cat > "$STAGING/etc/dagsocial/node.env" <<'ENVEOF'
@@ -163,7 +129,7 @@ RATE_LIMIT_PER_HOUR=5
 ENVEOF
 
 # ---------------------------------------------------------------------------
-# 7. DEBIAN control files
+# 6. DEBIAN control files
 # ---------------------------------------------------------------------------
 
 # conffiles — dpkg preserves user edits to these on upgrade
@@ -238,13 +204,13 @@ PRERM
 chmod 755 "$STAGING/DEBIAN/prerm"
 
 # ---------------------------------------------------------------------------
-# 8. Build the .deb
+# 7. Build the .deb
 # ---------------------------------------------------------------------------
 echo "==> Building .deb package..."
 dpkg-deb --root-owner-group --build "$STAGING" "$REPO_ROOT/$DEB"
 
 # ---------------------------------------------------------------------------
-# 9. Cleanup
+# 8. Cleanup
 # ---------------------------------------------------------------------------
 rm -rf "$STAGING"
 

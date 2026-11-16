@@ -21,5 +21,8 @@
       "@libp2p/gossipsub@17.2.1": "patches/@libp2p__gossipsub@17.2.1.patch",
       "libp2p@3.5.1": "patches/libp2p@3.5.1.patch"
     }
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
   }
 }

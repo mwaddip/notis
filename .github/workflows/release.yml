@@ -1,14 +1,22 @@
 name: release
 
-# Manual only. Builds the three testnet packages, each on its own OS for the
-# Node runtime it bundles, and attaches them to a GitHub Release for the given
-# tag. The Release and its assets are public.
+# Manual only. Each job builds its packages on its own OS for the native
+# binaries it carries — the Linux job builds the tarball and the .deb
+# (NODE_INTERFACE → "The .deb and the tarball run the system's Node"), the
+# Windows job the installer with node.exe bundled. On a tagged run the
+# release job attaches every artifact to a public GitHub Release; a dry run
+# builds and uploads the artifacts as workflow artifacts alone and skips
+# the release job.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
-        required: true
+        description: "Release tag (e.g. v0.1.0); leave empty for a dry run"
+        required: false
+      dry_run:
+        description: "Build and upload artifacts only, no GitHub Release"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -61,8 +69,15 @@ jobs:
 
   release:
     needs: [linux, windows]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require a tag on a non-dry run
+        run: |
+          if [ -z "${{ inputs.tag }}" ]; then
+            echo 'release job needs the tag input on a non-dry run'
+            exit 1
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: dist
