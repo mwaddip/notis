@@ -128,7 +128,7 @@ async function startNode(
   return { child, dir, apiPort, notisId, webrtcAddr };
 }
 
-describe('NODE_INTERFACE → Configuration → "The node\'s mesh endpoint forwards to its own public listener"', () => {
+describe(`NODE_INTERFACE → Configuration → "The node's mesh endpoint forwards to its own public listener"`, () => {
   const children: ChildProcess[] = [];
   const dirs: string[] = [];
   let reader: Libp2p | null = null;
