@@ -359,23 +359,25 @@ const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
 const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B and for C's first life
-// The harness's own ports for its spawned children (17–20's stack). Kept
-// clear of Chrome's debugger range (19200–19699), the e2e range (11000–12899)
-// and the dagsocial-miner unit's testnet ports.
-const B_HTTP_PORT = 19770;
-const B_ADMIN_PORT = 19771;
-const B_P2P_PORT = 19772;
-const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
-// The verified blocks' two relays — RLA in front of A, RLB in front of B.
-// The extension built for the verified-tip / figures / names runs names these
-// two bases in its seed list (`[{notisId, addrs: [], api: RLA}, {notisId,
-// addrs: [], api: RLB}]`), each entry reached at its api alone
-// (`MESH_INTERFACE → The client's node list → "An entry may carry an API
-// base"`), so every read the extension makes passes through one of them. Each
-// relay carries a mode the harness sets between steps, on both relays at once
-// — the one hostile edit per mode is the one the run meets whichever relay
-// the client routes a read to (WEB_INTERFACE → The extension → "The verified
-// tip", "The verified figures", "The verified names"):
+// Every address the harness owns is bound by the OS: each relay listens on
+// port 0 and reads its port from `server.address()`, each node spawns with
+// `PORT=0`, `ADMIN_PORT=0`, `LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0` and, for a
+// mesh node, `MESH_LISTEN=/ip4/127.0.0.1/udp/0/webrtc-direct`, and its ports
+// are read from its own start lines. The constants below are the values each
+// first start recorded; a restart "behind a seed-list entry" takes the same
+// values (A' and B' across M2, M3 and M4; M4's relay takes A''s first HTTP
+// port), and a port taken in between fails the block naming the port. A node
+// behind a relay (B behind RLB, every upstream the tip and light relays move
+// to) restarts on 0 and the relay's upstream moves to it.
+//
+// The two tip relays — RLA in front of A, RLB in front of B. The seed list
+// the harness writes names these two bases, each entry reached at its api
+// alone (`MESH_INTERFACE → The client's node list → "An entry may carry an
+// API base"`). Each relay carries a mode the harness sets between steps, on
+// both relays at once — the one hostile edit per mode is the one the run
+// meets whichever relay the client routes a read to (WEB_INTERFACE → The
+// extension → "The verified tip", "The verified figures", "The verified
+// names"):
 //   `honest`         — none; everything passes to upstream verbatim.
 //   `proof-invalid`  — the `/nipopow/proof/<m>/<k>` answer altered so it does
 //                      not verify (one byte flipped ten from the end), every
@@ -397,83 +399,26 @@ const B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
 //   `verified` (the arms prove against an anchor), reads the row through
 //   whichever relay the client routes to, and sets both relays back to
 //   `honest` on the way out.
-const RLA_PORT = 19780;
-const RLA_ORIGIN = `http://127.0.0.1:${RLA_PORT}`;
-const RLB_PORT = 19781;
-const RLB_ORIGIN = `http://127.0.0.1:${RLB_PORT}`;
-// Node D — isolated, mined on demand: for 19b the block mines D past A's tip
-// so D's chain is heavier than A/B's, and the client seats D's chain and B's
-// tip reads off it; for 19c the block mines D past m + k + 4 and keeps it
-// below A's height, so D's chain verifies but B's heavier chain seats and D's
-// tip reads off it (WEB_INTERFACE → The extension → "The verified tip").
-const D_HTTP_PORT = 19795;
-const D_ADMIN_PORT = 19796;
-const D_P2P_PORT = 19797;
-const D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
-// The light block's two relays — RA in front of A, RB in front of B — each
-// in one of eight modes at a time (honest, text, drop, hold, hang, list-down,
-// list-replay, down); the extension built for the block names them as its
-// seed list, and no other base (WEB_INTERFACE → The extension → "The light
-// read", "The resolve"). Ports clear of the two tip relays (19780, 19781),
-// the figures relay (19785) and D (19795/96/97).
-const RA_PORT = 19810;
-const RA_ORIGIN = `http://127.0.0.1:${RA_PORT}`;
-const RB_PORT = 19815;
-const RB_ORIGIN = `http://127.0.0.1:${RB_PORT}`;
-// The light block's own D — a fresh isolated chain of its own that both
-// relays' upstreams move to for L13.
-const DL_HTTP_PORT = 19820;
-const DL_ADMIN_PORT = 19821;
-const DL_P2P_PORT = 19822;
-const DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
-// The mesh block's two nodes A' and B' — each spawned with
-// MESH_ROLE=public, MESH_LISTEN=/ip4/127.0.0.1/udp/<AP_MESH_PORT or
-// BP_MESH_PORT>/webrtc-direct, MESH_STUN=off (two public nodes on one
-// loopback cannot share STUN_PORT 3478, and the brief names off). Ports
-// clear of the tip block's (B on 19770-72), the tip relays (19780-81), D
-// (19795-97), the light relays (19810/15) and DL (19820-22). A' and B'
-// are reached by the extension at their HTTP origins directly (the api
-// field of each seed-list entry), and over the mesh at their webrtc-
-// direct addresses (the addrs field of each entry — one address a piece,
-// with certhash and /p2p/<peerId>, read from the start line the node
-// prints — NODE_INTERFACE → Configuration → "A mesh node prints its
-// identity line"). For M4 one node's HTTP is moved aside and a tip relay
-// (startTipRelay) stands in front of its api, in `hold-posts` mode — a
-// read passes through, a POST /posts is held past REQUEST_TIMEOUT_MS so
-// the client's write rule moves the same bytes to the next entry
-// (MESH_INTERFACE → The client's node list → "A write goes to one node
-// at a time").
-const AP_HTTP_PORT = 19830;
-const AP_ADMIN_PORT = 19831;
-const AP_P2P_PORT = 19832;
-const AP_MESH_PORT = 19833;
-const AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
-const BP_HTTP_PORT = 19835;
-const BP_ADMIN_PORT = 19836;
-const BP_P2P_PORT = 19837;
-const BP_MESH_PORT = 19838;
-const BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
-// For M4's relay-in-front stage: the alternate HTTP port A' is restarted
-// on so the tip relay can take over AP_HTTP_PORT with A' as its upstream.
-// The node's p2p listen (AP_P2P_PORT) and mesh listen (AP_MESH_PORT) stay
-// on their own ports — only the HTTP listener is moved.
-const AP_ALT_HTTP_PORT = 19834;
-// M5's isolated node D — a miner with its own MINING_SECRET on a copy of
-// A''s store, BOOTSTRAP_PEERS empty so it peers with no node and no node
-// can give it M3's post's text, reached by the extension as a hand-added
-// node over the mesh:
-//   NODE_INTERFACE → Posts DAG →
-//     "A serving reader is asked for what has been due";
-//   WEB_INTERFACE → The settings window → "The serve row";
-//   WEB_INTERFACE → The extension → "A serving read is answered from it".
-// Ports clear of every other harness child: B (19770–72), the tip relays
-// (19780–81), D for the verified-tip block (19795–97), the light relays
-// (19810/15), DL (19820–22), A' (19830–34) and B' (19835–38).
-const DM5_HTTP_PORT = 19860;
-const DM5_ADMIN_PORT = 19861;
-const DM5_P2P_PORT = 19862;
-const DM5_MESH_PORT = 19863;
-const DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
+let B_HTTP_PORT = null, B_ADMIN_PORT = null, B_P2P_PORT = null, B_ORIGIN = null;
+let RLA_PORT = null, RLA_ORIGIN = null;
+let RLB_PORT = null, RLB_ORIGIN = null;
+// Node D — isolated, mined on demand for the verified-tip block.
+let D_HTTP_PORT = null, D_ADMIN_PORT = null, D_P2P_PORT = null, D_ORIGIN = null;
+// The light block's two relays and its own isolated D for L13.
+let RA_PORT = null, RA_ORIGIN = null;
+let RB_PORT = null, RB_ORIGIN = null;
+let DL_HTTP_PORT = null, DL_ADMIN_PORT = null, DL_P2P_PORT = null, DL_ORIGIN = null;
+// The mesh block's two nodes A' and B'. The ports are read from each node's
+// start line on its first spawn and pinned for every later spawn behind the
+// seed-list entry (M2, M3 and M4); M4 restarts A' on a fresh alt HTTP port
+// and stands a tip relay on A''s first HTTP port with that alt as upstream.
+let AP_HTTP_PORT = null, AP_ADMIN_PORT = null, AP_P2P_PORT = null, AP_MESH_PORT = null;
+let AP_ORIGIN = null;
+let BP_HTTP_PORT = null, BP_ADMIN_PORT = null, BP_P2P_PORT = null, BP_MESH_PORT = null;
+let BP_ORIGIN = null;
+// M5's isolated node D — its ports are read from its start line.
+let DM5_HTTP_PORT = null, DM5_ADMIN_PORT = null, DM5_P2P_PORT = null, DM5_MESH_PORT = null;
+let DM5_ORIGIN = null;
 // The devnet faucet's public key — devnet-only and public by design: the key
 // steps 12 and 21 send to, the owner of the real box the figures relay lists
 // under R's key in step 22b, and the owner the relay names for S's handle in
@@ -1127,7 +1072,6 @@ const sleep = async (ms) => {
 // data dir, and the single extension it loads at --extension-dir
 // (WEB_INTERFACE → The extension → "The verified tip").
 async function launchChromium(extensionDir) {
-  const chromePort = 19200 + Math.floor(Math.random() * 500);
   const profileDir = mkdtempSync(join(tmpdir(), 'notis-ext-proof-'));
   // Chromium refuses WebRTC connections to 127.0.0.1 unless started with
   // --allow-loopback-in-peer-connection. The flag is a harness switch for
@@ -1139,9 +1083,12 @@ async function launchChromium(extensionDir) {
   // on the same browser defaults a reader's browser carries
   // (memory `runs-on-browser-defaults`).
   const meshArgs = MESH ? ['--allow-loopback-in-peer-connection'] : [];
+  // Chromium binds the DevTools port itself: `--remote-debugging-port=0`
+  // has the OS answer the port, and Chrome writes it to the
+  // `DevToolsActivePort` file in the profile directory — the first line.
   const chromeProc = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
-    `--remote-debugging-port=${chromePort}`, `--user-data-dir=${profileDir}`,
+    '--remote-debugging-port=0', `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionDir}`, `--disable-extensions-except=${extensionDir}`,
     ...meshArgs,
     'about:blank',
@@ -1149,14 +1096,21 @@ async function launchChromium(extensionDir) {
   chromeProc.stderr.on('data', () => {}); // absorb chrome's noise
   chromeProc.stdout.on('data', () => {});
   return recordWait('launchChromium DevTools up', 200 * 100, async () => {
+    const portFilePath = join(profileDir, 'DevToolsActivePort');
     for (let i = 0; i < 200; i++) {
-      try {
-        const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
-        if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
-      } catch {}
+      if (existsSync(portFilePath)) {
+        try {
+          const firstLine = readFileSync(portFilePath, 'utf8').split('\n')[0];
+          const chromePort = Number(firstLine);
+          if (Number.isFinite(chromePort) && chromePort > 0) {
+            const r = await fetch(`http://127.0.0.1:${chromePort}/json/version`);
+            if (r.ok) return { proc: chromeProc, port: chromePort, profile: profileDir, version: await r.json() };
+          }
+        } catch {}
+      }
       await sleep(100);
     }
-    throw new Error(`chrome DevTools never appeared on port ${chromePort}`);
+    throw new Error(`chrome DevTools never appeared (DevToolsActivePort not written in ${profileDir})`);
   });
 }
 
@@ -1697,6 +1651,47 @@ async function stopAllChildren() {
   }
 }
 
+// Whether a TCP port on 127.0.0.1 is free right now — the test the restart
+// rule reads before pinning a port a node took on its first start. Binds a
+// bare server on the port; a successful bind proves the port is free (the
+// server is closed before the function returns). The caller's refusal names
+// the port on a false answer: a port taken between a node's first start and
+// its restart behind the seed-list entry it answers for fails the block, the
+// port and the node named.
+async function portIsFree(port) {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => {
+      srv.close(() => resolve(true));
+    });
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+// Read the p2p port and peerId out of a `[net] listening on` line —
+// `/ip4/<host>/tcp/<port>/p2p/<peerId>`. The `tools/test-state` loader
+// reads the same line (its `nodePeerIdFromListenLine`); web declares no
+// dependency on that member, so this is a small local reader.
+function parseNetListenLine(line) {
+  const m = /listening on:\s*\/ip4\/[^/]+\/tcp\/(\d+)\/p2p\/([^\s/]+)/.exec(line);
+  return m ? { port: Number(m[1]), peerId: m[2] } : null;
+}
+
+// Read the mesh (WebRTC-direct) port out of a mesh node's identity
+// `multiaddrs` entry — the one shaped
+// `/ip4/<host>/udp/<port>/webrtc-direct/certhash/<multihash>/p2p/<peerId>`.
+// Returns `null` when the identity carries no such entry.
+function pickMeshPortFromIdentity(identity) {
+  if (identity === null || !Array.isArray(identity.multiaddrs)) return null;
+  for (const a of identity.multiaddrs) {
+    if (typeof a !== 'string') continue;
+    const m = /^\/ip4\/[^/]+\/udp\/(\d+)\/webrtc-direct\//.exec(a);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
 async function currentHeight(origin) {
   try {
     const r = await fetch(`${origin}/blocks/current`);
@@ -1906,10 +1901,11 @@ async function waitForHeightsClose(originA, originB, tolerance, ms = 300000) {
 // start from. `relay.fakeBox`, `relay.foreignBox`, `relay.droppedCreditsBox`
 // and `relay.droppedKarmaBox` hold the box the figures mode last edited R's
 // listing with — the one the arm asserts the figures line names.
-async function startTipRelay(upstream, port) {
+async function startTipRelay(upstream, port = 0) {
   const relay = {
     server: null,
-    origin: `http://127.0.0.1:${port}`,
+    origin: null,
+    port: null,
     upstream,
     mode: 'honest',
     flips: { total: 0 },
@@ -2170,6 +2166,9 @@ async function startTipRelay(upstream, port) {
     relay.server.on('error', rej);
     relay.server.listen(port, '127.0.0.1', res);
   });
+  const bound = relay.server.address();
+  relay.port = typeof bound === 'object' && bound !== null ? bound.port : port;
+  relay.origin = `http://127.0.0.1:${relay.port}`;
   return relay;
 }
 
@@ -2388,23 +2387,38 @@ async function pressAndReadVerdict(cx, opts = {}) {
 }
 
 // Bring node B up, bootstrapped from A. B's role is server; its store is
-// fresh; it waits for one peer (A) before returning. Answers with the sync
-// heights the caller records.
+// fresh at each start, the key file at `${SCRATCH}/b.key` persists, so
+// every B of a run answers to the same `notisId` the seed list names.
+// B spawns with `PORT=0`, `ADMIN_PORT=0`, `LISTEN_ADDRS=/ip4/127.0.0.1/tcp/0`
+// — a node behind a relay takes new ports on every start, and the relay's
+// upstream moves to them (`WEB_INTERFACE → The extension → "The verified
+// tip"`). The ports are read back from B's start lines
+// (`api_listening`, `Admin listener on …:<port>`, `[net] listening on:`)
+// and the tip and light relays' upstreams are moved to B's new origin.
 async function bringUpNodeB() {
   const bDbPath = join(SCRATCH, 'b.db');
   for (const suffix of ['', '-shm', '-wal']) {
     try { rmSync(bDbPath + suffix, { force: true }); } catch {}
   }
-  console.log(`[vt] spawning node B: port=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT} db=${bDbPath} bootstrap=${NODE_P2P}`);
-  spawnDaemon('b', NODE_DIST, {
+  console.log(`[vt] spawning node B on OS-bound ports: db=${bDbPath} bootstrap=${NODE_P2P}`);
+  const bSpawn = await spawnServerNode('b', {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'server',
-    PORT: String(B_HTTP_PORT),
-    ADMIN_PORT: String(B_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${B_P2P_PORT}`,
+    PORT: '0',
+    ADMIN_PORT: '0',
+    LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: NODE_P2P,
     DB_PATH: bDbPath,
-  });
+  }, { withMesh: false });
+  B_HTTP_PORT = bSpawn.ports.http;
+  B_ADMIN_PORT = bSpawn.ports.admin;
+  B_P2P_PORT = bSpawn.ports.p2p;
+  B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
+  console.log(`[vt] node B bound: http=${B_HTTP_PORT} admin=${B_ADMIN_PORT} p2p=${B_P2P_PORT}`);
+  // The tip and light relays whose upstream is B (RLB for the verified and
+  // waiting runs, RB for `--light`) move to B's new origin on every spawn.
+  if (tipRelays.b !== null && !WAITING_ONLY) tipRelays.b.upstream = B_ORIGIN;
+  if (lightRelays.b !== null) lightRelays.b.upstream = B_ORIGIN;
   return { bDbPath };
 }
 
@@ -2676,16 +2690,24 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
       && readingStopped.tipClass === 'tip mono'
       && /^only one node could be checked · tip \d+$/.test(readingStopped.title ?? '');
 
+    // B behind RLB restarts on OS-bound ports, same key file, same store;
+    // the relay's upstream moves to B's new origin (`WEB_INTERFACE → The
+    // extension → "The verified tip"`).
     console.log(`[vt] spawning node B again on the same store: ${bDbPath}`);
-    spawnDaemon('b', NODE_DIST, {
+    const bRestart = await spawnServerNode('b', {
       NETWORK_TYPE: 'devnet',
       NODE_ROLE: 'server',
-      PORT: String(B_HTTP_PORT),
-      ADMIN_PORT: String(B_ADMIN_PORT),
-      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${B_P2P_PORT}`,
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
       BOOTSTRAP_PEERS: NODE_P2P,
       DB_PATH: bDbPath,
-    });
+    }, { withMesh: false });
+    B_HTTP_PORT = bRestart.ports.http;
+    B_ADMIN_PORT = bRestart.ports.admin;
+    B_P2P_PORT = bRestart.ports.p2p;
+    B_ORIGIN = `http://127.0.0.1:${B_HTTP_PORT}`;
+    if (tipRelays.b !== null) tipRelays.b.upstream = B_ORIGIN;
     const bBackUp = await waitForHttpUp(B_ORIGIN, 30000);
     const synced2 = bBackUp ? await waitForHeightsClose(NODE, B_ORIGIN, 2, 300000) : null;
 
@@ -2784,20 +2806,30 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     try { rmSync(dDbPath + suffix, { force: true }); } catch {}
   }
   const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vt] spawning node D: port=${D_HTTP_PORT} admin=${D_ADMIN_PORT} p2p=${D_P2P_PORT} db=${dDbPath} isolated`);
-  spawnDaemon('d', NODE_DIST, {
-    NETWORK_TYPE: 'devnet',
-    NODE_ROLE: 'miner',
-    PORT: String(D_HTTP_PORT),
-    ADMIN_PORT: String(D_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${D_P2P_PORT}`,
-    BOOTSTRAP_PEERS: '',
-    DB_PATH: dDbPath,
-    MINING_SECRET: dSecret,
-  });
-  if (!await waitForHttpUp(D_ORIGIN, 30000)) {
-    record('19c', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
-    record('19b', 'NOT RUN', `node D did not come up at ${D_ORIGIN}`);
+  console.log(`[vt] spawning node D on OS-bound ports: db=${dDbPath} isolated`);
+  let dSpawnOk = false;
+  try {
+    const dSpawn = await spawnServerNode('d', {
+      NETWORK_TYPE: 'devnet',
+      NODE_ROLE: 'miner',
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
+      BOOTSTRAP_PEERS: '',
+      DB_PATH: dDbPath,
+      MINING_SECRET: dSecret,
+    }, { withMesh: false });
+    D_HTTP_PORT = dSpawn.ports.http;
+    D_ADMIN_PORT = dSpawn.ports.admin;
+    D_P2P_PORT = dSpawn.ports.p2p;
+    D_ORIGIN = `http://127.0.0.1:${D_HTTP_PORT}`;
+    dSpawnOk = await waitForHttpUp(D_ORIGIN, 30000);
+  } catch (e) {
+    console.log(`[vt] node D spawn failed: ${e.message}`);
+  }
+  if (!dSpawnOk) {
+    record('19c', 'NOT RUN', `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
+    record('19b', 'NOT RUN', `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
   } else {
     console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
@@ -7647,11 +7679,12 @@ function markLightFail(reason) {
 //                  the client reads is D's (`WEB_INTERFACE → The extension
 //                  → "The chain's name"`, `"The post cache"`). The one
 //                  edit is the upstream swap, not the mode's behaviour.
-async function startRelay(name, upstream, port) {
+async function startRelay(name, upstream, port = 0) {
   const relay = {
     name,
     server: null,
-    origin: `http://127.0.0.1:${port}`,
+    origin: null,
+    port: null,
     upstream,
     mode: 'honest',
     targetId: null,
@@ -7851,6 +7884,9 @@ async function startRelay(name, upstream, port) {
     relay.server.on('error', reject);
     relay.server.listen(port, '127.0.0.1', resolve);
   });
+  const bound = relay.server.address();
+  relay.port = typeof bound === 'object' && bound !== null ? bound.port : port;
+  relay.origin = `http://127.0.0.1:${relay.port}`;
   return relay;
 }
 
@@ -8378,17 +8414,21 @@ async function bringUpLightD() {
     try { rmSync(dDbPath + suffix, { force: true }); } catch {}
   }
   const dSecret = randomBytes(32).toString('hex');
-  console.log(`[vl] spawning light D at ${DL_ORIGIN} (p2p=${DL_P2P_PORT}, isolated)`);
-  spawnDaemon('d-light', NODE_DIST, {
+  console.log(`[vl] spawning light D on OS-bound ports (isolated)`);
+  const dlSpawn = await spawnServerNode('d-light', {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'miner',
-    PORT: String(DL_HTTP_PORT),
-    ADMIN_PORT: String(DL_ADMIN_PORT),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DL_P2P_PORT}`,
+    PORT: '0',
+    ADMIN_PORT: '0',
+    LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
     BOOTSTRAP_PEERS: '',
     DB_PATH: dDbPath,
     MINING_SECRET: dSecret,
-  });
+  }, { withMesh: false });
+  DL_HTTP_PORT = dlSpawn.ports.http;
+  DL_ADMIN_PORT = dlSpawn.ports.admin;
+  DL_P2P_PORT = dlSpawn.ports.p2p;
+  DL_ORIGIN = `http://127.0.0.1:${DL_HTTP_PORT}`;
   const up = await waitForHttpUp(DL_ORIGIN, 30000);
   if (!up) return { ok: false, reason: 'light D did not come up' };
   const dPast = TIP_M + TIP_K + 4;
@@ -9462,49 +9502,55 @@ function markMeshFail(reason) {
   for (const s of MESH_STEPS) record(s, false, reason);
 }
 
-const AP_PORTS = {
-  http: AP_HTTP_PORT, admin: AP_ADMIN_PORT, p2p: AP_P2P_PORT, mesh: AP_MESH_PORT, altHttp: AP_ALT_HTTP_PORT,
-};
-const BP_PORTS = {
-  http: BP_HTTP_PORT, admin: BP_ADMIN_PORT, p2p: BP_P2P_PORT, mesh: BP_MESH_PORT,
-};
+// The mesh nodes' first-start ports, read back from each spawn's start
+// lines and pinned on every later spawn behind the seed-list entry each
+// node answers for (M2, M3 and M4); M4 restarts A' on a fresh alt HTTP
+// port (bound on 0) and stands a tip relay on A''s first HTTP port with
+// that alt as upstream. Each `altHttp` is set at M4 time; `apHttp` on
+// `meshNodes.ap` names the port A' is listening on right now.
+const AP_PORTS = { http: null, admin: null, p2p: null, mesh: null, altHttp: null };
+const BP_PORTS = { http: null, admin: null, p2p: null, mesh: null };
 
-// The env one mesh node takes — mesh on or off, and (for B') the bootstrap
-// multiaddr naming A''s p2p listen. `httpPort` overrides `ports.http` when
-// the relay-in-front stage moves the node off its base port.
-function meshNodeEnv({ ports, dbPath, withMesh, bootstrap, httpPort }) {
+// The env one node takes — mesh on or off, each port explicit so the
+// caller passes `0` for a first start (OS answers) or the stored
+// first-start value for a restart behind the seed-list entry the node
+// answers for.
+function nodeEnv({ dbPath, bootstrap, http, admin, p2p, mesh }) {
   const env = {
     NETWORK_TYPE: 'devnet',
     NODE_ROLE: 'server',
-    PORT: String(httpPort ?? ports.http),
-    ADMIN_PORT: String(ports.admin),
-    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${ports.p2p}`,
+    PORT: String(http),
+    ADMIN_PORT: String(admin),
+    LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${p2p}`,
     DB_PATH: dbPath,
   };
   env.BOOTSTRAP_PEERS = bootstrap ?? '';
-  if (withMesh) {
+  if (mesh !== undefined) {
     env.MESH_ROLE = 'public';
-    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${ports.mesh}/webrtc-direct`;
+    env.MESH_LISTEN = `/ip4/127.0.0.1/udp/${mesh}/webrtc-direct`;
     env.MESH_STUN = 'off';
   }
   return env;
 }
 
-// Spawn a mesh-on node and read its identity line (the first JSON line of
-// its stdout with `notisId`, `peerId` and `multiaddrs`) —
-// `NODE_INTERFACE → Configuration → "A mesh node prints its identity
-// line"`. Returns the child, its exit promise, the parsed identity and
-// the ports the spawn used. `spawnDaemon`'s log pipe runs through dynamic
-// import and attaches after a tick; this helper attaches a 'data' listener
-// synchronously after `spawn`, buffers until the identity line arrives,
-// then writes every chunk to the log file (so the identity is in the log
-// too, with no race against the pipe).
-async function spawnMeshNode(name, env, timeoutMs = 60000) {
+// Spawn a node and read every port the OS bound for it from its start
+// lines: `api_listening` (http), `Admin listener on …:<port>` (admin),
+// `[net] listening on: /ip4/…/tcp/<port>/p2p/<peerId>` (p2p), and, for a
+// mesh node, the identity JSON line (notisId, peerId, multiaddrs — one of
+// them carries the mesh port as `/ip4/…/udp/<port>/webrtc-direct/…`).
+// Returns `{ child, exited, identity, ports: { http, admin, p2p, mesh? } }`.
+// `env` carries the ports the node binds — `0` on a first start (the OS
+// answers), the stored first-start value on a restart behind the seed-list
+// entry the node answers for. The `stderr` stream and every stdout chunk
+// land in the log file at `${SCRATCH}/${name}.log`, with no race against a
+// deferred pipe attach — the data listener attaches synchronously after
+// `spawn`.
+async function spawnServerNode(name, env, { withMesh }, timeoutMs = 60000) {
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
   const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
     vtChildren.delete(name);
-    console.log(`[vm] ${name} exited: code=${code} signal=${sig}`);
+    console.log(`[${withMesh ? 'vm' : 'vt'}] ${name} exited: code=${code} signal=${sig}`);
     res();
   }));
   vtChildren.set(name, { child, exited });
@@ -9516,50 +9562,76 @@ async function spawnMeshNode(name, env, timeoutMs = 60000) {
   }
   let buf = '';
   let identity = null;
-  const identityPromise = new Promise((resolve, reject) => {
+  let httpPort = null;
+  let adminPort = null;
+  let p2pPort = null;
+  let meshPort = null;
+  const have = () =>
+    httpPort !== null
+    && adminPort !== null
+    && p2pPort !== null
+    && (!withMesh || (identity !== null && meshPort !== null));
+  const ready = new Promise((resolve, reject) => {
     const to = setTimeout(() => {
-      if (identity === null) reject(new Error(`${name} never printed an identity line within ${timeoutMs}ms`));
+      if (!have()) reject(new Error(
+        `${name} never printed every start line within ${timeoutMs}ms`
+        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`,
+      ));
     }, timeoutMs);
     const onData = (chunk) => {
       const text = chunk.toString('utf8');
       logStream?.write(text);
-      if (identity !== null) return;
       buf += text;
       let idx;
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
+        // `api_listening` JSON event and the identity JSON line — mesh
+        // nodes print both, non-mesh nodes only the first.
         try {
           const parsed = JSON.parse(line);
-          if (typeof parsed?.notisId === 'string'
+          if (parsed?.event === 'api_listening' && typeof parsed.port === 'number') {
+            httpPort = parsed.port;
+          } else if (typeof parsed?.notisId === 'string'
               && typeof parsed?.peerId === 'string'
               && Array.isArray(parsed?.multiaddrs)) {
             identity = parsed;
-            clearTimeout(to);
-            resolve(parsed);
-            return;
+            meshPort = pickMeshPortFromIdentity(parsed);
           }
-        } catch { /* not a JSON identity line, next */ }
+        } catch { /* not JSON */ }
+        const adm = /^Admin listener on [^:]+:([0-9]+)$/.exec(line);
+        if (adm) adminPort = Number(adm[1]);
+        const net = parseNetListenLine(line);
+        if (net !== null) p2pPort = net.port;
+        if (have()) { clearTimeout(to); resolve(); return; }
       }
     };
     child.stdout?.on('data', onData);
     child.on('exit', () => {
       clearTimeout(to);
-      if (identity === null) reject(new Error(`${name} exited before printing an identity line`));
+      if (!have()) reject(new Error(
+        `${name} exited before every start line was printed`
+        + ` (http=${httpPort}, admin=${adminPort}, p2p=${p2pPort}${withMesh ? `, mesh=${meshPort}, identity=${identity === null ? 'null' : 'read'}` : ''})`,
+      ));
     });
   });
-  const id = await identityPromise;
-  return { child, exited, identity: id };
+  await ready;
+  const ports = withMesh
+    ? { http: httpPort, admin: adminPort, p2p: p2pPort, mesh: meshPort }
+    : { http: httpPort, admin: adminPort, p2p: p2pPort };
+  return { child, exited, identity, ports };
 }
 
-// Spawn a mesh-off node — plain `spawnDaemon` and wait for HTTP. The DB
-// path and the node's identity (notisId) are kept across restarts, so a
-// restart without MESH_ROLE leaves every seed-list entry's notisId still
-// matching its node's key.
-async function spawnPlainNode(name, env, httpOrigin, timeoutMs = 60000) {
-  spawnDaemon(name, NODE_DIST, env);
-  const up = await waitForHttpUp(httpOrigin, timeoutMs);
-  if (!up) throw new Error(`${name} did not answer /blocks/current at ${httpOrigin} within ${timeoutMs}ms`);
+// Refuse a pin on a port that is not free right now, naming the port and
+// the node — a port taken between a node's first start and its restart
+// behind the seed-list entry it answers for fails the block
+// (`WEB_INTERFACE → The extension → "The verified tip"`,
+// `MESH_INTERFACE → The node endpoint`).
+async function refuseIfPortTaken(port, label) {
+  if (port === null || port === 0) return;
+  if (!(await portIsFree(port))) {
+    throw new Error(`port ${port} is taken — cannot restart ${label} behind its seed-list entry`);
+  }
 }
 
 // A's peer id, read from `NODE_P2P` (the --node-p2p multiaddr, shape
@@ -9580,7 +9652,7 @@ function nodeP2pPeerId() {
 // Wait for a node's log to carry `[net] outbound handshake with <peerId> on
 // id=<connection id>: ok=true` — the one line `packages/net`'s node writer
 // records when an outbound handshake completes. The log is `${SCRATCH}/${name}.log`, which
-// both `spawnDaemon` and `spawnMeshNode` write to. Returns true on match,
+// both `spawnDaemon` and `spawnServerNode` write to. Returns true on match,
 // false on timeout. A restart appends to the log, so the caller passes
 // the offset into the file where the restart begins — a previous spawn's
 // handshake line is not counted for the current one.
@@ -9706,25 +9778,36 @@ async function setupMeshStack() {
   for (const p of [apDb, apDb + '-shm', apDb + '-wal', bpDb, bpDb + '-shm', bpDb + '-wal']) {
     try { rmSync(p, { force: true }); } catch {}
   }
-  // A' spawns first with mesh, bootstrapped from the operator's A at
-  // --node-p2p so A' is a peer on A's chain and inherits R's karma
-  // (operator-promoted on A); B' bootstraps from A''s p2p listen, so
-  // B' syncs through A' and reaches A's chain too.
-  console.log(`[vm] spawning A': http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT} db=${apDb} bootstrap=${NODE_P2P}`);
-  const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
-    ports: AP_PORTS, dbPath: apDb, withMesh: true, bootstrap: NODE_P2P,
-  }));
-  const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
-  if (!apUp) throw new Error(`A' did not answer /blocks/current at ${AP_ORIGIN}`);
-  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, multiaddrs=${JSON.stringify(apSpawn.identity.multiaddrs)}`);
+  // A' spawns first with mesh on OS-bound ports, bootstrapped from the
+  // operator's A at `--node-p2p` so A' is a peer on A's chain and inherits
+  // R's karma (operator-promoted on A). Every port is read back from A''s
+  // start lines, pinned in `AP_PORTS` and the module-level globals, and
+  // every later spawn of A' behind the seed-list entry takes those ports.
+  console.log(`[vm] spawning A' on OS-bound ports: db=${apDb} bootstrap=${NODE_P2P}`);
+  const apSpawn = await spawnServerNode('ap', nodeEnv({
+    dbPath: apDb, bootstrap: NODE_P2P, http: 0, admin: 0, p2p: 0, mesh: 0,
+  }), { withMesh: true });
+  AP_HTTP_PORT = apSpawn.ports.http;
+  AP_ADMIN_PORT = apSpawn.ports.admin;
+  AP_P2P_PORT = apSpawn.ports.p2p;
+  AP_MESH_PORT = apSpawn.ports.mesh;
+  AP_ORIGIN = `http://127.0.0.1:${AP_HTTP_PORT}`;
+  AP_PORTS.http = AP_HTTP_PORT; AP_PORTS.admin = AP_ADMIN_PORT;
+  AP_PORTS.p2p = AP_P2P_PORT; AP_PORTS.mesh = AP_MESH_PORT;
+  console.log(`[vm] A' up: notisId=${apSpawn.identity.notisId.slice(0, 16)}…, peerId=${apSpawn.identity.peerId}, http=${AP_HTTP_PORT} admin=${AP_ADMIN_PORT} p2p=${AP_P2P_PORT} mesh=${AP_MESH_PORT}`);
   const bpBootstrap = `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${apSpawn.identity.peerId}`;
-  console.log(`[vm] spawning B': http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT} db=${bpDb} bootstrap=${bpBootstrap}`);
-  const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
-    ports: BP_PORTS, dbPath: bpDb, withMesh: true, bootstrap: bpBootstrap,
-  }));
-  const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
-  if (!bpUp) throw new Error(`B' did not answer /blocks/current at ${BP_ORIGIN}`);
-  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, multiaddrs=${JSON.stringify(bpSpawn.identity.multiaddrs)}`);
+  console.log(`[vm] spawning B' on OS-bound ports: db=${bpDb} bootstrap=${bpBootstrap}`);
+  const bpSpawn = await spawnServerNode('bp', nodeEnv({
+    dbPath: bpDb, bootstrap: bpBootstrap, http: 0, admin: 0, p2p: 0, mesh: 0,
+  }), { withMesh: true });
+  BP_HTTP_PORT = bpSpawn.ports.http;
+  BP_ADMIN_PORT = bpSpawn.ports.admin;
+  BP_P2P_PORT = bpSpawn.ports.p2p;
+  BP_MESH_PORT = bpSpawn.ports.mesh;
+  BP_ORIGIN = `http://127.0.0.1:${BP_HTTP_PORT}`;
+  BP_PORTS.http = BP_HTTP_PORT; BP_PORTS.admin = BP_ADMIN_PORT;
+  BP_PORTS.p2p = BP_P2P_PORT; BP_PORTS.mesh = BP_MESH_PORT;
+  console.log(`[vm] B' up: notisId=${bpSpawn.identity.notisId.slice(0, 16)}…, peerId=${bpSpawn.identity.peerId}, http=${BP_HTTP_PORT} admin=${BP_ADMIN_PORT} p2p=${BP_P2P_PORT} mesh=${BP_MESH_PORT}`);
   meshNodes.ap = {
     identity: apSpawn.identity, ports: AP_PORTS, dbPath: apDb, mesh: true, apHttp: AP_HTTP_PORT,
   };
@@ -9897,13 +9980,24 @@ async function runMeshStepM2(bcx) {
   try {
     await stopChild('ap');
     await stopChild('bp');
-    await spawnPlainNode('ap', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P,
-    }), AP_ORIGIN);
-    await spawnPlainNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false,
+    // A' and B' restart behind the seed-list entries they answer for, so
+    // each takes back the ports its first start was given. A port taken
+    // between fails the block, naming it.
+    await refuseIfPortTaken(AP_PORTS.http, "A' http");
+    await refuseIfPortTaken(AP_PORTS.admin, "A' admin");
+    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
+    await refuseIfPortTaken(BP_PORTS.http, "B' http");
+    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
+    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
+    await spawnServerNode('ap', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: AP_PORTS.http, admin: AP_PORTS.admin, p2p: AP_PORTS.p2p,
+    }), { withMesh: false });
+    await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath,
       bootstrap: `/ip4/127.0.0.1/tcp/${AP_P2P_PORT}/p2p/${meshNodes.ap.identity.peerId}`,
-    }), BP_ORIGIN);
+      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p,
+    }), { withMesh: false });
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
     page = await openFreshExtensionPage(bcx);
@@ -9959,16 +10053,30 @@ async function runMeshStepM3(bcx) {
     const bpLog = join(SCRATCH, 'bp.log');
     const apLogOff = logOffset(apLog);
     const bpLogOff = logOffset(bpLog);
-    const apSpawn = await spawnMeshNode('ap', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: true, bootstrap: NODE_P2P,
-    }));
+    // A' and B' restart behind the seed-list entries they answer for, so
+    // each takes back the first-start ports and the mesh identity's
+    // `addrs[0]` the write pass wrote into `notis-nodes` still matches.
+    // A port taken in between fails the block, naming it.
+    await refuseIfPortTaken(AP_PORTS.http, "A' http");
+    await refuseIfPortTaken(AP_PORTS.admin, "A' admin");
+    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
+    await refuseIfPortTaken(AP_PORTS.mesh, "A' mesh");
+    await refuseIfPortTaken(BP_PORTS.http, "B' http");
+    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
+    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
+    await refuseIfPortTaken(BP_PORTS.mesh, "B' mesh");
+    const apSpawn = await spawnServerNode('ap', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: AP_PORTS.http, admin: AP_PORTS.admin, p2p: AP_PORTS.p2p, mesh: AP_PORTS.mesh,
+    }), { withMesh: true });
     const apUp = await waitForHttpUp(AP_ORIGIN, 60000);
     if (!apUp) throw new Error(`A' did not answer at ${AP_ORIGIN} after M3 restart`);
     // B' bootstraps from A, the same bootstrap A' takes, so B' peers
     // with A directly and relays an admitted write to A at admission.
-    const bpSpawn = await spawnMeshNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: true, bootstrap: NODE_P2P,
-    }));
+    const bpSpawn = await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
+      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p, mesh: BP_PORTS.mesh,
+    }), { withMesh: true });
     const bpUp = await waitForHttpUp(BP_ORIGIN, 60000);
     if (!bpUp) throw new Error(`B' did not answer at ${BP_ORIGIN} after M3 restart`);
     meshNodes.ap = { ...meshNodes.ap, identity: apSpawn.identity, mesh: true };
@@ -10101,18 +10209,28 @@ async function runMeshStepM4(bcx) {
     const bpLog = join(SCRATCH, 'bp.log');
     const apM4LogOff = logOffset(apM4Log);
     const bpLogOff = logOffset(bpLog);
-    // A' restarts on its alt HTTP port (p2p and mesh ports unchanged).
-    // No MESH_ROLE — M4 reaches each at its api base alone. A' still
-    // bootstraps from --node-p2p so it stays on A's chain, and B' takes
-    // the same bootstrap so B' peers with A directly and relays the
-    // admitted write to A at admission.
-    await spawnPlainNode('ap-m4', meshNodeEnv({
-      ports: AP_PORTS, dbPath: meshNodes.ap.dbPath, withMesh: false, bootstrap: NODE_P2P, httpPort: AP_ALT_HTTP_PORT,
-    }), `http://127.0.0.1:${AP_ALT_HTTP_PORT}`);
-    await spawnPlainNode('bp', meshNodeEnv({
-      ports: BP_PORTS, dbPath: meshNodes.bp.dbPath, withMesh: false, bootstrap: NODE_P2P,
-    }), BP_ORIGIN);
-    meshNodes.ap.apHttp = AP_ALT_HTTP_PORT;
+    // A' restarts on a fresh alt HTTP port (bound on 0) with its first-
+    // start p2p port taken back; B' restarts behind its seed-list entry
+    // with every port taken back. No MESH_ROLE — M4 reaches each at its
+    // api base alone. A' still bootstraps from --node-p2p so it stays on
+    // A's chain, and B' takes the same bootstrap so B' peers with A
+    // directly and relays the admitted write to A at admission. A port
+    // taken in between fails the block, naming it.
+    await refuseIfPortTaken(AP_PORTS.p2p, "A' p2p");
+    await refuseIfPortTaken(BP_PORTS.http, "B' http");
+    await refuseIfPortTaken(BP_PORTS.admin, "B' admin");
+    await refuseIfPortTaken(BP_PORTS.p2p, "B' p2p");
+    const apM4Spawn = await spawnServerNode('ap-m4', nodeEnv({
+      dbPath: meshNodes.ap.dbPath, bootstrap: NODE_P2P,
+      http: 0, admin: 0, p2p: AP_PORTS.p2p,
+    }), { withMesh: false });
+    AP_PORTS.altHttp = apM4Spawn.ports.http;
+    const apAltOrigin = `http://127.0.0.1:${AP_PORTS.altHttp}`;
+    await spawnServerNode('bp', nodeEnv({
+      dbPath: meshNodes.bp.dbPath, bootstrap: NODE_P2P,
+      http: BP_PORTS.http, admin: BP_PORTS.admin, p2p: BP_PORTS.p2p,
+    }), { withMesh: false });
+    meshNodes.ap.apHttp = AP_PORTS.altHttp;
     meshNodes.ap.mesh = false;
     meshNodes.bp.mesh = false;
     const aPeerId = nodeP2pPeerId();
@@ -10133,11 +10251,15 @@ async function runMeshStepM4(bcx) {
     if (!apGossipedBlock) throw new Error(`ap-m4 did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
     const bpGossipedBlock = await waitForAppliedBlockInLog(bpLog, bpLogOff, 180000);
     if (!bpGossipedBlock) throw new Error(`B' did not receive a gossiped ordering block from A within 180 s after M4 restart (the handshake completed but gossip mesh did not form)`);
-    // The tip relay on AP_HTTP_PORT with A''s alt HTTP as upstream — the
-    // build's api for A' still names AP_ORIGIN, so every client read of
+    // The tip relay takes A''s first HTTP port (the one the seed-list
+    // entry names) with A''s alt HTTP as upstream — every client read of
     // A''s HTTP base routes through this relay. `hold-posts` holds POST
-    // /posts past REQUEST_TIMEOUT_MS; reads pass through.
-    m4Relay = await startTipRelay(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`, AP_HTTP_PORT);
+    // /posts past REQUEST_TIMEOUT_MS; reads pass through. A port taken
+    // in between — nothing bound A's first HTTP port between the stop
+    // and this listen, since A' itself stopped above — fails the block
+    // naming it.
+    await refuseIfPortTaken(AP_PORTS.http, "A' http (M4 relay)");
+    m4Relay = await startTipRelay(apAltOrigin, AP_PORTS.http);
     m4Relay.mode = 'honest';
     console.log(`[vm] M4 relay up: ${m4Relay.origin} → ${m4Relay.upstream}`);
 
@@ -10177,7 +10299,7 @@ async function runMeshStepM4(bcx) {
         const a = await currentTip(NODE);
         if (a !== null && a.height > 0 && a.hash !== null) {
           const [apTip, bpTip] = await Promise.all([
-            currentTip(`http://127.0.0.1:${AP_ALT_HTTP_PORT}`),
+            currentTip(apAltOrigin),
             currentTip(BP_ORIGIN),
           ]);
           last = { a, apTip, bpTip };
@@ -10215,7 +10337,7 @@ async function runMeshStepM4(bcx) {
       const t0 = Date.now();
       while (Date.now() - t0 < 180000) {
         const [a, b] = await Promise.all([
-          fetch(`http://127.0.0.1:${AP_ALT_HTTP_PORT}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
+          fetch(`${apAltOrigin}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
           fetch(`${BP_ORIGIN}/posts?roots=1&author=${R_JSON.pubKeyHex}&limit=20`).then((r) => r.json()).catch(() => null),
         ]);
         const inA = Array.isArray(a?.posts) ? a.posts.filter((p) => p?.content === CONTENT).length : 0;
@@ -10335,20 +10457,25 @@ async function runMeshStepM5(cx, bcx) {
     await runSqliteCmd([dM5Db, `UPDATE dag_posts SET content = NULL WHERE id = '${P_ID}';`]);
     console.log(`[vm] M5: copied ${meshNodes.ap.dbPath} → ${dM5Db} and nulled content on id=${P_ID.slice(0, 16)}…`);
     const dSecret = randomBytes(32).toString('hex');
-    console.log(`[vm] M5: spawning D: http=${DM5_HTTP_PORT} admin=${DM5_ADMIN_PORT} p2p=${DM5_P2P_PORT} mesh=${DM5_MESH_PORT} db=${dM5Db} isolated (no bootstrap)`);
-    dSpawn = await spawnMeshNode('d-m5', {
+    console.log(`[vm] M5: spawning D on OS-bound ports: db=${dM5Db} isolated (no bootstrap)`);
+    dSpawn = await spawnServerNode('d-m5', {
       NETWORK_TYPE: 'devnet',
       NODE_ROLE: 'miner',
-      PORT: String(DM5_HTTP_PORT),
-      ADMIN_PORT: String(DM5_ADMIN_PORT),
-      LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${DM5_P2P_PORT}`,
+      PORT: '0',
+      ADMIN_PORT: '0',
+      LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
       BOOTSTRAP_PEERS: '',
       DB_PATH: dM5Db,
       MINING_SECRET: dSecret,
       MESH_ROLE: 'public',
-      MESH_LISTEN: `/ip4/127.0.0.1/udp/${DM5_MESH_PORT}/webrtc-direct`,
+      MESH_LISTEN: '/ip4/127.0.0.1/udp/0/webrtc-direct',
       MESH_STUN: 'off',
-    });
+    }, { withMesh: true });
+    DM5_HTTP_PORT = dSpawn.ports.http;
+    DM5_ADMIN_PORT = dSpawn.ports.admin;
+    DM5_P2P_PORT = dSpawn.ports.p2p;
+    DM5_MESH_PORT = dSpawn.ports.mesh;
+    DM5_ORIGIN = `http://127.0.0.1:${DM5_HTTP_PORT}`;
     const dUp = await waitForHttpUp(DM5_ORIGIN, 60000);
     if (!dUp) throw new Error(`D did not answer at ${DM5_ORIGIN} within 60 s`);
     const dAddr = pickWebRtcDirectAddr(dSpawn.identity, DM5_MESH_PORT);
@@ -12470,10 +12597,12 @@ async function setupLightRelays() {
   const bUp = await waitForHttpUp(B_ORIGIN, 60000);
   if (!bUp) throw new Error(`node B\'s HTTP /blocks/current never answered at ${B_ORIGIN}`);
   console.log(`[vl] B up at ${B_ORIGIN}`);
-  const ra = await startRelay('RA', NODE.replace(/\/+$/, ''), RA_PORT);
-  const rb = await startRelay('RB', B_ORIGIN, RB_PORT);
+  const ra = await startRelay('RA', NODE.replace(/\/+$/, ''), 0);
+  const rb = await startRelay('RB', B_ORIGIN, 0);
   lightRelays.a = ra;
   lightRelays.b = rb;
+  RA_PORT = ra.port; RA_ORIGIN = ra.origin;
+  RB_PORT = rb.port; RB_ORIGIN = rb.origin;
   console.log(`[vl] RA up at ${ra.origin} → ${ra.upstream}; RB up at ${rb.origin} → ${rb.upstream}`);
 }
 
@@ -12501,16 +12630,20 @@ const tipRelays = { a: null, b: null };
 
 async function setupTipRelays() {
   if (!(VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING_ONLY)) return;
-  // The verified blocks run RLB in front of B; under --waiting-only B is
-  // not needed, so RLB's upstream is A too. The seed list the extension
-  // was built with still names both bases, and the client reads both —
-  // every read reaches A either way, and the corner's tip run can
-  // verify with two nodes answering the same chain.
-  const rlbUpstream = WAITING_ONLY ? NODE.replace(/\/+$/, '') : B_ORIGIN;
-  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), RLA_PORT);
-  const rlb = await startTipRelay(rlbUpstream, RLB_PORT);
+  // Each relay binds on port 0, the OS answers the port, and the relay's
+  // `origin` names it; the globals the rest of the harness reads
+  // (`RLA_ORIGIN`, `RLB_ORIGIN`) and the seed list the write pass carries
+  // into the copy are set from the bound value. Under `--waiting-only` B
+  // is not needed, so RLB's upstream is A; otherwise its upstream is left
+  // null before B comes up, and `bringUpNodeB` moves it to B's origin on
+  // the first spawn — a request that arrives in that window answers 502
+  // as a relay whose upstream refuses the connection answers today.
+  const rla = await startTipRelay(NODE.replace(/\/+$/, ''), 0);
+  const rlb = await startTipRelay(WAITING_ONLY ? NODE.replace(/\/+$/, '') : null, 0);
   tipRelays.a = rla;
   tipRelays.b = rlb;
+  RLA_PORT = rla.port; RLA_ORIGIN = rla.origin;
+  RLB_PORT = rlb.port; RLB_ORIGIN = rlb.origin;
   console.log(`[vt] RLA up at ${rla.origin} → ${rla.upstream}; RLB up at ${rlb.origin} → ${rlb.upstream}`);
 }
 
