@@ -136,13 +136,21 @@ console.log(`check: public=${PUBLIC_ORIGIN}`);
 console.log(`check: blocks=${SELECTED.join(',')} (${SERIAL ? 'serial' : 'side-by-side'})`);
 
 // --- teardown state ---
-// Every harness the check launched runs under its own `child` handle —
-// each block's `SIGTERM` is sent to the handle, and the wait is on the
-// `exited` promise the spawn registers.
-const liveHarnesses = new Map(); // block -> { child, exited }
+// Every process the check launched runs under its own `child` handle —
+// each `SIGTERM` is sent to the handle, and the wait is on the `exited`
+// promise the spawn registered. Three kinds, each with its own map:
+// builds (short-lived, but a signal mid-build leaves them behind),
+// `up` CLIs (short-lived, but each writes `processes.log` as A, the
+// faucet and the miner start, so a signal mid-`up` leaves those nodes
+// behind), and harnesses (the long-running ones).
+const liveBuildChildren = new Map(); // child -> exited
+const liveUpChildren = new Map();    // runDir -> { child, exited }
+const liveHarnesses = new Map();     // block -> { child, exited }
 // Each stack's run directory the check started an `up` into; `down`
 // reads `processes.log` from the directory (TEST_STATE_INTERFACE →
-// Loading a state).
+// Loading a state). The directory is recorded before `up` spawns, so
+// a signal during `up` ends on `processes.log` for whatever `up`
+// recorded before the signal landed.
 const liveRunDirs = new Set();
 
 let signalEnding = false;
@@ -150,8 +158,21 @@ async function endOnSignal(signal) {
   if (signalEnding) process.exit(130);
   signalEnding = true;
   console.error(`check: ${signal} received, tearing down`);
+  // Builds first — `pnpm -r build` and `vite build` finish on their own
+  // but a signal does not wait on them; send SIGTERM and await the exit.
+  for (const [child] of liveBuildChildren) { try { child.kill('SIGTERM'); } catch {} }
+  for (const [, exited] of liveBuildChildren) { try { await exited; } catch {} }
+  // `up` CLIs next — a running `up` has (or is about to have) A, the
+  // faucet and the miner written to `processes.log`; stop the CLI first
+  // so it writes nothing more, then `down` on its run directory.
+  for (const [, rec] of liveUpChildren) { try { rec.child.kill('SIGTERM'); } catch {} }
+  for (const [, rec] of liveUpChildren) { try { await rec.exited; } catch {} }
+  // Harnesses: their own signal teardown stops their nodes and
+  // Chromium (EXTENSION_CHECK_INTERFACE → The command).
   for (const [, rec] of liveHarnesses) { try { rec.child.kill('SIGTERM'); } catch {} }
   for (const [, rec] of liveHarnesses) { try { await rec.exited; } catch {} }
+  // `down` on every run directory `up` reached — stops whatever
+  // `processes.log` names (TEST_STATE_INTERFACE → Loading a state).
   for (const d of liveRunDirs) { try { await runDown(d); } catch {} }
   if (WORKTREE_PATH !== null && !WORKTREE_REMOVED) { try { await removeWorktree(); } catch {} }
   process.exit(130);
@@ -176,9 +197,12 @@ async function runBuild(label, command, args, cwd, env = {}) {
   const logPath = join(OUT, `${label}.log`);
   const log = createWriteStream(logPath, { flags: 'w' });
   const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = new Promise((r) => child.on('exit', (c) => r(c)));
+  liveBuildChildren.set(child, exited);
   child.stdout.pipe(log, { end: false });
   child.stderr.pipe(log, { end: false });
-  const code = await new Promise((r) => child.on('exit', (c) => r(c)));
+  const code = await exited;
+  liveBuildChildren.delete(child);
   await new Promise((r) => log.end(() => r()));
   if (code !== 0) {
     const msg = `check: ${label} build failed (exit ${code}); log: ${logPath}`;
@@ -264,9 +288,14 @@ const NEEDS_PUBLIC = new Set(['links', 'tip', 'figures', 'names', 'light']);
 
 // `up base` into the block's run directory, with every port 0. The JSON
 // object `up` prints on stdout is parsed here (TEST_STATE_INTERFACE →
-// What a caller reads).
+// What a caller reads). The run directory is added to `liveRunDirs`
+// before `up` spawns: `up` starts A, the faucet and the miner and
+// records each in `processes.log` as it starts, so a signal mid-`up`
+// has to end on `processes.log` for whatever it already recorded
+// (TEST_STATE_INTERFACE → Loading a state).
 async function runUp(block, runDir) {
   mkdirSync(dirname(runDir), { recursive: true });
+  liveRunDirs.add(runDir);
   const logPath = join(dirname(runDir), 'up.log');
   const log = createWriteStream(logPath, { flags: 'w' });
   const child = spawn(
@@ -281,15 +310,17 @@ async function runUp(block, runDir) {
     ],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   );
+  const exited = new Promise((r) => child.on('exit', (c) => r(c)));
+  liveUpChildren.set(runDir, { child, exited });
   let stdout = '';
   child.stdout.on('data', (b) => { stdout += b.toString('utf8'); });
   child.stderr.pipe(log, { end: false });
-  const code = await new Promise((r) => child.on('exit', (c) => r(c)));
+  const code = await exited;
+  liveUpChildren.delete(runDir);
   await new Promise((r) => log.end(() => r()));
   if (code !== 0) throw new Error(`up base --dir ${runDir} failed (exit ${code}); log: ${logPath}`);
   let parsed;
   try { parsed = JSON.parse(stdout.trim()); } catch (e) { throw new Error(`up base stdout is not JSON: ${e.message}`); }
-  liveRunDirs.add(runDir);
   return parsed;
 }
 
