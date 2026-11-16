@@ -2666,6 +2666,9 @@ Six rules govern it:
    build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
+   > ⚠ **AHEAD OF CODE (2026-11-16).** `tools/test-state` spawns the same node and `tools/faucet/dist/index.js`, and
+   > refuses in the same way. The refusal and its lists move into that member, and `tools/e2e` imports them from it
+   > (`TEST_STATE_INTERFACE → Place in the workspace`).
 5. **Test trees are typechecked — every package, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
