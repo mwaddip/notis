@@ -210,6 +210,73 @@ describe('miner', () => {
     expect(stillAt.height).toBe(reached.height);
   }, 60_000);
 
+  it('answers two concurrent mine-to requests each with its own height', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      intervalMs: 2_000,
+      controlPort: 0,
+    });
+    // Two requests in flight at once. The miner mines toward max(h1, h2);
+    // each answers when the tip reaches its own height.
+    const [a, b] = await Promise.all([
+      postJson<{ height: number }>(
+        `http://127.0.0.1:${handle.controlPort}/mine-to`,
+        { height: 3 },
+      ),
+      postJson<{ height: number }>(
+        `http://127.0.0.1:${handle.controlPort}/mine-to`,
+        { height: 5 },
+      ),
+    ]);
+    expect(a.height).toBeGreaterThanOrEqual(3);
+    expect(b.height).toBeGreaterThanOrEqual(5);
+  }, 60_000);
+
+  for (const [label, bodyText] of [
+    ['height is 0', '{"height":0}'],
+    ['height is 1.5', '{"height":1.5}'],
+    ['height is 1e309 (Infinity)', '{"height":1e309}'],
+    ['height is "5" (a string)', '{"height":"5"}'],
+    ['height is missing', '{}'],
+  ] as const) {
+    it(`refuses a mine-to whose ${label} with a 400`, async () => {
+      const miningSecret = randomBytes(16).toString('hex');
+      node = await spawnDevnetNode({ miningSecret });
+      handle = await runMiner({
+        nodeApiUrl: node.apiUrl,
+        miningSecret,
+        intervalMs: 2_000,
+        controlPort: 0,
+      });
+      const res = await fetch(`http://127.0.0.1:${handle.controlPort}/mine-to`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyText,
+      });
+      expect(res.status).toBe(400);
+    }, 30_000);
+  }
+
+  it('answers a body that is not JSON with a 400', async () => {
+    const miningSecret = randomBytes(16).toString('hex');
+    node = await spawnDevnetNode({ miningSecret });
+    handle = await runMiner({
+      nodeApiUrl: node.apiUrl,
+      miningSecret,
+      intervalMs: 2_000,
+      controlPort: 0,
+    });
+    const res = await fetch(`http://127.0.0.1:${handle.controlPort}/mine-to`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not-json',
+    });
+    expect(res.status).toBe(400);
+  }, 30_000);
+
   it('stops the miner naming a refusal other than 404', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });

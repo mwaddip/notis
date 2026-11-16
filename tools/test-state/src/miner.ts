@@ -62,23 +62,39 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return raw.length === 0 ? null : JSON.parse(raw);
 }
 
+interface Waiter {
+  readonly height: number;
+  resolve(reached: number): void;
+}
+
 export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   const pollMs = cfg.pollIntervalMs ?? 100;
   const templateDeadlineMs = cfg.templateDeadlineMs ?? 60_000;
   const controlHost = cfg.controlHost ?? '127.0.0.1';
 
   let shuttingDown = false;
-  let mineToTarget: number | null = null;
-  let mineToResolve: ((h: number) => void) | null = null;
+  const waiters: Waiter[] = [];
   let server: Server | null = null;
 
-  const notifyMineToDone = (reached: number): void => {
-    if (mineToResolve) {
-      mineToResolve(reached);
-      mineToResolve = null;
+  function highestTarget(): number | null {
+    if (waiters.length === 0) return null;
+    let max = waiters[0]!.height;
+    for (const w of waiters) if (w.height > max) max = w.height;
+    return max;
+  }
+
+  function resolveReached(tip: number): boolean {
+    let any = false;
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const w = waiters[i]!;
+      if (tip >= w.height) {
+        w.resolve(tip);
+        waiters.splice(i, 1);
+        any = true;
+      }
     }
-    mineToTarget = null;
-  };
+    return any;
+  }
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${cfg.miningSecret}`,
@@ -139,16 +155,19 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     return data.height;
   }
 
-  // The loop: one block per interval, mine-to on demand. After a mine-to the
-  // cadence resumes from the moment it ended, so a caller cannot chain
-  // mine-to requests into a burst.
+  // The loop: one block per interval, mine-to on demand. Many requests may
+  // wait at once; each answers when A's tip reaches its own height. The
+  // miner races toward the highest height asked; the cadence resumes from
+  // the moment the last waiter was notified, so chained mine-to requests
+  // cannot produce a burst.
   async function loop(): Promise<void> {
     let nextCadenceAt = Date.now() + cfg.intervalMs;
     while (!shuttingDown) {
-      if (mineToTarget !== null) {
+      const target = highestTarget();
+      if (target !== null) {
         const tip = await tipHeight();
-        if (tip >= mineToTarget) {
-          notifyMineToDone(tip);
+        resolveReached(tip);
+        if (waiters.length === 0) {
           nextCadenceAt = Date.now() + cfg.intervalMs;
           continue;
         }
@@ -168,39 +187,46 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
     if (req.method === 'POST' && req.url === '/mine-to') {
       void (async () => {
+        let body: unknown;
         try {
-          const body = (await readJsonBody(req)) as { height?: number } | null;
-          const height = body?.height;
-          if (typeof height !== 'number' || height < 1) {
-            res.statusCode = 400;
-            res.end('{"error":"height required (positive integer)"}');
-            return;
-          }
-          if (shuttingDown) {
-            res.statusCode = 503;
-            res.end('{"error":"miner shutting down"}');
-            return;
-          }
-          // Only one mine-to at a time; a new target overrides the pending one.
-          if (mineToResolve !== null) {
-            mineToResolve(-1);
-            mineToResolve = null;
-          }
-          mineToTarget = height;
-          const reached = await new Promise<number>((resolve) => {
-            mineToResolve = resolve;
-          });
+          body = await readJsonBody(req);
+        } catch {
+          res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
-          res.statusCode = 200;
-          res.end(JSON.stringify({ height: reached }));
-        } catch (err) {
-          res.statusCode = 500;
-          res.end(JSON.stringify({ error: (err as Error).message }));
+          res.end('{"error":"body is not valid JSON"}');
+          return;
         }
+        const height = (body as { height?: unknown } | null)?.height;
+        // `height` must be a safe integer ≥ 1. A JSON number outside the
+        // safe range (e.g. 1e309) parses to Infinity, which fails
+        // Number.isSafeInteger.
+        if (
+          typeof height !== 'number' ||
+          !Number.isSafeInteger(height) ||
+          height < 1
+        ) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json');
+          res.end('{"error":"height required (safe integer ≥ 1)"}');
+          return;
+        }
+        if (shuttingDown) {
+          res.statusCode = 503;
+          res.setHeader('Content-Type', 'application/json');
+          res.end('{"error":"miner shutting down"}');
+          return;
+        }
+        const reached = await new Promise<number>((resolve) => {
+          waiters.push({ height, resolve });
+        });
+        res.setHeader('Content-Type', 'application/json');
+        res.statusCode = 200;
+        res.end(JSON.stringify({ height: reached }));
       })();
       return;
     }
     res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
     res.end('{"error":"not found"}');
   };
 
@@ -220,10 +246,8 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   const stop = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    if (mineToResolve !== null) {
-      mineToResolve(-1);
-      mineToResolve = null;
-    }
+    // Pending waiters never answer with a sentinel — their HTTP request
+    // is abandoned on the server close, which is the shape a client sees.
     if (server !== null) {
       await new Promise<void>((resolve) => {
         server!.close(() => resolve());
