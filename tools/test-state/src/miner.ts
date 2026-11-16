@@ -21,6 +21,7 @@ export interface MinerConfig {
   readonly controlHost?: string; // '127.0.0.1' default
   readonly pollIntervalMs?: number; // between 404 retries (default 100)
   readonly templateDeadlineMs?: number; // deadline for a 404 poll (default 60 s)
+  readonly callDeadlineMs?: number; // single-call deadline, A's answer per call (default 10 s)
 }
 
 export interface MinerHandle {
@@ -70,9 +71,44 @@ interface Waiter {
 export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   const pollMs = cfg.pollIntervalMs ?? 100;
   const templateDeadlineMs = cfg.templateDeadlineMs ?? 60_000;
+  const callDeadlineMs = cfg.callDeadlineMs ?? 10_000;
   const controlHost = cfg.controlHost ?? '127.0.0.1';
 
   let shuttingDown = false;
+  // One controller aborts every in-flight fetch at stop(), so the loop
+  // does not wait on a connection the node keeps open.
+  const shutdownController = new AbortController();
+
+  // Every call to A runs under the single-call deadline; a node that
+  // never answers stops the miner, naming the call.
+  async function fetchUnderDeadline(
+    label: string,
+    url: string,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), callDeadlineMs);
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: AbortSignal.any([
+          shutdownController.signal,
+          timeoutController.signal,
+        ]),
+      });
+    } catch (err) {
+      if (shutdownController.signal.aborted) {
+        throw new Error('miner shutting down');
+      }
+      if (timeoutController.signal.aborted) {
+        throw new Error(`${label} did not answer within ${callDeadlineMs} ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   const waiters: Waiter[] = [];
   let server: Server | null = null;
 
@@ -101,8 +137,11 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   };
 
   async function fetchTemplate(): Promise<TemplateResponse | 'not-ready'> {
-    const u = `${cfg.nodeApiUrl}/mining/template`;
-    const res = await fetch(u, { headers });
+    const res = await fetchUnderDeadline(
+      'GET /mining/template',
+      `${cfg.nodeApiUrl}/mining/template`,
+      { headers },
+    );
     if (res.status === 404) return 'not-ready';
     if (!res.ok) {
       const body = await res.text();
@@ -132,11 +171,15 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     if (nonce === null) {
       throw new Error(`failed to solve PoW at height ${tpl.header.height}`);
     }
-    const res = await fetch(`${cfg.nodeApiUrl}/mining/submit`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ powNonce: nonce, height: tpl.header.height }),
-    });
+    const res = await fetchUnderDeadline(
+      'POST /mining/submit',
+      `${cfg.nodeApiUrl}/mining/submit`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ powNonce: nonce, height: tpl.header.height }),
+      },
+    );
     if (res.status !== 201) {
       const body = await res.text();
       throw new Error(
@@ -147,7 +190,10 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   }
 
   async function tipHeight(): Promise<number> {
-    const res = await fetch(`${cfg.nodeApiUrl}/blocks/current`);
+    const res = await fetchUnderDeadline(
+      'GET /blocks/current',
+      `${cfg.nodeApiUrl}/blocks/current`,
+    );
     if (!res.ok) {
       throw new Error(`GET /blocks/current returned ${res.status}`);
     }
@@ -246,8 +292,10 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
   const stop = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    // Pending waiters never answer with a sentinel — their HTTP request
-    // is abandoned on the server close, which is the shape a client sees.
+    // Every in-flight fetch aborts at once; the loop sees shutdown and
+    // leaves. Pending mine-to waiters see their HTTP request abandoned on
+    // the server close, which is the shape a client sees.
+    shutdownController.abort();
     if (server !== null) {
       await new Promise<void>((resolve) => {
         server!.close(() => resolve());
@@ -267,9 +315,17 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     }) + '\n',
   );
 
-  const joined = loop().finally(() => {
-    process.off('SIGTERM', onSigterm);
-  });
+  const joined = loop()
+    .catch((err: unknown) => {
+      // A shutdown that aborts an in-flight fetch surfaces here as "miner
+      // shutting down". The exit shape is that of a clean stop, not a
+      // refusal, so swallow it and let joined resolve.
+      if (shuttingDown) return;
+      throw err;
+    })
+    .finally(() => {
+      process.off('SIGTERM', onSigterm);
+    });
 
   return {
     controlPort,

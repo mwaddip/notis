@@ -148,7 +148,13 @@ async function startFakeNode(handlers: {
   const bound = s.address() as { port: number };
   return {
     url: `http://127.0.0.1:${bound.port}`,
-    stop: () => new Promise<void>((resolve) => s.close(() => resolve())),
+    stop: () => {
+      // Force every open connection closed so a request held open by one
+      // of the handlers (e.g. a "never answers" case) does not keep the
+      // afterEach waiting on `.close`.
+      s.closeAllConnections();
+      return new Promise<void>((resolve) => s.close(() => resolve()));
+    },
   };
 }
 
@@ -168,6 +174,12 @@ describe('miner', () => {
   let handle: MinerHandle | null = null;
 
   afterEach(async () => {
+    // Close the fake's connections first — a miner fetch held by an
+    // unresponsive handler would keep `handle.joined` from settling.
+    if (fake) {
+      await fake.stop();
+      fake = null;
+    }
     if (handle) {
       await handle.stop();
       await handle.joined.catch(() => {});
@@ -176,10 +188,6 @@ describe('miner', () => {
     if (node) {
       await node.stop();
       node = null;
-    }
-    if (fake) {
-      await fake.stop();
-      fake = null;
     }
   });
 
@@ -375,6 +383,36 @@ describe('miner', () => {
     });
     expect(res.status).toBe(400);
   }, 30_000);
+
+  it('stops the miner naming the call when a template hangs past the deadline', async () => {
+    // The fake accepts /mining/template and never answers. Under the
+    // call deadline (set short here), the miner's fetch aborts and the
+    // loop throws naming the call.
+    fake = await startFakeNode({
+      template: () => {
+        // never ends the response; the miner's AbortController fires.
+      },
+    });
+    handle = await runMiner({
+      nodeApiUrl: fake.url,
+      miningSecret: 'any',
+      intervalMs: 500,
+      controlPort: 0,
+      callDeadlineMs: 500,
+    });
+    let joinedError: Error | null = null;
+    try {
+      await handle.joined;
+    } catch (err) {
+      joinedError = err as Error;
+    }
+    expect(joinedError).not.toBeNull();
+    expect(joinedError!.message).toMatch(
+      /GET \/mining\/template did not answer within 500 ms/,
+    );
+    await handle.stop();
+    handle = null;
+  }, 15_000);
 
   it('stops the miner when submit answers 409, naming the status', async () => {
     // A local fake node answering `/mining/template` 200 at an easy target
