@@ -54,18 +54,20 @@ const baseMesh = {
 } as const;
 
 describe('mesh — public announce', () => {
-  it('a public node announces every listen address with a concrete port', () => {
+  it('a public node on all-concrete ports announces every listen entry verbatim', () => {
     const mesh: MeshConfig = {
       ...baseMesh,
       role: 'public',
       listen: ['/ip4/11.100.0.11/udp/4001/webrtc-direct', '/ip4/11.100.0.11/tcp/4002'],
     };
     const listen = ['/ip4/11.100.0.11/tcp/9100', ...mesh.listen];
-    expect(effectiveAnnounce(listen, mesh)).toEqual([
-      '/ip4/11.100.0.11/tcp/9100',
-      '/ip4/11.100.0.11/udp/4001/webrtc-direct',
-      '/ip4/11.100.0.11/tcp/4002',
-    ]);
+    expect(effectiveAnnounce(listen, mesh)).toEqual({
+      announce: [
+        '/ip4/11.100.0.11/tcp/9100',
+        '/ip4/11.100.0.11/udp/4001/webrtc-direct',
+        '/ip4/11.100.0.11/tcp/4002',
+      ],
+    });
   });
 
   it('mesh.announce replaces the auto-default', () => {
@@ -76,21 +78,31 @@ describe('mesh — public announce', () => {
       announce: ['/ip4/203.0.113.4/udp/4001/webrtc-direct'],
     };
     const listen = ['/ip4/11.100.0.11/tcp/9100', ...mesh.listen];
-    expect(effectiveAnnounce(listen, mesh)).toEqual([
-      '/ip4/203.0.113.4/udp/4001/webrtc-direct',
-    ]);
+    expect(effectiveAnnounce(listen, mesh)).toEqual({
+      announce: ['/ip4/203.0.113.4/udp/4001/webrtc-direct'],
+    });
   });
 
-  it('a /udp/0 or /tcp/0 listen is dropped from the auto-default', () => {
+  it('a port-0 listen beside a concrete entry shifts to appendAnnounce of the concrete alone', () => {
     const mesh: MeshConfig = {
       ...baseMesh,
       role: 'public',
       listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct', '/ip4/11.100.0.11/tcp/4002'],
     };
     const listen = ['/ip4/127.0.0.1/tcp/0', ...mesh.listen];
-    expect(effectiveAnnounce(listen, mesh)).toEqual([
-      '/ip4/11.100.0.11/tcp/4002',
-    ]);
+    expect(effectiveAnnounce(listen, mesh)).toEqual({
+      appendAnnounce: ['/ip4/11.100.0.11/tcp/4002'],
+    });
+  });
+
+  it('a configuration with every entry on port 0 answers undefined — transport addresses carry the announce', () => {
+    const mesh: MeshConfig = {
+      ...baseMesh,
+      role: 'public',
+      listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+    };
+    const listen = ['/ip4/127.0.0.1/tcp/0', ...mesh.listen];
+    expect(effectiveAnnounce(listen, mesh)).toBeUndefined();
   });
 
   it('a private config carries no announce', () => {
@@ -174,13 +186,7 @@ describe('mesh — public announce (live)', () => {
   // directory, the operator pins the WebRTC-direct port to the first
   // start's bound one; TCP stays on port 0. Both bound ports are
   // announced on the restarted node.
-  //
-  // Plain-`it` failure:
-  //   AssertionError: expected undefined to be defined
-  //   — a listen entry with a concrete port replaces the auto-default,
-  //   and the `/tcp/0` listen is dropped from the announce; the bound
-  //   TCP port never reaches `meshIdentity().multiaddrs`.
-  it.fails('a public node restarted with webrtc-direct pinned and tcp/0 announces both at their bound ports', async () => {
+  it('a public node restarted with webrtc-direct pinned and tcp/0 announces both at their bound ports', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-announce-pin-'));
     dirs.push(dir);
     const key = generateKeyPair();
@@ -232,14 +238,7 @@ describe('mesh — public announce (live)', () => {
   // `MESH_INTERFACE → NAT → "A public node announces its listen
   // addresses from the start"` — a concrete TCP port beside a
   // webrtc-direct listen on udp/0 announces both at their bound ports.
-  //
-  // Plain-`it` failure:
-  //   AssertionError: expected undefined to be defined
-  //   — the listen entry with a concrete port replaces the auto-default,
-  //   and the `/udp/0/webrtc-direct` listen is dropped from the announce;
-  //   the bound WebRTC-direct port never reaches
-  //   `meshIdentity().multiaddrs`.
-  it.fails('a public node on tcp/<concrete> + webrtc-direct udp/0 announces both at their bound ports', async () => {
+  it('a public node on tcp/<concrete> + webrtc-direct udp/0 announces both at their bound ports', async () => {
     // Bind a TCP socket to find a free port, then release it — the
     // kernel usually hands the same port back on the next listen; a
     // rare collision would retry here if it mattered.
