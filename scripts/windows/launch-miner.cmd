@@ -8,7 +8,7 @@ set "DB_PATH=%APPDATA%\Notis\notis.db"
 
 rem MINING_INTERFACE → Consolidation — the key file is the one source the
 rem miner reads; gen-miner-key.mjs writes it where MINER_KEY_PATH names.
-"%~dp0node\node.exe" "%~dp0app\packages\node\scripts\gen-miner-key.mjs" "%APPDATA%\Notis\miner-key.json" > nul
+"%~dp0node\node.exe" "%~dp0app\scripts\gen-miner-key.mjs" "%APPDATA%\Notis\miner-key.json" > nul
 set "MINER_KEY_PATH=%APPDATA%\Notis\miner-key.json"
 "%~dp0node\node.exe" -e "console.log(require('crypto').randomUUID())" > "%TEMP%\notis_sec.txt"
 set /p MINING_SECRET=<"%TEMP%\notis_sec.txt"
@@ -18,7 +18,7 @@ set "NODE_ROLE=miner"
 if "%MINER_PCT%"=="" set "MINER_PCT=25"
 
 rem The miner-role node in its own window; this window runs the miner loop.
-start "Notis Node (miner)" "%~dp0node\node.exe" "%~dp0app\packages\node\dist\index.js"
+start "Notis Node (miner)" "%~dp0node\node.exe" "%~dp0app\dist\node.js"
 timeout /t 3 >nul
 set "NODE_URL=http://localhost:3000"
-"%~dp0node\node.exe" "%~dp0app\packages\node\scripts\miner.mjs"
+"%~dp0node\node.exe" "%~dp0app\scripts\miner.mjs"
