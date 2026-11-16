@@ -90,10 +90,13 @@ pipeline and fork resolution, which read most of the node.
 ## The rows
 
 **A row is an edge the declarations do not carry**, read off the tree: who reads what, and how. **A row is read at
-run time or in a suite:**
+run time, in a suite, or by no run:**
 
 - **at run time** — the reader runs what it reads, so a change there reaches the reader;
-- **in a suite** — a test reads it, so a change there selects the reader's own run and reaches nothing.
+- **in a suite** — a test reads it, so a change there selects the reader's own run and reaches nothing;
+- **by no run** — a file names the path and no run the matrix answers reads it through that name: a file name a
+  fixture writes into a directory of its own, a spawn line a test asserts on as text, a spawn in the mesh stage. It
+  selects nothing; it is a row so that → Tests' scan passes the name.
 
 | Reader | Reads | How | Read |
 |---|---|---|---|
