@@ -167,7 +167,7 @@ function collectUncovered(): UncoveredHit[] {
 }
 
 describe('the tree', () => {
-  it.fails('every cross-member reference is covered', () => {
+  it('every cross-member reference is covered', () => {
     expect(collectUncovered()).toEqual([]);
   });
 

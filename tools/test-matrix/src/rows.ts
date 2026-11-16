@@ -82,4 +82,124 @@ export const ROWS: readonly Row[] = [
     how: 'its harness',
     kind: 'run time',
   },
+
+  // The scan's rows: edges beside the declarations, kept so that every
+  // cross-member reference has a cover.
+
+  // test-state's fingerprint reads each member's dist bytes
+  // (src/fingerprint.ts over dist-freshness.ts's lists). net, types and
+  // validation are declared and need no row.
+  {
+    reader: 'test-state',
+    reads: 'wire',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'node-reads',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'avltree',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'nipopow',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'consensus',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+  {
+    reader: 'test-state',
+    reads: 'nipopow-client',
+    how: 'src/fingerprint.ts reads its dist/*.{js,mjs}',
+    kind: 'run time',
+  },
+
+  // test-state's fingerprint.test.ts writes names under packages/web/src/,
+  // tools/e2e/src/ and contracts/ into a directory of its own.
+  {
+    reader: 'test-state',
+    reads: 'web',
+    how: 'test/fingerprint.test.ts writes packages/web/src/foo.ts as a fixture',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-state',
+    reads: 'e2e',
+    how: 'test/fingerprint.test.ts writes tools/e2e/src/foo.ts as a fixture',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-state',
+    reads: 'contracts/',
+    how: 'test/fingerprint.test.ts writes contracts/FOO.md as a fixture',
+    kind: 'by no run',
+  },
+
+  // mesh-poc's stage/ scripts spawn node's dist and miner.mjs, and
+  // test/scenarios.test.ts asserts a spawn line's text. The stage runs
+  // by hand as root, outside the matrix's answer.
+  {
+    reader: 'mesh-poc',
+    reads: 'node',
+    how: 'stage/ spawns node and test/scenarios.test.ts asserts the spawn line',
+    kind: 'by no run',
+  },
+
+  // test-matrix names each other member and the contracts directory in
+  // its own source and tests, in strings the suite does not read as
+  // files. Node reads them through nothing.
+  {
+    reader: 'test-matrix',
+    reads: 'node',
+    how: 'src/rows.ts and test/place.test.ts name packages/node/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'web',
+    how: 'src/rows.ts, src/place.ts and test/place.test.ts name packages/web/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'e2e',
+    how: 'test/place.test.ts names tools/e2e/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'faucet',
+    how: 'src/rows.ts and test/place.test.ts name tools/faucet/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'types',
+    how: 'test/place.test.ts names packages/types/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'wire',
+    how: 'test/place.test.ts names packages/wire/ paths as strings',
+    kind: 'by no run',
+  },
+  {
+    reader: 'test-matrix',
+    reads: 'contracts/',
+    how: 'src/rows.ts and test/place.test.ts name contracts/<FILE>.md as strings',
+    kind: 'by no run',
+  },
 ];
