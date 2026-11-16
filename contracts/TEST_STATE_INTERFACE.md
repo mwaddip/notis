@@ -46,7 +46,6 @@ by hand reads it through the same loader.
 | the store | node A's `DB_PATH`, copied after A has exited on `SIGTERM`, with no `-wal` or `-shm` file beside it |
 | the node key | `DB_PATH` with its extension replaced by `.key` (`NODE_INTERFACE → Configuration`, `NODE_KEY_PATH`) — what fixes A's `notisId` and peer id across loads |
 | the mesh state | `DB_PATH` with its extension replaced by `.mesh`, where A has one (`MESH_INTERFACE → Transports → "The WebRTC-direct certificate persists"`) |
-| the miner key | the key A's blocks pay, in the key file's form (`MINING_INTERFACE → Consolidation`) |
 | each identity's key | `{ pubKeyHex, privKeyBase64 }`, mode 600 — the form the extension check's `--r-key` and `--s-key` read |
 | the manifest | → The manifest |
 
@@ -85,11 +84,11 @@ name of its own.
 (`createHash('blake2b512')`, the first 32 bytes) over a fixed order of inputs, each one's repo-relative path and then
 its bytes:
 
-1. the runtime `.js` files of `dist/` of every member on the lists the stale-build check reads for the node and the
+1. the runtime `.js` and `.mjs` files of `dist/` of every member on the lists the stale-build check reads for the node and the
    faucet — the node, each workspace member it loads, the faucet, and each member the faucet loads. The devnet profile
    and its genesis are inside `types`;
-2. this member's own source, the preload included, and the scripts the generator runs — `promote.mjs`,
-   `claim-name.mjs` and `packages/node/scripts/gen-miner-key.mjs` — without the client code those scripts bundle;
+2. this member's own source, the preload included, and the scripts the generator runs — `promote.mjs` and
+   `claim-name.mjs` — without the client code those scripts bundle;
 3. `pnpm-lock.yaml`.
 
 **The inputs are built bytes, and they are the node's whole runtime, not only the packages that compute state.** The
@@ -182,8 +181,8 @@ offset, so an interval measured inside one process is unmoved.
 ## Blocks during a run
 
 **One miner per stack, started by the loader.** It mines A through `GET /mining/template` and `POST /mining/submit`
-(`MINING_INTERFACE → Mining API`), under the run's mining secret, paying the state's miner key. It makes blocks in two
-ways:
+(`MINING_INTERFACE → Mining API`), under the run's mining secret. It names no payout key, so every block pays A's own
+key, as a template does without `?miner=` (`MINING_INTERFACE → GET /mining/template`). It makes blocks in two ways:
 
 1. **The steady cadence.** It mines one block every interval: 6 s by default, the caller's to set, each block mined
    when its interval comes and never in bursts. The cadence is what a run needs:
@@ -210,7 +209,7 @@ interval of its own.
 - the clock offset in milliseconds and the preload's path, for the processes the caller spawns;
 - A's HTTP and admin origins, its p2p multiaddr, its `notisId` and its peer id;
 - the faucet's origin;
-- the miner control's origin and the miner's public key;
+- the miner control's origin;
 - for each identity, its label, its key file's path and the manifest's figures;
 - the tip.
 
