@@ -5837,10 +5837,10 @@ The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, runs 
 Windows installer's `launch-miner.cmd` pass the file it writes as `MINER_KEY_PATH`, so their miners consolidate
 (`MINING_INTERFACE → Consolidation`).
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** `scripts/bundle-node.mjs` does not exist. The three packages copy the working
-> tree less `scripts/package-excludes.txt` and install its production dependencies into it — every member's `src` and
-> tests, the contracts, source maps and every platform's native binaries ride; no build starts the node it built; the
-> tarball carries Node's binary; and the miner unit runs `/opt/dagsocial/packages/node/scripts/miner.mjs`.
+> ⚠ **AHEAD OF CODE (2026-11-16).** The Windows installer is not built on `scripts/bundle-node.mjs`: it copies the
+> working tree less `scripts/package-excludes.txt` and installs its production dependencies into it — every member's
+> `src` and tests, the contracts, source maps and every platform's native binaries ride, and its build starts no node.
+> `THIRD-PARTY-LICENSES` carries no standard licence text.
 
 **The packages carry the node as one bundle, beside the native modules it loads.** `scripts/bundle-node.mjs` builds
 the one tree the `.deb`, the tarball and the Windows installer carry, from the workspace's built `dist/` directories
@@ -5862,11 +5862,14 @@ binary. The web client ships as its own zip (→ The node serves no client); the
 light client's command line run from a checkout.
 
 **A bundle imports nothing the tree does not carry.** The build refuses a bundle that imports any module but a Node
-built-in and the three native modules, and a tree that lacks a package one of the three loads.
+built-in and the three native modules or that takes a file from outside the repository, and a tree that lacks a
+package one of the three loads or that loads one from outside the tree.
 
 **The tree carries the licence of everything it carries.** `THIRD-PARTY-LICENSES` holds, for each package a bundle
-includes, its name, its version and its licence text — or, where it ships no licence file, the licence its
-`package.json` names; a native module keeps its own licence file in its directory.
+includes, its name, its version and its licence files — or, where it ships none, the licence its `package.json` names
+— and after the packages, once each, the standard text of every licence those `package.json`s name, from the copies
+under `scripts/licenses/`; a name with no copy there fails the build. A native module keeps its own licence file in
+its directory.
 
 **A package build runs the node it built.** Each build starts the tree's `dist/node.js` once, on devnet with a fresh
 store and no seeds — under the build host's Node, the Windows build under the `node.exe` it carries — and fails
