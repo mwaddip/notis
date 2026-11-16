@@ -1934,6 +1934,18 @@ async function startTipRelay(upstream, port = 0) {
         try { req.socket.destroy(); } catch {}
         return;
       }
+      // No upstream yet — RLB stands with `upstream === null` before B's
+      // first spawn (`setupTipRelays`), and `bringUpNodeB` moves it to B's
+      // origin on the first spawn. A request that arrives in that window
+      // answers 502 — the same status, the same CORS header and the same
+      // log entry an upstream-connection refusal takes further down the
+      // handler.
+      if (relay.upstream === null) {
+        res.writeHead(502, { 'access-control-allow-origin': '*' });
+        res.end('no upstream');
+        relay.log.push({ at, doneAt: Date.now(), method, url, mode: mode0, upstream: null, status: 502 });
+        return;
+      }
       // `hold-posts` — the --mesh block's M4 mode: POST /posts is held past
       // REQUEST_TIMEOUT_MS so the client's write rule moves the same bytes
       // to the next entry (MESH_INTERFACE → The client's node list → "A
