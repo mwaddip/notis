@@ -5837,11 +5837,6 @@ The reference miner unit, `packages/node/scripts/dagsocial-miner.service`, runs 
 Windows installer's `launch-miner.cmd` pass the file it writes as `MINER_KEY_PATH`, so their miners consolidate
 (`MINING_INTERFACE → Consolidation`).
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** The Windows installer is not built on `scripts/bundle-node.mjs`: it copies the
-> working tree less `scripts/package-excludes.txt` and installs its production dependencies into it — every member's
-> `src` and tests, the contracts, source maps and every platform's native binaries ride, and its build starts no node.
-> `THIRD-PARTY-LICENSES` carries no standard licence text.
-
 **The packages carry the node as one bundle, beside the native modules it loads.** `scripts/bundle-node.mjs` builds
 the one tree the `.deb`, the tarball and the Windows installer carry, from the workspace's built `dist/` directories
 and its installed dependencies — the patched ones (`patches/`) as patched:
@@ -5853,7 +5848,7 @@ and its installed dependencies — the patched ones (`patches/`) as patched:
 - `scripts/miner.mjs` and `scripts/gen-miner-key.mjs`, as written; they import Node built-ins alone.
 - `node_modules/` — the three native modules the bundles load and do not carry, `better-sqlite3`, `node-datachannel`
   and `cbor-extract`, each with the packages it loads, at the lockfile's versions and with the build platform's binary
-  alone.
+  alone; `cbor-extract` keeps one package per platform, which holds that platform's glibc and musl builds.
 - `package.json`, which names the tree's `.js` files ES modules; the repository's `LICENSE`; and
   `THIRD-PARTY-LICENSES`.
 

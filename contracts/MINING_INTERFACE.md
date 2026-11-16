@@ -837,9 +837,6 @@ file does not read or parse as either form, is the web client's encrypted envelo
 passphrase — or holds a secret that does not derive the public key it names; and where a `MINER_PUBKEY` set beside
 it names another key.
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** The Windows installer carries `packages/node/dist/miner-consolidate.js` unbundled,
-> beside `packages/node/scripts/miner.mjs`, with the workspace packages it imports.
-
 **With a key file the script loads node's build; without one it loads nothing more.** It imports the consolidation
 `@dagsocial/node` builds beside its entry — `src/miner-consolidate.ts`, built to `dist/miner-consolidate.js`, over
 `@dagsocial/types` (the transaction, its id, its JSON) and `@dagsocial/node-reads` (the `/status` and listing reads)
