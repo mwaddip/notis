@@ -256,11 +256,11 @@ function collectUncovered(): UncoveredHit[] {
 }
 
 describe('the tree', () => {
-  it.fails('every cross-member reference is covered', () => {
+  it('every cross-member reference is covered', () => {
     expect(collectUncovered()).toEqual([]);
   });
 
-  it.fails("every row's reader and what it reads exist in the tree", () => {
+  it("every row's reader and what it reads exist in the tree", () => {
     const bad: Array<{ row: Row; why: string }> = [];
     for (const row of ROWS) {
       if (row.kind === 'by no run') {
