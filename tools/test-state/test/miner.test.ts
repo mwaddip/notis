@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import {
   createServer,
   type IncomingMessage,
@@ -382,6 +382,73 @@ describe('miner', () => {
       body: '{not-json',
     });
     expect(res.status).toBe(400);
+  }, 30_000);
+
+  it('the CLI miner exits 0 on SIGTERM during template polling', async () => {
+    // A fake answering /mining/template by holding the response forever —
+    // every miner fetch is a long-running request, so SIGTERM reliably
+    // arrives while the miner is inside that fetch. A stop is an end,
+    // not a refusal; the CLI exits 0.
+    fake = await startFakeNode({
+      template: () => {
+        // never ends the response
+      },
+    });
+    const secretDir = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-sigterm-'));
+    const secretPath = join(secretDir, 'mining-secret');
+    writeFileSync(secretPath, randomBytes(16).toString('hex'));
+    const cliBin = resolve(REPO_ROOT, 'tools/test-state/dist/cli.js');
+    const cp = spawn(
+      process.execPath,
+      [
+        cliBin,
+        'miner',
+        '--node-api',
+        fake.url,
+        '--mining-secret-path',
+        secretPath,
+        '--interval-ms',
+        '100',
+        '--control-port',
+        '0',
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    try {
+      let ready = false;
+      cp.stdout!.setEncoding('utf8');
+      cp.stdout!.on('data', (chunk: string) => {
+        for (const line of chunk.split('\n')) {
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line) as { event?: string };
+            if (evt.event === 'miner_ready') ready = true;
+          } catch {
+            // non-JSON lines are ignored
+          }
+        }
+      });
+      const readyDeadline = Date.now() + 10_000;
+      while (!ready && Date.now() < readyDeadline) {
+        await sleep(50);
+      }
+      expect(ready).toBe(true);
+      // Let the loop pass the first cadence tick and enter the long
+      // template fetch; SIGTERM lands while that fetch is in flight.
+      await sleep(500);
+      const exitP = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        cp.once('exit', (code, signal) => resolve({ code, signal }));
+      });
+      cp.kill('SIGTERM');
+      const result = await exitP;
+      expect(result.code).toBe(0);
+    } finally {
+      if (cp.exitCode === null) cp.kill('SIGKILL');
+      rmSync(secretDir, { recursive: true, force: true });
+    }
   }, 30_000);
 
   it('stops the miner naming the call when a template hangs past the deadline', async () => {
