@@ -136,6 +136,7 @@ const KNOWN_ARGS = new Set([
   'miner',
   'miner-control',
   'scratch',
+  'summary',
 ]);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
@@ -278,6 +279,9 @@ const NODE_DIST = args.get('node-dist') ?? null;
 const MINER_SCRIPT = args.get('miner') ?? null;
 const SCRATCH = args.get('scratch') ?? null;
 const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the bootstrap for B and for C's first life
+// EXTENSION_CHECK_INTERFACE → The command — the orchestrator reads the
+// summary object from this path instead of parsing the log.
+const SUMMARY = args.get('summary') ?? null;
 // Every address the harness owns is bound by the OS
 // (`EXTENSION_CHECK_INTERFACE → Addresses`). Each relay listens on port 0
 // and reads its port from `server.address()`; each node spawns with
@@ -12475,6 +12479,26 @@ async function teardownTipRelays() {
   if (tipRelays.b) { closeRelay(tipRelays.b); tipRelays.b = null; }
 }
 
+// EXTENSION_CHECK_INTERFACE → The command — "Whatever ends a check stops
+// everything it started". On SIGTERM or SIGINT the harness runs the same
+// teardown its normal end runs — tip, light and mesh teardowns, Chromium
+// through `proc.kill()`, the web server closed — and exits. A second
+// signal during the teardown exits at once.
+let signalEnding = false;
+async function endOnSignal(signal) {
+  if (signalEnding) process.exit(130);
+  signalEnding = true;
+  console.error(`run: ${signal} received, tearing down`);
+  try { await teardownTipRelays(); } catch {}
+  try { await teardownLightRelays(); } catch {}
+  try { await teardownMeshStack(); } catch {}
+  if (proc !== null) { try { proc.kill(); } catch {} }
+  if (webServer) { try { await new Promise((r) => webServer.close(() => r())); } catch {} }
+  process.exit(130);
+}
+process.on('SIGTERM', endOnSignal);
+process.on('SIGINT', endOnSignal);
+
 let exitCode = 0;
 try {
   // The nodes an entry names and every key the harness owns come up first;
@@ -12547,7 +12571,11 @@ for (const f of findings) {
   }
 }
 console.log(`[waits] === run totals === wall ${fmtSecs(totalWall)}s · cap-ended ${fmtSecs(totalCap)}s · fixed sleeps ${fmtSecs(totalSleep)}s`);
-console.log(JSON.stringify({ block: BLOCK, measured, pass, fail, skipped, findings }, null, 2));
+const summaryJson = { block: BLOCK, measured, pass, fail, skipped, findings };
+console.log(JSON.stringify(summaryJson, null, 2));
+// EXTENSION_CHECK_INTERFACE → The command — the orchestrator reads the
+// summary object from `--summary` instead of parsing the log.
+if (SUMMARY !== null) writeFileSync(SUMMARY, JSON.stringify(summaryJson, null, 2));
 // A `ConfigError` the outer catch set `exitCode = 2` for stands. Otherwise
 // the exit code is 0 only when every step of the block passed; any in-block
 // step that did not pass (NOT RUN, FAIL, SKIPPED) is exit 1
