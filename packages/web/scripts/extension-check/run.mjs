@@ -3049,12 +3049,10 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
     return;
   }
 
-  // ---- Pre-flight — A is up. The tip block's cleanup (stopAllChildren) stops
-  // B when --verified-tip runs, and a run without --verified-tip never starts
-  // it, so B is always down here. The figures block owns its own B: the tip
-  // block's calls verbatim (bringUpNodeB, waitForHttpUp, waitForPeers,
-  // waitForHeightsClose). Step 25 needs no B and still runs when B does not
-  // come up.
+  // ---- Pre-flight — A is up. The figures block owns its own B:
+  // `bringUpNodeB` spawns it from `--node-dist`, bootstrapped from
+  // `--node-p2p`. Step 25 reads the hosted web build and still runs where
+  // B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
     for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
@@ -3063,6 +3061,19 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   }
   const preHeightA = await currentHeight(NODE);
   console.log(`[vf] pre-flight: A height=${preHeightA} at ${NODE}`);
+
+  // ---- Faucet credits for R — step 21's send refuses a balance under 2
+  // $NOTIS, and the block starts from `base`, which grants R none
+  // (EXTENSION_CHECK_INTERFACE → Blocks: "A block prepares what it reads
+  // beyond `base`, itself"). A refusal or a missed landing fails every
+  // step of the block with the reason.
+  const faucetPrep = await prepareFaucetCreditsForR();
+  if (!faucetPrep.ok) {
+    const reason = `faucet credits prep: ${faucetPrep.reason}`;
+    for (const s of VERIFIED_FIGURES_STEPS) record(s, false, reason);
+    return;
+  }
+  console.log(`[vf] faucet credits for R: boxId ${faucetPrep.boxId.slice(0, 12)}…, elapsed=${(faucetPrep.elapsedMs / 1000).toFixed(0)}s`);
 
   // Bring up B — bringUpNodeB wipes b.db and spawns fresh from NODE_DIST,
   // bootstrapped from NODE_P2P. The tip block's cleanup left b.db orphaned
@@ -3577,6 +3588,74 @@ async function readNodeKarmaPending() {
   } catch {
     return null;
   }
+}
+
+// Ask the faucet for R's credits through its HTTP route, the one the
+// extension's own faucet step asks (NODE_INTERFACE → Faucet,
+// WEB_INTERFACE → The faucet step): POST <FAUCET>/credits with
+// `{ pubkey: <R> }`. A 202 carries the grant's `boxId`; the helper then
+// asks the stack's miner for the next heights (`askMineTo`, as the other
+// height waits do) and waits until R's plain `/credits` on A lists a box
+// of that id — the node's own word, never a balance figure moving (a row
+// read as a landing is the trap). Answers `{ ok, boxId?, reason? }`; a
+// refusal or missed landing lets the caller fail every in-block step with
+// the reason. `figures` reads R holding $NOTIS (step 21's send refuses
+// under 2 $NOTIS; the row's figure is the pending view's spendable sum);
+// `names` reads R holding $NOTIS too (step 29 types a send to S's handle
+// and the flow builds a transfer tx on R's spendable boxes).
+async function prepareFaucetCreditsForR() {
+  const rKey = R_JSON?.pubKeyHex;
+  if (typeof rKey !== 'string' || !/^[0-9a-f]{64}$/.test(rKey)) {
+    return { ok: false, reason: 'no --r-key pubKeyHex' };
+  }
+  const url = `${FAUCET.replace(/\/+$/, '')}/credits`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pubkey: rKey }),
+    });
+  } catch (e) {
+    return { ok: false, reason: `POST ${url} failed: ${e?.message ?? String(e)}` };
+  }
+  const bodyText = await res.text().catch(() => '');
+  let answer;
+  try { answer = JSON.parse(bodyText); } catch { answer = bodyText; }
+  if (res.status !== 202) {
+    return { ok: false, reason: `POST ${url} status=${res.status} body=${bodyText.slice(0, 200)}` };
+  }
+  const grantBoxId = typeof answer?.boxId === 'string' && /^[0-9a-f]{64}$/i.test(answer.boxId)
+    ? answer.boxId.toLowerCase() : null;
+  const expiresAtHeight = typeof answer?.expiresAtHeight === 'number' ? answer.expiresAtHeight : null;
+  if (grantBoxId === null) {
+    return { ok: false, reason: `POST ${url} 202 carried no 64-hex boxId: ${bodyText.slice(0, 200)}` };
+  }
+  // Ask the stack's miner to mine to the expiry height (or two blocks past
+  // the current one where no expiry is named) so the grant's transaction
+  // lands on A before the wait begins. The ask is a no-op when
+  // --miner-control is not set; the wait then runs on the cadence.
+  const nowHeight = await currentHeight(NODE);
+  const target = expiresAtHeight ?? ((nowHeight ?? 0) + 2);
+  if (MINER_CONTROL !== null && typeof target === 'number') {
+    try { await askMineTo(target, 'faucet credits prep'); }
+    catch (e) { return { ok: false, reason: `askMineTo(${target}) failed: ${e?.message ?? String(e)}` }; }
+  }
+  const wait = await recordWait('faucet credits prep landing', 180000, async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 180000) {
+      const c = await readNodeCredits(rKey);
+      if (c !== null && c.boxIds.some((id) => id.toLowerCase() === grantBoxId)) {
+        return { landed: true, elapsedMs: Date.now() - t0 };
+      }
+      await sleep(2000);
+    }
+    return { landed: false, elapsedMs: Date.now() - t0 };
+  });
+  if (!wait.landed) {
+    return { ok: false, reason: `the faucet grant (boxId ${grantBoxId.slice(0, 12)}…) did not land on R's plain /credits within ${(wait.elapsedMs / 1000).toFixed(0)}s` };
+  }
+  return { ok: true, boxId: grantBoxId, elapsedMs: wait.elapsedMs };
 }
 
 // A key's plain /credits on A — the plain listing's boxes (id, value, locked
@@ -4461,6 +4540,19 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   console.log(`[vn] pre-flight: A height=${await currentHeight(NODE)} at ${NODE}`);
   const sHeld = await usernameOf(NODE, S_PUB);
   console.log(`[vn] S ${S_PUB.slice(0, 8)}… holds ${sHeld === null ? 'no name' : `@${sHeld.name}, box ${sHeld.boxId.slice(0, 12)}…, claimed at block ${sHeld.claimedAtBlock}`}`);
+
+  // ---- Faucet credits for R — step 29's send builds a transfer tx on
+  // R's spendable boxes and the prompt reads them; the block starts from
+  // `base`, which grants R none (EXTENSION_CHECK_INTERFACE → Blocks: "A
+  // block prepares what it reads beyond `base`, itself"). A refusal or a
+  // missed landing fails every step of the block with the reason.
+  const faucetPrep = await prepareFaucetCreditsForR();
+  if (!faucetPrep.ok) {
+    const reason = `faucet credits prep: ${faucetPrep.reason}`;
+    for (const s of VERIFIED_NAMES_STEPS) record(s, false, reason);
+    return;
+  }
+  console.log(`[vn] faucet credits for R: boxId ${faucetPrep.boxId.slice(0, 12)}…, elapsed=${(faucetPrep.elapsedMs / 1000).toFixed(0)}s`);
 
   // ---- B — bringUpNodeB wipes b.db and spawns fresh, bootstrapped from A.
   console.log(`[vn] bringing up node B for the names block`);
