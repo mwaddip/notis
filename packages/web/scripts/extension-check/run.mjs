@@ -9481,17 +9481,17 @@ let m3Post = null;
 // across steps can be fired by name), the ports the node takes on every
 // restart, and the identity line the mesh-on spawn read. `apHttp` is the
 // HTTP port the node currently listens on — equal to `ports.http` at rest
-// and equal to `AP_ALT_HTTP_PORT` during M4 while the M4 relay owns the
-// base port.
+// and equal to `ports.altHttp` during M4 while the M4 relay owns the base
+// port.
 const meshNodes = {
   ap: null, // { identity, ports, dbPath, mesh: boolean, apHttp: number }
   bp: null, // { identity, ports, dbPath, mesh: boolean }
 };
 
 // The M4 relay stood up only during M4 — a `startTipRelay` in front of A'
-// at `AP_HTTP_PORT` with upstream `http://127.0.0.1:AP_ALT_HTTP_PORT`, set
-// to `hold-posts` after a fresh page's tip run has returned verified so
-// the client's first write goes through the held POST.
+// on A''s first HTTP port, with A''s alt HTTP as its upstream, set to
+// `hold-posts` after a fresh page's tip run has returned verified so the
+// client's first write goes through the held POST.
 let m4Relay = null;
 
 function markMeshNotRun(reason) {
@@ -10196,10 +10196,11 @@ async function runMeshStepM3(bcx) {
 // at a time", and WEB_INTERFACE → The wallet → "Nothing retries a
 // rejection"'s `**A send that ends with no answer is no rejection**`.
 // Both nodes are reached at their api bases alone (`MESH_ROLE` off, as
-// M2); a tip relay at AP_HTTP_PORT, with A' restarted on AP_ALT_HTTP_PORT
-// as its upstream, holds `POST /posts` past REQUEST_TIMEOUT_MS. The
-// client's write rule moves the same bytes to the next entry; the post
-// lands on B' (and, through p2p propagation, on A') once.
+// M2); a tip relay takes A''s first HTTP port with A' restarted on a fresh
+// alt HTTP port as its upstream, and holds `POST /posts` past
+// REQUEST_TIMEOUT_MS. The client's write rule moves the same bytes to the
+// next entry; the post lands on B' (and, through p2p propagation, on A')
+// once.
 async function runMeshStepM4(bcx) {
   let page = null;
   try {
