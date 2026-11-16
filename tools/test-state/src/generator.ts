@@ -158,13 +158,47 @@ async function waitForLine(
   });
 }
 
-async function endProcess(cp: ChildProcess, deadlineMs = 10_000): Promise<void> {
-  if (cp.exitCode !== null) return;
-  const exited = new Promise<void>((resolve) => cp.once('exit', () => resolve()));
-  cp.kill('SIGTERM');
-  const kill = setTimeout(() => cp.kill('SIGKILL'), deadlineMs);
-  await exited;
-  clearTimeout(kill);
+// A spawned child's exit event with the fact (`code`, `signal`) the handler
+// receives. Captured AT SPAWN, so a child that dies before the first
+// `endProcess` call has its exit already resolved — `cp.exitCode` is null
+// for a signal-killed child, and `cp.once('exit', …)` registered after the
+// event never fires (TRAPS → "awaitExit waits forever on a signal-killed
+// child, whose exitCode is null").
+interface TrackedProcess {
+  readonly cp: ChildProcess;
+  readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+export function trackSpawn(cp: ChildProcess): TrackedProcess {
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve) => {
+      cp.once('exit', (code, signal) => resolve({ code, signal }));
+    },
+  );
+  return { cp, exited };
+}
+
+export async function endProcess(
+  tracked: TrackedProcess,
+  deadlineMs = 10_000,
+): Promise<void> {
+  try {
+    tracked.cp.kill('SIGTERM');
+  } catch {
+    // dead already — harmless
+  }
+  const timer = setTimeout(() => {
+    try {
+      tracked.cp.kill('SIGKILL');
+    } catch {
+      // dead already — harmless
+    }
+  }, deadlineMs);
+  try {
+    await tracked.exited;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -339,6 +373,7 @@ export async function generate(
       env: nodeEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const nodeTracked = trackSpawn(nodeCp);
     const processRecords: ProcessRecord[] = [
       { pid: nodeCp.pid!, argv: [process.execPath, paths.nodeBin], started: Date.now() },
     ];
@@ -406,6 +441,7 @@ export async function generate(
         env: faucetEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      const faucetTracked = trackSpawn(faucetCp);
       processRecords.push({ pid: faucetCp.pid!, argv: [process.execPath, paths.faucetBin], started: Date.now() });
       const faucetLogStream: string[] = [];
       faucetCp.stdout!.setEncoding('utf8');
@@ -575,8 +611,8 @@ export async function generate(
           //    store afterwards is a failure (claim 1 as a guard).
           await miner.stop();
           await miner.joined.catch(() => {});
-          await endProcess(faucetCp);
-          await endProcess(nodeCp);
+          await endProcess(faucetTracked);
+          await endProcess(nodeTracked);
 
           if (!existsSync(dbPath)) {
             throw new Error(`generator: the store ${dbPath} is missing after A exited`);
@@ -629,10 +665,10 @@ export async function generate(
           }
         }
       } finally {
-        if (faucetCp.exitCode === null) await endProcess(faucetCp);
+        await endProcess(faucetTracked);
       }
     } finally {
-      if (nodeCp.exitCode === null) await endProcess(nodeCp);
+      await endProcess(nodeTracked);
     }
   } catch (err) {
     // G4: keep the scratch directory on failure and name it. A's log,
