@@ -86,8 +86,13 @@
 // run (a harness switch for a loopback stage, not a product setting): a
 // browser refuses the RTCPeerConnection to 127.0.0.1 without it and no
 // mesh connection opens. The `--block mesh` A' and B' listen on
-// `/ip4/127.0.0.1/udp/<port>/webrtc-direct`, and `setupMeshStack` checks
-// the built shell's `notis-nodes` against each node's identity line.
+// `/ip4/127.0.0.1/udp/<port>/webrtc-direct`, and `setupMeshStack`
+// spawns A' and B', reads each node's identity line, and writes the
+// two entries into the copy's shell as `notis-nodes` before Chromium
+// launches (`writeAndVerifyCopyShells` runs after `setupMeshStack`,
+// `EXTENSION_CHECK_INTERFACE → Builds`); the webrtc-direct multiaddr
+// each identity line carries is refused as a `ConfigError` where the
+// expected mesh port is not among them.
 //
 // Usage:
 //   node packages/web/scripts/extension-check/run.mjs \
