@@ -5580,6 +5580,13 @@ A second Express server on `127.0.0.1:ADMIN_PORT` (default 3001). Never
 binds to a non-loopback address — a non-loopback bind logs a WARN at
 startup. It sends no CORS header on any answer (→ Cross-origin requests).
 
+**The admin listener's start line names the address and port it bound.** Once it listens it prints `Admin listener
+on <address>:<port>`, read from the bound server, so under `ADMIN_PORT=0` the line names the port the system chose —
+the port a process that spawned the node reads it by (`TEST_STATE_INTERFACE → Loading a state`).
+
+> ⚠ **AHEAD OF CODE (2026-11-16).** `createAdminApp` prints the configured `ADMIN_PORT`, which reads `0` under an
+> ephemeral bind.
+
 **Every value is in-memory; `/health` and `/stats` never query the database.** The admin router is a
 reader of two things: the node's **metrics** (`node/src/metrics.ts` — one module, written at four seams,
 below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INTERFACE → API).
