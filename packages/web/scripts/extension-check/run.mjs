@@ -10919,8 +10919,17 @@ async function main() {
   }
 
   // --- Step 6 — Post under ask → decline → composer still open with its text,
-  // foot line "post not sent.", karma unchanged, no submission.
-  const karmaBefore6 = Number((await (await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`)).json()).effective ?? 0);
+  // foot line "post not sent.", no `POST /posts` across either tip relay's
+  // log for the span (WEB_INTERFACE → The wallet → "A flow can end before
+  // the node ever sees it: `notSigned`" — the declined post never reaches
+  // a node). The log counts the writes the extension drives through either
+  // relay (RLA, RLB), the `forwardedPostCount` idiom the waiting block
+  // reads. A's plain `/karma/<R>.effective` is left out — step 5's post
+  // lands on A's own cadence, and a landing between the two reads of the
+  // decline window moves `effective` by 5 rep for a reason step 6 does
+  // not make.
+  const relayAIdx6 = tipRelays.a?.log.length ?? 0;
+  const relayBIdx6 = tipRelays.b?.log.length ?? 0;
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
   await cx2.waitFor(`document.querySelector('.composer textarea')`, 'composer for decline');
   const CONTENT6 = 'proof-declined-' + Date.now();
@@ -10941,9 +10950,21 @@ async function main() {
     const composerStill = await cx2.eval(`!!document.querySelector('.composer textarea')`);
     const draftIntact = await cx2.eval(`document.querySelector('.composer textarea')?.value ?? null`);
     const foot = await cx2.eval(`document.querySelector('.composer .karma')?.textContent ?? null`);
-    const karmaAfter6 = Number((await (await fetch(`${NODE}/karma/${R_JSON.pubKeyHex}`)).json()).effective ?? 0);
-    record(6, composerStill && draftIntact === CONTENT6 && foot === 'post not sent.' && karmaAfter6 === karmaBefore6,
-      `composer still open (${composerStill}), draft="${draftIntact}", foot="${foot}", karma ${karmaBefore6}→${karmaAfter6}`);
+    // Count forwarded `POST /posts` across either relay for the span —
+    // the span starts at the index captured before the composer opened and
+    // ends with this read. A control: the span before (every forwarded
+    // `POST /posts` since setup through the previous index) carries at
+    // least one entry — step 3's and step 5's posts both went through.
+    const relayAPosts6 = (tipRelays.a?.log ?? []).slice(relayAIdx6);
+    const relayBPosts6 = (tipRelays.b?.log ?? []).slice(relayBIdx6);
+    const forwardedPostsStep6 = forwardedPostCount({ log: relayAPosts6 }, '/posts')
+      + forwardedPostCount({ log: relayBPosts6 }, '/posts');
+    const controlAPosts = (tipRelays.a?.log ?? []).slice(0, relayAIdx6);
+    const controlBPosts = (tipRelays.b?.log ?? []).slice(0, relayBIdx6);
+    const controlPostsPrior = forwardedPostCount({ log: controlAPosts }, '/posts')
+      + forwardedPostCount({ log: controlBPosts }, '/posts');
+    record(6, composerStill && draftIntact === CONTENT6 && foot === 'post not sent.' && forwardedPostsStep6 === 0 && controlPostsPrior >= 1,
+      `composer still open (${composerStill}), draft="${draftIntact}", foot="${foot}", forwarded POST /posts across step 6's span=${forwardedPostsStep6} (control: prior forwarded POST /posts=${controlPostsPrior})`);
     cxp.s.close();
   } else {
     record(6, false, 'no prompt target for decline');
