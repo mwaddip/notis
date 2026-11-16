@@ -98,6 +98,28 @@ describe('cache', () => {
     expect(readState(cacheRoot, FINGERPRINT, NAME)).toBeNull();
   });
 
+  it('a rename error that is not ENOTEMPTY or EEXIST propagates', () => {
+    // The target path is a regular file, so rename(dir, file) throws
+    // ENOTDIR — writeState must not swallow it.
+    mkdirSync(join(cacheRoot, FINGERPRINT), { recursive: true });
+    writeFileSync(join(cacheRoot, FINGERPRINT, NAME), 'not a directory');
+    const source = makeSourceState(tmp, { name: NAME, fingerprint: FINGERPRINT }, {});
+    expect(() => writeState(cacheRoot, FINGERPRINT, NAME, source)).toThrow(/ENOTDIR/);
+  });
+
+  it('throws naming the final directory when it holds no readable manifest', () => {
+    // A directory already exists at the final path, non-empty but with no
+    // manifest.json. writeState loses the rename and reads no state back;
+    // the error names the directory.
+    const final = join(cacheRoot, FINGERPRINT, NAME);
+    mkdirSync(final, { recursive: true });
+    writeFileSync(join(final, 'noise.txt'), 'x');
+    const source = makeSourceState(tmp, { name: NAME, fingerprint: FINGERPRINT }, {});
+    expect(() => writeState(cacheRoot, FINGERPRINT, NAME, source)).toThrow(
+      new RegExp(final.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+  });
+
   it('copies a state out into a run directory', () => {
     const manifest: Manifest = { name: NAME, fingerprint: FINGERPRINT };
     const source = makeSourceState(tmp, manifest, { 'store.db': 'the store' });

@@ -61,8 +61,9 @@ export function readState(
 
 // Copies the source into a temporary directory beside the final location and
 // renames it into place. A rename that lands on an existing non-empty
-// directory refuses (rename(2) ENOTEMPTY) — a second writer that loses the
-// race removes its own copy and reads the winner's.
+// directory refuses (rename(2) ENOTEMPTY, or EEXIST on some platforms) — a
+// second writer that loses the race removes its own copy and reads the
+// winner's. Any other rename error propagates.
 export function writeState(
   cacheRoot: string,
   fingerprint: string,
@@ -76,12 +77,17 @@ export function writeState(
   const final = join(fingerprintDir, name);
   try {
     renameSync(tmpDir, final);
-  } catch {
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOTEMPTY' && code !== 'EEXIST') {
+      rmSync(tmpDir, { recursive: true, force: true });
+      throw err;
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   }
   const state = readState(cacheRoot, fingerprint, name);
   if (!state) {
-    throw new Error(`cache entry missing after write: ${fingerprint}/${name}`);
+    throw new Error(`${final} is not a readable state`);
   }
   return state;
 }
