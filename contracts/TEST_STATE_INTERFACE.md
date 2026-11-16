@@ -51,7 +51,7 @@ by hand reads it through the same loader.
 | the manifest | → The manifest |
 
 **A state holds no secret of a run.** Each load draws its own mining secret. The faucet's key is devnet's public pair,
-which the loader writes into the run.
+which the loader writes into the run after checking that its public half is the devnet profile's `faucetPublicKey`.
 
 ### The manifest
 
@@ -88,7 +88,8 @@ its bytes:
 1. the runtime `.js` files of `dist/` of every member on the lists the stale-build check reads for the node and the
    faucet — the node, each workspace member it loads, the faucet, and each member the faucet loads. The devnet profile
    and its genesis are inside `types`;
-2. this member's own source, the preload included, and `promote.mjs` and `claim-name.mjs`;
+2. this member's own source, the preload included, and the scripts the generator runs — `promote.mjs`,
+   `claim-name.mjs` and `packages/node/scripts/gen-miner-key.mjs` — without the client code those scripts bundle;
 3. `pnpm-lock.yaml`.
 
 **The inputs are built bytes, and they are the node's whole runtime, not only the packages that compute state.** The
@@ -97,8 +98,9 @@ indexes) is node code. A fingerprint over a narrower set would let a build load 
 and nothing would say so. The cost is one generation per build of the node's runtime, shared by every worktree on
 that build.
 
-**The web client's source is not an input.** A state holds what the node accepted, and a node on the same build reads
-it the same whichever client built the writes.
+**Client code is not an input** — the web client's source, and the transaction builders a write script bundles. A
+state holds what the node accepted, and a node on the same build reads it the same whichever client built the writes.
+The scripts are inputs because they decide what a state holds: which identities, which posts, which name.
 
 **Equal builds give equal fingerprints.** Two worktrees at one rev compute the same fingerprint: no input carries a
 worktree path, a time or a host name.
