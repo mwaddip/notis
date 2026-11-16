@@ -1,8 +1,7 @@
 // TEST_MATRIX_INTERFACE → How a path is placed, → Reach, → The rows, → The
 // output: a case per rule and each kind of row. Each case asserts the rule
 // that placed each of its paths and the sorted list of selected runs
-// (TEST_MATRIX_INTERFACE → Tests → "A case asserts the rule that placed
-// each of its paths, not only the runs").
+// (TEST_MATRIX_INTERFACE → Tests → "Each rule is held by a case").
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
