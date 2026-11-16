@@ -440,6 +440,14 @@ if (NEEDS_PUBLIC.has(BLOCK) && PUBLIC === null) {
   console.error(`--block ${BLOCK} requires --public <origin+base> and --web-dist <dir> — the block has a hosted-page step`);
   process.exit(2);
 }
+// The build's own public origin (`--public`) stays what the shell check
+// below reads. The `links` block serves at that origin; `tip`, `figures`,
+// `names` and `light` serve on an OS-bound port under the same base path,
+// so each block that reads the hosted page reaches the harness's own
+// server (EXTENSION_CHECK_INTERFACE → Addresses). `publicOrigin`,
+// `publicBase` and `publicPort` are the SERVED location — read from the
+// bound value for every block but `links`, the same as `--public` for
+// `links`.
 let publicOrigin = null;
 let publicBase = null;
 let publicPort = null;
@@ -450,9 +458,16 @@ if (PUBLIC !== null) {
   if (!u.pathname.endsWith('/')) { console.error('--public must end with \'/\''); process.exit(2); }
   if (u.search !== '' || u.hash !== '') { console.error('--public must carry no query or fragment'); process.exit(2); }
   if (u.port === '') { console.error('--public must name a port'); process.exit(2); }
-  publicOrigin = u.origin;
   publicBase = u.pathname;
-  publicPort = Number(u.port);
+  if (LINKS) {
+    publicOrigin = u.origin;
+    publicPort = Number(u.port);
+  } else {
+    // Bound on 0 by `startWebServer`; `publicOrigin` and `publicPort`
+    // are read from `server.address()` after the listen settles.
+    publicOrigin = null;
+    publicPort = 0;
+  }
   if (!existsSync(WEB_DIST)) { console.error(`--web-dist not found: ${WEB_DIST}`); process.exit(2); }
   if (!existsSync(join(resolve(WEB_DIST), 'index.html'))) { console.error(`--web-dist has no index.html: ${resolve(WEB_DIST)}`); process.exit(2); }
 }
@@ -751,8 +766,21 @@ async function startWebServer() {
   });
   await new Promise((res, rej) => {
     webServer.on('error', rej);
+    // `links` binds the build's own port (the background reads a tab as a
+    // Notis link by the build's origin, port included); every other block
+    // binds on 0, and reads `publicOrigin` and `publicPort` from the bound
+    // address (EXTENSION_CHECK_INTERFACE → Addresses).
     webServer.listen(publicPort, '127.0.0.1', () => res());
   });
+  if (!LINKS) {
+    const addr = webServer.address();
+    const bound = typeof addr === 'object' && addr !== null ? addr.port : null;
+    if (typeof bound !== 'number' || bound <= 0) {
+      throw new Error(`web server bound on 0 but server.address() returned ${JSON.stringify(addr)}`);
+    }
+    publicPort = bound;
+    publicOrigin = `http://127.0.0.1:${bound}`;
+  }
   console.log(`web server: ${webDistAbs} served on ${publicOrigin}${publicBase} (port ${publicPort})`);
 }
 
