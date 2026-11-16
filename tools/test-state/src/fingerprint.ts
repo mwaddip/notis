@@ -43,27 +43,26 @@ function distRuntimeFiles(root: string, member: string): string[] {
 }
 
 export function fingerprintInputs(root: string): readonly FingerprintInput[] {
-  // The two lists, deduplicated, in code-unit order by path.
   const members = [...new Set([...NODE_LOADS, ...FAUCET_LOADS])].sort();
   const paths: string[] = [];
 
-  // (1) runtime .js/.mjs under each member's dist/, in code-unit order by path.
+  // The two lists' dist/*.{js,mjs}, deduplicated, in code-unit order by
+  // member and by path within each member.
   for (const m of members) {
     const files = distRuntimeFiles(root, m).map((abs) => toRepoRel(root, abs));
     files.sort();
     paths.push(...files);
   }
 
-  // (2) this member's own source, in code-unit order by path.
+  // This member's own source, the preload included, and the generator's
+  // three scripts — the client code those scripts bundle is not read.
   const selfSrc = walk(join(root, TEST_STATE_SRC))
     .map((abs) => toRepoRel(root, abs))
     .sort();
   paths.push(...selfSrc);
-
-  // (3–5) the generator scripts, in the fixed order declared here.
   paths.push(...GENERATOR_SCRIPTS);
 
-  // (6) the lockfile.
+  // The lockfile.
   paths.push(LOCKFILE);
 
   return paths.map((path) => ({ path }));
