@@ -27,9 +27,10 @@ the refusal and the lists of members each spawned entry loads, and the preload i
 member's build emits declarations under its `exports` entry for that import. Those lists are also the fingerprint's
 input (→ The fingerprint), so one list says both what a process loads and what a state depends on.
 
-**Its reader is the extension check** (`packages/web/scripts/extension-check/`), which takes the stack `up` answers
-and asks its miner for the heights its steps need (`--miner-control`). A person bringing up a devnet stack by hand
-reads it through the same loader.
+**Its reader is the extension check** (`packages/web/scripts/extension-check/`), which loads a stack of its own for
+each block it runs (`EXTENSION_CHECK_INTERFACE → The stack a block runs on`), takes the stack `up` answers and asks its
+miner for the heights its steps need (`--miner-control`). A person bringing up a devnet stack by hand reads it through
+the same loader.
 
 ## A state
 
@@ -66,10 +67,13 @@ landed. The generator computes none of them.
 
 **`base` is the state the extension check starts from** — what the check's setup builds at every run without one:
 
+> ⚠ **AHEAD OF CODE (2026-11-16).** The generator promotes four members, `R`, `S`, `R2` and `R3`.
+
 - a chain of 60 blocks before the first write, past `m + k + 14`, the height the check's verified-tip block requires
   of A (`m`, `k` — `CONSTANTS → Client defaults`);
-- four members, `R`, `S`, `R2` and `R3`, each made by `promote.mjs` on the earned path (`ARCHITECTURE → Membership`):
-  two threads, the faucet's vouch, and its likes on both. Each promotion also writes one faucet root thread;
+- two members, `R` and `S`, each made by `promote.mjs` on the earned path (`ARCHITECTURE → Membership`): two threads,
+  the faucet's vouch, and its likes on both. Each promotion also writes one faucet root thread. Every block of the
+  check loads its own copy, so each reads `R` as `base` holds it;
 - `S`'s name, `Sk5send`, claimed by `claim-name.mjs`.
 
 ### The suite's state

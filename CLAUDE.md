@@ -123,6 +123,8 @@ contract first, then implement against it, never the reverse.
 - `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
 - `contracts/TEST_STATE_INTERFACE.md` — prepared devnet states: what a state holds, its fingerprint, the cache, the
   loader, the clock offset and the run's miner
+- `contracts/EXTENSION_CHECK_INTERFACE.md` — the extension check as a tool: its blocks, the state and stack each runs
+  on, the addresses it binds, its one build per check and the command that runs it
 
 **The contract change rides the same branch as the code that implements it** — not merged ahead of it.
 One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
