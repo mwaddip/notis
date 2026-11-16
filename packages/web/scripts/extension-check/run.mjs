@@ -10778,114 +10778,15 @@ async function runOneBlock(bcx) {
   }
 }
 
-async function main() {
-  // Chrome launched with `--load-extension` does not open the extension's
-  // `index.html` on its own; a `Target.createTarget` opens it, and the
-  // page appears in `/json/list` once Chrome finishes attaching the new
-  // target.
-  const bv = await browserVersion();
-  const br = new WebSocket(bv.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
-  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
-  await sleep(2000);
-  br.close();
-  const page = await findExt('index.html');
-  if (!page) throw new Error('no extension page');
-  // Give the page a moment to finish parsing before we attach — main.ts's
-  // top-level `await bootstrapProxy(chrome)` runs before `#feed` gets its
-  // children, but the section element itself is in the initial HTML.
-  await sleep(4000);
-  const cx = await openSession(page.webSocketDebuggerUrl);
-  // Wait longer for the page to be usable; the extension's SW must be ready
-  // for main.ts's bootstrapProxy to return.
-  await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
-  await sleep(2000);
-
-  // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
-  // The expected first node matches the extension build the run was given —
-  // A' under --mesh (seed list [A', B']), RA under --light (seed list
-  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
-  // top refuses any other build.
-  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
-  const s1 = await cx.eval(`(() => ({
-    nodes: document.querySelector('meta[name="notis-nodes"]').content,
-    newPost: !!document.querySelector('[data-composer-open="@feed"]'),
-    feedLoaded: document.querySelectorAll('#feed .card').length,
-    feedReport: document.querySelector('#feed .report')?.textContent ?? null,
-  }))()`);
-  record(1, s1.nodes.includes(expectedFirstNode) && s1.newPost === false, `notis-nodes=${s1.nodes}, new-post=${s1.newPost}, feedCards=${s1.feedLoaded}, feedReport=${s1.feedReport}`);
-
-  // --- Step 2 — import R through the profile window's Import row.
-  await cx.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
-  await cx.waitFor(`!!window.__btn('import')`, 'import button');
-  // The App's inspectFile branch takes the file's text via chrome.runtime.sendMessage
-  // through the proxy; the profile then reveals a set-passphrase form. Drive that
-  // by calling importFile through the proxy directly — the seam the reader's file
-  // picker feeds into after inspectFile.
-  const r2 = await cx.eval(`chrome.runtime.sendMessage({ kind: 'importFile', text: ${JSON.stringify(R_TEXT)}, passphrase: ${JSON.stringify(PASSPHRASE)} })`);
-  await sleep(1500);
-  const s2 = await cx.eval(`(async () => {
-    const local = await chrome.storage.local.get(['notis.identity','notis.identity.backedup']);
-    const session = await chrome.storage.session.get(['notis.seed']);
-    const state = await chrome.runtime.sendMessage({ kind: 'state' });
-    const localEnv = local['notis.identity'];
-    const seedHex = session['notis.seed'] ?? '';
-    return {
-      importOk: ${JSON.stringify(r2 ?? null)},
-      state,
-      envelopeSet: typeof localEnv === 'string' && localEnv.length > 0,
-      seedInSession: typeof seedHex === 'string' && seedHex.length === 64,
-      seedFreeLocal: typeof localEnv === 'string' && seedHex.length === 64 && !localEnv.includes(seedHex),
-    };
-  })()`);
-  const pubKeyHex = s2.state?.pubKeyHex;
-  record(2, pubKeyHex === R_JSON.pubKeyHex && s2.envelopeSet && s2.seedInSession && s2.seedFreeLocal,
-    `state.pubKeyHex=${pubKeyHex?.slice(0, 8)}…, envelope in local, seed in session, seed-free local: ${s2.seedFreeLocal}`);
-
-  // Reload so the identity is loaded from storage — proves the proxy's snapshot boot.
-  await cx.call('Page.reload');
-  await sleep(2500);
-  const p2 = await findExt('index.html');
-  const cx2 = await openSession(p2.webSocketDebuggerUrl);
-  await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
-
-  // Every block runs steps 1 and 2 above and then its own steps on R
-  // (EXTENSION_CHECK_INTERFACE → Blocks). A step outside the run's block
-  // reads NOT RUN with the reason naming the block that runs it.
-  if (!WRITES) markWritesNotRun('the writes block runs it');
-  if (!LINKS) markLinksNotRun('the links block runs it');
-  if (!VERIFIED_TIP) markVerifiedTipNotRun('the tip block runs it');
-  if (!VERIFIED_FIGURES) markVerifiedFiguresNotRun('the figures block runs it');
-  if (!VERIFIED_NAMES) markVerifiedNamesNotRun('the names block runs it');
-  if (!WAITING) markWaitingWritesNotRun('the waiting block runs it');
-  if (!LIGHT) markLightNotRun('the light block runs it');
-  if (!MESH) markMeshNotRun('the mesh block runs it');
-
-  // The blocks whose steps run on their own fresh session. `writes` and
-  // `links` run on the `cx2` page below.
-  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING || LIGHT || MESH) {
-    const bbcx = await openBrowserSession();
-    try {
-      await runOneBlock(bbcx);
-      // Every block prints the diag liveness line at its end, as `--light`
-      // and `--mesh` did when they ran alone. `links` prints its own diag
-      // before `13-uncancelled` on its own path below.
-      await diagBeforeThirteenUncancelled(page.id);
-    } finally {
-      try { bbcx.s.close(); } catch {}
-    }
-    return;
-  }
-
-  // The `writes` and `links` blocks run inline on `cx2`. `writes` runs
-  // steps 3–12 below and ends; `links` skips to 13a, read on the page
-  // steps 1 and 2 leave (`cx10`, read under the alias each site uses),
-  // followed by the `[diag]` line and `13-uncancelled`.
+// `writes` block steps 3–12 on R, run on the page `main()` opens and
+// reloads at step 2 (`cx2`). Steps 3–9 use `cx2`; step 10 reloads and
+// opens `cx10`, which steps 10–12 use. Prints the `[diag]` liveness
+// line at the end (EXTENSION_CHECK_INTERFACE → Blocks).
+async function writesSteps(cx2, pageId) {
   let cx10 = cx2;
 
   // --- Step 3 — Post a thread under silent policy; the composer collapses only after
   // the sign round-trip; the post lands.
-  if (WRITES) {
   await cx2.eval(`document.querySelector('[data-composer-open="@feed"]').click()`, true);
   await cx2.waitFor(`document.querySelector('.composer textarea')`, 'composer opened');
   const CONTENT = 'proof-thread-' + Date.now();
@@ -11546,16 +11447,17 @@ async function main() {
 
   // The writes block ends here — every block prints the `[diag]` line at
   // its end (EXTENSION_CHECK_INTERFACE → Blocks).
-  await diagBeforeThirteenUncancelled(page.id);
+  await diagBeforeThirteenUncancelled(pageId);
   return;
-  } // end if (WRITES)
+}
 
-  // -------------------------------------------------------------------------
-  // Steps 13–16 — WEB_INTERFACE → The extension → "Links into the extension".
-  // The links block runs them on the page steps 1 and 2 leave (`cx10 = cx2`
-  // above) and ends with the `[diag]` line and `13-uncancelled`.
-  // -------------------------------------------------------------------------
-
+// `links` block steps 13a, 13–16, the `[diag]` liveness line and
+// `13-uncancelled` on R, run on the page `main()` opens and reloads
+// at step 2 (`cx2`, aliased as `cx10` where each site reads). The
+// function opens the browser-level session its targets open through
+// and closes it at the end (EXTENSION_CHECK_INTERFACE → Blocks).
+async function linksSteps(cx2, pageId) {
+  const cx10 = cx2;
   const postId = await pickOwnRootPostId();
   if (postId === null) {
     record('13a', false, 'no confirmed root post authored by R — nothing to link to');
@@ -12274,7 +12176,7 @@ async function main() {
   // hung-page stack line that follows when a page reads `hung`. The
   // page id is `main()`'s initial extension page, so `block-leftover`
   // names a page some block opened and did not close.
-  await diagBeforeThirteenUncancelled(page.id);
+  await diagBeforeThirteenUncancelled(pageId);
 
   // ------- Step 13-uncancelled — the browser-context arm, last after the
   // verified-tip block. The extension does not load in a
@@ -12301,8 +12203,8 @@ async function main() {
           && t.url.startsWith(`chrome-extension://${EXT_ID}/index.html`)
           && typeof t.webSocketDebuggerUrl === 'string');
         // main()'s id first when it still stands, else the browser's order.
-        const mainFirst = indexes.find((t) => t.id === page.id);
-        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== page.id)] : indexes;
+        const mainFirst = indexes.find((t) => t.id === pageId);
+        return mainFirst ? [mainFirst, ...indexes.filter((t) => t.id !== pageId)] : indexes;
       } catch { return []; }
     })();
     const probeAnswers = async (wsUrl) => {
@@ -12383,6 +12285,117 @@ async function main() {
   }
 
   try { bcx.s.close(); } catch {}
+}
+
+async function main() {
+  // Chrome launched with `--load-extension` does not open the extension's
+  // `index.html` on its own; a `Target.createTarget` opens it, and the
+  // page appears in `/json/list` once Chrome finishes attaching the new
+  // target.
+  const bv = await browserVersion();
+  const br = new WebSocket(bv.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { br.onopen = res; br.onerror = rej; });
+  br.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: `chrome-extension://${EXT_ID}/index.html` } }));
+  await sleep(2000);
+  br.close();
+  const page = await findExt('index.html');
+  if (!page) throw new Error('no extension page');
+  // Give the page a moment to finish parsing before we attach — main.ts's
+  // top-level `await bootstrapProxy(chrome)` runs before `#feed` gets its
+  // children, but the section element itself is in the initial HTML.
+  await sleep(4000);
+  const cx = await openSession(page.webSocketDebuggerUrl);
+  // Wait longer for the page to be usable; the extension's SW must be ready
+  // for main.ts's bootstrapProxy to return.
+  await cx.waitFor(`!!document.querySelector('#feed')`, 'feed root', 30000);
+  await sleep(2000);
+
+  // --- Step 1 — read surface: seed list drives the feed; no `new post` button.
+  // The expected first node matches the extension build the run was given —
+  // A' under --mesh (seed list [A', B']), RA under --light (seed list
+  // [RA, RB]), else RLA (seed list [RLA, RLB]) — and the shell check at the
+  // top refuses any other build.
+  const expectedFirstNode = MESH ? AP_ORIGIN : LIGHT ? RA_ORIGIN : RLA_ORIGIN;
+  const s1 = await cx.eval(`(() => ({
+    nodes: document.querySelector('meta[name="notis-nodes"]').content,
+    newPost: !!document.querySelector('[data-composer-open="@feed"]'),
+    feedLoaded: document.querySelectorAll('#feed .card').length,
+    feedReport: document.querySelector('#feed .report')?.textContent ?? null,
+  }))()`);
+  record(1, s1.nodes.includes(expectedFirstNode) && s1.newPost === false, `notis-nodes=${s1.nodes}, new-post=${s1.newPost}, feedCards=${s1.feedLoaded}, feedReport=${s1.feedReport}`);
+
+  // --- Step 2 — import R through the profile window's Import row.
+  await cx.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
+  await cx.waitFor(`!!window.__btn('import')`, 'import button');
+  // The App's inspectFile branch takes the file's text via chrome.runtime.sendMessage
+  // through the proxy; the profile then reveals a set-passphrase form. Drive that
+  // by calling importFile through the proxy directly — the seam the reader's file
+  // picker feeds into after inspectFile.
+  const r2 = await cx.eval(`chrome.runtime.sendMessage({ kind: 'importFile', text: ${JSON.stringify(R_TEXT)}, passphrase: ${JSON.stringify(PASSPHRASE)} })`);
+  await sleep(1500);
+  const s2 = await cx.eval(`(async () => {
+    const local = await chrome.storage.local.get(['notis.identity','notis.identity.backedup']);
+    const session = await chrome.storage.session.get(['notis.seed']);
+    const state = await chrome.runtime.sendMessage({ kind: 'state' });
+    const localEnv = local['notis.identity'];
+    const seedHex = session['notis.seed'] ?? '';
+    return {
+      importOk: ${JSON.stringify(r2 ?? null)},
+      state,
+      envelopeSet: typeof localEnv === 'string' && localEnv.length > 0,
+      seedInSession: typeof seedHex === 'string' && seedHex.length === 64,
+      seedFreeLocal: typeof localEnv === 'string' && seedHex.length === 64 && !localEnv.includes(seedHex),
+    };
+  })()`);
+  const pubKeyHex = s2.state?.pubKeyHex;
+  record(2, pubKeyHex === R_JSON.pubKeyHex && s2.envelopeSet && s2.seedInSession && s2.seedFreeLocal,
+    `state.pubKeyHex=${pubKeyHex?.slice(0, 8)}…, envelope in local, seed in session, seed-free local: ${s2.seedFreeLocal}`);
+
+  // Reload so the identity is loaded from storage — proves the proxy's snapshot boot.
+  await cx.call('Page.reload');
+  await sleep(2500);
+  const p2 = await findExt('index.html');
+  const cx2 = await openSession(p2.webSocketDebuggerUrl);
+  await cx2.waitFor(`document.querySelector('#feed .feed-head .btn-primary')`, 'new post button after identity load');
+
+  // Every block runs steps 1 and 2 above and then its own steps on R
+  // (EXTENSION_CHECK_INTERFACE → Blocks). A step outside the run's block
+  // reads NOT RUN with the reason naming the block that runs it.
+  if (!WRITES) markWritesNotRun('the writes block runs it');
+  if (!LINKS) markLinksNotRun('the links block runs it');
+  if (!VERIFIED_TIP) markVerifiedTipNotRun('the tip block runs it');
+  if (!VERIFIED_FIGURES) markVerifiedFiguresNotRun('the figures block runs it');
+  if (!VERIFIED_NAMES) markVerifiedNamesNotRun('the names block runs it');
+  if (!WAITING) markWaitingWritesNotRun('the waiting block runs it');
+  if (!LIGHT) markLightNotRun('the light block runs it');
+  if (!MESH) markMeshNotRun('the mesh block runs it');
+
+  // The blocks whose steps run on their own fresh session. `writes` and
+  // `links` run on the `cx2` page below.
+  if (VERIFIED_TIP || VERIFIED_FIGURES || VERIFIED_NAMES || WAITING || LIGHT || MESH) {
+    const bbcx = await openBrowserSession();
+    try {
+      await runOneBlock(bbcx);
+      // Every block prints the diag liveness line at its end, as `--light`
+      // and `--mesh` did when they ran alone. `links` prints its own diag
+      // before `13-uncancelled` on its own path below.
+      await diagBeforeThirteenUncancelled(page.id);
+    } finally {
+      try { bbcx.s.close(); } catch {}
+    }
+    return;
+  }
+
+  // Dispatch the writes and links blocks like every other block: each
+  // has its own steps function called from here after steps 1 and 2.
+  if (WRITES) {
+    await writesSteps(cx2, page.id);
+    return;
+  }
+  if (LINKS) {
+    await linksSteps(cx2, page.id);
+    return;
+  }
 }
 
 // WEB_INTERFACE → The extension → "The light read" — bring up B, then the
