@@ -347,6 +347,36 @@ describe('admin app CORS', () => {
   });
 });
 
+// NODE_INTERFACE → Admin Listener → "The admin listener's start line names the
+// address and port it bound".
+describe('admin listener start line', () => {
+  it('names the address and port the server bound under adminPort 0', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let adminServer: http.Server | undefined;
+    try {
+      adminServer = createAdminApp(
+        makeTestConfig({ adminPort: 0, adminBindAddress: '127.0.0.1' }),
+        {
+          getConnectedPeers: () => [],
+          syncPhase: () => 'idle',
+          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+        },
+      );
+      await new Promise<void>((resolve) => {
+        if (adminServer?.listening) { resolve(); return; }
+        adminServer?.once('listening', resolve);
+      });
+      const addr = adminServer.address() as AddressInfo;
+      expect(addr.port).not.toBe(0);
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(lines).toContain(`Admin listener on ${addr.address}:${addr.port}`);
+    } finally {
+      logSpy.mockRestore();
+      adminServer?.close();
+    }
+  });
+});
+
 // NODE_INTERFACE → The public server → "No answer names the software, and none
 // is read as another type": every answer of the public app and the admin
 // listener carries X-Content-Type-Options: nosniff, and neither sends
