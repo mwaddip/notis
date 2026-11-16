@@ -604,7 +604,8 @@ export async function generate(
           // 8. Stop miner, faucet, A. `endProcess` awaits the exit event,
           //    so no further wait is needed — A's SIGTERM handler closes
           //    the store before exit, and a `-wal` or `-shm` beside the
-          //    store afterwards is a failure (claim 1 as a guard).
+          //    store after A's clean exit fails the generation, naming
+          //    the file.
           await miner.stop();
           await miner.joined.catch(() => {});
           await endProcess(faucetTracked);
