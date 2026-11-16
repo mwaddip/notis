@@ -3,39 +3,21 @@
 //   fingerprint [--list] [<repo-root>]  — the 32-byte digest, or the input paths
 //   miner --node-api <url> --mining-secret-path <p>
 //         [--interval-ms <N>] [--control-port <N>]  — one miner driving one node
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { assertDistFresh } from './dist-freshness.js';
 import { computeFingerprint, fingerprintInputs } from './fingerprint.js';
 import { runMiner } from './miner.js';
 
-function newestMtime(dir: string): number {
-  let newest = 0;
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    const st = statSync(full, { throwIfNoEntry: false });
-    if (!st) continue;
-    if (st.isDirectory()) newest = Math.max(newest, newestMtime(full));
-    else newest = Math.max(newest, st.mtimeMs);
-  }
-  return newest;
-}
-
-// The CLI runs from dist/. The fingerprint reads this member's src under the
-// digest, so a dist older than src runs code the fingerprint does not
-// describe. The refusal names the package and exits before any action.
+// The CLI runs from dist/. The fingerprint reads this member's src under
+// the digest, so a dist older than src runs code the fingerprint does not
+// describe. The refusal is `assertDistFresh`'s, named by package and path.
 function refuseStaleSelf(): void {
-  const packageRoot = resolve(import.meta.dirname, '..');
-  const distIndex = join(packageRoot, 'dist', 'index.js');
-  const srcDir = join(packageRoot, 'src');
-  const dist = statSync(distIndex, { throwIfNoEntry: false });
-  if (!dist) {
-    console.error('Stale dist — tools/test-state has no dist/index.js; run its build');
-    process.exit(2);
-  }
-  if (newestMtime(srcDir) > dist.mtimeMs) {
-    console.error(
-      'Stale dist — tools/test-state src is newer than dist; rebuild before continuing',
-    );
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  try {
+    assertDistFresh(['tools/test-state'], repoRoot);
+  } catch (err) {
+    console.error((err as Error).message);
     process.exit(2);
   }
 }
