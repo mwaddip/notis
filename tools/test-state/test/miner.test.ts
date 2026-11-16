@@ -382,7 +382,7 @@ describe('miner', () => {
     expect(elapsed).toBeLessThanOrEqual(intervalMs * 1.5);
   }, 60_000);
 
-  it('answers two concurrent mine-to requests each with its own height', async () => {
+  it('answers the lower request below the higher target, no later than the higher', async () => {
     const miningSecret = randomBytes(16).toString('hex');
     node = await spawnDevnetNode({ miningSecret });
     handle = await runMiner({
@@ -392,19 +392,32 @@ describe('miner', () => {
       controlPort: 0,
     });
     // Two requests in flight at once. The miner mines toward max(h1, h2);
-    // each answers when the tip reaches its own height.
-    const [a, b] = await Promise.all([
-      postJson<{ height: number }>(
-        `http://127.0.0.1:${handle.controlPort}/mine-to`,
-        { height: 3 },
-      ),
-      postJson<{ height: number }>(
-        `http://127.0.0.1:${handle.controlPort}/mine-to`,
-        { height: 5 },
-      ),
-    ]);
+    // each answers when the tip reaches its OWN height, so the lower
+    // request answers at a height below the higher's target and before
+    // (or no later than) the higher request answers.
+    let aAt: number | null = null;
+    let bAt: number | null = null;
+    const aP = postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: 3 },
+    ).then((r) => {
+      aAt = Date.now();
+      return r;
+    });
+    const bP = postJson<{ height: number }>(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      { height: 5 },
+    ).then((r) => {
+      bAt = Date.now();
+      return r;
+    });
+    const [a, b] = await Promise.all([aP, bP]);
     expect(a.height).toBeGreaterThanOrEqual(3);
+    expect(a.height).toBeLessThan(5);
     expect(b.height).toBeGreaterThanOrEqual(5);
+    expect(aAt).not.toBeNull();
+    expect(bAt).not.toBeNull();
+    expect(aAt! <= bAt!).toBe(true);
   }, 60_000);
 
   for (const [label, bodyText] of [
