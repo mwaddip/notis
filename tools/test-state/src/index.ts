@@ -16,6 +16,15 @@ export {
   type FingerprintInput,
 } from './fingerprint.js';
 
+export {
+  cacheRootDir,
+  copyOutState,
+  readState,
+  writeState,
+  type CachedState,
+  type Manifest,
+} from './cache.js';
+
 // TEST_STATE_INTERFACE → The clock offset. The barrel lives in src/ at test
 // time (vitest's alias) and in dist/ at runtime (the package's main); the
 // build copies the preload next to dist/index.js, so this resolve finds the
