@@ -1,12 +1,5 @@
 # EXTENSION_CHECK Interface Contract
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** No `check.mjs` exists; a check is a recipe kept outside the repo. Only `light`,
-> `mesh` and `waiting` run alone (`--light`, `--mesh`, `--waiting-only`); one relays run carries `writes` through
-> `waiting` in one browser, and every block of a check shares one stack. The harness's addresses are fixed ports in
-> 19740–19863, Chromium's DevTools port drawn at random from 19200–19699. Each of the three runs takes its own extension
-> build with its addresses baked in, the zips moved into the repo root. `figures` reads R's `$NOTIS` from `writes`'
-> step 12, and `base` holds R2 and R3 for the light and mesh runs.
-
 ## Scope
 
 **The extension check is the extension's proof in a browser.** `packages/web/scripts/extension-check/` drives the built
@@ -104,9 +97,11 @@ values reaching the metas, which `build-extension.sh` and `build-release.sh` ref
 **The harness runs one block per process** — `run.mjs --block <name>` — on the stack, the build copies and the
 addresses it is handed or binds; the check starts one harness per block.
 
-**It prints a line per block as the block ends** — its name, its steps passed, failed and not run, its wall — and the
-summary last. Each block's log stamps every harness line as it arrives. **The exit code**: 0 when every step of every
-block it ran passed, 1 when any failed, 2 when the check refused before a block ran.
+**It prints a line per block as the block ends** — its name, its own steps passed, failed and ended any other way, its
+wall — and the summary last. A block's steps are the ones its table row names; the harness records every other step
+`NOT RUN`, and the line does not count them. Each block's log stamps every harness line as it arrives. **The exit
+code**: 0 when every step of every block it ran passed, 1 when any did not, 2 when the check refused before a block
+ran, 130 when a signal ended it.
 
 **Whatever ends a check stops everything it started** — a pass, a failure, a refusal or a signal: each harness its
 own nodes, relays and Chromium; each stack by `down`. Every process is stopped by the process the check or the harness
