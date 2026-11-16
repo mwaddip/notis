@@ -273,12 +273,19 @@ function copyPackageTree(srcPkgDir, dstPkgDir, opts = {}) {
         walk(s, t);
       } else if (st.isFile()) {
         if (!keepFile(s)) continue;
-        if (filter && !filter(path.relative(srcPkgDir, s))) continue;
+        // The filter reads a `/`-separated path on every platform, so
+        // `startsWith('dist/')` matches on Windows where
+        // `path.relative(..., ...)` returns `dist\cjs\lib\index.cjs`.
+        if (filter && !filter(toForwardSlashRel(srcPkgDir, s))) continue;
         copyFileSync(s, t);
       }
     }
   }
   walk(srcPkgDir, dstPkgDir);
+}
+
+function toForwardSlashRel(fromDir, absPath) {
+  return path.relative(fromDir, absPath).split(path.sep).join('/');
 }
 
 function pkgRootOf(resolvedPkgJsonPath) {
