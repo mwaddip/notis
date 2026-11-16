@@ -453,6 +453,9 @@ importers:
       '@dagsocial/nipopow-client':
         specifier: workspace:*
         version: link:../nipopow-client
+      '@dagsocial/test-state':
+        specifier: workspace:*
+        version: link:../test-state
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -619,6 +622,31 @@ importers:
       '@noble/curves':
         specifier: 2.2.0
         version: 2.2.0
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
+
+  tools/test-state:
+    dependencies:
+      '@dagsocial/net':
+        specifier: workspace:*
+        version: link:../../packages/net
+      '@dagsocial/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@dagsocial/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
+    devDependencies:
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2

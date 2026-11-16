@@ -2655,17 +2655,18 @@ Six rules govern it:
    side effect of testing.**
 4. **Spawned processes are exempt and still need a real build.** A vitest alias exists only inside
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
-   artefact, so it needs a genuine build first and no alias reaches it. **One suite does:
+   artefact, so it needs a genuine build first and no alias reaches it. **Two members do.
    `tools/e2e` (`@dagsocial/e2e`) spawns `packages/node/dist/index.js` for every node of its mesh,
-   which loads `wire`, `types`, `validation`, `net`, `avltree`, `nipopow` and `consensus` from their `dist` in turn,
-   and its light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `wire`, `types`, `validation`,
-   `avltree`, `nipopow`, `consensus` and `node-reads` the same way** (a bundle externalises its workspace
-   dependencies). It
-   refuses to run when any `dist/index.js` a process it spawns loads is
-   missing or older than the newest file under that package's `src/`, naming the package — a stale
-   build is a refusal, never a run against old code that reports green. The gate
-   order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
-   suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
+   which loads `wire`, `types`, `node-reads`, `validation`, `net`, `avltree`, `nipopow` and `consensus` from their
+   `dist` in turn, and its light-client test spawns `tools/nipopow-client/dist/index.js`, which loads `wire`, `types`,
+   `validation`, `avltree`, `nipopow`, `consensus` and `node-reads` the same way; `tools/test-state` spawns the same
+   node, `tools/faucet/dist/index.js` (which loads `wire`, `types` and `node-reads`) and its own `dist/cli.js` for a
+   prepared devnet stack (`TEST_STATE_INTERFACE → Loading a state`)** (a bundle externalises its workspace
+   dependencies). Each refuses to run when any `dist/index.js` a process it spawns loads is missing or older than the
+   newest file under that package's `src/`, naming the package — a stale build is a refusal, never a run against old
+   code that reports green. The refusal and its lists are one, `tools/test-state`'s, which `tools/e2e` imports. The
+   gate order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, both are in
+   `pnpm -r test` by the workspace glob; nothing has to remember to run them.
 5. **Test trees are typechecked — every package, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero

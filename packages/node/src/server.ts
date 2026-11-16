@@ -36,7 +36,7 @@ import { tryGetAvlProver } from './state/avl-prover.js';
 import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
 import { createServer, type Server } from 'http';
-import type { Socket } from 'net';
+import type { AddressInfo, Socket } from 'net';
 import {
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
@@ -153,8 +153,11 @@ export function createAdminApp(config: Config, deps: AdminDeps): Server {
     );
   }
 
-  const server = adminApp.listen(config.adminPort, config.adminBindAddress, () => {
-    console.log(`Admin listener on ${config.adminBindAddress}:${config.adminPort}`);
+  // NODE_INTERFACE → Admin Listener → "The admin listener's start line names the
+  // address and port it bound".
+  const server: Server = adminApp.listen(config.adminPort, config.adminBindAddress, () => {
+    const bound = server.address() as AddressInfo;
+    console.log(`Admin listener on ${bound.address}:${bound.port}`);
   });
 
   return server;

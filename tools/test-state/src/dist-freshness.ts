@@ -9,7 +9,7 @@ const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..');
 // transitively — a bundle externalises its workspace dependencies, so each loads from its
 // own `dist`. Listed in build order, which the refusal's Run hint follows.
 
-// `packages/node/dist/index.js`, spawned for every node of a mesh.
+// `packages/node/dist/index.js`, spawned for every node of a mesh or a prepared devnet stack.
 export const NODE_LOADS: readonly string[] = [
   'packages/wire',
   'packages/types',
@@ -33,6 +33,14 @@ export const NIPOPOW_CLIENT_LOADS: readonly string[] = [
   'packages/consensus',
   'packages/node-reads',
   'tools/nipopow-client',
+];
+
+// `tools/faucet/dist/index.js`, spawned by a prepared devnet stack beside the node.
+export const FAUCET_LOADS: readonly string[] = [
+  'packages/wire',
+  'packages/types',
+  'packages/node-reads',
+  'tools/faucet',
 ];
 
 function newestMtime(dir: string): number {
@@ -68,7 +76,7 @@ export function assertDistFresh(members: readonly string[], root: string = REPO_
     const list = stale.map((s) => `  - ${s}`).join('\n');
     const names = members.map((m) => basename(m)).join(' ');
     throw new Error(
-      `Stale dist — rebuild before running the mesh suite:\n${list}\n` +
+      `Stale dist — rebuild before continuing:\n${list}\n` +
         `Run: for p in ${names}; do pnpm --filter @dagsocial/$p build; done`,
     );
   }

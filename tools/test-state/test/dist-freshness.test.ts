@@ -10,10 +10,15 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, relative, resolve } from 'path';
-import { assertDistFresh, NODE_LOADS, NIPOPOW_CLIENT_LOADS } from '../src/dist-freshness.js';
+import {
+  assertDistFresh,
+  NODE_LOADS,
+  NIPOPOW_CLIENT_LOADS,
+  FAUCET_LOADS,
+} from '../src/dist-freshness.js';
 
 const REPO_ROOT = realpathSync(resolve(import.meta.dirname, '..', '..', '..'));
-const T0 = 1_700_000_000;
+const MTIME_BASE = 1_700_000_000;
 
 function touch(root: string, path: string, mtime: number): void {
   const full = join(root, path);
@@ -39,7 +44,7 @@ function workspaceDeps(member: string): string[] {
     dependencies?: Record<string, string>;
   };
   return Object.entries(manifest.dependencies ?? {})
-    .filter(([, spec]) => spec.startsWith('workspace:'))
+    .filter(([, specifier]) => specifier.startsWith('workspace:'))
     .map(([name]) => relative(REPO_ROOT, realpathSync(join(REPO_ROOT, member, 'node_modules', name))));
 }
 
@@ -58,22 +63,22 @@ describe('dist freshness', () => {
   let root: string;
 
   beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), 'dagsocial-e2e-freshness-'));
+    root = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-freshness-'));
     // Every file under src/, the nested one too, predates dist/index.js; the directories
-    // holding them keep today's mtime.
+    // holding them keep the current wall-clock mtime.
     for (const m of ['packages/fresh', 'tools/fresh-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
-      touch(root, `${m}/src/deep/nested.ts`, T0);
-      touch(root, `${m}/dist/index.js`, T0 + 10);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
+      touch(root, `${m}/src/deep/nested.ts`, MTIME_BASE);
+      touch(root, `${m}/dist/index.js`, MTIME_BASE + 10);
     }
     // Only the nested file postdates dist/index.js.
     for (const m of ['packages/stale', 'tools/stale-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
-      touch(root, `${m}/src/deep/nested.ts`, T0 + 20);
-      touch(root, `${m}/dist/index.js`, T0 + 10);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
+      touch(root, `${m}/src/deep/nested.ts`, MTIME_BASE + 20);
+      touch(root, `${m}/dist/index.js`, MTIME_BASE + 10);
     }
     for (const m of ['packages/unbuilt', 'tools/unbuilt-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
     }
   });
 
@@ -95,7 +100,7 @@ describe('dist freshness', () => {
       'tools/unbuilt-tool',
     ];
     expect(refusal(members, root).split('\n')).toEqual([
-      'Stale dist — rebuild before running the mesh suite:',
+      'Stale dist — rebuild before continuing:',
       '  - @dagsocial/stale (packages/stale): src/ newer than dist/index.js',
       '  - @dagsocial/unbuilt (packages/unbuilt): dist/index.js missing',
       '  - @dagsocial/stale-tool (tools/stale-tool): src/ newer than dist/index.js',
@@ -107,6 +112,7 @@ describe('dist freshness', () => {
   for (const [entry, loads] of [
     ['packages/node', NODE_LOADS],
     ['tools/nipopow-client', NIPOPOW_CLIENT_LOADS],
+    ['tools/faucet', FAUCET_LOADS],
   ] as const) {
     it(`${entry}: the checked list is its workspace dependency closure, in build order`, () => {
       expect(new Set(loads)).toEqual(closure(entry));

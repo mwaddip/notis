@@ -17,7 +17,7 @@ import {
   awaitExit,
   type NodeProcess,
 } from '../src/node-process.js';
-import { assertDistFresh, NODE_LOADS } from '../src/dist-freshness.js';
+import { assertDistFresh, NODE_LOADS } from '@dagsocial/test-state';
 import { p2pPort } from '../src/ports.js';
 
 // NET_INTERFACE → The node key → "The key file holds the key's `KeyPair.secretKey`".

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { spawnNode, waitForStatus, awaitExit, type NodeProcess } from './node-process.js';
 import { p2pPort } from './ports.js';
-import { assertDistFresh, NODE_LOADS } from './dist-freshness.js';
+import { assertDistFresh, NODE_LOADS } from '@dagsocial/test-state';
 
 export interface MeshOptions {
   fileIndex: number;
