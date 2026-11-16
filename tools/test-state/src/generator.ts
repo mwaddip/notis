@@ -47,7 +47,7 @@ export function devnetFaucet(): { publicKeyHex: string; secretKeyHex: string } {
 
 // NET_INTERFACE → The node key. The notisId is the 32-byte Ed25519 public
 // key `loadNodeKey` reads from the file's seed. The caller passes a path
-// that is known to exist (G5's check runs first) so `loadNodeKey` never
+// that is known to exist (a missing file is a failure above) so `loadNodeKey` never
 // writes a fresh key here — it only reads what the node wrote.
 export async function notisIdFromKeyFile(path: string): Promise<string> {
   const keyPair = await loadNodeKey(path);
@@ -65,31 +65,31 @@ export function nodePeerIdFromListenLine(line: string): { port: number; peerId: 
   return { port: Number(m[1]), peerId: m[2]! };
 }
 
-export interface StateRecipe {
+export interface StateDef {
   readonly name: string;
   readonly startingHeight: number;
   readonly promotions: readonly string[]; // identity labels to promote
   readonly claim: { readonly identity: string; readonly name: string } | null;
 }
 
-export const BASE: StateRecipe = {
+export const BASE: StateDef = {
   name: 'base',
   startingHeight: 60,
   promotions: ['R', 'S', 'R2', 'R3'],
   claim: { identity: 'S', name: 'Sk5send' },
 };
 
-// A test-only small state the suite uses. The brief's "if `base` is too slow
+// A test-only small state the suite uses. The "if `base` is too slow
 // for the suite, use a smaller one" shape: mine to 5, one promotion
 // (`promote.mjs` for R), no claim.
-export const MINIMAL: StateRecipe = {
+export const MINIMAL: StateDef = {
   name: 'minimal',
   startingHeight: 5,
   promotions: ['R'],
   claim: null,
 };
 
-export const RECIPES = new Map<string, StateRecipe>([
+export const STATE_DEFS = new Map<string, StateDef>([
   [BASE.name, BASE],
   [MINIMAL.name, MINIMAL],
 ]);
@@ -329,28 +329,28 @@ export async function generate(
   stateName: string,
   options: GenerateOptions,
 ): Promise<GenerateResult> {
-  const recipe = RECIPES.get(stateName);
-  if (!recipe) throw new Error(`Unknown state: ${stateName}`);
+  const def = STATE_DEFS.get(stateName);
+  if (!def) throw new Error(`Unknown state: ${stateName}`);
   const fingerprint = computeFingerprint(options.repoRoot);
   const paths = pathsFor(options.repoRoot);
   const intervalMs = options.intervalMs ?? 1_500;
 
-  const scratchDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-gen-${recipe.name}-`));
+  const workDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-gen-${def.name}-`));
   try {
-    const dbPath = join(scratchDir, 'dagsocial.db');
-    const nodeKeyPath = join(scratchDir, 'dagsocial.key');
+    const dbPath = join(workDir, 'dagsocial.db');
+    const nodeKeyPath = join(workDir, 'dagsocial.key');
     const miningSecret = randomBytes(16).toString('hex');
-    const miningSecretPath = join(scratchDir, 'mining-secret');
+    const miningSecretPath = join(workDir, 'mining-secret');
     writeFileSync(miningSecretPath, miningSecret, { mode: 0o600 });
     chmodSync(miningSecretPath, 0o600);
 
     const faucetKey = devnetFaucet();
-    const faucetKeyPath = join(scratchDir, 'faucet.key');
+    const faucetKeyPath = join(workDir, 'faucet.key');
     writeFileSync(faucetKeyPath, faucetKey.secretKeyHex, { mode: 0o600 });
     chmodSync(faucetKeyPath, 0o600);
 
     // 1. Spawn A (devnet, miner, no bootstrap, PORT/ADMIN_PORT/listen=0).
-    const nodeLog = join(scratchDir, 'node.log');
+    const nodeLog = join(workDir, 'node.log');
     const nodeEnv: NodeJS.ProcessEnv = {
       ...allowlistedEnv(),
       NETWORK_TYPE: 'devnet',
@@ -364,7 +364,7 @@ export async function generate(
       MINING_SECRET: miningSecret,
     };
     const nodeCp = spawn(process.execPath, [paths.nodeBin], {
-      cwd: scratchDir,
+      cwd: workDir,
       env: nodeEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -420,7 +420,7 @@ export async function generate(
       //    free loopback port is taken from the OS and passed as PORT.
       const { pickFreePort } = await import('./loader.js');
       const faucetBoundPort = await pickFreePort();
-      const faucetLog = join(scratchDir, 'faucet.log');
+      const faucetLog = join(workDir, 'faucet.log');
       const faucetEnv: NodeJS.ProcessEnv = {
         ...allowlistedEnv(),
         NETWORK_TYPE: 'devnet',
@@ -432,7 +432,7 @@ export async function generate(
         FAUCET_CREDIT_AMOUNT: '10000000000',
       };
       const faucetCp = spawn(process.execPath, [paths.faucetBin], {
-        cwd: scratchDir,
+        cwd: workDir,
         env: faucetEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -478,12 +478,12 @@ export async function generate(
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ height: recipe.startingHeight }),
+              body: JSON.stringify({ height: def.startingHeight }),
             },
           );
           if (!reachStartingHeight.ok) {
             throw new Error(
-              `mine-to ${recipe.startingHeight} returned ${reachStartingHeight.status}: ` +
+              `mine-to ${def.startingHeight} returned ${reachStartingHeight.status}: ` +
                 (await reachStartingHeight.text()),
             );
           }
@@ -495,8 +495,8 @@ export async function generate(
             keyFile: string;
             memberSinceBlock?: number;
           }> = [];
-          for (const label of recipe.promotions) {
-            const log = join(scratchDir, `promote-${label}.log`);
+          for (const label of def.promotions) {
+            const log = join(workDir, `promote-${label}.log`);
             const promoted = await runPromote(
               {
                 repoRoot: options.repoRoot,
@@ -507,7 +507,7 @@ export async function generate(
               },
               log,
             );
-            const keyFile = join(scratchDir, `${label}.key`);
+            const keyFile = join(workDir, `${label}.key`);
             writeFileSync(
               keyFile,
               JSON.stringify({
@@ -522,13 +522,13 @@ export async function generate(
 
           // 6. Run the claim, if any.
           let claimed: { boxId: string; claimedAtBlock: number; name: string } | null = null;
-          if (recipe.claim) {
-            const { identity: claimLabel, name: claimName } = recipe.claim;
+          if (def.claim) {
+            const { identity: claimLabel, name: claimName } = def.claim;
             const ident = identities.find((i) => i.label === claimLabel);
             if (!ident) {
               throw new Error(`claim identity ${claimLabel} not among promoted`);
             }
-            const log = join(scratchDir, `claim-${claimLabel}.log`);
+            const log = join(workDir, `claim-${claimLabel}.log`);
             const result = await runClaimName(
               {
                 repoRoot: options.repoRoot,
@@ -577,7 +577,7 @@ export async function generate(
             throw new Error('node did not print a `[net] listening on` line with a peerId');
           }
           const manifest: Manifest = {
-            name: recipe.name,
+            name: def.name,
             fingerprint,
             tip: {
               height: tip.height,
@@ -590,13 +590,13 @@ export async function generate(
             claim: claimed,
           };
           writeFileSync(
-            join(scratchDir, 'manifest.json'),
+            join(workDir, 'manifest.json'),
             JSON.stringify(manifest),
           );
 
           // Write process records.
           writeFileSync(
-            join(scratchDir, 'processes.log'),
+            join(workDir, 'processes.log'),
             processRecords.map((r) => JSON.stringify(r)).join('\n') + '\n',
           );
 
@@ -627,7 +627,7 @@ export async function generate(
           // 9. Write to the cache. The state's files: the store, the node
           //    key, the mesh state (where one exists), each identity key,
           //    the manifest. `.mesh` is a directory on a mesh node.
-          const stageDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-stage-${recipe.name}-`));
+          const stageDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-stage-${def.name}-`));
           try {
             cpSync(dbPath, join(stageDir, 'dagsocial.db'));
             cpSync(nodeKeyPath, join(stageDir, 'dagsocial.key'));
@@ -641,10 +641,11 @@ export async function generate(
             }
             writeFileSync(join(stageDir, 'manifest.json'), JSON.stringify(manifest));
 
-            const cached = writeState(options.cacheRoot, fingerprint, recipe.name, stageDir);
-            // G4: scratch stays on failure; on success remove it below.
+            const cached = writeState(options.cacheRoot, fingerprint, def.name, stageDir);
+            // Remove the staging copy on success; keep it (and the generator's work directory
+            // beside it) only when the generation threw.
             rmSync(stageDir, { recursive: true, force: true });
-            rmSync(scratchDir, { recursive: true, force: true });
+            rmSync(workDir, { recursive: true, force: true });
             return { manifest, fingerprint, cachePath: cached.dir };
           } finally {
             if (existsSync(stageDir)) {
@@ -666,12 +667,12 @@ export async function generate(
       await endProcess(nodeTracked);
     }
   } catch (err) {
-    // G4: keep the scratch directory on failure and name it. A's log,
-    // the pool (`<scratchDir>/dagsocial.db` through `sqlite3 -readonly`)
+    // On failure keep the generator's work directory and name it. A's log,
+    // the pool (`<workDir>/dagsocial.db` through `sqlite3 -readonly`)
     // and the scripts' logs sit under it for a reader to inspect.
     const message = (err as Error).message ?? String(err);
     throw new Error(
-      `generation of ${recipe.name} failed; scratch kept at ${scratchDir}\n${message}`,
+      `generation of ${def.name} failed; work directory kept at ${workDir}\n${message}`,
     );
   }
 }

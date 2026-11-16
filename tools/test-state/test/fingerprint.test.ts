@@ -11,9 +11,9 @@ import { dirname, join } from 'path';
 import { computeFingerprint, fingerprintInputs } from '../src/fingerprint.js';
 import { NODE_LOADS, FAUCET_LOADS } from '../src/dist-freshness.js';
 
-const T0 = 1_700_000_000;
-const SRC_MTIME = T0;
-const DIST_MTIME = T0 + 10;
+const MTIME_BASE = 1_700_000_000;
+const SRC_MTIME = MTIME_BASE;
+const DIST_MTIME = MTIME_BASE + 10;
 
 type Overrides = Record<string, string>;
 
@@ -134,7 +134,7 @@ describe('fingerprint', () => {
     expect(computeFingerprint(rootA)).toBe(computeFingerprint(rootB));
   });
 
-  it('lists per-member dist entries in code-unit order', () => {
+  it('lists per-member dist entries in lexicographic order', () => {
     populate(rootA);
     const member = 'packages/wire';
     for (const n of ['zzz.js', 'aaa.js', 'mmm.js', 'ccc.js']) {
@@ -145,7 +145,7 @@ describe('fingerprint', () => {
     expect(memberDist).toEqual([...memberDist].sort());
   });
 
-  it("lists this member's src entries in code-unit order", () => {
+  it("lists this member's src entries in lexicographic order", () => {
     populate(rootA);
     const base = 'tools/test-state/src';
     for (const n of ['zzz.ts', 'aaa.ts', 'mmm.ts', 'ccc.ts']) {

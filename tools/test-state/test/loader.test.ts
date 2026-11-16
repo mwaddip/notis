@@ -18,7 +18,7 @@ interface SharedCache {
 }
 
 // The suite uses the MINIMAL state so one run brings up a stack in seconds.
-// `base` is timed by hand in the report.
+// `base` is timed by hand elsewhere.
 let sharedCache: SharedCache | null = null;
 const activeUps = new Set<string>();
 
@@ -229,7 +229,7 @@ describe('loader', () => {
   }, 60_000);
 
   it('the CLI up exits 0 with the stack running; the tip rises; down leaves nothing', async () => {
-    // L1: up (CLI) spawns three detached processes and exits with their
+    // up (CLI) spawns three detached processes and exits with their
     // readiness read from log files. After `up` returns, A's tip still
     // rises at the cadence — the miner is a detached subprocess, not
     // inside `up`'s own process. `down` from another process stops all
@@ -331,7 +331,7 @@ describe('loader', () => {
   }, 60_000);
 
   it('up with an unavailable faucet port stops the node before throwing', async () => {
-    // L2: a port the faucet cannot bind makes `up` throw partway; the
+    // A port the faucet cannot bind makes `up` throw partway; the
     // node already started is stopped before the throw reaches the
     // caller.
     const held = await (async () => {
@@ -384,7 +384,7 @@ describe('loader', () => {
   }, 60_000);
 
   it('devnetFaucet refuses a mismatched public key', () => {
-    // G3: the one helper the generator and the loader share.
+    // The one helper the generator and the loader share.
     // Mutating `DEVNET_FAUCET_PKCS8_HEX` would refuse here against
     // NETWORK_PROFILES.devnet.faucetPublicKey. The happy path:
     // devnetFaucet() returns the expected public key.

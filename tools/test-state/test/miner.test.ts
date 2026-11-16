@@ -265,7 +265,7 @@ describe('miner', () => {
     expect(evt.port).toBe(node.apiPort);
     // The admin line is logged with the configured adminPort — under PORT=0
     // that reads as the literal 0, so the admin port is NOT readable from
-    // the process's own line. Record the line for the report.
+    // the process's own line. Record the line for a reader.
     if (node.adminLine !== null) {
       expect(node.adminLine).toMatch(/Admin listener on /);
     }

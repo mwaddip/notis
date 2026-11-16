@@ -18,7 +18,7 @@ import {
 } from '../src/dist-freshness.js';
 
 const REPO_ROOT = realpathSync(resolve(import.meta.dirname, '..', '..', '..'));
-const T0 = 1_700_000_000;
+const MTIME_BASE = 1_700_000_000;
 
 function touch(root: string, path: string, mtime: number): void {
   const full = join(root, path);
@@ -44,7 +44,7 @@ function workspaceDeps(member: string): string[] {
     dependencies?: Record<string, string>;
   };
   return Object.entries(manifest.dependencies ?? {})
-    .filter(([, spec]) => spec.startsWith('workspace:'))
+    .filter(([, specifier]) => specifier.startsWith('workspace:'))
     .map(([name]) => relative(REPO_ROOT, realpathSync(join(REPO_ROOT, member, 'node_modules', name))));
 }
 
@@ -67,18 +67,18 @@ describe('dist freshness', () => {
     // Every file under src/, the nested one too, predates dist/index.js; the directories
     // holding them keep the current wall-clock mtime.
     for (const m of ['packages/fresh', 'tools/fresh-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
-      touch(root, `${m}/src/deep/nested.ts`, T0);
-      touch(root, `${m}/dist/index.js`, T0 + 10);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
+      touch(root, `${m}/src/deep/nested.ts`, MTIME_BASE);
+      touch(root, `${m}/dist/index.js`, MTIME_BASE + 10);
     }
     // Only the nested file postdates dist/index.js.
     for (const m of ['packages/stale', 'tools/stale-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
-      touch(root, `${m}/src/deep/nested.ts`, T0 + 20);
-      touch(root, `${m}/dist/index.js`, T0 + 10);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
+      touch(root, `${m}/src/deep/nested.ts`, MTIME_BASE + 20);
+      touch(root, `${m}/dist/index.js`, MTIME_BASE + 10);
     }
     for (const m of ['packages/unbuilt', 'tools/unbuilt-tool']) {
-      touch(root, `${m}/src/index.ts`, T0);
+      touch(root, `${m}/src/index.ts`, MTIME_BASE);
     }
   });
 

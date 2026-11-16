@@ -230,7 +230,7 @@ export async function up(options: UpOptions): Promise<UpResult> {
   const preloadOption = nodeOptionsForPreload(CLOCK_OFFSET_PRELOAD);
 
   const records: ProcessRecord[] = [];
-  // L2: if any part of the startup fails, stop every process already
+  // If any part of the startup fails, stop every process already
   // recorded before re-throwing.
   try {
     // 5. Spawn A.
@@ -445,7 +445,7 @@ export async function up(options: UpOptions): Promise<UpResult> {
     };
     return result;
   } catch (err) {
-    // L2: tear down anything we already started.
+    // Tear down anything we already started.
     try {
       await stopRecords(records);
     } catch {

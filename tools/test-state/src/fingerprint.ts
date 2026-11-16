@@ -45,7 +45,7 @@ export function fingerprintInputs(root: string): readonly FingerprintInput[] {
   const members = [...new Set([...NODE_LOADS, ...FAUCET_LOADS])].sort();
   const paths: string[] = [];
 
-  // The two lists' dist/*.{js,mjs}, deduplicated, in code-unit order by
+  // The two lists' dist/*.{js,mjs}, deduplicated, in lexicographic order by
   // member and by path within each member.
   for (const m of members) {
     const files = distRuntimeFiles(root, m).map((abs) => toRepoRel(root, abs));

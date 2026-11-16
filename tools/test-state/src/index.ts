@@ -44,12 +44,12 @@ export {
 export {
   generate,
   pathsFor,
-  RECIPES,
+  STATE_DEFS,
   BASE,
   MINIMAL,
   type GenerateOptions,
   type GenerateResult,
-  type StateRecipe,
+  type StateDef,
 } from './generator.js';
 
 export {
