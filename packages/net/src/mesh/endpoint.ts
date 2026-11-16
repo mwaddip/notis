@@ -34,10 +34,16 @@ export function meshEndpoint(
         }
         // MESH_INTERFACE → The node endpoint — the base is read per
         // request; a `null` answer aborts the stream as a refused
-        // upstream does. The empty-string coalesce leaves `fetch` with
-        // a relative URL, which it refuses — the throw lands in the
-        // catch below, which aborts the libp2p stream with no answer.
-        const base = (httpBase() ?? '').replace(/\/+$/, '');
+        // upstream does, with no `fetch` attempted. The throw lands in
+        // the catch below, which aborts the libp2p stream with no
+        // answer; `null` names the window before `net`'s own HTTP API
+        // has bound (`NODE_INTERFACE → Configuration → "The node's mesh
+        // endpoint forwards to its own public listener"`).
+        const current = httpBase();
+        if (current === null) {
+          throw new Error('mesh endpoint: the node\'s HTTP API has not bound');
+        }
+        const base = current.replace(/\/+$/, '');
         const url = normalizeUrl(info);
         const init: RequestInit = {
           method,
