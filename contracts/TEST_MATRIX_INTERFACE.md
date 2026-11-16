@@ -116,7 +116,7 @@ for `claim-name.mjs` — and does not reach web.
 ## The output
 
 **A line per selected run**, naming the first path that selected it and the rule; then each path placed under no run,
-with its rule; then each member not reached. `--json` prints the same answer as one JSON object.
+with its rule; then each member whose run is not selected. `--json` prints the same answer as one JSON object.
 
 **`--members` prints the selected members' names on one line**, without `@dagsocial/`, in the workspace's build
 order, for a gate script that takes member names. `node:slow` and `check` are not on it.
