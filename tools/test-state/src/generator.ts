@@ -79,9 +79,11 @@ export const BASE: StateDef = {
   claim: { identity: 'S', name: 'Sk5send' },
 };
 
-// A test-only small state the suite uses. The "if `base` is too slow
-// for the suite, use a smaller one" shape: mine to 5, one promotion
-// (`promote.mjs` for R), no claim.
+// A small devnet state the suite uses: a chain mined to height 5, one
+// identity (R) promoted to member on the earned path, and no name
+// claim. Every manifest field a `base` load reads is also written for
+// `minimal`, so the suite exercises the generator's full shape without
+// the four promotions and the claim `base` carries.
 export const MINIMAL: StateDef = {
   name: 'minimal',
   startingHeight: 5,
