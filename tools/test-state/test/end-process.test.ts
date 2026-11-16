@@ -1,7 +1,22 @@
-import { describe, it, expect } from 'vitest';
-import { spawn } from 'node:child_process';
+import { describe, it, expect, afterEach } from 'vitest';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { endProcess, trackSpawn } from '../src/generator.js';
+
+const activeChildren = new Set<ChildProcess>();
+
+afterEach(async () => {
+  for (const cp of activeChildren) {
+    if (cp.exitCode === null && cp.signalCode === null) {
+      try {
+        cp.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  activeChildren.clear();
+});
 
 describe('endProcess', () => {
   it('resolves on a child already killed by SIGKILL, and a second call returns at once', async () => {
@@ -16,6 +31,7 @@ describe('endProcess', () => {
       ['-e', 'setInterval(() => {}, 1000);'],
       { stdio: 'ignore' },
     );
+    activeChildren.add(cp);
     const tracked = trackSpawn(cp);
     // Let the child's event loop register its interval.
     await sleep(100);

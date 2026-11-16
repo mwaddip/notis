@@ -1,10 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { spawn } from 'node:child_process';
+import { describe, it, expect, afterEach } from 'vitest';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { trackSpawn } from '../src/generator.js';
 import { waitForLineInFile } from '../src/loader.js';
+
+const activeChildren = new Set<ChildProcess>();
+
+afterEach(() => {
+  for (const cp of activeChildren) {
+    if (cp.exitCode === null && cp.signalCode === null) {
+      try {
+        cp.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  activeChildren.clear();
+});
 
 describe('waitForLineInFile', () => {
   it('ends when the process exits before the line, naming the exit', async () => {
@@ -15,6 +30,7 @@ describe('waitForLineInFile', () => {
       const cp = spawn(process.execPath, ['-e', 'process.exit(2);'], {
         stdio: ['ignore', 'ignore', 'ignore'],
       });
+      activeChildren.add(cp);
       const tracked = trackSpawn(cp);
       await expect(
         waitForLineInFile(log, () => false, 30_000, 'child', tracked.exited),

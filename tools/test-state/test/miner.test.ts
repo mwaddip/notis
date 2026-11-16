@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { assertDistFresh, NODE_LOADS } from '../src/dist-freshness.js';
+import { endProcess, trackSpawn } from '../src/generator.js';
 import { runMiner, type MinerHandle } from '../src/miner.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..');
@@ -66,7 +67,8 @@ async function spawnDevnetNode(opts: { miningSecret: string }): Promise<SpawnedN
     MINING_SECRET: opts.miningSecret,
   };
   const nodeBin = resolve(REPO_ROOT, 'packages/node/dist/index.js');
-  const cp = spawn(process.execPath, [nodeBin], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const cp = track(spawn(process.execPath, [nodeBin], { env, stdio: ['ignore', 'pipe', 'pipe'] }));
+  const tracked = trackSpawn(cp);
 
   const logs: string[] = [];
   let apiPort: number | null = null;
@@ -116,15 +118,9 @@ async function spawnDevnetNode(opts: { miningSecret: string }): Promise<SpawnedN
   }
 
   const stop = async (): Promise<void> => {
-    if (cp.exitCode !== null) {
-      rmSync(tmpDir, { recursive: true, force: true });
-      return;
-    }
-    const exited = new Promise<void>((resolve) => cp.once('exit', () => resolve()));
-    cp.kill('SIGTERM');
-    const killGuard = setTimeout(() => cp.kill('SIGKILL'), 10_000);
-    await exited;
-    clearTimeout(killGuard);
+    // `endProcess` awaits the exit event captured at spawn; a child
+    // killed externally (exitCode null) does not hang the wait.
+    await endProcess(tracked);
     rmSync(tmpDir, { recursive: true, force: true });
   };
 
@@ -233,6 +229,17 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Every spawned child in this file lives in this set from the moment it
+// is spawned. `afterEach` ends every one whose SIGKILL has not landed, so
+// a case that fails or times out before its own teardown leaves no node,
+// no faucet and no miner behind.
+const activeChildren = new Set<ChildProcess>();
+
+function track<T extends ChildProcess>(cp: T): T {
+  activeChildren.add(cp);
+  return cp;
+}
+
 describe('miner', () => {
   let node: SpawnedNode | null = null;
   let fake: FakeNode | null = null;
@@ -254,6 +261,19 @@ describe('miner', () => {
       await node.stop();
       node = null;
     }
+    // Backstop: every tracked child whose exit has not landed gets
+    // SIGKILL. A case that threw before its own cleanup leaves nothing
+    // behind.
+    for (const cp of activeChildren) {
+      if (cp.exitCode === null && cp.signalCode === null) {
+        try {
+          cp.kill('SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
+    }
+    activeChildren.clear();
   });
 
   it('reads the API port off the node\'s own line (PORT=0)', async () => {
@@ -528,21 +548,23 @@ describe('miner', () => {
     const secretPath = join(secretDir, 'mining-secret');
     writeFileSync(secretPath, randomBytes(16).toString('hex'));
     const cliBin = resolve(REPO_ROOT, 'tools/test-state/dist/cli.js');
-    const cp = spawn(
-      process.execPath,
-      [
-        cliBin,
-        'miner',
-        '--node-api',
-        fake.url,
-        '--mining-secret-path',
-        secretPath,
-        '--interval-ms',
-        '100',
-        '--control-port',
-        '0',
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+    const cp = track(
+      spawn(
+        process.execPath,
+        [
+          cliBin,
+          'miner',
+          '--node-api',
+          fake.url,
+          '--mining-secret-path',
+          secretPath,
+          '--interval-ms',
+          '100',
+          '--control-port',
+          '0',
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      ),
     );
     try {
       let ready = false;
