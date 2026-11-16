@@ -25,6 +25,12 @@ export {
   type Manifest,
 } from './cache.js';
 
+export {
+  runMiner,
+  type MinerConfig,
+  type MinerHandle,
+} from './miner.js';
+
 // TEST_STATE_INTERFACE → The clock offset. The barrel lives in src/ at test
 // time (vitest's alias) and in dist/ at runtime (the package's main); both
 // are one directory below the package root, so `..` lands on the package

@@ -633,6 +633,10 @@ importers:
         version: 1.6.1(@types/node@24.19.2)(happy-dom@20.13.2)
 
   tools/test-state:
+    dependencies:
+      '@dagsocial/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
     devDependencies:
       '@types/node':
         specifier: ^24.19.2
