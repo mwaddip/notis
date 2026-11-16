@@ -365,6 +365,12 @@ function identityKeyFile(up, label) {
 }
 
 function harnessArgsFor(block, up, runDir, scratch, summaryPath) {
+  // TEST_STATE_INTERFACE → The clock offset — every node the caller
+  // spawns for the run reads the offset, through the preload and
+  // `DAGSOCIAL_CLOCK_OFFSET_MS`. `--clock-offset-ms` and `--preload`
+  // carry `up`'s `clockOffsetMs` and `preloadPath` into every node
+  // and miner the harness spawns from `--node-dist` or `--miner`
+  // (`spawnServerNode`, `spawnDaemon`).
   const args = [
     '--block', block,
     '--extension-dir', EXT_DIR,
@@ -373,6 +379,8 @@ function harnessArgsFor(block, up, runDir, scratch, summaryPath) {
     '--faucet', `${up.faucetOrigin}/faucet`,
     '--miner-control', up.minerControlOrigin,
     '--summary', summaryPath,
+    '--clock-offset-ms', String(up.clockOffsetMs),
+    '--preload', up.preloadPath,
   ];
   const rKey = identityKeyFile(up, 'R');
   if (rKey !== null) args.push('--r-key', rKey);

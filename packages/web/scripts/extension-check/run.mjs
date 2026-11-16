@@ -137,6 +137,8 @@ const KNOWN_ARGS = new Set([
   'miner-control',
   'scratch',
   'summary',
+  'clock-offset-ms',
+  'preload',
 ]);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
@@ -282,6 +284,23 @@ const NODE_P2P = args.get('node-p2p') ?? null; // A's p2p multiaddr — the boot
 // EXTENSION_CHECK_INTERFACE → The command — the orchestrator reads the
 // summary object from this path instead of parsing the log.
 const SUMMARY = args.get('summary') ?? null;
+// TEST_STATE_INTERFACE → The clock offset — every node the caller
+// spawns for the run reads the offset, through the preload
+// `--import`ed in `NODE_OPTIONS` and the offset in
+// `DAGSOCIAL_CLOCK_OFFSET_MS`. `augmentEnv` carries both into every
+// node and miner the harness spawns from `NODE_DIST` and
+// `MINER_SCRIPT` (`spawnServerNode`, `spawnDaemon`).
+const CLOCK_OFFSET_RAW = args.get('clock-offset-ms') ?? null;
+const CLOCK_OFFSET_MS = CLOCK_OFFSET_RAW === null ? null : Number(CLOCK_OFFSET_RAW);
+if (CLOCK_OFFSET_RAW !== null && (!Number.isFinite(CLOCK_OFFSET_MS) || !Number.isInteger(CLOCK_OFFSET_MS))) {
+  console.error(`--clock-offset-ms must be an integer, got: ${JSON.stringify(CLOCK_OFFSET_RAW)}`);
+  process.exit(2);
+}
+const PRELOAD = args.get('preload') ?? null;
+if (PRELOAD !== null && !existsSync(PRELOAD)) {
+  console.error(`--preload not found: ${PRELOAD}`);
+  process.exit(2);
+}
 // Every address the harness owns is bound by the OS
 // (`EXTENSION_CHECK_INTERFACE → Addresses`). Each relay listens on port 0
 // and reads its port from `server.address()`; each node spawns with
@@ -1431,10 +1450,30 @@ async function pickOwnLiveRootPostId() {
 // process's own 'exit'.
 const vtChildren = new Map(); // name → { child, exited: Promise<void> }
 
+// TEST_STATE_INTERFACE → The clock offset — every node and miner the
+// harness spawns runs under the run's shifted clock: the preload is
+// `--import`ed through `NODE_OPTIONS`, prepended so a caller-set
+// `NODE_OPTIONS` keeps whatever it adds, and the offset in
+// `DAGSOCIAL_CLOCK_OFFSET_MS`. `--clock-offset-ms` and `--preload`
+// null leaves `env` untouched, so a harness run without them runs on
+// real time as before.
+function augmentEnv(env) {
+  const merged = { ...process.env, ...env };
+  if (PRELOAD !== null) {
+    const importArg = `--import=${PRELOAD}`;
+    const existing = typeof merged.NODE_OPTIONS === 'string' && merged.NODE_OPTIONS.length > 0 ? merged.NODE_OPTIONS : '';
+    merged.NODE_OPTIONS = existing ? `${importArg} ${existing}` : importArg;
+  }
+  if (CLOCK_OFFSET_MS !== null) {
+    merged.DAGSOCIAL_CLOCK_OFFSET_MS = String(CLOCK_OFFSET_MS);
+  }
+  return merged;
+}
+
 function spawnDaemon(name, entry, env, extraArgs = []) {
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
   const stdio = logPath ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'];
-  const child = spawn(process.execPath, [entry, ...extraArgs], { env: { ...process.env, ...env }, stdio });
+  const child = spawn(process.execPath, [entry, ...extraArgs], { env: augmentEnv(env), stdio });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
     vtChildren.delete(name);
     console.log(`[vt] ${name} exited: code=${code} signal=${sig}`);
@@ -9497,7 +9536,7 @@ async function spawnServerNode(name, env, { withMesh, waitFor }, timeoutMs = 600
     identity: waitFor?.identity ?? withMesh,
   };
   const logPath = SCRATCH ? join(SCRATCH, `${name}.log`) : null;
-  const child = spawn(process.execPath, [NODE_DIST], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [NODE_DIST], { env: augmentEnv(env), stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise((res) => child.on('exit', (code, sig) => {
     vtChildren.delete(name);
     console.log(`[${withMesh ? 'vm' : 'vt'}] ${name} exited: code=${code} signal=${sig}`);
