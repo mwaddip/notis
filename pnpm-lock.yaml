@@ -634,15 +634,15 @@ importers:
 
   tools/test-state:
     dependencies:
+      '@dagsocial/net':
+        specifier: workspace:*
+        version: link:../../packages/net
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@dagsocial/validation':
         specifier: workspace:*
         version: link:../../packages/validation
-      '@noble/curves':
-        specifier: 2.2.0
-        version: 2.2.0
     devDependencies:
       '@types/node':
         specifier: ^24.19.2

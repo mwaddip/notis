@@ -11,9 +11,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@dagsocial/net": "workspace:*",
     "@dagsocial/types": "workspace:*",
-    "@dagsocial/validation": "workspace:*",
-    "@noble/curves": "2.2.0"
+    "@dagsocial/validation": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

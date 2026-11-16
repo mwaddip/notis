@@ -390,7 +390,7 @@ export async function up(options: UpOptions): Promise<UpResult> {
 
     writeRecords(runDir, records);
 
-    const notisId = notisIdFromKeyFile(nodeKeyPath);
+    const notisId = await notisIdFromKeyFile(nodeKeyPath);
     const result: UpResult = {
       name: stateName,
       fingerprint,

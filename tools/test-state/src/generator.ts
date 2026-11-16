@@ -10,13 +10,12 @@ import {
   cpSync,
   existsSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { loadNodeKey } from '@dagsocial/net';
 import { NETWORK_PROFILES } from '@dagsocial/types';
 import { allowlistedEnv } from './env.js';
 import { writeState, type Manifest } from './cache.js';
@@ -47,16 +46,12 @@ export function devnetFaucet(): { publicKeyHex: string; secretKeyHex: string } {
 }
 
 // NET_INTERFACE → The node key. The notisId is the 32-byte Ed25519 public
-// key derived from the key file's seed. The key file is the PKCS8 DER:
-// 16-byte prefix + 32-byte seed.
-export function notisIdFromKeyFile(path: string): string {
-  const bytes = readFileSync(path);
-  if (bytes.length !== 48) {
-    throw new Error(`node key at ${path} is ${bytes.length} bytes, expected 48`);
-  }
-  const seed = bytes.subarray(16);
-  const pub = ed25519.getPublicKey(new Uint8Array(seed));
-  return Buffer.from(pub).toString('hex');
+// key `loadNodeKey` reads from the file's seed. The caller passes a path
+// that is known to exist (G5's check runs first) so `loadNodeKey` never
+// writes a fresh key here — it only reads what the node wrote.
+export async function notisIdFromKeyFile(path: string): Promise<string> {
+  const keyPair = await loadNodeKey(path);
+  return Buffer.from(keyPair.publicKey).toString('hex');
 }
 
 // NET_INTERFACE → The node key. The `[net] listening on` line carries
@@ -574,10 +569,10 @@ export async function generate(
             });
           }
 
-          // G2: notisId is the node key's public half (`loadNodeKey`'s
+          // notisId is the node key's public half (`loadNodeKey`'s
           // seed-derived publicKey); peerId is libp2p's identity from the
           // `[net] listening on` line. `/status` carries neither.
-          const notisId = notisIdFromKeyFile(nodeKeyPath);
+          const notisId = await notisIdFromKeyFile(nodeKeyPath);
           if (peerIdFromLine === null) {
             throw new Error('node did not print a `[net] listening on` line with a peerId');
           }

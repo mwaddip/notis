@@ -330,18 +330,17 @@ describe('loader', () => {
     expect(got.publicKeyHex).toBe(expected);
   });
 
-  it('notisIdFromKeyFile derives the Ed25519 public key from the seed', () => {
-    // G2: the notisId is the node key's public half, derived from the
-    // 32-byte seed in the PKCS8 DER (prefix + seed).
+  it('notisIdFromKeyFile reads the publicKey loadNodeKey gives', async () => {
+    // The notisId is the Ed25519 public key `@dagsocial/net`'s
+    // `loadNodeKey` derives from the key file's seed. For the 32-zero-
+    // byte seed the public key is the known value below.
     const tmp = mkdtempSync(join(tmpdir(), 'dagsocial-test-state-nodekey-'));
     try {
-      // 48-byte PKCS8 DER: 16-byte Ed25519 PKCS8 prefix + 32 zero bytes.
       const prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
-      const seed = Buffer.alloc(32); // all zeros
+      const seed = Buffer.alloc(32);
       const keyFile = join(tmp, 'k.key');
-      writeFileSync(keyFile, Buffer.concat([prefix, seed]));
-      const id = notisIdFromKeyFile(keyFile);
-      // Ed25519 public key for the 32-zero-byte seed is a known constant.
+      writeFileSync(keyFile, Buffer.concat([prefix, seed]), { mode: 0o600 });
+      const id = await notisIdFromKeyFile(keyFile);
       expect(id).toBe(
         '3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29',
       );
