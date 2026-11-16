@@ -82,7 +82,7 @@ Ten packages, in dependency order:
   every list read as ids with the node's word — drawn from that cache at once, the posts it lacks read by id from the
   nodes in the client's order (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
-Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
+Five tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
 - `@dagsocial/faucet` — an ordinary-key service that invites and sends credits through the node's HTTP API.
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
@@ -95,6 +95,11 @@ Four tools live under `tools/` — in the workspace by the `tools/*` glob, so in
   node's key over libp2p, with no DNS name. The page, the mesh client's cases that start a WebRTC transport, and a stage
   of network namespaces — one node run with `MESH_ROLE` per host — that runs `MESH_INTERFACE → Acceptance`'s eight
   scenarios; the stage needs root and is run by hand; its unit checks run in `pnpm -r test`.
+- `@dagsocial/test-state` — prepared devnet states: a generator that builds a state once through the product's own
+  write paths, a per-user cache keyed by the fingerprint of the node's built runtime, and `up`/`down`, which bring a
+  stack up on a copy in seconds — node, faucet and a miner on a steady cadence that also mines to a height on request,
+  all on one clock offset. It holds the one stale-build check and clock preload `tools/e2e` imports. The extension
+  check runs on its `base` state (`TEST_STATE_INTERFACE`).
 
 ## Design by Contract
 
@@ -116,6 +121,8 @@ contract first, then implement against it, never the reverse.
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights
 - `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
+- `contracts/TEST_STATE_INTERFACE.md` — prepared devnet states: what a state holds, its fingerprint, the cache, the
+  loader, the clock offset and the run's miner
 
 **The contract change rides the same branch as the code that implements it** — not merged ahead of it.
 One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
