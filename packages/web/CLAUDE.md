@@ -904,36 +904,29 @@ hash route. ⚠ **Opening a thread that is already open reads nothing**: a step 
 **The ten-minute timer and the visibility rule are the unit tests'**, not the proof's. ⚠ **17b guards a
 race that is wide only for a follower under a fast miner**: a press that reads a node a block behind the other must
 read *verified across 2 nodes*, never the alarm; at about three blocks a second the two reads see different heights,
-under the paced miner of a full run they mostly see one. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
-VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <scratch>`; the
-extension with `VITE_PUBLIC=<--public>`. All of it against a local
-devnet **started by hand on ports above 19000** — `packages/node/dist/index.js` with `NETWORK_TYPE=devnet
-NODE_ROLE=miner BOOTSTRAP_PEERS=""` and its own `miner.mjs`; ⚠ `packages/node/scripts/dev.mjs` cannot serve a proof:
-it binds node 1 to port 3000 and stops every child when one exits — `tools/faucet/dist` with the devnet faucet key
-(`tools/e2e/src/identities.ts`, devnet-only and public by design; `FAUCET_KEY_PATH` is a mode-600 file holding the
-PKCS8 DER as hex), `promote.mjs` for a throwaway member (`--r-key` is a file `{ pubKeyHex, privKeyBase64 }`, the
-base64 of the 48-byte PKCS8 DER `promote.mjs` prints as hex),
-the extension built with devnet values, the faucet's base among them — the harness refuses to run when the built
-shell's `notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
+under the state's steady cadence they mostly see one. The web build for it: `VITE_WEB_BASE=/web/ VITE_API_BASE=<the devnet node's origin>
+VITE_FAUCET_BASE='' VITE_NODES='[]' VITE_PUBLIC='' VITE_PUBLIC_ORIGIN='' npx vite build --outDir <out>`; the
+extension with `VITE_PUBLIC=<--public>`. The stack is `node tools/test-state/dist/cli.js up base --dir <run-dir>
+--http-port 19740 --admin-port 19741 --p2p-port 19742 --faucet-port 19750 --miner-port 19751`, whose JSON answer on
+stdout carries `nodeHttp` (A's HTTP, for --node), `nodeP2p` (for every block that spawns B), `faucetOrigin` (for
+--faucet), `minerControlOrigin` (for --miner-control) and `identities` (R's and S's key file paths, for --r-key and
+--s-key); `node tools/test-state/dist/cli.js down --dir <run-dir>` tears it down
+(`TEST_STATE_INTERFACE → Loading a state`). The four promotions and S's name claim are `base`'s own, made once per
+build of the node's runtime by the state's generator and loaded in seconds thereafter
+(`TEST_STATE_INTERFACE → The base state`, `→ The fingerprint`). The miner mines A on a 6 s steady cadence by default
+and answers `POST /mine-to { "height": <n> }` at `minerControlOrigin`
+(`TEST_STATE_INTERFACE → Blocks during a run`); with --miner-control the harness posts `/mine-to` before each
+A-height wait whose target is known ahead — the pre-flight A ≥ m + k + 14, step 21's landed + k + 1, step 24's
+landed + k + 1, step 29's claimedAtBlock + k — and then runs the wait, which confirms A's own height. 28b's
+stale-anchor wait stays on the cadence: the step observes A mining past the anchor. The harness's own miners —
+the --miner script the verified-tip, light and mesh blocks spawn for their own isolated D, and the mesh block's
+D on `MINER_PCT=10` — are separate from the stack's and are the harness's to start and stop. The extension is
+built with devnet values, the faucet's base among them — the harness refuses to run when the built shell's
+`notis-faucet` differs from `--faucet`. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
-`/background.js` (Chrome ships a built-in Hangouts worker first). Ports above 19000. The throwaway's key file
-and the faucet's live under a scratch path, never in the repo, a log or a report. The faucet runs from the
-tree's `tools/faucet` with `FAUCET_CREDIT_AMOUNT` set, and `--faucet` names its origin with the `/faucet` prefix
-the service routes under. At start the harness adds the two loopback origins to the unpacked manifest's
-`host_permissions`, since CDP cannot drive the browser's permission dialog — the tracked template and the packed
-manifest are untouched, and the granted path is the hand pass. Devnet's decay outruns the harness at full mining
-speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute
-(`kill -STOP`, forty seconds, `kill -CONT`, three seconds measured about three a minute here), **started before
-`promote.mjs` and kept to the end** — for the throwaway's rep to last the run: unpaced at about four blocks a second
-the throwaway fell from 240 rep to 4 before its second post. The loop has a pidfile of its own, and ⚠ **a
-`SIGSTOP`-ed miner does not die on `SIGTERM` until it is continued** — stop the loop, `kill -CONT`, then `kill`. The
-miner at `MINER_PCT=3` on a fresh chain paces a full run's blocks (about twenty a minute falling to five as ASERT
-hardens); at `MINER_PCT=1` windows yield nothing and a grant's wait runs out. ⚠ **Launch the miner and the pacer with
-`setsid`, from a script** (`bash stack-up.sh`): under `nohup … & disown` a stopped miner stays in the launching shell's
-process group, and when that shell exits the kernel's SIGCONT to the orphaned group runs the miner unpaced until the
-pacer's next stop; in a shell with job control on, `setsid` forks and `$!` names the exited parent. ⚠ **`promote.mjs`
-under the pacer needs retries** — its waits lose to windows that yield nothing; run it again after a pacer
-cycle.
+`/background.js` (Chrome ships a built-in Hangouts worker first). At start the harness adds the two loopback
+origins to the unpacked manifest's `host_permissions`, since CDP cannot drive the browser's permission dialog —
+the tracked template and the packed manifest are untouched, and the granted path is the hand pass.
 
 **The waits block beside the summary** names every wait each step made — each line opens `[waits]`, a prefix no
 other output carries. A per-step line gives the step's wall and the time split across waits ended by their condition,
@@ -961,10 +954,7 @@ step. Keep `TMPDIR` on a short path (unset, or `/tmp`). ⚠ **The extension buil
 root**, where the user's release zips may already sit — a proof build in the main tree would overwrite them, and a
 run's cleanup would then delete them. Build the extension in a throwaway detached worktree (`git worktree add
 --detach <scratch path> HEAD`; remove with `git worktree remove --force <path>`), which takes the built zips with
-it and leaves the release ones untouched. ⚠ **The `MINER_PCT` and pace numbers this machine measures** — an
-unpaced `MINER_PCT=25` miner runs at about 35 blocks a second on a fresh chain (about 9× the older 4-blocks-a-second
-figure), and `MINER_PCT=3` under the standard 40 s stop / 3 s continue pacer at about 10 blocks a minute — so a
-"fast start" burns through height fast, and a run's B/C/D still spawn with plenty of head-room.
+it and leaves the release ones untouched.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from
