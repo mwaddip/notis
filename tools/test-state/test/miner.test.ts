@@ -611,6 +611,54 @@ describe('miner', () => {
     handle = null;
   }, 15_000);
 
+  it('a pending mine-to answers 500 with the refusal message when the miner stops', async () => {
+    // Fake answering /mining/template 200 at an easy target and
+    // /mining/submit 409; /blocks/current reports height 0 so the loop
+    // enters mineOne. A /mine-to request is in flight when the miner
+    // stops on the 409; it reads the refusal's message, not a dropped
+    // connection.
+    fake = await startFakeNode({
+      template: (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            header: { height: 1, powTargetBits: 1024 },
+            powPreimage: '00'.repeat(32),
+          }),
+        );
+      },
+      submit: (_req, res) => {
+        res.statusCode = 409;
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"error":"already-committed"}');
+      },
+      current: (_req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end('{"height":0,"hash":null}');
+      },
+    });
+    handle = await runMiner({
+      nodeApiUrl: fake.url,
+      miningSecret: 'any',
+      intervalMs: 500,
+      controlPort: 0,
+    });
+    const response = await fetch(
+      `http://127.0.0.1:${handle.controlPort}/mine-to`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ height: 10 }),
+      },
+    );
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/POST \/mining\/submit returned 409/);
+    expect(body.error).toMatch(/already-committed/);
+    await handle.joined.catch(() => {});
+    handle = null;
+  }, 30_000);
+
   it('stops the miner when submit answers 409, naming the status', async () => {
     // A local fake node answering `/mining/template` 200 at an easy target
     // and `/mining/submit` 409. The miner's answer to the node's answer is

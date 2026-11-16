@@ -63,9 +63,11 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return raw.length === 0 ? null : JSON.parse(raw);
 }
 
+type WaiterOutcome = { readonly height: number } | { readonly error: string };
+
 interface Waiter {
   readonly height: number;
-  resolve(reached: number): void;
+  resolve(outcome: WaiterOutcome): void;
 }
 
 export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
@@ -124,7 +126,7 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     for (let i = waiters.length - 1; i >= 0; i--) {
       const w = waiters[i]!;
       if (tip >= w.height) {
-        w.resolve(tip);
+        w.resolve({ height: tip });
         waiters.splice(i, 1);
         any = true;
       }
@@ -262,12 +264,17 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
           res.end('{"error":"miner shutting down"}');
           return;
         }
-        const reached = await new Promise<number>((resolve) => {
+        const outcome = await new Promise<WaiterOutcome>((resolve) => {
           waiters.push({ height, resolve });
         });
         res.setHeader('Content-Type', 'application/json');
-        res.statusCode = 200;
-        res.end(JSON.stringify({ height: reached }));
+        if ('error' in outcome) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: outcome.error }));
+        } else {
+          res.statusCode = 200;
+          res.end(JSON.stringify({ height: outcome.height }));
+        }
       })();
       return;
     }
@@ -315,17 +322,32 @@ export async function runMiner(cfg: MinerConfig): Promise<MinerHandle> {
     }) + '\n',
   );
 
-  const joined = loop()
-    .catch((err: unknown) => {
+  const joined = (async () => {
+    try {
+      await loop();
+    } catch (err) {
       // A shutdown that aborts an in-flight fetch surfaces here as "miner
       // shutting down". The exit shape is that of a clean stop, not a
       // refusal, so swallow it and let joined resolve.
       if (shuttingDown) return;
+      // The miner stopped on a refusal. Every pending mine-to answers
+      // 500 with the refusal's message so a caller reads why it ended,
+      // not a dropped connection; then the control server closes.
+      const message = (err as Error).message;
+      for (const w of waiters) w.resolve({ error: message });
+      waiters.length = 0;
+      shuttingDown = true;
+      if (server !== null) {
+        await new Promise<void>((resolve) => {
+          server!.close(() => resolve());
+        });
+        server = null;
+      }
       throw err;
-    })
-    .finally(() => {
+    } finally {
       process.off('SIGTERM', onSigterm);
-    });
+    }
+  })();
 
   return {
     controlPort,
