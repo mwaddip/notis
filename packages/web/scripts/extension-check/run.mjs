@@ -2651,8 +2651,8 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
     console.log(`[vt] node D spawn failed: ${e.message}`);
   }
   if (!dSpawnOk) {
-    record('19c', 'NOT RUN', `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
-    record('19b', 'NOT RUN', `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
+    record('19c', false, `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
+    record('19b', false, `node D did not come up (${D_ORIGIN ?? 'no HTTP port read'})`);
   } else {
     console.log(`[vt] node D up at ${D_ORIGIN}, height ${await currentHeight(D_ORIGIN)}`);
 
@@ -2851,7 +2851,7 @@ async function verifiedTipSteps(cx, bcx, targetId = 'unknown') {
 
   // ---- Step 20 — no verifier, on the hosted origin.
   if (PUBLIC === null) {
-    record(20, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(20, false, 'no --public / --web-dist — the hosted origin is not served');
   } else {
     console.log(`[vt] step 20: opening the hosted origin at ${publicOrigin}${publicBase}`);
     const bcx = await openBrowserSession();
@@ -3121,7 +3121,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   // B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node A did not answer /blocks/current at ${NODE}`);
     await runFiguresStep25();
     return;
   }
@@ -3150,7 +3150,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   await bringUpNodeB();
   const bUp = await waitForHttpUp(B_ORIGIN, 30000);
   if (!bUp) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B did not come up at ${B_ORIGIN}`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node B did not come up at ${B_ORIGIN}`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -3160,7 +3160,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   const bPeers = await waitForPeers(bAdminOrigin, 1, 60000);
   console.log(`[vf] node B peers_connected=${bPeers}`);
   if (bPeers === null) {
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `node B never reached ≥1 peer_connected within 60s (bootstrap ${NODE_P2P})`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -3169,7 +3169,7 @@ async function verifiedFiguresSteps(cx, bcx, targetId = 'unknown') {
   if (abSynced === null) {
     const hA = await currentHeight(NODE);
     const hB = await currentHeight(B_ORIGIN);
-    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, 'NOT RUN', `B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
+    for (const s of [21, 24, ...LIE_ARM_STEPS]) record(s, false, `B never caught up to A within 5 minutes (A=${hA}, B=${hB})`);
     await runFiguresStep25();
     await stopChild('b');
     return;
@@ -4113,7 +4113,7 @@ async function runFiguresLieArms(cx, bcx) {
   void cx;
   const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
   if (relays.length !== 2) {
-    for (const s of LIE_ARM_STEPS) record(s, 'NOT RUN',
+    for (const s of LIE_ARM_STEPS) record(s, false,
       `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
@@ -4299,7 +4299,7 @@ async function runLieArm(bcx, relays, arm) {
 // reads NOT RUN by name.
 async function runFiguresStep25() {
   if (PUBLIC === null || webDistAbs === null) {
-    record(25, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(25, false, 'no --public / --web-dist — the hosted origin is not served');
     return;
   }
   let bcx = null;
@@ -4599,7 +4599,7 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   // or B does not come up.
   const aUp = await waitForHttpUp(NODE, 15000);
   if (!aUp) {
-    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', `node A did not answer /blocks/current at ${NODE}`);
+    for (const s of NAMES_STEPS_ON_B) record(s, false, `node A did not answer /blocks/current at ${NODE}`);
     await runNamesStep30(null);
     return;
   }
@@ -4624,7 +4624,7 @@ async function verifiedNamesSteps(cx, bcx, targetId = 'unknown') {
   console.log(`[vn] bringing up node B for the names block`);
   await bringUpNodeB();
   const notRunWithout = async (reason) => {
-    for (const s of NAMES_STEPS_ON_B) record(s, 'NOT RUN', reason);
+    for (const s of NAMES_STEPS_ON_B) record(s, false, reason);
     await runNamesStep30((await usernameOf(NODE, rKey))?.name ?? null);
   };
   try {
@@ -5127,7 +5127,7 @@ async function runNamesLieArms(cx, bcx, rKey, rName, sHeld) {
   void cx;
   const relays = [tipRelays.a, tipRelays.b].filter((r) => r !== null);
   if (relays.length !== 2) {
-    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, 'NOT RUN',
+    for (const s of [...NAMES_LABEL_STEPS, ...NAMES_SEND_STEPS]) record(s, false,
       `the two tip relays did not both start: RLA=${tipRelays.a?.origin ?? 'null'}, RLB=${tipRelays.b?.origin ?? 'null'}`);
     return;
   }
@@ -6016,7 +6016,7 @@ async function runNamesStep29(cx, sHeld) {
 // request it made.
 async function runNamesStep30(rName) {
   if (PUBLIC === null || webDistAbs === null) {
-    record(30, 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record(30, false, 'no --public / --web-dist — the hosted origin is not served');
     return;
   }
   const rKey = R_JSON.pubKeyHex.toLowerCase();
@@ -6657,7 +6657,7 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
   if (prepCached < prepCachedTarget) {
     record('W1', false, prepDetail);
     for (const s of ['W2', 'W3', 'W4', 'W5']) {
-      record(s, 'NOT RUN', `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
+      record(s, false, `prep did not land A's cache (cached=${prepCached}, <${prepCachedTarget})`);
     }
     return;
   }
@@ -9309,7 +9309,7 @@ async function lightSteps(cx, targetId = 'unknown') {
   // `posts/batch`, none carries `tx`; no `notis.posts.` database; no slot
   // and no clay line.
   if (PUBLIC === null || webDistAbs === null) {
-    record('L14', 'NOT RUN', 'no --public / --web-dist — the hosted origin is not served');
+    record('L14', false, 'no --public / --web-dist — the hosted origin is not served');
   } else {
     let bcx = null;
     let cxH = null;
@@ -10392,7 +10392,7 @@ async function runSqliteCmd(args) {
 
 async function runMeshStepM5(cx, bcx) {
   if (m3Post === null) {
-    record('M5', 'NOT RUN',
+    record('M5', false,
       `M3 did not record a pass, so M5 carries no post id or text to copy, null and refill (NODE_INTERFACE → Posts DAG → "A serving reader is asked for what has been due")`);
     return;
   }
@@ -10846,12 +10846,8 @@ async function main() {
   // Every block runs steps 1 and 2 above and then its own steps on R
   // (EXTENSION_CHECK_INTERFACE → Blocks). A step outside the run's block
   // reads NOT RUN with the reason naming the block that runs it.
-  if (!WRITES) {
-    for (const s of WRITES_STEPS) record(s, 'NOT RUN', 'the writes block runs it');
-  }
-  if (!LINKS) {
-    for (const s of LINKS_STEPS) record(s, 'NOT RUN', 'the links block runs it');
-  }
+  if (!WRITES) markWritesNotRun('the writes block runs it');
+  if (!LINKS) markLinksNotRun('the links block runs it');
   if (!VERIFIED_TIP) markVerifiedTipNotRun('the tip block runs it');
   if (!VERIFIED_FIGURES) markVerifiedFiguresNotRun('the figures block runs it');
   if (!VERIFIED_NAMES) markVerifiedNamesNotRun('the names block runs it');
