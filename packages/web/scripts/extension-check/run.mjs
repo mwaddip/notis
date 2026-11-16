@@ -111,11 +111,39 @@ import { computeTxId, txToJson } from '@dagsocial/types';
 import { loadNodeKey } from '@dagsocial/net';
 import { matchPatternFor } from '../../extension/match-pattern.mjs';
 
+// The arguments the harness reads. Every `--name` on the command line is
+// matched against this set; anything else is refused before any copy, key
+// or process. `block` is required and validated below; the rest take a
+// value, each with its own meaning read in the sites below.
+const KNOWN_ARGS = new Set([
+  'block',
+  'extension-dir',
+  'r-key',
+  's-key',
+  'node',
+  'faucet',
+  'extension-id',
+  'public',
+  'web-dist',
+  'node-id',
+  'node-dist',
+  'node-p2p',
+  'miner',
+  'miner-control',
+  'scratch',
+]);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
-  if (!arg.startsWith('--')) continue;
+  if (!arg.startsWith('--')) {
+    console.error(`unexpected positional argument: ${arg}`);
+    process.exit(2);
+  }
   const name = arg.slice(2);
+  if (!KNOWN_ARGS.has(name)) {
+    console.error(`--${name} is not an argument the harness reads — one of: ${[...KNOWN_ARGS].map((n) => '--' + n).join(', ')}`);
+    process.exit(2);
+  }
   args.set(name, process.argv[++i]);
 }
 
