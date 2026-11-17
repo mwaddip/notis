@@ -528,10 +528,12 @@ pnpm test           # Every member's suite — includes the e2e mesh, which spaw
 pnpm typecheck      # Type-check every member, src and test trees
 ```
 
-The gate before a commit is `pnpm -r build && pnpm -r typecheck && pnpm -r test`: tests resolve
-`@dagsocial/*` to `src`, so a green suite does not prove a package builds.
+Every member is built before a suite runs: tests resolve `@dagsocial/*` to `src`, so a green suite
+does not prove a package builds. Before a pull request, `node tools/test-matrix/src/cli.ts` names the
+members a change warrants a typecheck and a suite of; every pull request's CI runs
+`pnpm -r build && pnpm -r typecheck && pnpm -r test` whole.
 
-**Thirteen workspace members** (`packages/*` and `tools/*`), in dependency order:
+**Sixteen workspace members** (`packages/*` and `tools/*`), in dependency order:
 
 - **`@dagsocial/wire`** — stream framing: VLQ, blake2b checksums, magic bytes.
 - **`@dagsocial/types`** — data structures, the positional codecs, hashing, protocol constants,
@@ -549,11 +551,17 @@ The gate before a commit is `pnpm -r build && pnpm -r typecheck && pnpm -r test`
 - **`@dagsocial/net`** — libp2p + Gossipsub relay, headers-first sync, peer discovery and penalties.
 - **`@dagsocial/node`** — Express server, SQLite store, AVL+ state root, block creator, the header
   pipeline; it runs `consensus`' rules over its store.
-- **`@dagsocial/web`** — the browser client and the browser extension, built with vite.
 - **`@dagsocial/faucet`** (`tools/faucet`) — the invite service.
+- **`@dagsocial/test-state`** (`tools/test-state`) — prepared devnet states, generated once through the
+  product's own write paths and loaded in seconds.
+- **`@dagsocial/nipopow-client`** (`tools/nipopow-client`) — the light client.
+- **`@dagsocial/web`** — the browser client and the browser extension, built with vite.
 - **`@dagsocial/e2e`** (`tools/e2e`) — the mesh suite: spawns built nodes and asserts the protocol
   across them over HTTP.
-- **`@dagsocial/nipopow-client`** (`tools/nipopow-client`) — the light client.
+- **`@dagsocial/mesh-poc`** (`tools/mesh-poc`) — the mesh's stage: a browser page that reaches a node's
+  HTTP API by the node's key over libp2p, and network namespaces that run the mesh's acceptance scenarios.
+- **`@dagsocial/test-matrix`** (`tools/test-matrix`) — which suites, and whether the extension check, a
+  change warrants.
 
 ### Contracts
 
@@ -576,6 +584,10 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/WIRE_INTERFACE.md` | Frame and message codec |
 | `contracts/JOURNAL_EVENTS.md` | Block journal events |
 | `contracts/WEB_INTERFACE.md` | The browser client |
+| `contracts/MESH_INTERFACE.md` | The mesh: identity, transports, NAT, block gossip, discovery, the node endpoint |
+| `contracts/TEST_STATE_INTERFACE.md` | Prepared devnet states: what a state holds, its fingerprint, the cache, the loader |
+| `contracts/EXTENSION_CHECK_INTERFACE.md` | The extension check: its blocks, the stack each runs on, the command |
+| `contracts/TEST_MATRIX_INTERFACE.md` | Which suites and whether the extension check a change warrants |
 | `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
 | `contracts/SPECIAL.md` | Per-subsystem attention weights for review |
 
