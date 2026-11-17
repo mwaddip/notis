@@ -402,6 +402,223 @@ export interface ClientState {
   notContinued: boolean;
 }
 
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it does"
+ * — the discriminated union the `events` sink receives. Every event carries
+ * the fields the lead names; nothing more, and no clock reading of its own
+ * except the durations the lead names (the caller stamps the time). A client
+ * handed no sink reports nothing, and what it reports moves nothing it
+ * decides.
+ */
+export type MeshEvent =
+  | MeshDialEvent
+  | MeshConnectionEvent
+  | MeshHandshakeEvent
+  | MeshCheckEvent
+  | MeshGossipBlockEvent
+  | MeshRequestEvent
+  | MeshRequestBodyEvent
+  | MeshServingStreamEvent
+  | MeshServingCallEvent;
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a dial's end, with the node and the time the dial took. Three
+ * outcomes: nothing dialable, the dial resolved, or the dial failed with
+ * each attributed address's kind and message where
+ * `attributeAggregateDialErrors` answers, else the aggregate's message
+ * alone (addresses `null`).
+ */
+export interface MeshDialEvent {
+  kind: 'dial';
+  nodeId: string;
+  outcome:
+    | { result: 'no-dialable' }
+    | { result: 'connected' }
+    | {
+      result: 'failed';
+      addresses: Array<{
+        addr: string;
+        kind: FailureKind;
+        message: string;
+        wrongKey: { answeredPeerIdString: string } | null;
+      }> | null;
+      message: string;
+    };
+  ms: number;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a connection opened or closed. The peer reads as the Notis key
+ * where `notisIdFromPeerId` answers, else the peer id's string; the
+ * transport and path are `classifyConnectionAddr`'s answer for the
+ * connection's remote address against the live connection list.
+ */
+export interface MeshConnectionEvent {
+  kind: 'connection';
+  event: 'open' | 'close';
+  connId: string;
+  peer: string;
+  peerKind: 'notis' | 'peer-id';
+  transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+  path: 'direct' | 'relay' | null;
+  direction: 'inbound' | 'outbound';
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a handshake's verdict. Each of the three endings
+ * `runHandshake` records: `passed` (the one state a read goes out on),
+ * `failed` with the handshake's reason, and `no-chain` with the fixed
+ * reason `runHandshake` writes.
+ */
+export interface MeshHandshakeEvent {
+  kind: 'handshake';
+  connId: string;
+  peer: string;
+  peerKind: 'notis' | 'peer-id';
+  verdict: 'passed' | 'failed' | 'no-chain';
+  reason: string | null;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a check's end. Its number (the post-increment value of
+ * `state.checks`), its time, the tip, the agreement counts, the proofs
+ * it read, each node's tip event as `tipEvent` answers it, `lastLeft`.
+ * A check that throws is reported as ending with the throw's message
+ * carried in `threw`; every other check carries `threw: null`.
+ */
+export interface MeshCheckEvent {
+  kind: 'check';
+  number: number;
+  ms: number;
+  tip: { height: number; hash: string | null } | null;
+  agreement: AgreementCounts | null;
+  proofs: { asked: number; verified: number; invalid: number; tooShort: number } | null;
+  nodes: Array<{ nodeId: string; event: TipEvent }>;
+  lastLeft: { nodeId: string; reason: string } | null;
+  threw: string | null;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a gossiped block weighed. One report per message: the
+ * validator's reject (the detail, and whether it was held a lie), the
+ * validator's ignore, or the delivery's ending — extended, fork, gap,
+ * held (under a question), unsettled (before a chain settled) — with
+ * the height (where the message decoded) and the propagation source
+ * (the Notis key where `notisIdFromPeerId` answers, else the peer id's
+ * string).
+ */
+export interface MeshGossipBlockEvent {
+  kind: 'gossip-block';
+  source: string;
+  sourceKind: 'notis' | 'peer-id';
+  /** The decoded block's height, or `null` when the validator rejected the message before decode. */
+  height: number | null;
+  outcome:
+    | { result: 'reject'; lie: boolean; detail: string }
+    | { result: 'ignore' }
+    | { result: 'extended' }
+    | { result: 'fork' }
+    | { result: 'gap' }
+    | { result: 'held' }
+    | { result: 'unsettled' };
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a request's head. Numbered from a counter of the client's,
+ * one number per request. Carries the URL, the route it took, the
+ * status or the failure's kind, and the time to the answer's head; over
+ * the mesh the id, transport and path of the connection the stream
+ * opened on, captured when that connection was picked for the request
+ * (never re-picked or read off `ClientState` afterwards, which can name
+ * another connection). Absent on the API route.
+ */
+export interface MeshRequestEvent {
+  kind: 'request';
+  number: number;
+  url: string;
+  route: 'mesh' | 'api';
+  connection?: {
+    id: string;
+    transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+    path: 'direct' | 'relay' | null;
+  };
+  head:
+    | { ok: true; status: number; ms: number }
+    | { ok: false; failureKind: string; message: string; ms: number };
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — the second report under the same request number, written when
+ * the body is read to its end: the bytes read and the time from the
+ * request to the end of the body.
+ */
+export interface MeshRequestBodyEvent {
+  kind: 'request-body';
+  number: number;
+  bytes: number;
+  ms: number;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — a serving stream, written from a wrapper the client puts
+ * around the one serving handler instance it registers
+ * (`makeServingHandler`). The node — the Notis key where
+ * `notisIdFromPeerId` answers, else the peer id's string — and the
+ * connection.
+ */
+export interface MeshServingStreamEvent {
+  kind: 'serving-stream';
+  nodeId: string;
+  nodeKind: 'notis' | 'peer-id';
+  connId: string;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — the provider's call: the count of ids asked and the count of
+ * ids answered, never the ids themselves.
+ */
+export interface MeshServingCallEvent {
+  kind: 'serving-call';
+  asked: number;
+  answered: number;
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — `diagnostics()`'s answer. Each open connection — the peer,
+ * the remote address, the direction, the transport, the path, whether
+ * limited, its age in ms since the client opened it, its handshake's
+ * verdict and reason (or pending) — the ordering-block topic's mesh
+ * peers and direct peers by count, and `iceConfiguration()`'s servers.
+ */
+export interface MeshDiagnostics {
+  connections: Array<{
+    connId: string;
+    peer: string;
+    peerKind: 'notis' | 'peer-id';
+    remoteAddr: string;
+    direction: 'inbound' | 'outbound';
+    transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+    path: 'direct' | 'relay' | null;
+    limited: boolean;
+    ageMs: number;
+    handshake:
+      | { verdict: 'passed' | 'failed' | 'no-chain'; reason: string | null }
+      | { verdict: 'pending' };
+  }>;
+  gossip: { meshPeers: number; directPeers: number };
+  iceServers: RTCIceServer[];
+}
+
 export interface MeshClient {
   /**
    * MESH_INTERFACE → The mesh URL / The client's node list → "An entry may
@@ -503,6 +720,13 @@ export interface MeshClient {
    */
   iceConfiguration(): { iceServers: RTCIceServer[] };
   /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "It answers its diagnostics when asked". Pure: the
+   * client's state stays unchanged; no connection is opened. See
+   * `MeshDiagnostics`.
+   */
+  diagnostics(): MeshDiagnostics;
+  /**
    * MESH_INTERFACE → What the client remembers — the snapshot to persist
    * at the end of a check or on stop: the kept proof's bytes (or null),
    * the known nodes the client would dial at its next start — latest first,
@@ -555,6 +779,16 @@ export interface StartMeshClientOptions {
    * Absent: nothing is logged.
    */
   log?: (line: string) => void;
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — the sink the client tells its events to. Absent: the
+   * client reports nothing and behaves as it does. A sink that throws
+   * is logged through `log`, as a state listener that throws is
+   * (`emitStateChange`), and changes nothing the client does. Events
+   * carry no clock reading of their own except the durations the lead
+   * names.
+   */
+  events?: (e: MeshEvent) => void;
   /**
    * MESH_INTERFACE → "Two clocks" — the retry timers' clock. The list and
    * every per-entry deadline reads this; a clock that steps never holds a
@@ -720,6 +954,13 @@ class MeshClientImpl implements MeshClient {
   private readonly profile: NetworkProfile;
   private readonly agentName: string;
   private readonly log: ((line: string) => void) | undefined;
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what it
+   * does" — the event sink the start-time options hand in, called at each
+   * site the lead names. A throw from the sink is logged through `log` and
+   * changes nothing the client does.
+   */
+  private readonly events: ((e: MeshEvent) => void) | undefined;
   private readonly nodeList: NodeList;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly state_: ClientState;
@@ -859,6 +1100,13 @@ class MeshClientImpl implements MeshClient {
    * handshake once; cleared on `connection:close`.
    */
   private readonly handshakeDone: Map<string, Promise<'passed' | 'failed' | 'no-chain'>> = new Map();
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what it
+   * does" — "its age": the monotonic timestamp at which each open
+   * connection was first seen. Set at `connection:open`, cleared at
+   * `connection:close`.
+   */
+  private readonly connectionOpenedAt: Map<string, number> = new Map();
   // MESH_INTERFACE → Block gossip — the delivery listener, kept as a
   // bound reference so `removeEventListener` reads the same identity
   // on stop.
@@ -904,6 +1152,11 @@ class MeshClientImpl implements MeshClient {
     this.profile = o.profile;
     this.agentName = o.agentName;
     this.log = o.log;
+    this.events = o.events;
+    // MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — the sink is held here and the sites `emit` writes to
+    // it from.
+    void this.events;
     this.httpFetchFn = httpFetch;
     this.nodeList = new NodeList(o.firstContact, ownId, clock, random);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
@@ -994,11 +1247,13 @@ class MeshClientImpl implements MeshClient {
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (evt): void => {
       const conn = evt.detail;
+      this.connectionOpenedAt.set(conn.id, this.clock());
       const promise = this.runHandshake(conn);
       this.handshakeDone.set(conn.id, promise);
       this.refreshTransportPathAndEmit();
     };
     this.onConnectionClose = (evt): void => {
+      this.connectionOpenedAt.delete(evt.detail.id);
       this.handshakeDone.delete(evt.detail.id);
       this.handshakeResults.delete(evt.detail.id);
       this.handshakeReasons.delete(evt.detail.id);
@@ -1447,6 +1702,82 @@ class MeshClientImpl implements MeshClient {
     const servers = stunServersFor(this.state().nodes, STUN_SERVERS_MAX);
     assertIceServers(servers);
     return { iceServers: iceConfigurations(servers) };
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "It answers its diagnostics when asked". Reads the live
+   * connection list, the gossipsub router's ordering-block mesh and its
+   * direct set, and the client's ICE configuration; the client's state
+   * stays unchanged.
+   */
+  diagnostics(): MeshDiagnostics {
+    const conns = this.libp2p.getConnections();
+    const connections = conns.map((c) => {
+      const peerIdString = c.remotePeer.toString();
+      let peer: string = peerIdString;
+      let peerKind: 'notis' | 'peer-id' = 'peer-id';
+      try {
+        peer = notisIdFromPeerId(c.remotePeer);
+        peerKind = 'notis';
+      } catch (e) {
+        if (!(e instanceof MeshKeyError)) throw e;
+      }
+      let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+      let path: 'direct' | 'relay' | null = null;
+      try {
+        const classified = classifyConnectionAddr(c.remoteAddr.toString(), conns);
+        transport = classified.transport;
+        path = classified.path;
+      } catch { /* an address the classifier does not name reads as null */ }
+      const openedAtMs = this.connectionOpenedAt.get(c.id) ?? null;
+      const ageMs = openedAtMs !== null ? Math.max(0, this.clock() - openedAtMs) : 0;
+      const verdict = this.handshakeResults.get(c.id);
+      const handshake: MeshDiagnostics['connections'][number]['handshake'] =
+        verdict === undefined
+          ? { verdict: 'pending' }
+          : { verdict, reason: this.handshakeReasons.get(c.id) ?? null };
+      return {
+        connId: c.id,
+        peer,
+        peerKind,
+        remoteAddr: c.remoteAddr.toString(),
+        direction: c.direction,
+        transport,
+        path,
+        limited: c.limits != null,
+        ageMs,
+        handshake,
+      };
+    });
+    const topic = gossipTopics(this.profile.magic).orderingBlock;
+    const router = this.getPubsubInternals();
+    const meshPeers = router.mesh.get(topic)?.size ?? 0;
+    const directPeers = router.direct.size;
+    return {
+      connections,
+      gossip: { meshPeers, directPeers },
+      iceServers: this.iceConfiguration().iceServers,
+    };
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — a small router view used by `diagnostics()` alone: the
+   * ordering-block topic's mesh set and the router's direct set. The
+   * cast reaches gossipsub internals (`MESH_INTERFACE → Place in the
+   * workspace → "libp2p is pinned."` holds either way); the shapes are
+   * pinned by a case against the real router.
+   */
+  private getPubsubInternals(): { mesh: Map<string, Set<string>>; direct: Set<string> } {
+    const pubsub = (this.libp2p as unknown as {
+      services: {
+        pubsub: { mesh?: Map<string, Set<string>>; direct?: Set<string> };
+      };
+    }).services.pubsub;
+    const mesh = pubsub.mesh ?? new Map<string, Set<string>>();
+    const direct = pubsub.direct ?? new Set<string>();
+    return { mesh, direct };
   }
 
   onState(cb: (s: ClientState) => void): () => void {
@@ -3200,6 +3531,7 @@ class MeshClientImpl implements MeshClient {
       }
     }
   }
+
 }
 
 function isBodyLevelFailure(r: NodeError): boolean {
