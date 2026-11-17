@@ -13,9 +13,7 @@ export interface DiffOptions {
 }
 
 export interface Diff {
-  // Repository root, as `git rev-parse --show-toplevel` answers for `cwd`
-  // (TEST_MATRIX_INTERFACE → "The repository is the one the command runs
-  // in").
+  // Repository root, as `git rev-parse --show-toplevel` answers for `cwd`.
   readonly root: string;
   // Tracked paths the diff names. Under --rev every path is here; without
   // --rev, committed, staged and unstaged paths are here.

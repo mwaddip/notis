@@ -27,8 +27,7 @@ function write(dir: string, path: string, content: string): void {
   writeFileSync(full, content);
 }
 
-// TEST_MATRIX_INTERFACE → "The repository is the one the command runs in":
-// each case builds its fixture under `os.tmpdir()`, with a `master` branch
+// Each case builds its fixture under `os.tmpdir()`, with a `master` branch
 // and `user.name`/`user.email` set in the repository's own config.
 function initRepo(dir: string): void {
   sh('git', ['init', '-q', '--initial-branch=master', '.'], dir);
