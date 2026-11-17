@@ -106,7 +106,7 @@
 //     [--miner-control <origin>]
 
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -11543,6 +11543,26 @@ async function writesSteps(cx2, pageId) {
   } else {
     const dlDir12e = join(SCRATCH, 'downloads-12e');
     mkdirSync(dlDir12e, { recursive: true });
+    const keptDir12e = join(SCRATCH, 'downloads-12e-kept');
+    mkdirSync(keptDir12e, { recursive: true });
+    // A saved file's name has a second's resolution: its text is read the
+    // moment its name appears and the file moves out of the download
+    // directory, so the next save's name is new whatever the clock reads.
+    const takeDebugFile12e = async (before, label) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 20000) {
+        const names = readdirSync(dlDir12e).filter((n) =>
+          /^notis-debug-.*\.json$/.test(n) && !before.has(n));
+        if (names.length > 0) {
+          const name = names[0];
+          const text = readFileSync(join(dlDir12e, name), 'utf8');
+          renameSync(join(dlDir12e, name), join(keptDir12e, `${label}-${name}`));
+          return { name, text };
+        }
+        await sleep(100);
+      }
+      return null;
+    };
     const bcx12e = await openBrowserSession();
     try {
       await bcx12e.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir12e });
@@ -11568,16 +11588,7 @@ async function writesSteps(cx2, pageId) {
         const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
         btn.click();
       })()`, true);
-      const file1 = await recordWait('12e debug file unticked', 20000, async () => {
-        const t0 = Date.now();
-        while (Date.now() - t0 < 20000) {
-          const names = readdirSync(dlDir12e).filter((n) =>
-            /^notis-debug-.*\.json$/.test(n) && !beforeUnticked.has(n));
-          if (names.length > 0) return names[0];
-          await sleep(100);
-        }
-        return null;
-      });
+      const file1 = await recordWait('12e debug file unticked', 20000, () => takeDebugFile12e(beforeUnticked, 'unticked'));
       // Tick the box and press `save as file` again.
       await cx10.eval(`(() => {
         const row = document.querySelector('.row.debug-row');
@@ -11592,29 +11603,12 @@ async function writesSteps(cx2, pageId) {
         const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
         btn.click();
       })()`, true);
-      const file2 = await recordWait('12e debug file ticked', 20000, async () => {
-        const t0 = Date.now();
-        while (Date.now() - t0 < 20000) {
-          const names = readdirSync(dlDir12e).filter((n) =>
-            /^notis-debug-.*\.json$/.test(n) && !beforeTicked.has(n));
-          if (names.length > 0) return names[0];
-          await sleep(100);
-        }
-        return null;
-      });
-      let parse1 = null, parse2 = null, text1 = '', text2 = '';
-      try {
-        if (file1 !== null) {
-          text1 = readFileSync(join(dlDir12e, file1), 'utf8');
-          parse1 = JSON.parse(text1);
-        }
-      } catch (e) { parse1 = { error: e?.message ?? String(e) }; }
-      try {
-        if (file2 !== null) {
-          text2 = readFileSync(join(dlDir12e, file2), 'utf8');
-          parse2 = JSON.parse(text2);
-        }
-      } catch (e) { parse2 = { error: e?.message ?? String(e) }; }
+      const file2 = await recordWait('12e debug file ticked', 20000, () => takeDebugFile12e(beforeTicked, 'ticked'));
+      let parse1 = null, parse2 = null;
+      const text1 = file1 !== null ? file1.text : '';
+      const text2 = file2 !== null ? file2.text : '';
+      try { if (file1 !== null) parse1 = JSON.parse(text1); } catch (e) { parse1 = { error: e?.message ?? String(e) }; }
+      try { if (file2 !== null) parse2 = JSON.parse(text2); } catch (e) { parse2 = { error: e?.message ?? String(e) }; }
       const keyLc = R_JSON.pubKeyHex.toLowerCase();
       const txLc = postTxId12e.toLowerCase();
       const text1Lc = text1.toLowerCase();
@@ -11630,7 +11624,7 @@ async function writesSteps(cx2, pageId) {
       const hasWrite = events1.some((e) => e && e.kind === 'write');
       record('12e',
         fmtOk1 && fmtOk2 && untickedDropsKey && untickedDropsTx && tickedHoldsKey && tickedHoldsTx && hasSign && hasWrite,
-        `postId=${postId12e.slice(0, 8)}…, txId=${postTxId12e.slice(0, 8)}…, unticked=${JSON.stringify(file1)} (format=${JSON.stringify(parse1?.format ?? null)}, drops key=${untickedDropsKey}, drops tx=${untickedDropsTx}, events sign=${hasSign}, write=${hasWrite}), ticked=${JSON.stringify(file2)} (format=${JSON.stringify(parse2?.format ?? null)}, holds key=${tickedHoldsKey}, holds tx=${tickedHoldsTx})`);
+        `postId=${postId12e.slice(0, 8)}…, txId=${postTxId12e.slice(0, 8)}…, unticked=${JSON.stringify(file1?.name ?? null)} (format=${JSON.stringify(parse1?.format ?? null)}, drops key=${untickedDropsKey}, drops tx=${untickedDropsTx}, events sign=${hasSign}, write=${hasWrite}), ticked=${JSON.stringify(file2?.name ?? null)} (format=${JSON.stringify(parse2?.format ?? null)}, holds key=${tickedHoldsKey}, holds tx=${tickedHoldsTx})`);
     } finally {
       try { bcx12e.s.close(); } catch {}
     }
