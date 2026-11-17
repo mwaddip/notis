@@ -472,12 +472,15 @@ describe('background — sign prompt path (ask or credits)', () => {
     await c.send({ kind: 'draft' });
     await c.send({ kind: 'create', passphrase: 'pw' });
     expect(registered).toEqual([]);
+    // The tab-close handler reads live from `storage.session` through
+    // `readAllRecords` (background.ts). A spy on `storage.local.get`
+    // would not catch the handler's read.
     const reads: unknown[] = [];
-    const get = c.api.storage.local.get.bind(c.api.storage.local);
-    c.api.storage.local.get = ((...args: unknown[]) => {
+    const get = c.api.storage.session.get.bind(c.api.storage.session);
+    c.api.storage.session.get = ((...args: unknown[]) => {
       reads.push(args);
       return (get as (...a: unknown[]) => unknown)(...args);
-    }) as typeof c.api.storage.local.get;
+    }) as typeof c.api.storage.session.get;
     c.fireTabRemoved(42);
     await new Promise((r) => setImmediate(r));
     expect(reads).toEqual([]);
