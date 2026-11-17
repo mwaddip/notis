@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import {
   takeSnapshot,
+  settingsFactsFrom,
   type BuildFacts,
   type ReaderFacts,
   type SettingsFacts,
@@ -186,5 +187,18 @@ describe('the debug snapshot', () => {
     expect(snap.postCache).toEqual({ error: 'cache is broken' });
     expect(snap.reader).toEqual(READER);
     expect(snap.log).not.toHaveProperty('error');
+  });
+});
+
+describe('the settings facts', () => {
+  it('the sign policy and the links preference are the identity module\'s answers, not the page\'s storage', () => {
+    const storage = { getItem: (): string | null => null };
+    const facts = settingsFactsFrom({
+      storage,
+      identity: { policy: () => 'ask', links: () => 'site' },
+      handNodeKey: () => null,
+    });
+    expect(facts.signPolicy).toBe('ask');
+    expect(facts.links).toBe('site');
   });
 });

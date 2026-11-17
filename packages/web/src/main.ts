@@ -9,8 +9,6 @@ import { createPostsVerifier } from './extension/posts-verifier';
 import { createPostCache, rememberedChain, type PostCacheWithStats } from './extension/post-cache';
 import { postTextsFromCache } from './extension/post-texts';
 import { startDebugLog } from './extension/debug-start';
-import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, POLICY_KEY, SERVE_KEY } from './extension/storage-keys';
-import { readLinksPref, K_LINKS } from './extension/links';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam, ServeSeam } from './view/settings';
@@ -190,7 +188,9 @@ if (isExtension && BUILD_NETWORK !== null) {
 
   // WEB_INTERFACE → The settings window → "The debug row" — compose the
   // seam the App takes. The build facts are the `page` event's own four;
-  // the settings facts read the same storage keys the settings seams do;
+  // the settings facts read each preference where it lives (the sign
+  // policy and the links preference from the identity module, the rest from
+  // the page's storage);
   // the mesh seam is the client's `state` and `diagnostics`; the post
   // cache's `stats` answers its own return type; the log carries `stats`
   // for the snapshot and `clear`/`list` for the row's own controls. The
@@ -203,21 +203,15 @@ if (isExtension && BUILD_NETWORK !== null) {
     network: BUILD_NETWORK ?? '',
     userAgent: navigator.userAgent,
   });
-  const settingsFacts = (): SettingsFacts => {
-    const stored = window.localStorage.getItem(HAND_NODE_KEY) ?? '';
-    const off = window.localStorage.getItem(HAND_NODE_OFF_KEY) === '1';
-    let key: string | null = null;
-    if (stored !== '') {
-      const parsed = parseHandNodeAddress(stored);
-      if ('notisId' in parsed) key = parsed.notisId;
-    }
-    return {
-      serve: window.localStorage.getItem(SERVE_KEY) === '1',
-      links: readLinksPref(window.localStorage.getItem(K_LINKS)),
-      signPolicy: window.localStorage.getItem(POLICY_KEY) === 'ask' ? 'ask' : 'silent',
-      handNode: { address: stored, off, key },
-    };
-  };
+  const { settingsFactsFrom } = await import('./extension/debug-snapshot');
+  const settingsFacts = (): SettingsFacts => settingsFactsFrom({
+    storage: window.localStorage,
+    identity: idm,
+    handNodeKey: (address) => {
+      const parsed = parseHandNodeAddress(address);
+      return 'notisId' in parsed ? parsed.notisId : null;
+    },
+  });
   const download = (filename: string, text: string): void => {
     const a = document.createElement('a');
     a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);

@@ -9,6 +9,7 @@
 import type { MeshClient, ClientState, MeshDiagnostics } from '../mesh/mesh-client.js';
 import type { DebugLog, DebugLogStats } from './debug-log.js';
 import type { PostCacheStats } from './post-cache.js';
+import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, SERVE_KEY } from './storage-keys.js';
 
 /** The build the page was loaded as (WEB_INTERFACE → The extension → "The
  *  snapshot" — "the build"). The page's `startDebugLog` already records these
@@ -31,6 +32,31 @@ export interface SettingsFacts {
   links: 'site' | 'here' | null;
   signPolicy: 'silent' | 'ask';
   handNode: { address: string; off: boolean; key: string | null };
+}
+
+/** The settings section, read where each preference lives (WEB_INTERFACE →
+ *  The extension → "The contexts, and what each may hold"): the sign policy
+ *  and the links preference are the identity module's answers — the
+ *  background holds them in `storage.local` — and the serve choice and the
+ *  hand-added node are the page's own `localStorage`. `handNodeKey` answers
+ *  the key a stored address names, `null` where it names none. */
+export function settingsFactsFrom(deps: {
+  storage: Pick<Storage, 'getItem'>;
+  identity: { policy?: () => 'silent' | 'ask'; links?: () => 'site' | 'here' };
+  handNodeKey: (address: string) => string | null;
+}): SettingsFacts {
+  const { storage, identity } = deps;
+  const address = storage.getItem(HAND_NODE_KEY) ?? '';
+  return {
+    serve: storage.getItem(SERVE_KEY) === '1',
+    links: identity.links ? identity.links() : null,
+    signPolicy: identity.policy ? identity.policy() : 'silent',
+    handNode: {
+      address,
+      off: storage.getItem(HAND_NODE_OFF_KEY) === '1',
+      key: address === '' ? null : deps.handNodeKey(address),
+    },
+  };
 }
 
 /** A pending entry as the snapshot carries it (WEB_INTERFACE → The extension →
