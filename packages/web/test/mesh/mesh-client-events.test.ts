@@ -148,6 +148,99 @@ describe('mesh client — the events sink: request events', () => {
   }, 15_000);
 });
 
+describe('mesh client — the events sink: an empty-body response', () => {
+  const clients: MeshClient[] = [];
+  const servers: Server[] = [];
+  afterEach(async () => {
+    for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+    for (const s of servers.splice(0)) { s.close(); }
+  });
+
+  it('a `fetch` of an http URL whose response has no body writes one `request-body` event with `bytes: 0` under the request\'s number', async () => {
+    // A 204 No Content response has a null body under Node's native
+    // `fetch`, so `wrapResponseBody` takes the empty-body branch
+    // (MESH_INTERFACE → The client's node list → "The client reports
+    // what it does" — "an answer's body read to its end"). The
+    // `request-body` event lands at once under the request's number.
+    const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
+    servers.push(tip.srv);
+    const srv204 = createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise<void>((resolve) => srv204.listen(0, '127.0.0.1', resolve));
+    servers.push(srv204);
+    const port204 = (srv204.address() as AddressInfo).port;
+    const base204 = `http://127.0.0.1:${port204}`;
+
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: HEX64_A, addrs: [], api: tip.base }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-events-empty',
+      resolve: resolveTooShort,
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    const url = `${base204}/no-body`;
+    const response = await client.fetch(url, undefined);
+    expect(response.status, 'the 204 arrived').toBe(204);
+    expect(response.body, 'a 204 answer carries no body').toBeNull();
+    const reqs = captured.filter(
+      (e): e is Extract<MeshEvent, { kind: 'request' }> =>
+        e.kind === 'request' && e.url === url,
+    );
+    expect(reqs.length, 'one request event for the empty-body URL').toBe(1);
+    const bodies = captured.filter(
+      (e): e is Extract<MeshEvent, { kind: 'request-body' }> =>
+        e.kind === 'request-body' && e.number === reqs[0]!.number,
+    );
+    expect(bodies.length, 'one request-body event under the request\'s number').toBe(1);
+    expect(bodies[0]!.bytes, 'zero bytes for an empty body').toBe(0);
+  }, 15_000);
+});
+
+describe('mesh client — the events sink: a check whose work throws', () => {
+  const clients: MeshClient[] = [];
+  const servers: Server[] = [];
+  afterEach(async () => {
+    for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+    for (const s of servers.splice(0)) { s.close(); }
+  });
+
+  it('writes one `check` event whose `threw` carries the throw\'s message', async () => {
+    const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
+    servers.push(tip.srv);
+    // A resolver that throws takes the check into the `check()`
+    // promise chain's catch, which writes `threw: messageOf(e)` into
+    // the `check` event (MESH_INTERFACE → The client's node list →
+    // "The client reports what it does" — "a check that throws is
+    // reported as ending with the throw's message").
+    const BOOM = 'resolver boom';
+    const resolveThrows: ResolveFn = async () => {
+      throw new Error(BOOM);
+    };
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: HEX64_A, addrs: [], api: tip.base }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-events-threw',
+      resolve: resolveThrows,
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    let caught: unknown;
+    try { await client.check(); } catch (e) { caught = e; }
+    expect(caught, 'the check threw').toBeDefined();
+    const ends = captured.filter((e): e is Extract<MeshEvent, { kind: 'check' }> => e.kind === 'check');
+    expect(ends.length, 'one check event for the thrown check').toBeGreaterThanOrEqual(1);
+    const last = ends[ends.length - 1]!;
+    expect(last.threw, 'the threw message names the throw').toContain(BOOM);
+  }, 15_000);
+});
+
 describe('mesh client — the events sink: a sink that throws is absorbed', () => {
   const clients: MeshClient[] = [];
   const servers: Server[] = [];
