@@ -406,6 +406,107 @@ describe('the refusals exit 2 with one stderr line', () => {
   });
 });
 
+describe('a staged change whose working-tree copy is put back', () => {
+  it('a staged change to packages/a/src/s.ts whose file holds the committed bytes is counted', () => {
+    const { dir, cleanup } = fixture();
+    try {
+      write(dir, 'packages/a/src/s.ts', 'original\n');
+      sh('git', ['add', 'packages/a/src/s.ts'], dir);
+      sh('git', ['commit', '-q', '-m', 'add s'], dir);
+      sh('git', ['checkout', '-q', '-b', 'work'], dir);
+      write(dir, 'packages/a/src/s.ts', 'modified\n');
+      sh('git', ['add', 'packages/a/src/s.ts'], dir);
+      write(dir, 'packages/a/src/s.ts', 'original\n');
+      const r = invoke(dir, ['--json']);
+      expect(r.status).toEqual(0);
+      const a = parse(r.stdout);
+      expect(runNames(a)).toEqual(['a', 'b']);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('the base means the merge base, not the base tip', () => {
+  it('--rev <branch> --base master reads from merge-base(master, branch), not master', () => {
+    const { dir, cleanup } = fixture();
+    try {
+      sh('git', ['checkout', '-q', '-b', 'work'], dir);
+      write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
+      sh('git', ['add', 'packages/a/src/x.ts'], dir);
+      sh('git', ['commit', '-q', '-m', 'change a on work'], dir);
+      sh('git', ['checkout', '-q', 'master'], dir);
+      write(dir, 'pnpm-lock.yaml', 'lockfileVersion: 9\n');
+      sh('git', ['add', 'pnpm-lock.yaml'], dir);
+      sh('git', ['commit', '-q', '-m', 'bump lock on master'], dir);
+      const r = invoke(dir, ['--rev', 'work', '--base', 'master', '--json']);
+      expect(r.status).toEqual(0);
+      const a = parse(r.stdout);
+      expect([...runNames(a)].sort()).toEqual(['a', 'b']);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('no --rev reads from merge-base(master, HEAD), not master', () => {
+    const { dir, cleanup } = fixture();
+    try {
+      sh('git', ['checkout', '-q', '-b', 'work'], dir);
+      write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
+      sh('git', ['add', 'packages/a/src/x.ts'], dir);
+      sh('git', ['commit', '-q', '-m', 'change a on work'], dir);
+      sh('git', ['checkout', '-q', 'master'], dir);
+      write(dir, 'pnpm-lock.yaml', 'lockfileVersion: 9\n');
+      sh('git', ['add', 'pnpm-lock.yaml'], dir);
+      sh('git', ['commit', '-q', '-m', 'bump lock on master'], dir);
+      sh('git', ['checkout', '-q', 'work'], dir);
+      const r = invoke(dir, ['--json']);
+      expect(r.status).toEqual(0);
+      const a = parse(r.stdout);
+      expect([...runNames(a)].sort()).toEqual(['a', 'b']);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('--members prints build order where it differs from name order', () => {
+  it('a workspace where b declares z prints "z b"', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'tm-cli-'));
+    try {
+      initRepo(dir);
+      write(dir, 'pnpm-workspace.yaml', "packages:\n  - 'packages/*'\n");
+      write(
+        dir,
+        'packages/z/package.json',
+        JSON.stringify({ name: '@dagsocial/z', version: '0.0.1' }),
+      );
+      write(dir, 'packages/z/src/index.ts', '// z\n');
+      write(
+        dir,
+        'packages/b/package.json',
+        JSON.stringify({
+          name: '@dagsocial/b',
+          version: '0.0.1',
+          dependencies: { '@dagsocial/z': 'workspace:*' },
+        }),
+      );
+      write(dir, 'packages/b/src/index.ts', '// b\n');
+      sh('git', ['add', '-A'], dir);
+      sh('git', ['commit', '-q', '-m', 'init'], dir);
+      sh('git', ['checkout', '-q', '-b', 'work'], dir);
+      write(dir, 'packages/z/src/x.ts', 'export const x = 1;\n');
+      sh('git', ['add', 'packages/z/src/x.ts'], dir);
+      sh('git', ['commit', '-q', '-m', 'change z'], dir);
+      const r = invoke(dir, ['--rev', 'work', '--base', 'master', '--members']);
+      expect(r.status).toEqual(0);
+      expect(r.stdout).toEqual('z b\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('an empty diff', () => {
   it('--rev master --base master exits 0 and selects nothing', () => {
     const { dir, cleanup } = fixture();
