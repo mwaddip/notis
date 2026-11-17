@@ -2650,10 +2650,12 @@ Six rules govern it:
    `dist`. `instanceof` fails across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
    symbol exported from a module but missing from `index.ts` still fails at import.
-3. **`pnpm test` no longer proves a package builds.** Nothing in the unit-test path executes `tsup`,
-   so a bundling or externalisation break passes the suite. `pnpm -r build && pnpm -r typecheck &&
-   pnpm -r test` is the gate before any commit or PR — **the build is a separate obligation, not a
-   side effect of testing.**
+3. **`pnpm test` does not prove a package builds.** Nothing in the unit-test path executes `tsup`,
+   so a bundling or externalisation break passes the suite. **Every member is built before any suite
+   runs — the build is a separate obligation, not a side effect of testing.** Before a pull request
+   the typechecks and suites that run are the ones the change warrants
+   (`TEST_MATRIX_INTERFACE → How a path is placed`); every pull request's CI runs
+   `pnpm -r build && pnpm -r typecheck && pnpm -r test` whole.
 4. **Spawned processes are exempt and still need a real build.** A vitest alias exists only inside
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
    artefact, so it needs a genuine build first and no alias reaches it. **Two members do.

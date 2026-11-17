@@ -24,19 +24,23 @@ node packages/node/dist/index.js    # Start a node on :3000
 ```
 
 **`pnpm test` does not prove a package builds** — test code resolves `@dagsocial/*` to `src`, never
-`dist`. The gate before any commit is:
+`dist`. Before a pull request, every member is built, then each member the change warrants is typechecked and
+tested — the test matrix answers which, and whether node's slow tree and the extension check are warranted
+(`TEST_MATRIX_INTERFACE`):
 
 ```bash
-pnpm -r build && pnpm -r typecheck && pnpm -r test
+pnpm -r build
+node tools/test-matrix/src/cli.ts                     # the runs this branch warrants; --members for the names
+pnpm --filter @dagsocial/<member> typecheck && pnpm --filter @dagsocial/<member> test   # each member it names
 ```
 
-Run the last two **per package**: `pnpm -r test` fails fast and hides everything after a red package.
+The full gate is `pnpm -r build && pnpm -r typecheck && pnpm -r test`. Run members **one at a time**:
+`pnpm -r test` fails fast and hides everything after a red package.
 **The build step is load-bearing, not advisory:** `tools/e2e` spawns `packages/node/dist/index.js` and
 refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build and test resolution".
 
 **`pnpm -r test` leaves the node's slow tree out** — `pnpm --filter @dagsocial/node test:slow` runs the three deepest
-header-pipeline cases (`packages/node/slow/`); run it when a change touches the pipeline, `reorg`, or anything they
-read. **Every
+header-pipeline cases (`packages/node/slow/`); the matrix selects it for any change that reaches the node. **Every
 pull request runs the full gate, the slow tree included** — `.github/workflows/ci.yml`, one job per workspace member.
 
 ## Architecture
@@ -82,7 +86,7 @@ Ten packages, in dependency order:
   every list read as ids with the node's word — drawn from that cache at once, the posts it lacks read by id from the
   nodes in the client's order (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
 
-Five tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
+Six tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
 - `@dagsocial/faucet` — an ordinary-key service that invites and sends credits through the node's HTTP API.
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
@@ -100,6 +104,10 @@ Five tools live under `tools/` — in the workspace by the `tools/*` glob, so in
   stack up on a copy in seconds — node, faucet and a miner on a steady cadence that also mines to a height on request,
   all on one clock offset. It holds the one stale-build check and clock preload `tools/e2e` imports. The extension
   check runs on its `base` state (`TEST_STATE_INTERFACE`).
+- `@dagsocial/test-matrix` — which local runs a change warrants: each member's typecheck and suite, node's slow tree,
+  and the extension check whole or not at all, read from a diff and the workspace's declarations plus the rows for
+  the edges no declaration carries; its suite scans the tree for a cross-member reference no row covers. It runs from
+  its source with no build: `node tools/test-matrix/src/cli.ts` (`TEST_MATRIX_INTERFACE`).
 
 ## Design by Contract
 
@@ -125,6 +133,8 @@ contract first, then implement against it, never the reverse.
   loader, the clock offset and the run's miner
 - `contracts/EXTENSION_CHECK_INTERFACE.md` — the extension check as a tool: its blocks, the state and stack each runs
   on, the addresses it binds, its one build per check and the command that runs it
+- `contracts/TEST_MATRIX_INTERFACE.md` — the test matrix: the runs a diff warrants, how a path is placed, the rows the
+  declarations do not carry, and the scan that holds them to the tree
 
 **The contract change rides the same branch as the code that implements it** — not merged ahead of it.
 One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
