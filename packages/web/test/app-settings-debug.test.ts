@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { App } from '../src/app';
 import type { Api } from '../src/api/client';
 import type {
@@ -8,7 +8,7 @@ import type {
 import { prefs, setTheme } from '../src/prefs';
 import { karmaResult } from './karma-fixture';
 import type { AppIdentity } from '../src/model/state';
-import type { DebugSeam } from '../src/extension/debug-row';
+import { debugRow, type DebugSeam } from '../src/extension/debug-row';
 import type {
   BuildFacts, SettingsFacts, SnapshotSeams,
 } from '../src/extension/debug-snapshot';
@@ -155,11 +155,18 @@ function mountWithDebug(seam: DebugSeam, idm?: AppIdentity): {
   const panes = document.createElement('section'); panes.id = 'panes';
   workspace.append(feed, panes);
   document.body.append(appbar, workspace);
+  let appRef: App;
+  const builder = (): HTMLElement => debugRow({
+    seam,
+    reader: () => appRef.readerFacts(),
+    now: () => Date.now(),
+  });
   const app = new App(
     fakeApi(), undefined, idm, undefined, undefined, undefined,
     undefined, undefined, undefined, undefined, undefined, undefined,
-    undefined, undefined, undefined, seam,
+    undefined, undefined, undefined, builder,
   );
+  appRef = app;
   app.mount(appbar, feed, panes);
   return { app, appbar, feed, panes };
 }
@@ -187,14 +194,21 @@ const toggleWord = (row: HTMLElement): HTMLButtonElement =>
 const debugBody = (row: HTMLElement): HTMLElement | null =>
   row.querySelector<HTMLElement>('.debug-body');
 
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+
 beforeEach(() => {
   localStorage.clear();
   prefs.faucet = '';
   setTheme('light');
 });
 
+afterEach(() => {
+  if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+  else Object.defineProperty(navigator, 'clipboard', originalClipboard);
+});
+
 describe('the settings window debug row', () => {
-  it.fails('the row stands closed at the window\'s open, the word reading show', async () => {
+  it('the row stands closed at the window\'s open, the word reading show', async () => {
     const stub = freshStub();
     const { appbar, panes } = mountWithDebug(makeDebugSeam(stub));
     await openSettings(appbar);
@@ -204,7 +218,7 @@ describe('the settings window debug row', () => {
     expect(debugBody(row!)).toBeNull();
   });
 
-  it.fails('a show press opens the lines from a snapshot and the word reads hide', async () => {
+  it('a show press opens the lines from a snapshot and the word reads hide', async () => {
     const stub = freshStub();
     const { appbar, panes } = mountWithDebug(makeDebugSeam(stub), loadedIdm());
     await openSettings(appbar);
@@ -223,7 +237,7 @@ describe('the settings window debug row', () => {
     expect(text).toMatch(/0 \/ 2000000 bytes/);
   });
 
-  it.fails('a value press writes the clipboard and reads copied, muted, beside the value', async () => {
+  it('a value press writes the clipboard and reads copied, muted, beside the value', async () => {
     const stub = freshStub();
     const writes: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
@@ -245,7 +259,7 @@ describe('the settings window debug row', () => {
     expect(press.querySelector('.debug-copy-note')?.classList.contains('inkmute')).toBe(true);
   });
 
-  it.fails('a refused clipboard leaves the value as selectable text followed by — copy it by hand', async () => {
+  it('a refused clipboard leaves the value as selectable text followed by — copy it by hand', async () => {
     const stub = freshStub();
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: (): Promise<void> => Promise.reject(new Error('refused')) },
@@ -269,7 +283,7 @@ describe('the settings window debug row', () => {
     expect(parent.textContent).toContain('— copy it by hand');
   });
 
-  it.fails('the include box is unticked on a second show after it was ticked', async () => {
+  it('the include box is unticked on a second show after it was ticked', async () => {
     const stub = freshStub();
     const { appbar, panes } = mountWithDebug(makeDebugSeam(stub), loadedIdm());
     await openSettings(appbar);
@@ -290,7 +304,7 @@ describe('the settings window debug row', () => {
     expect(box2.checked).toBe(false);
   });
 
-  it.fails('save as file unticked hands download a text that does not carry the reader\'s key', async () => {
+  it('save as file unticked hands download a text that does not carry the reader\'s key', async () => {
     const stub = freshStub();
     const { appbar, panes } = mountWithDebug(makeDebugSeam(stub), loadedIdm());
     await openSettings(appbar);
@@ -307,7 +321,7 @@ describe('the settings window debug row', () => {
     expect(stub.downloads[0]!.text).not.toContain(KEY);
   });
 
-  it.fails('save as file ticked hands download a text that carries the reader\'s key', async () => {
+  it('save as file ticked hands download a text that carries the reader\'s key', async () => {
     const stub = freshStub();
     const { appbar, panes } = mountWithDebug(makeDebugSeam(stub), loadedIdm());
     await openSettings(appbar);
@@ -326,7 +340,7 @@ describe('the settings window debug row', () => {
     expect(stub.downloads[0]!.text).toContain(KEY);
   });
 
-  it.fails('clear log asks in place, keep keeps the log, Esc keeps, clear empties it', async () => {
+  it('clear log asks in place, keep keeps the log, Esc keeps, clear empties it', async () => {
     const stub = freshStub();
     stub.events = [
       { t: 1, page: 'ab12cd34', kind: 'page', version: '0.7.0' },
@@ -373,7 +387,7 @@ describe('the settings window debug row', () => {
     expect(debugBody(row)!.textContent).toMatch(/0 events/);
   });
 
-  it.fails('refresh re-takes the snapshot, and a settings draw with no press does not', async () => {
+  it('refresh re-takes the snapshot, and a settings draw with no press does not', async () => {
     const stub = freshStub();
     const seam = makeDebugSeam(stub);
     let buildCalls = 0;

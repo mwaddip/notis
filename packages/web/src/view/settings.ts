@@ -54,6 +54,12 @@ export interface SettingsHandlers {
   // The extension's serve-posts seam — the row renders only with it
   // (WEB_INTERFACE → The settings window → "The serve row").
   serve?: ServeSeam;
+  // The extension's debug row — the hook builds the row and the body
+  // appends it; the row's whole text and transport names live in the
+  // extension-only module the hook comes from (WEB_INTERFACE → The
+  // settings window → "The debug row"). Absent in the web build — the row
+  // renders only where the build hands the client a debug log.
+  debug?: () => HTMLElement;
 }
 
 /** The extension's hand-added node seam (WEB_INTERFACE → The settings window →
@@ -319,6 +325,16 @@ export function settingsBody(handlers: SettingsHandlers): WindowBody {
       }
     });
     b.appendChild(r);
+  }
+
+  // The extension's debug row — appended last, built once by the hook the
+  // extension build hands. Nothing pushes an update for it: a draw of the
+  // window leaves the row in place, with its open/closed state, the box
+  // and a standing clear-log question as they are (WEB_INTERFACE → The
+  // settings window → "The debug row", → The workspace → "A window's body
+  // stands while the window is open").
+  if (handlers.debug) {
+    b.appendChild(handlers.debug());
   }
 
   const update = (): void => {

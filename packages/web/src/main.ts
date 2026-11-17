@@ -6,16 +6,21 @@ import { identity } from './identity/identity';
 import { bootstrapProxy } from './extension/proxy';
 import { wrapTabs } from './extension/handover';
 import { createPostsVerifier } from './extension/posts-verifier';
-import { createPostCache, rememberedChain } from './extension/post-cache';
+import { createPostCache, rememberedChain, type PostCacheWithStats } from './extension/post-cache';
 import { postTextsFromCache } from './extension/post-texts';
 import { startDebugLog } from './extension/debug-start';
+import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, POLICY_KEY, SERVE_KEY } from './extension/storage-keys';
+import { readLinksPref, K_LINKS } from './extension/links';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam, ServeSeam } from './view/settings';
 import type { WaitingStorage, WaitRecorder } from './wallet/waiting';
 import type { LockManager } from './locks';
-import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache, PostResolver } from './model/state';
+import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostResolver } from './model/state';
 import type { DebugLog } from './extension/debug-log';
+import type { DebugSeam } from './extension/debug-row';
+import type { BuildFacts, SettingsFacts } from './extension/debug-snapshot';
+import type { MeshClient } from './mesh/mesh-client';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -32,9 +37,13 @@ if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 // bootstrapProxy and the extension module never enters the bundle.
 const isExtension = import.meta.env.VITE_IDENTITY === 'extension';
 // WEB_INTERFACE → The extension → "The debug log" — the log starts before
-// the proxy, so every `sign` answer the proxy records lands in the one log.
-// The seams are the page's own; a build with no network reads an empty one
-// in the `page` event.
+// the proxy, so every `sign` answer the proxy records lands in the one log;
+// `main.ts` records the walking of a waiting write through the `waitRecorder`
+// below, hands the log to the mesh-seams module which records every mesh
+// report in it, and composes the `DebugSeam` the App takes for the settings
+// window's `debug` row (WEB_INTERFACE → The settings window → "The debug
+// row"), whose snapshot the log's `stats` answers. The seams are the page's
+// own; a build with no network reads an empty one in the `page` event.
 let debugLog: DebugLog | undefined;
 if (isExtension) {
   const started = startDebugLog({
@@ -77,10 +86,20 @@ let verifier: TipVerifier | undefined;
 let figuresVerifier: FiguresVerifier | undefined;
 let namesVerifier: NamesVerifier | undefined;
 let postsVerifier: PostsVerifier | undefined;
-let postCache: PostCache | undefined;
+let postCache: PostCacheWithStats | undefined;
 let postResolver: PostResolver | undefined;
 let handNodeSeam: HandNodeSeam | undefined;
 let serveSeam: ServeSeam | undefined;
+// WEB_INTERFACE → The settings window → "The debug row" — the extension
+// build composes the seam from the build, the settings' storage keys, the
+// mesh client, the post cache's `stats` and the debug log, then imports
+// `debug-row.ts` and hands the App a thunk that builds the row. The web
+// build composes none, imports none and Rollup tree-shakes the module and
+// its transitive strings (`webrtc-direct`, `notis.debug`, `notis-debug/1`)
+// out of the web bundle.
+let debugSeam: DebugSeam | undefined;
+let debugRowBuilder: (() => HTMLElement) | undefined;
+let meshClient: MeshClient | undefined;
 // WEB_INTERFACE → The wallet → "A write no node answers waits". The extension
 // build holds a waiting store over `window.localStorage` and the browser's
 // `navigator.locks` (the same adapter the background uses); the web build
@@ -113,11 +132,11 @@ if (isExtension && BUILD_NETWORK !== null) {
   // by-hand node after start, so `removeByHand` can later drop it. The mesh
   // module is reached by a dynamic import so Rollup drops every byte of
   // it from the web bundle (`build-release.sh`'s mesh grep).
-  const [{ startExtensionMesh }, { startMeshClient }] = await Promise.all([
+  const [{ startExtensionMesh, parseHandNodeAddress }, { startMeshClient }] = await Promise.all([
     import('./extension/mesh-seams'),
     import('./mesh'),
   ]);
-  const { seams } = await startExtensionMesh({
+  const { client: meshClientLocal, seams } = await startExtensionMesh({
     firstContact: [...BUILD_NODES],
     network: BUILD_NETWORK,
     agentName: 'notis-extension',
@@ -138,6 +157,7 @@ if (isExtension && BUILD_NETWORK !== null) {
     postTexts: postTextsFromCache(postCache),
     debugLog: debugLog!,
   });
+  meshClient = meshClientLocal;
   readClient = seams.readClient;
   writeClientSeam = seams.writeClient;
   verifier = seams.tipVerifier;
@@ -167,13 +187,74 @@ if (isExtension && BUILD_NETWORK !== null) {
     rememberedChain: (): string | null => rememberedChain(window.localStorage),
     recorder: waitRecorder,
   };
+
+  // WEB_INTERFACE → The settings window → "The debug row" — compose the
+  // seam the App takes. The build facts are the `page` event's own four;
+  // the settings facts read the same storage keys the settings seams do;
+  // the mesh seam is the client's `state` and `diagnostics`; the post
+  // cache's `stats` answers its own return type; the log carries `stats`
+  // for the snapshot and `clear`/`list` for the row's own controls. The
+  // App adds its own reader seam at the moment of a snapshot, so the
+  // identity, the pending ledger, the waiting store and the last runs
+  // read as they are then.
+  const buildFacts = (): BuildFacts => ({
+    version: chrome.runtime.getManifest().version,
+    commit: import.meta.env.VITE_COMMIT ?? '',
+    network: BUILD_NETWORK ?? '',
+    userAgent: navigator.userAgent,
+  });
+  const settingsFacts = (): SettingsFacts => {
+    const stored = window.localStorage.getItem(HAND_NODE_KEY) ?? '';
+    const off = window.localStorage.getItem(HAND_NODE_OFF_KEY) === '1';
+    let key: string | null = null;
+    if (stored !== '') {
+      const parsed = parseHandNodeAddress(stored);
+      if ('notisId' in parsed) key = parsed.notisId;
+    }
+    return {
+      serve: window.localStorage.getItem(SERVE_KEY) === '1',
+      links: readLinksPref(window.localStorage.getItem(K_LINKS)),
+      signPolicy: window.localStorage.getItem(POLICY_KEY) === 'ask' ? 'ask' : 'silent',
+      handNode: { address: stored, off, key },
+    };
+  };
+  const download = (filename: string, text: string): void => {
+    const a = document.createElement('a');
+    a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
+    a.download = filename;
+    a.click();
+  };
+  debugSeam = {
+    seams: {
+      build: buildFacts,
+      settings: settingsFacts,
+      mesh: meshClient,
+      postCache: { stats: () => postCache!.stats() },
+      debugLog: { stats: () => debugLog!.stats() },
+    },
+    log: { clear: () => debugLog!.clear(), list: () => debugLog!.list() },
+    download,
+  };
+  // The reader closure refers to `app` after it is constructed below —
+  // safe: the thunk is called only on the settings body's first build,
+  // well after construction. The import is inside the extension branch so
+  // Rollup drops the module from the web bundle.
+  const seam = debugSeam;
+  const { debugRow } = await import('./extension/debug-row');
+  debugRowBuilder = (): HTMLElement => debugRow({
+    seam,
+    reader: () => app!.readerFacts(),
+    now: () => Date.now(),
+  });
 }
 
-new App(
+let app: App | undefined;
+app = new App(
   readClient, writeClientSeam, idm, undefined, tabs, requestFaucetOrigin,
   verifier, figuresVerifier, namesVerifier, postsVerifier, postCache, postResolver,
-  handNodeSeam, waitingSeam, serveSeam,
-).start(appbar, feed, panes, mode);
+  handNodeSeam, waitingSeam, serveSeam, debugRowBuilder,
+);
+app.start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).
