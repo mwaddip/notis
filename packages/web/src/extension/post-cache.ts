@@ -55,6 +55,24 @@ interface Entry {
   own: boolean;
 }
 
+/** What the cache answers of itself for the debug snapshot
+ *  (WEB_INTERFACE → The extension → "The snapshot"): the open database's name
+ *  or `null`, the entries and the reader's own held in it, its bytes, and the
+ *  entries kept before a chain is named. `unavailable` is true where the
+ *  browser gives the page no IndexedDB. */
+export interface PostCacheStats {
+  database: string | null;
+  entries: number;
+  bytes: number;
+  own: number;
+  kept: number;
+  unavailable: boolean;
+}
+
+/** The cache as `createPostCache` answers it: the App's `PostCache` and the
+ *  one read the snapshot makes. */
+export type PostCacheWithStats = PostCache & { stats(): Promise<PostCacheStats> };
+
 /** The dependencies the module takes — an injected clock for `lastSeen`, the
  *  `indexedDB` factory and the `localStorage` for the chain's name. Each
  *  defaults to the browser's own; a test substitutes `fake-indexeddb` and a
@@ -83,7 +101,7 @@ function stripTx(row: PostJson): PostJson {
   return out;
 }
 
-export function createPostCache(deps: PostCacheDeps = {}): PostCache {
+export function createPostCache(deps: PostCacheDeps = {}): PostCacheWithStats {
   const now = deps.now ?? Date.now;
   // The browser's own `indexedDB` and `localStorage`, or the dependencies the
   // test injects. With no `indexedDB` — a browser that gives the page none —
@@ -884,6 +902,9 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCache {
     },
     byAuthor(author, limit): Promise<HeldPost[]> {
       return serial(() => byAuthorInternal(author, limit));
+    },
+    stats(): Promise<PostCacheStats> {
+      return Promise.resolve({ database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: false });
     },
   };
 }
