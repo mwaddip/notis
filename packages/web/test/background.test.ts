@@ -460,6 +460,29 @@ describe('background — sign prompt path (ask or credits)', () => {
     expect(promptRecords(c)).toHaveLength(0);
   });
 
+  it('with `windows` the background registers no tab-close listener, and a tab\'s close reads nothing', async () => {
+    const c = fakeChrome();
+    const registered: unknown[] = [];
+    const add = c.api.tabs.onRemoved.addListener.bind(c.api.tabs.onRemoved);
+    c.api.tabs.onRemoved.addListener = ((listener: (tabId: number) => void) => {
+      registered.push(listener);
+      add(listener);
+    }) as typeof c.api.tabs.onRemoved.addListener;
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
+    await c.send({ kind: 'draft' });
+    await c.send({ kind: 'create', passphrase: 'pw' });
+    expect(registered).toEqual([]);
+    const reads: unknown[] = [];
+    const get = c.api.storage.local.get.bind(c.api.storage.local);
+    c.api.storage.local.get = ((...args: unknown[]) => {
+      reads.push(args);
+      return (get as (...a: unknown[]) => unknown)(...args);
+    }) as typeof c.api.storage.local.get;
+    c.fireTabRemoved(42);
+    await new Promise((r) => setImmediate(r));
+    expect(reads).toEqual([]);
+  });
+
   it('on background start every record without a result is declined', async () => {
     const fixture = freshFixture();
     const first = fakeChrome(fixture);

@@ -84,16 +84,15 @@ export function install(api: typeof chrome, config: BackgroundConfig, options: I
   api.runtime.onStartup.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });
   api.action.onClicked.addListener(() => { void raiseOrOpenPage(api); });
   // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
-  // the window-close listener registers only where `windows` offers it; the
-  // background asks whether the API exists, never which browser it runs in.
+  // the window-close listener registers where `windows` offers it, and the
+  // tab-close listener where it does not, since the prompt is a tab there;
+  // the background asks whether the API exists, never which browser it runs in.
   const windows = api.windows;
   if (windows !== undefined) {
     windows.onRemoved.addListener((windowId) => { void withPromptLock(locks, () => windowClosed(api, windowId)); });
+  } else {
+    api.tabs.onRemoved.addListener((tabId) => { void withPromptLock(locks, () => tabClosed(api, tabId)); });
   }
-  // The tab-close listener registers at start the way `windows.onRemoved` is,
-  // so a prompt tab the reader closes writes declined wherever the browser
-  // offers no `windows` API.
-  api.tabs.onRemoved.addListener((tabId) => { void withPromptLock(locks, () => tabClosed(api, tabId)); });
 }
 
 /** The lock a prompt-record path runs its whole body under — WEB_INTERFACE →
