@@ -1,5 +1,6 @@
 import { applyPrefs, BUILD_NODES, BUILD_NETWORK, BUILD_PUBLIC, WEB_BASE } from './prefs';
 import { App } from './app';
+import { download } from './dom';
 import { decideMode } from './mode';
 import { createTabs, type Tabs } from './tabs';
 import { identity } from './identity/identity';
@@ -212,12 +213,6 @@ if (isExtension && BUILD_NETWORK !== null) {
       return 'notisId' in parsed ? parsed.notisId : null;
     },
   });
-  const download = (filename: string, text: string): void => {
-    const a = document.createElement('a');
-    a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
-    a.download = filename;
-    a.click();
-  };
   debugSeam = {
     seams: {
       build: buildFacts,

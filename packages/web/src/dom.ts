@@ -8,6 +8,16 @@ export function el(tag: string, cls?: string | null, txt?: string | null): HTMLE
   return n;
 }
 
+/** Hand the reader a file — an exported identity, the debug file. A data: URL
+ *  needs no object-URL lifecycle and works from a static bundle (WEB_INTERFACE →
+ *  The profile window). */
+export function download(filename: string, text: string): void {
+  const a = document.createElement('a');
+  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
+  a.download = filename;
+  a.click();
+}
+
 /** A span in the mono face. */
 export function mono(text: string): HTMLElement {
   return el('span', 'mono', text);

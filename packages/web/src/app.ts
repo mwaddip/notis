@@ -9,7 +9,7 @@ import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
-import { el, shortHex, preservingScroll, endForm } from './dom';
+import { el, shortHex, preservingScroll, endForm, download } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODE_BASES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
@@ -119,15 +119,6 @@ const rowPlace = (held: HeldCardRow): RowPlace => (held.kind === 'link' ? 'link'
  *  drawn in two lists holds its rows in each. No list key and no post id
  *  carries a null byte. */
 const rowKey = (list: string, postId: string, place: RowPlace): string => list + '\0' + postId + '\0' + place;
-
-/** Hand the reader a file — an exported identity. A data: URL needs no object-URL
- *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
-function download(filename: string, text: string): void {
-  const a = document.createElement('a');
-  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
-  a.download = filename;
-  a.click();
-}
 
 // WEB_INTERFACE → The wallet → "A rejection's words follow the node's message,
 // never its status alone": the pool's box conflict reads one sentence on every
