@@ -211,10 +211,11 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     const HEX = 'a'.repeat(64);
     c.storage.session.set('notis.open.' + HEX, { raise: true });
     const PAGE_TAB = 300;
-    await c.send(
+    const answer = await c.send(
       { kind: 'takeOpen' },
       pageSender(c, PAGE_TAB, 500),
     );
+    expect(answer).toEqual({ ids: [HEX] });
     expect(c.tabs.updated).toContainEqual([PAGE_TAB, { active: true }]);
     expect(c.windows.focused).toEqual([]);
   });
