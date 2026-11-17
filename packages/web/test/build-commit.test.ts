@@ -50,7 +50,7 @@ function makeRepo(): { dir: string; cleanup: () => void } {
 }
 
 describe('build-commit — the function', () => {
-  it.fails('a checkout with the placeholder answers `git rev-parse HEAD`', () => {
+  it('a checkout with the placeholder answers `git rev-parse HEAD`', () => {
     const r = makeRepo();
     try {
       const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
@@ -60,7 +60,7 @@ describe('build-commit — the function', () => {
     }
   });
 
-  it.fails('a tracked file that differs from HEAD appends -dirty', () => {
+  it('a tracked file that differs from HEAD appends -dirty', () => {
     const r = makeRepo();
     try {
       const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
@@ -71,7 +71,7 @@ describe('build-commit — the function', () => {
     }
   });
 
-  it.fails('an untracked file leaves the build clean — no -dirty', () => {
+  it('an untracked file leaves the build clean — no -dirty', () => {
     const r = makeRepo();
     try {
       const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
@@ -82,7 +82,7 @@ describe('build-commit — the function', () => {
     }
   });
 
-  it.fails('an archive answers the same commit with no `.git` present', () => {
+  it('an archive answers the same commit with no `.git` present', () => {
     const r = makeRepo();
     const unpack = mkdtempSync(join(tmpdir(), 'notis-build-commit-archive-'));
     try {
@@ -101,7 +101,7 @@ describe('build-commit — the function', () => {
     }
   });
 
-  it.fails('a commit.txt holding anything else refuses, naming the content', () => {
+  it('a commit.txt holding anything else refuses, naming the content', () => {
     const r = makeRepo();
     try {
       writeFileSync(join(r.dir, 'extension', 'commit.txt'), 'not a commit\n');

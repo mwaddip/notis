@@ -89,6 +89,21 @@ export VITE_PUBLIC=${VITE_PUBLIC-https://notis.fun/web/}
 export VITE_NETWORK=${VITE_NETWORK-testnet}
 export VITE_IDENTITY=extension
 
+# WEB_INTERFACE → The extension → "The build carries its commit". The module
+# reads `extension/commit.txt` — forty lowercase hex is the archive case
+# (expanded under `export-subst`), the literal `$Format:%H$` triggers
+# `git rev-parse HEAD` beside a dirty check — and refuses anything else. The
+# value must be forty lowercase hex with or without `-dirty`; the vite builds
+# below read it from `import.meta.env.VITE_COMMIT`.
+VITE_COMMIT=$(node -e "import('./scripts/build-commit.mjs').then(m => process.stdout.write(m.readBuildCommit(process.cwd())))")
+case "$VITE_COMMIT" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-dirty) ;;
+  *) echo "FAIL: VITE_COMMIT is not forty lowercase hex (with or without -dirty): $VITE_COMMIT"; exit 1 ;;
+esac
+export VITE_COMMIT
+echo "==> VITE_COMMIT=$VITE_COMMIT"
+
 # Staging: a fresh temp dir every build, so the zip is assembled against
 # nothing left over (WEB_INTERFACE → The client is served from the node's
 # own origin → "A zip holds one build").

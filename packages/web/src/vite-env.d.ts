@@ -9,6 +9,12 @@ interface ImportMetaEnv {
    *  the prefix the extension background checks the bridge's sender against
    *  (WEB_INTERFACE → The extension → "Links into the extension"). */
   readonly VITE_PUBLIC?: string;
+  /** The commit the extension build was built from
+   *  (WEB_INTERFACE → The extension → "The build carries its commit"):
+   *  forty lowercase hex, with `-dirty` appended where a tracked file
+   *  differs from `HEAD`. Written by `build-extension.sh`; unset in the
+   *  web build. */
+  readonly VITE_COMMIT?: string;
 }
 
 interface ImportMeta {
