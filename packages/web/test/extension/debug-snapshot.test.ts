@@ -15,6 +15,7 @@ import {
   type SettingsFacts,
   type SnapshotSeams,
 } from '../../src/extension/debug-snapshot';
+import type { PostCacheStats } from '../../src/extension/post-cache';
 import {
   createDebugLog,
   type DebugLog,
@@ -91,6 +92,15 @@ const SETTINGS: SettingsFacts = {
   handNode: { address: '', off: false },
 };
 
+const CACHE: PostCacheStats = {
+  database: 'notis.posts.c0ffee',
+  entries: 4,
+  bytes: 1234,
+  own: 1,
+  kept: 0,
+  unavailable: false,
+};
+
 const READER: ReaderFacts = {
   identityLoaded: true,
   unlocked: true,
@@ -113,6 +123,7 @@ function seams(overrides: Partial<SnapshotSeams> = {}): SnapshotSeams {
       diagnostics: () => emptyDiagnostics(),
     },
     reader: () => READER,
+    postCache: { stats: () => Promise.resolve(CACHE) },
     debugLog: log,
     ...overrides,
   };
@@ -125,7 +136,7 @@ describe('the debug snapshot', () => {
     expect(snap.settings).toEqual(SETTINGS);
     expect(snap.mesh).toEqual({ state: emptyState(), diagnostics: emptyDiagnostics() });
     expect(snap.reader).toEqual(READER);
-    expect(snap.postCache).toEqual({});
+    expect(snap.postCache).toEqual(CACHE);
     expect(snap.log).toMatchObject({
       events: expect.any(Number),
       bytes: expect.any(Number),
@@ -164,7 +175,16 @@ describe('the debug snapshot', () => {
     expect(snap.build).toEqual(BUILD);
     expect(snap.settings).toEqual(SETTINGS);
     expect(snap.mesh).toEqual({ state: emptyState(), diagnostics: emptyDiagnostics() });
-    expect(snap.postCache).toEqual({});
+    expect(snap.postCache).toEqual(CACHE);
+    expect(snap.log).not.toHaveProperty('error');
+  });
+
+  it('a post cache seam that rejects leaves every other part whole and reports the error', async () => {
+    const snap = await takeSnapshot(seams({
+      postCache: { stats: () => Promise.reject(new Error('cache is broken')) },
+    }));
+    expect(snap.postCache).toEqual({ error: 'cache is broken' });
+    expect(snap.reader).toEqual(READER);
     expect(snap.log).not.toHaveProperty('error');
   });
 });

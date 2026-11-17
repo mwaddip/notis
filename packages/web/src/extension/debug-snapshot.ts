@@ -8,6 +8,7 @@
 
 import type { MeshClient, ClientState, MeshDiagnostics } from '../mesh/mesh-client.js';
 import type { DebugLog, DebugLogStats } from './debug-log.js';
+import type { PostCacheStats } from './post-cache.js';
 
 /** The build the page was loaded as (WEB_INTERFACE → The extension → "The
  *  snapshot" — "the build"). The page's `startDebugLog` already records these
@@ -77,15 +78,8 @@ export interface ReaderFacts {
 }
 
 /** The post cache section (WEB_INTERFACE → The extension → "The snapshot" —
- *  "the post cache"). The cache's module answers no stats of its own —
- *  `src/extension/post-cache.ts` exports `open`, `openRemembered`, `put`,
- *  `withdraw`, `thread`, `getMany`, `refresh`, `roots` and `byAuthor`, none
- *  of which carries the database name, an entry count, a byte total or the
- *  reader-own / kept-entry counts. The snapshot's own section is empty; the
- *  five counts the contract names are reports, not new reads. */
-export interface PostCacheFacts {
-  // Intentionally empty — see the comment above.
-}
+ *  "the post cache"): the cache's own answer to `stats()`. */
+export type PostCacheFacts = PostCacheStats;
 
 /** The seam that answers mesh state and diagnostics at the moment the
  *  snapshot is taken. The mesh client's `state()` returns a shallow copy
@@ -106,6 +100,7 @@ export interface SnapshotSeams {
   settings: SettingsSeam;
   mesh: MeshSnapshotSeam;
   reader: ReaderSeam;
+  postCache: { stats: () => Promise<PostCacheStats> };
   debugLog: Pick<DebugLog, 'stats'>;
 }
 
@@ -165,9 +160,12 @@ export async function takeSnapshot(seams: SnapshotSeams): Promise<DebugSnapshot>
   const reader: SectionOr<ReaderFacts> = (() => {
     try { return deepCopy(seams.reader()); } catch (e) { return { error: messageOf(e) }; }
   })();
-  // The post cache module exports no stats; the section is empty here, and
-  // the five counts the contract names are reports (see `PostCacheFacts`).
-  const postCache: SectionOr<PostCacheFacts> = {};
+  let postCache: SectionOr<PostCacheFacts>;
+  try {
+    postCache = deepCopy(await seams.postCache.stats());
+  } catch (e) {
+    postCache = { error: messageOf(e) };
+  }
   let log: SectionOr<DebugLogStats>;
   try {
     const stats = await seams.debugLog.stats();

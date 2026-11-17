@@ -1012,7 +1012,7 @@ describe("post-cache — a post checked before any tip run names a chain is kept
 describe('post-cache — stats', () => {
   const sizeOf = (bytes: Uint8Array, r: PostJson): number => bytes.byteLength + JSON.stringify({ ...r, tx: undefined }).length;
 
-  it.fails('after puts of the reader\'s own and others\' posts, the five read as the puts left them', async () => {
+  it('after puts of the reader\'s own and others\' posts, the five read as the puts left them', async () => {
     const cache = createPostCache({ indexedDB: new IDBFactory(), localStorage: fakeLs(), now: clock().tick });
     await cache.open('A');
     const mine = row('m');
@@ -1034,7 +1034,7 @@ describe('post-cache — stats', () => {
     });
   });
 
-  it.fails('a put before a chain is named counts among the kept ones, and none after the naming', async () => {
+  it('a put before a chain is named counts among the kept ones, and none after the naming', async () => {
     const cache = createPostCache({ indexedDB: new IDBFactory(), localStorage: fakeLs(), now: clock().tick });
     const r = row('k');
     await cache.put({ id: r.id, txBytes: new Uint8Array([1]), row: r, author: r.author, parent: null, own: false });
@@ -1043,7 +1043,7 @@ describe('post-cache — stats', () => {
     expect(await cache.stats()).toMatchObject({ database: 'notis.posts.A', entries: 1, kept: 0 });
   });
 
-  it.fails('no IndexedDB answers that it is unavailable', async () => {
+  it('no IndexedDB answers that it is unavailable', async () => {
     const cache = createPostCache({ indexedDB: null, localStorage: fakeLs(), now: clock().tick });
     expect(await cache.stats()).toEqual({ database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: true });
   });

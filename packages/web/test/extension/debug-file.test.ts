@@ -53,7 +53,7 @@ function snapshotWithValues(): DebugSnapshot {
       lastFiguresRun: null,
       lastNamesRun: null,
     },
-    postCache: {},
+    postCache: { database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: false },
     log: { events: 0, bytes: 0, oldestT: null, dropped: 0, open: true, unavailable: false },
   };
 }

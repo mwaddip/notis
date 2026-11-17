@@ -864,6 +864,45 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCacheWithStats {
     };
   }
 
+  /** The counts the debug snapshot holds (WEB_INTERFACE → The extension →
+   *  "The snapshot" — "the post cache"): the entries and the reader's own
+   *  counted in one read-only transaction over the store as it stands, the
+   *  bytes the running total, the kept entries from memory. With no database
+   *  open the name is `null` and the store counts are 0 beside the kept
+   *  ones; with no IndexedDB the answer says so. */
+  async function statsInternal(): Promise<PostCacheStats> {
+    if (idb === null) {
+      return { database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: true };
+    }
+    const kept = keptEntries.size;
+    if (db === null || openedChain === null) {
+      return { database: null, entries: 0, bytes: 0, own: 0, kept, unavailable: false };
+    }
+    const database = DB_PREFIX + openedChain;
+    const bytes = total;
+    return new Promise<PostCacheStats>((resolve) => {
+      let entries = 0;
+      let own = 0;
+      const answer = (): void => resolve({ database, entries, bytes, own, kept, unavailable: false });
+      let tx: IDBTransaction;
+      try {
+        tx = db!.transaction(STORE, 'readonly');
+      } catch { answer(); return; }
+      const cur = tx.objectStore(STORE).openCursor();
+      cur.onsuccess = (): void => {
+        const c = cur.result;
+        if (c) {
+          entries += 1;
+          if ((c.value as Entry).own) own += 1;
+          c.continue();
+        }
+      };
+      tx.oncomplete = answer;
+      tx.onerror = answer;
+      tx.onabort = answer;
+    });
+  }
+
   // Serialize operations so a second call does not race the first — the
   // module makes one order of events the test and the App can both rely on.
   function serial<T>(op: () => Promise<T>): Promise<T> {
@@ -904,7 +943,7 @@ export function createPostCache(deps: PostCacheDeps = {}): PostCacheWithStats {
       return serial(() => byAuthorInternal(author, limit));
     },
     stats(): Promise<PostCacheStats> {
-      return Promise.resolve({ database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: false });
+      return serial(() => statsInternal());
     },
   };
 }
