@@ -183,13 +183,15 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     return line;
   };
 
-  const copyControl = (value: string): HTMLSpanElement => {
+  // A press copies `value`; the control shows `shown`, the value itself unless
+  // a line shortens it.
+  const copyControl = (value: string, shown: string = value): HTMLSpanElement => {
     const span = el('span', 'debug-value') as HTMLSpanElement;
     let copied = false;
     const btn = el('button', 'word mono debug-copy') as HTMLButtonElement;
     btn.type = 'button';
-    btn.textContent = value;
-    btn.setAttribute('aria-label', 'copy ' + value);
+    btn.textContent = shown;
+    btn.setAttribute('aria-label', 'copy ' + shown);
     const fallback = (): void => {
       if (!btn.parentNode) return;
       const monoNode = el('span', 'mono', value);
@@ -229,7 +231,7 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     }
     for (const node of state.nodes) {
       const line = el('div', 'debug-line');
-      line.appendChild(copyControl(shortHex(node.notisId, 16)));
+      line.appendChild(copyControl(node.notisId, shortHex(node.notisId, 16)));
       const conn = diag.connections.find((c) => c.peer === node.notisId);
       const reach = conn !== undefined
         ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`

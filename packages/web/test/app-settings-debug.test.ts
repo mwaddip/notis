@@ -476,4 +476,34 @@ describe('the settings window debug row', () => {
     expect(text).toContain('https://node.example');
     expect(text).not.toContain('203.0.113.7');
   });
+
+  it('a node\'s copy control writes the whole 64-hex key to the clipboard', async () => {
+    const writes: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (t: string): Promise<void> => { writes.push(t); return Promise.resolve(); } },
+      writable: true, configurable: true,
+    });
+    const node = {
+      notisId: KEY, addrs: [], api: 'https://node.example', status: 'candidate', readMs: null,
+    } as unknown as NodeEntry;
+    const row = debugRow({
+      seam: makeDebugSeam(freshStub(), {
+        state: () => emptyState({ nodes: [node] }),
+        diagnostics: () => emptyDiagnostics(),
+      }),
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+    toggleWord(row).click();
+    await flush();
+    const nodes = [...row.querySelectorAll<HTMLElement>('.debug-block')]
+      .find((b) => b.querySelector('.debug-head')?.textContent === 'nodes')!;
+    nodes.querySelector<HTMLButtonElement>('button.debug-copy')!.click();
+    await flush();
+    expect(writes).toEqual([KEY]);
+  });
 });
