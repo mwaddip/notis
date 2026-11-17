@@ -23,7 +23,7 @@ import {
   MAX_HANDSHAKE_FRAME_BYTES,
 } from '@dagsocial/net/browser';
 import { NetNode } from '@dagsocial/net';
-import { startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
+import { startMeshClient, type MeshClient, type MeshEvent } from '@dagsocial/web/mesh';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain } from './helpers/devnet-block.js';
@@ -174,6 +174,84 @@ describe('mesh-client — the reader handshake', () => {
     // the handshake named, never a lie.
     expect(entry!.status).toBe('retry');
     expect(entry!.lastFailure?.message ?? '').toMatch(/^handshake:/);
+  }, 60_000);
+
+  it('a handshake that fails writes one handshake event with `verdict: "failed"` and the recorded reason', async () => {
+    // MESH_INTERFACE → The client's node list → "The client reports
+    // what it does" — a handshake's verdict. Same arrangement as the
+    // "refuses" case above: `libp2p.unhandle(HANDSHAKE_PROTOCOL)`
+    // drops net's own handler on the node, so the client's stream
+    // open rejects and `readerHandshake` answers
+    // `{ ok: false, reason: ... }`. The events sink reads back the
+    // `failed` verdict with the reason `runHandshake` recorded.
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'hs-ev-failed-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+    await n.libp2p.unhandle(HANDSHAKE_PROTOCOL);
+
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+    const handshakes = captured.filter((e): e is Extract<MeshEvent, { kind: 'handshake' }> =>
+      e.kind === 'handshake' && e.peer === n.id,
+    );
+    expect(handshakes.length, 'one handshake event for the node').toBe(1);
+    expect(handshakes[0]!.verdict).toBe('failed');
+    expect(handshakes[0]!.reason, 'the recorded reason is non-empty').not.toBeNull();
+    expect((handshakes[0]!.reason ?? '').length, 'the recorded reason is non-empty').toBeGreaterThan(0);
+  }, 60_000);
+
+  it('a connection that closes writes one connection event with `event: "close"` beside its open', async () => {
+    // MESH_INTERFACE → The client's node list → "The client reports
+    // what it does" — a connection opened or closed. The client
+    // opens a connection to the node through its first check; a
+    // `node.stop()` ends it, and the `connection:close` listener on
+    // libp2p writes one close event with the same connection id as
+    // the open.
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'hs-ev-close-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+    // The node is the one the connection was opened against; stopping
+    // it closes the link from the far side.
+    await n.node.stop();
+    // The close event arrives through libp2p's listener; give the
+    // microtask queue a tick to drain (the sink runs inside the
+    // listener handler).
+    await new Promise((r) => setTimeout(r, 500));
+
+    const opens = captured.filter((e): e is Extract<MeshEvent, { kind: 'connection' }> =>
+      e.kind === 'connection' && e.event === 'open' && e.peer === n.id,
+    );
+    expect(opens.length, 'one open event for the node').toBeGreaterThanOrEqual(1);
+    const closes = captured.filter((e): e is Extract<MeshEvent, { kind: 'connection' }> =>
+      e.kind === 'connection' && e.event === 'close' && e.connId === opens[0]!.connId,
+    );
+    expect(closes.length, 'one close event for the connection').toBeGreaterThanOrEqual(1);
+    expect(closes[0]!.peer, 'the peer reads back').toBe(opens[0]!.peer);
+    expect(closes[0]!.peerKind).toBe('notis');
+    expect(closes[0]!.direction).toBe('outbound');
   }, 60_000);
 
   it('a node whose handshake declares no chain service is not read', async () => {
