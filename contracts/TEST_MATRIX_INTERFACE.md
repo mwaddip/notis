@@ -1,9 +1,5 @@
 # TEST_MATRIX Interface Contract
 
-> ⚠ **AHEAD OF CODE (2026-11-16).** Every section below leads `tools/test-matrix`, which is not in the tree yet. Three
-> things are settled by the code and written here when the unit closes: the output's lines and its JSON fields, and
-> any row the member's scan finds beyond → The rows' table.
-
 ## Scope
 
 `@dagsocial/test-matrix` (`tools/test-matrix`) answers **which local runs a change warrants**: each workspace member's
@@ -85,8 +81,9 @@ member's `package.json` (→ Tests). So a path rule 3, 4 or 5 places also select
 ### Reach
 
 **A reached member selects its own run and reaches every member that reads it**, by a declaration or by a row read at
-run time, until nothing new is reached. **Node reached selects `node:slow` as well**: the slow tree walks the header
-pipeline and fork resolution, which read most of the node.
+run time, until nothing new is reached. **A reached member also selects the run of each reader whose row reads it in a
+suite**, and nothing reads on from that reader. **Node reached selects `node:slow` as well**: the slow tree walks the
+header pipeline and fork resolution, which read most of the node.
 
 **The check is selected when a member it reads is reached** (→ The rows).
 
@@ -117,6 +114,11 @@ run time, in a suite, or by no run:**
 | `check` | test-state | brings up each block's stack through its loader — node, faucet and miner | at run time |
 | `check` | web | builds its hosted page and its extension | at run time |
 | `check` | `packages/web/scripts/extension-check/` | its harness, and `claim-name.mjs`, which base's generation runs and which bundles web's `src/` when it runs | at run time |
+| `tools/test-state/test/fingerprint.test.ts` | web, `contracts/` | writes files by those names into a fixture tree of its own | by no run |
+| `tools/mesh-poc/stage/run.mjs`, `tools/mesh-poc/stage/up.mjs`, `tools/mesh-poc/stage/scenarios/s5-impersonation.mjs` | node | the mesh stage spawns node's `dist` and `miner.mjs`, by hand | by no run |
+| `tools/mesh-poc/test/scenarios.test.ts` | node | asserts a spawn line's text names node's `dist` | by no run |
+| `tools/mesh-poc/test/hostile-fork-single.test.ts` | node | hands a fake a `miner.mjs` path | by no run |
+| `packages/web/scripts/docs-screens/entry.ts` | e2e | the docs site's screenshots, taken by hand, bundle e2e's builders | by no run |
 
 **The check's harness is not web's code.** No file under web's `src/` or `test/` reads
 `packages/web/scripts/extension-check/`, so a path under it selects what its rows name — the check, and test-state's
@@ -124,14 +126,29 @@ run for `claim-name.mjs` — and does not reach web.
 
 ## The output
 
-**A line per selected run**, naming the first path that selected it and the rule; then each path placed under no run,
-with its rule; then each member whose run is not selected. `--json` prints the same answer as one JSON object.
+**A line per entry**, in this order:
+
+| Line | What it names |
+|---|---|
+| `run <run>: <path> (<rule>)` | a selected run, the first path in the diff's order that selected it, and the rule that did |
+| `no-run: <path> (<rule>)` | a path placed under no run |
+| `not-selected: <member>` | a member whose run is not selected |
+| `not-counted: <path>` | an untracked file outside every member |
+
+**A rule is named** `every run`, `no run`, `test/`, `slow/`, `shadow/`, `bench/`, `reach`, `other`, `matrix` (the
+matrix's own suite, → How a path is placed), `row at run time` or `row in a suite`. **The text answer to a diff with
+nothing in it is `empty diff`**, one line.
+
+**`--json` prints the same answer as one JSON object on one line**: `runs`, each `{ run, path, rule }`; `unplaced`, each
+`{ path, rule }`; `membersLeftOut`; `notCounted`.
 
 **`--members` prints the selected members' names on one line**, without `@dagsocial/`, in the workspace's build
-order, for a gate script that takes member names. `node:slow` and `check` are not on it.
+order — every member after each member it declares, ties broken by name — for a gate script that takes member names.
+`node:slow` and `check` are not on it, and an answer selecting no member prints an empty line.
 
-**The exit code**: 0 for an answer, 2 when the matrix refuses — a rev that does not resolve, or a tree with no
-`pnpm-workspace.yaml` — naming why.
+**The exit code**: 0 for an answer; 2 when the matrix refuses, with one line on stderr naming why — an option it does
+not take, a `--rev` or `--base` that does not resolve, no merge base between them, a tree with no
+`pnpm-workspace.yaml`, a directory outside any git repository.
 
 ## Tests
 
@@ -147,8 +164,8 @@ order, for a gate script that takes member names. `node:slow` and `check` are no
   fails the suite, naming its file and line. A path built any other way is outside the scan. **A file a row reads at
   run time is read by that row's reader as well**: a reference in it is covered by its own member's declarations and
   rows or by the reader's — `promote/entry.ts`'s names under `tools/e2e/` are test-state's, the harness's names the
-  check's. **The matrix's own
-  files are not scanned**: the paths they name are its data, and its own reads are → How a path is placed's.
+  check's. **The matrix's own files are not scanned**: the paths they name are its data, and its own reads are
+  → How a path is placed's.
 - **Every row's reader and what it reads exist** in the tree; a row naming a member or a path the tree lacks fails.
 - **The check's harness stays unread by web**: a reference to `scripts/extension-check/` from a file under web's
   `src/` or `test/` fails.
