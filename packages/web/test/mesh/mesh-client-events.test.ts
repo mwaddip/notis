@@ -62,7 +62,7 @@ describe('mesh client — the events sink: check-end', () => {
     for (const s of servers.splice(0)) { s.close(); }
   });
 
-  it.fails('a check ends with one event carrying the number, the tip, the counts and the node tip events', async () => {
+  it('a check ends with one event carrying the number, the tip, the counts and the node tip events', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const captured: MeshEvent[] = [];
@@ -98,7 +98,7 @@ describe('mesh client — the events sink: request events', () => {
     for (const s of servers.splice(0)) { s.close(); }
   });
 
-  it.fails('a `fetch` of an http URL writes a request event carrying the number, url, route, status and the head ms', async () => {
+  it('a `fetch` of an http URL writes a request event carrying the number, url, route, status and the head ms', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ ok: true }) });
     servers.push(tip.srv);
     const captured: MeshEvent[] = [];
@@ -122,7 +122,7 @@ describe('mesh client — the events sink: request events', () => {
     expect(reqs[0]!.connection, 'the API route carries no connection').toBeUndefined();
   }, 15_000);
 
-  it.fails('a `fetch` of an http URL whose body is read to its end writes a request-body event under the same number', async () => {
+  it('a `fetch` of an http URL whose body is read to its end writes a request-body event under the same number', async () => {
     const payload = 'hello world';
     const tip = await startTipServer({ status: 200, body: payload });
     servers.push(tip.srv);
@@ -156,7 +156,7 @@ describe('mesh client — the events sink: a sink that throws is absorbed', () =
     for (const s of servers.splice(0)) { s.close(); }
   });
 
-  it.fails('a sink that throws leaves the client\'s state as a client with no sink leaves it', async () => {
+  it('a sink that throws leaves the client\'s state as a client with no sink leaves it', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const logLines: string[] = [];

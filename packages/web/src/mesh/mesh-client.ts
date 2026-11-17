@@ -964,7 +964,6 @@ class MeshClientImpl implements MeshClient {
   private readonly nodeList: NodeList;
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly state_: ClientState;
-  private readonly meshFetchFn: HttpFetch;
   private readonly httpFetchFn: HttpFetch;
   private readonly latestEventReason = new Map<string, string>();
   private readonly wallClock: () => number;
@@ -1107,6 +1106,21 @@ class MeshClientImpl implements MeshClient {
    * `connection:close`.
    */
   private readonly connectionOpenedAt: Map<string, number> = new Map();
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — a request's number comes from this counter, incremented
+   * once before the fetch begins so the `request` event and its
+   * follow-up `request-body` share one value.
+   */
+  private requestCounter: number = 0;
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — each node's tip event as `tipEvent` answers it, for the
+   * check that is currently running. Cleared at the start of
+   * `runCheck`, appended by `applyEvent`, read into the `check` event
+   * at the end of the check.
+   */
+  private checkTipEvents: Array<{ nodeId: string; event: TipEvent }> = [];
   // MESH_INTERFACE → Block gossip — the delivery listener, kept as a
   // bound reference so `removeEventListener` reads the same identity
   // on stop.
@@ -1153,10 +1167,6 @@ class MeshClientImpl implements MeshClient {
     this.agentName = o.agentName;
     this.log = o.log;
     this.events = o.events;
-    // MESH_INTERFACE → The client's node list → "The client reports what
-    // it does" — the sink is held here and the sites `emit` writes to
-    // it from.
-    void this.events;
     this.httpFetchFn = httpFetch;
     this.nodeList = new NodeList(o.firstContact, ownId, clock, random);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
@@ -1229,30 +1239,22 @@ class MeshClientImpl implements MeshClient {
     // connection" — the client's reads open their stream on a
     // connection the client already holds for the key, picked by
     // `pickReadyConnection` (strict: open, direct first, never
-    // limited, handshake passed). A read with no ready connection
-    // rejects as a transport failure.
-    const innerFetch = meshFetchOverConnection((notisId) =>
-      this.pickReadyConnection(notisId),
-    );
-    // MESH_INTERFACE → Block gossip → "A client is a reader of every
-    // node it holds a connection to" — await the handshake for a
-    // connection the pick would open its stream on, then hand off to
-    // the inner mesh fetch. No connection, or every one of theirs
-    // failed: the inner fetch rejects as transport.
-    this.meshFetchFn = async (url, init) => {
-      const notisId = idOfMeshUrl(url);
-      await this.awaitHandshakeForNode(notisId);
-      return innerFetch(url, init);
-    };
+    // limited, handshake passed). The outer `fetch` under "The client
+    // reports what it does" picks the connection itself for each
+    // request, so the `request` event names the exact one the stream
+    // opened on, and builds a one-shot `meshFetchOverConnection`
+    // whose pick returns that connection.
     this.onDiscovery = (evt): void => this.handleDiscovery(evt.detail);
     this.onConnectionOpen = (evt): void => {
       const conn = evt.detail;
       this.connectionOpenedAt.set(conn.id, this.clock());
+      this.emitConnectionEvent('open', conn);
       const promise = this.runHandshake(conn);
       this.handshakeDone.set(conn.id, promise);
       this.refreshTransportPathAndEmit();
     };
     this.onConnectionClose = (evt): void => {
+      this.emitConnectionEvent('close', evt.detail);
       this.connectionOpenedAt.delete(evt.detail.id);
       this.handshakeDone.delete(evt.detail.id);
       this.handshakeResults.delete(evt.detail.id);
@@ -1327,12 +1329,35 @@ class MeshClientImpl implements MeshClient {
    * the handshake's verdict for the connection id (`passed` alone).
    */
   private makeServingHandler(texts: PostTextProvider): ReturnType<typeof postTextsHandler> {
-    return postTextsHandler({
+    // MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — "serving": wrap the provider so each call reports its
+    // counts of ids asked and answered, never the ids themselves; wrap
+    // the one handler instance so each serving stream reports the node
+    // and the connection.
+    const wrappedTexts: PostTextProvider = async (ids) => {
+      const answered = await texts(ids);
+      this.emit({ kind: 'serving-call', asked: ids.length, answered: answered.size });
+      return answered;
+    };
+    const inner = postTextsHandler({
       magic: this.profile.magic,
-      texts,
+      texts: wrappedTexts,
       timeoutMs: 10_000,
       accept: (id) => this.handshakeResults.get(id) === 'passed',
     });
+    return async (stream, connection) => {
+      const peerIdStr = connection.remotePeer.toString();
+      let nodeId: string = peerIdStr;
+      let nodeKind: 'notis' | 'peer-id' = 'peer-id';
+      try {
+        nodeId = notisIdFromPeerId(peerIdFromString(peerIdStr));
+        nodeKind = 'notis';
+      } catch (e) {
+        if (!(e instanceof MeshKeyError)) throw e;
+      }
+      this.emit({ kind: 'serving-stream', nodeId, nodeKind, connId: connection.id });
+      return inner(stream, connection);
+    };
   }
 
   private getPubsub(): GossipSub & {
@@ -1386,7 +1411,15 @@ class MeshClientImpl implements MeshClient {
     this.state_.traffic.gossipBytes += msg.data.length;
     const data = new Uint8Array(msg.data);
     const verdict = this.blockCheck.check(data);
-    if (verdict.result === 'ignore') return TopicValidatorResult.Ignore;
+    // MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — "a gossiped block weighed" where the validator's own
+    // answer decides: `ignore` and `reject` land here, with the height
+    // drawn from the decoded block when accept, else null; `accept`
+    // waits for the delivery below.
+    if (verdict.result === 'ignore') {
+      this.emitGossipBlockEvent(peer, null, { result: 'ignore' });
+      return TopicValidatorResult.Ignore;
+    }
     if (verdict.result === 'reject') {
       let sourceNotisId: string | null = null;
       try {
@@ -1402,6 +1435,12 @@ class MeshClientImpl implements MeshClient {
         sourceNotisId,
         (id) => this.nodeList.entry(id) !== undefined,
       );
+      const lie = target !== null;
+      this.emitGossipBlockEvent(peer, null, {
+        result: 'reject',
+        lie,
+        detail: verdict.detail,
+      });
       if (target !== null) {
         // `lieTarget` returns a key only when `verdict` is a
         // `reject` with `lie: true`, so `verdict.detail` is reachable
@@ -1463,7 +1502,11 @@ class MeshClientImpl implements MeshClient {
       return;
     }
 
+    const propSource = detail.propagationSource;
     if (!this.chain.settled()) {
+      // MESH_INTERFACE → The client's node list → "The client reports
+      // what it does" — "before a chain settled".
+      this.emitGossipBlockEventFromPropSource(propSource, block.header.height, { result: 'unsettled' });
       this.emitStateChange();
       return;
     }
@@ -1475,6 +1518,7 @@ class MeshClientImpl implements MeshClient {
     // read the question again". Every gossiped block is dropped and
     // no check is run while a disagreement stands.
     if (this.state_.disagreement !== null) {
+      this.emitGossipBlockEventFromPropSource(propSource, block.header.height, { result: 'held' });
       this.emitStateChange();
       return;
     }
@@ -1482,11 +1526,13 @@ class MeshClientImpl implements MeshClient {
     if (r === 'extended') {
       const h = blockHash(block.header);
       this.state_.tip = { height: block.header.height, hash: h };
+      this.emitGossipBlockEventFromPropSource(propSource, block.header.height, { result: 'extended' });
       this.emitStateChange();
       return;
     }
     // 'fork' | 'gap' — a check runs at once (MESH_INTERFACE → The
     // client's node list → "The client's chain").
+    this.emitGossipBlockEventFromPropSource(propSource, block.header.height, { result: r });
     this.emitStateChange();
     this.triggerImmediateCheck();
   }
@@ -1494,16 +1540,155 @@ class MeshClientImpl implements MeshClient {
   // MESH_INTERFACE → The mesh URL / The client's node list → "An entry may
   // carry an API base" — route by URL scheme: `notis-mesh://…` goes over
   // the connection the client holds to the key, `http:` / `https:` goes
-  // over `httpFetch`. Anything else is a transport failure.
-  readonly fetch: HttpFetch = (url, init) => {
-    if (url.startsWith('notis-mesh://')) return this.meshFetchFn(url, init);
+  // over `httpFetch`. Anything else is a transport failure. Under the
+  // scheme split the client numbers each request from `requestCounter`,
+  // stamps the clock at the start, and writes a `request` event when
+  // the head arrives or the request fails (MESH_INTERFACE → The client's
+  // node list → "The client reports what it does"). Over the mesh the
+  // event carries the id, transport and path of the connection the
+  // stream opened on — captured by picking the connection here and
+  // handing `meshFetchOverConnection` a one-shot pick that returns that
+  // same connection, so the stream libp2p opens runs on exactly that
+  // one. The answer's body is wrapped so a `request-body` event under
+  // the same number lands when the body is read to its end.
+  readonly fetch: HttpFetch = async (url, init) => {
+    if (url.startsWith('notis-mesh://')) {
+      const number = ++this.requestCounter;
+      const startMs = this.clock();
+      let notisId: string;
+      try {
+        notisId = idOfMeshUrl(url);
+      } catch (e) {
+        if (e instanceof MeshFetchError) {
+          this.emit({
+            kind: 'request',
+            number,
+            url,
+            route: 'mesh',
+            head: { ok: false, failureKind: e.kind, message: e.message, ms: this.clock() - startMs },
+          });
+        }
+        throw e;
+      }
+      // Pick the connection once and keep it for the whole request so
+      // the event names the exact connection the stream opens on
+      // (MESH_INTERFACE → The client's node list → "A read opens no
+      // connection").
+      let picked: Connection | null = null;
+      try { picked = this.pickReadyConnection(notisId); } catch { /* bad id handled above */ }
+      let connection: MeshRequestEvent['connection'] | undefined;
+      if (picked !== null) {
+        let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+        let path: 'direct' | 'relay' | null = null;
+        try {
+          const c = classifyConnectionAddr(picked.remoteAddr.toString(), this.libp2p.getConnections());
+          transport = c.transport;
+          path = c.path;
+        } catch { /* an address the classifier does not name reads as null */ }
+        connection = { id: picked.id, transport, path };
+      }
+      try {
+        // Await the handshake as the inner mesh fetch does; the
+        // handshake belongs to the connection, so the clock stays
+        // whichever the caller set.
+        await this.awaitHandshakeForNode(notisId);
+        const pickedForCall = picked;
+        const oneShotPick = (_id: string): Connection | null => pickedForCall;
+        const innerForCall = meshFetchOverConnection(oneShotPick);
+        const response = await innerForCall(url, init);
+        const headMs = this.clock() - startMs;
+        this.emit({
+          kind: 'request', number, url, route: 'mesh', connection,
+          head: { ok: true, status: response.status, ms: headMs },
+        });
+        return this.wrapResponseBody(response, number, startMs);
+      } catch (e) {
+        const headMs = this.clock() - startMs;
+        const kind = e instanceof MeshFetchError ? e.kind : 'transport';
+        this.emit({
+          kind: 'request', number, url, route: 'mesh', connection,
+          head: { ok: false, failureKind: kind, message: messageOf(e), ms: headMs },
+        });
+        throw e;
+      }
+    }
     if (url.startsWith('http://') || url.startsWith('https://')) {
-      return this.httpFetchFn(url, init);
+      const number = ++this.requestCounter;
+      const startMs = this.clock();
+      try {
+        const response = await this.httpFetchFn(url, init);
+        const headMs = this.clock() - startMs;
+        this.emit({
+          kind: 'request', number, url, route: 'api',
+          head: { ok: true, status: response.status, ms: headMs },
+        });
+        return this.wrapResponseBody(response, number, startMs);
+      } catch (e) {
+        const headMs = this.clock() - startMs;
+        this.emit({
+          kind: 'request', number, url, route: 'api',
+          head: { ok: false, failureKind: 'transport', message: messageOf(e), ms: headMs },
+        });
+        throw e;
+      }
     }
     return Promise.reject(
       new MeshFetchError('transport', `unsupported URL scheme: ${url}`),
     );
   };
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "an answer's body read to its end": wrap the response's
+   * body so when the reader reads it to the end, one `request-body`
+   * event lands under the request's number with the bytes read and the
+   * time from the request to the end of the body. A body no caller
+   * reads never writes. An empty-body response (`response.body === null`)
+   * reports zero bytes at once.
+   */
+  private wrapResponseBody(response: Response, number: number, startMs: number): Response {
+    if (!response.body) {
+      this.emit({ kind: 'request-body', number, bytes: 0, ms: this.clock() - startMs });
+      return response;
+    }
+    const original = response.body;
+    const clock = this.clock;
+    const emit = (bytes: number): void =>
+      this.emit({ kind: 'request-body', number, bytes, ms: clock() - startMs });
+    let bytes = 0;
+    const wrapped = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const reader = original.getReader();
+        void (async () => {
+          try {
+            for (;;) {
+              const r = await reader.read();
+              if (r.done) {
+                emit(bytes);
+                controller.close();
+                return;
+              }
+              if (r.value !== undefined) bytes += r.value.length;
+              controller.enqueue(r.value);
+            }
+          } catch (e) {
+            // A mid-body failure leaves the body event unsent; the
+            // request event's `ok: true` already recorded the head,
+            // and the reader sees the error through the stream.
+            controller.error(e);
+          }
+        })();
+      },
+      cancel(reason) {
+        original.cancel(reason).catch(() => undefined);
+      },
+    });
+    return new Response(wrapped, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
 
   async check(): Promise<void> {
     if (this.checkInProgress) return this.checkInProgress;
@@ -1513,10 +1698,50 @@ class MeshClientImpl implements MeshClient {
     // code runs, so a `triggerImmediateCheck` fired from inside the
     // check (the routed-tip read finding no node, say) sees the running
     // check and does not schedule a 0 ms recurrence.
+    const startMs = this.clock();
+    this.checkTipEvents = [];
     this.checkInProgress = Promise.resolve()
       .then(() => this.runCheck())
+      .then(
+        () => {
+          // MESH_INTERFACE → The client's node list → "The client reports
+          // what it does" — "a check's end … a check that throws is
+          // reported as ending with the throw's message". A check that
+          // ends without throwing carries `threw: null`.
+          this.emitCheckEnd(startMs, null);
+        },
+        (e: unknown) => {
+          this.emitCheckEnd(startMs, messageOf(e));
+          throw e;
+        },
+      )
       .finally(() => { this.checkInProgress = null; });
     return this.checkInProgress;
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "a check's end". Reads the current state (`checks`,
+   * `tip`, `agreement`, `proofs`, `lastLeft`) and the collected
+   * `checkTipEvents` (deduplicated by nodeId, keeping the latest), and
+   * writes one `check` event.
+   */
+  private emitCheckEnd(startMs: number, threw: string | null): void {
+    const seen = new Map<string, TipEvent>();
+    for (const e of this.checkTipEvents) seen.set(e.nodeId, e.event);
+    const nodes: Array<{ nodeId: string; event: TipEvent }> = [];
+    for (const [nodeId, event] of seen) nodes.push({ nodeId, event });
+    this.emit({
+      kind: 'check',
+      number: this.state_.checks,
+      ms: this.clock() - startMs,
+      tip: this.state_.tip,
+      agreement: this.state_.agreement,
+      proofs: this.state_.proofs,
+      nodes,
+      lastLeft: this.state_.lastLeft,
+      threw,
+    });
   }
 
   async read(path: string, need: ReadNeed): Promise<{
@@ -3129,6 +3354,11 @@ class MeshClientImpl implements MeshClient {
   }
 
   private applyEvent(ev: TipEvent, route: 'mesh' | 'api' = 'mesh'): void {
+    // MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — "each node's tip event as `tipEvent` answers it".
+    // Append per application so the `check` event names every node the
+    // check read, with the one event each was moved by.
+    this.checkTipEvents.push({ nodeId: ev.id, event: ev });
     switch (ev.ev) {
       case 'success':
         this.nodeList.success(ev.id);
@@ -3168,6 +3398,11 @@ class MeshClientImpl implements MeshClient {
   private async dialByAddresses(id: string): Promise<void> {
     const entry = this.nodeList.entry(id);
     if (!entry) return;
+    // MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — "a dial's end": the clock starts at the function's
+    // entry so `ms` covers the gater pre-filter and libp2p's dial
+    // together.
+    const startMs = this.clock();
     const addrs = [...entry.addrs];
     // Plain `/ws` without `/tls/` or `/wss` is the client's own refusal
     // (MESH_INTERFACE → Transports → "A client dials a private address
@@ -3194,6 +3429,11 @@ class MeshClientImpl implements MeshClient {
         this.nodeList.failure(id, 'transport', 'no dialable address');
         this.latestEventReason.set(id, 'failure: transport: no dialable address');
       }
+      this.emit({
+        kind: 'dial', nodeId: id,
+        outcome: { result: 'no-dialable' },
+        ms: this.clock() - startMs,
+      });
       return;
     }
 
@@ -3219,6 +3459,11 @@ class MeshClientImpl implements MeshClient {
     const recorder = createDialProgressRecorder();
     try {
       await this.libp2p.dial(multiaddrs, { signal, onProgress: recorder.onProgress });
+      this.emit({
+        kind: 'dial', nodeId: id,
+        outcome: { result: 'connected' },
+        ms: this.clock() - startMs,
+      });
       return; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
@@ -3279,6 +3524,21 @@ class MeshClientImpl implements MeshClient {
       const message = messageOf(e);
       this.nodeList.failure(id, kind, message);
       this.latestEventReason.set(id, message ? `failure: ${kind}: ${message}` : `failure: ${kind}`);
+      // MESH_INTERFACE → The client's node list → "The client reports
+      // what it does" — "the dial failed, with each attributed address's
+      // kind and message where `attributeAggregateDialErrors` answers,
+      // else the aggregate" (addresses `null`).
+      const addresses = attributed === null ? null : attributed.map((row) => ({
+        addr: findBareAddrForDialable(dialable, row.addr) ?? row.addr,
+        kind: row.kind,
+        message: row.message,
+        wrongKey: row.wrongKey,
+      }));
+      this.emit({
+        kind: 'dial', nodeId: id,
+        outcome: { result: 'failed', addresses, message },
+        ms: this.clock() - startMs,
+      });
     }
   }
 
@@ -3466,6 +3726,7 @@ class MeshClientImpl implements MeshClient {
     if (!result.ok) {
       this.handshakeResults.set(conn.id, 'failed');
       this.handshakeReasons.set(conn.id, result.reason);
+      this.emitHandshakeEvent(conn, 'failed', result.reason);
       this.emitStateChange();
       return 'failed';
     }
@@ -3478,10 +3739,12 @@ class MeshClientImpl implements MeshClient {
       } catch (e) {
         if (!(e instanceof MeshKeyError)) throw e;
       }
+      this.emitHandshakeEvent(conn, 'no-chain', 'no chain service');
       this.emitStateChange();
       return 'no-chain';
     }
     this.handshakeResults.set(conn.id, 'passed');
+    this.emitHandshakeEvent(conn, 'passed', null);
     this.emitStateChange();
     return 'passed';
   }
@@ -3530,6 +3793,128 @@ class MeshClientImpl implements MeshClient {
         this.log?.(`[mesh-client] onState listener threw: ${messageOf(e)}`);
       }
     }
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — the one call site for the event sink. A sink that throws
+   * is logged through `log` as a state listener that throws is
+   * (`emitStateChange`), and changes nothing the client does. A client
+   * handed no sink skips the call.
+   */
+  private emit(ev: MeshEvent): void {
+    if (this.events === undefined) return;
+    try {
+      this.events(ev);
+    } catch (e) {
+      this.log?.(`[mesh-client] events sink threw: ${messageOf(e)}`);
+    }
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "a connection opened or closed". Reads the peer as a
+   * Notis key where `notisIdFromPeerId` answers, else the peer id's
+   * string; the transport and path through `classifyConnectionAddr`
+   * against the live connection list (null where the classifier
+   * refuses).
+   */
+  private emitConnectionEvent(event: 'open' | 'close', conn: Connection): void {
+    if (this.events === undefined) return;
+    const peerIdString = conn.remotePeer.toString();
+    let peer: string = peerIdString;
+    let peerKind: 'notis' | 'peer-id' = 'peer-id';
+    try {
+      peer = notisIdFromPeerId(conn.remotePeer);
+      peerKind = 'notis';
+    } catch (e) {
+      if (!(e instanceof MeshKeyError)) throw e;
+    }
+    let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+    let path: 'direct' | 'relay' | null = null;
+    try {
+      const c = classifyConnectionAddr(conn.remoteAddr.toString(), this.libp2p.getConnections());
+      transport = c.transport;
+      path = c.path;
+    } catch { /* an address the classifier does not name reads as null */ }
+    this.emit({
+      kind: 'connection', event, connId: conn.id,
+      peer, peerKind, transport, path,
+      direction: conn.direction,
+    });
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "a gossiped block weighed" from the validator side: the
+   * propagation source is a libp2p peer id; where it reads as a Notis
+   * key the event carries that, else the peer id's string.
+   */
+  private emitGossipBlockEvent(
+    peer: PeerId,
+    height: number | null,
+    outcome: MeshGossipBlockEvent['outcome'],
+  ): void {
+    if (this.events === undefined) return;
+    const peerIdString = peer.toString();
+    let source: string = peerIdString;
+    let sourceKind: 'notis' | 'peer-id' = 'peer-id';
+    try {
+      source = notisIdFromPeerId(peer);
+      sourceKind = 'notis';
+    } catch (e) {
+      if (!(e instanceof MeshKeyError)) throw e;
+    }
+    this.emit({ kind: 'gossip-block', source, sourceKind, height, outcome });
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "a gossiped block weighed" from the delivery side: the
+   * propagation source arrives as a `{ toString }` from gossipsub; the
+   * string is read back as a peer id (only to try the Notis mapping).
+   */
+  private emitGossipBlockEventFromPropSource(
+    propSource: { toString(): string } | undefined,
+    height: number,
+    outcome: MeshGossipBlockEvent['outcome'],
+  ): void {
+    if (this.events === undefined) return;
+    const peerIdString = propSource?.toString() ?? '';
+    let source: string = peerIdString;
+    let sourceKind: 'notis' | 'peer-id' = 'peer-id';
+    try {
+      const peer = peerIdFromString(peerIdString);
+      source = notisIdFromPeerId(peer);
+      sourceKind = 'notis';
+    } catch { /* not a Notis-shaped peer id, or an empty source */ }
+    this.emit({ kind: 'gossip-block', source, sourceKind, height, outcome });
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "The client reports what
+   * it does" — "a handshake's verdict". Reads the peer the same way
+   * `emitConnectionEvent` does.
+   */
+  private emitHandshakeEvent(
+    conn: Connection,
+    verdict: 'passed' | 'failed' | 'no-chain',
+    reason: string | null,
+  ): void {
+    if (this.events === undefined) return;
+    const peerIdString = conn.remotePeer.toString();
+    let peer: string = peerIdString;
+    let peerKind: 'notis' | 'peer-id' = 'peer-id';
+    try {
+      peer = notisIdFromPeerId(conn.remotePeer);
+      peerKind = 'notis';
+    } catch (e) {
+      if (!(e instanceof MeshKeyError)) throw e;
+    }
+    this.emit({
+      kind: 'handshake', connId: conn.id,
+      peer, peerKind, verdict, reason,
+    });
   }
 
 }
