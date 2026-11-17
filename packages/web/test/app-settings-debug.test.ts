@@ -102,14 +102,17 @@ interface Stub {
   readerCalls: number;
 }
 
-function makeDebugSeam(stub: Stub): DebugSeam {
+function makeDebugSeam(
+  stub: Stub,
+  mesh: { state: () => ClientState; diagnostics: () => MeshDiagnostics } = {
+    state: () => emptyState(),
+    diagnostics: () => emptyDiagnostics(),
+  },
+): DebugSeam {
   const seams: Omit<SnapshotSeams, 'reader'> = {
     build: () => ({ ...BUILD }),
     settings: () => ({ ...SETTINGS }),
-    mesh: {
-      state: () => emptyState(),
-      diagnostics: () => emptyDiagnostics(),
-    },
+    mesh,
     postCache: { stats: () => Promise.resolve({ ...CACHE }) },
     debugLog: { stats: () => Promise.resolve({ ...LOG_STATS, events: stub.events.length }) },
   };
@@ -425,5 +428,27 @@ describe('the settings window debug row', () => {
     app.mount(appbar, feed, panes);
     await openSettings(appbar);
     expect(debugRowEl(panes)).toBeUndefined();
+  });
+
+  it('a snapshot whose reader part names a tip verdict shows it in the chain lines', async () => {
+    const row = debugRow({
+      seam: makeDebugSeam(freshStub(), {
+        state: () => emptyState({ tip: { height: 12, hash: 'c'.repeat(64) } }),
+        diagnostics: () => emptyDiagnostics(),
+      }),
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [],
+        lastTipRun: { verdict: 'verified', chain: null },
+        lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+    toggleWord(row).click();
+    await flush();
+    const chain = [...row.querySelectorAll<HTMLElement>('.debug-block')]
+      .find((b) => b.querySelector('.debug-head')?.textContent === 'chain')!;
+    expect(chain.textContent).toContain('verified');
   });
 });

@@ -262,6 +262,10 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     } else {
       block.appendChild(muted('tip · (none yet)'));
     }
+    if (!('error' in snap.reader) && snap.reader.lastTipRun !== null) {
+      const verdict = snap.reader.lastTipRun['verdict'];
+      if (typeof verdict === 'string') block.appendChild(valueLine('verdict', verdict));
+    }
     if (state.agreement !== null) {
       const ag = state.agreement;
       block.appendChild(muted(`agreement · ${ag.onChain} on · ${ag.offChain} off`));
