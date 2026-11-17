@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readBuildCommit } from '../scripts/build-commit.mjs';
@@ -78,8 +78,8 @@ describe('build-commit — the function', () => {
       const path = join(r.dir, 'other.txt');
       const content = readFileSync(path, 'utf8');
       writeFileSync(path, content);
-      const later = spawnSync('touch', ['-d', '+1 hour', path], { encoding: 'utf8' });
-      if (later.status !== 0) throw new Error(`touch exited ${later.status}: ${later.stderr}`);
+      const later = new Date(Date.now() + 60 * 60 * 1000);
+      utimesSync(path, later, later);
       expect(readBuildCommit(r.dir)).toBe(head);
     } finally {
       r.cleanup();
