@@ -101,7 +101,7 @@ describe('mesh client — a mesh request over a real connection', () => {
     for (const d of dirs.splice(0)) { rmSync(d, { recursive: true, force: true }); }
   });
 
-  it.fails('a mesh read issued while its connection\'s handshake is still running answers the node\'s response and names the connection', async () => {
+  it('a mesh read issued while its connection\'s handshake is still running answers the node\'s response and names the connection', async () => {
     const up = await chainUpstream(CHAIN); ups.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'mr-pending-')); dirs.push(dir);
     const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
@@ -153,20 +153,23 @@ describe('mesh client — a mesh request over a real connection', () => {
     const response = await fetchPromise!;
     expect(response.status, 'the node answered the mesh read with 200').toBe(200);
 
-    // The `request` event for this URL carries `route: 'mesh'`, head
-    // is ok, and names the connection libp2p opened the stream on.
-    const requests = captured.filter(
+    // A `request` event for this URL with `route: 'mesh'` and
+    // `head.ok: true` names the connection libp2p opened the stream
+    // on. The check's own tip read uses the same URL, so the
+    // assertion reads the events that match on route and success —
+    // there is at least one, and each names a connection libp2p
+    // holds.
+    const okRequests = captured.filter(
       (e): e is Extract<MeshEvent, { kind: 'request' }> =>
-        e.kind === 'request' && e.url === meshUrl,
+        e.kind === 'request' && e.url === meshUrl && e.route === 'mesh' && e.head.ok === true,
     );
-    expect(requests.length, 'one request event for the mesh URL').toBe(1);
-    const ev = requests[0]!;
-    expect(ev.route, 'the mesh route').toBe('mesh');
-    expect(ev.head.ok, 'the request\'s head is ok').toBe(true);
-    expect(ev.connection, 'the event names the connection').toBeDefined();
+    expect(okRequests.length, 'at least one request event for the mesh URL').toBeGreaterThanOrEqual(1);
     const openConns = client.libp2p.getConnections(n.libp2p.peerId);
     expect(openConns.length, 'the client holds a connection to the node').toBeGreaterThanOrEqual(1);
     const ids = openConns.map((c) => c.id);
-    expect(ids, 'the event\'s connection id is one libp2p holds').toContain(ev.connection!.id);
+    for (const ev of okRequests) {
+      expect(ev.connection, 'the event names the connection').toBeDefined();
+      expect(ids, 'the event\'s connection id is one libp2p holds').toContain(ev.connection!.id);
+    }
   }, 60_000);
 });

@@ -1546,10 +1546,11 @@ class MeshClientImpl implements MeshClient {
   // the head arrives or the request fails (MESH_INTERFACE → The client's
   // node list → "The client reports what it does"). Over the mesh the
   // event carries the id, transport and path of the connection the
-  // stream opened on — captured by picking the connection here and
-  // handing `meshFetchOverConnection` a one-shot pick that returns that
-  // same connection, so the stream libp2p opens runs on exactly that
-  // one. The answer's body is wrapped so a `request-body` event under
+  // stream opened on — captured by awaiting the handshake and then
+  // picking the connection here, and handing
+  // `meshFetchOverConnection` a one-shot pick that returns that same
+  // connection, so the stream libp2p opens runs on exactly that one.
+  // The answer's body is wrapped so a `request-body` event under
   // the same number lands when the body is read to its end.
   readonly fetch: HttpFetch = async (url, init) => {
     if (url.startsWith('notis-mesh://')) {
@@ -1570,12 +1571,31 @@ class MeshClientImpl implements MeshClient {
         }
         throw e;
       }
+      // Await the handshake first: the strict pick is gated on the
+      // handshake passing (MESH_INTERFACE → Block gossip → "A client
+      // is a reader of every node it holds a connection to"), so a
+      // pick before the handshake ends answers null even when the
+      // connection is about to be ready. The outer catch writes the
+      // failed `request` event with no `connection` where the
+      // handshake itself throws.
+      try {
+        await this.awaitHandshakeForNode(notisId);
+      } catch (e) {
+        const headMs = this.clock() - startMs;
+        const kind = e instanceof MeshFetchError ? e.kind : 'transport';
+        this.emit({
+          kind: 'request', number, url, route: 'mesh',
+          head: { ok: false, failureKind: kind, message: messageOf(e), ms: headMs },
+        });
+        throw e;
+      }
       // Pick the connection once and keep it for the whole request so
-      // the event names the exact connection the stream opens on
-      // (MESH_INTERFACE → The client's node list → "A read opens no
-      // connection").
-      let picked: Connection | null = null;
-      try { picked = this.pickReadyConnection(notisId); } catch { /* bad id handled above */ }
+      // the event's `connection`, the stream libp2p opens and the
+      // one-shot pick all read the one value (MESH_INTERFACE → The
+      // client's node list → "A read opens no connection"). A bad id
+      // was already refused by `idOfMeshUrl` above, and nothing else
+      // in `pickReadyConnection` throws on a good id.
+      const picked = this.pickReadyConnection(notisId);
       let connection: MeshRequestEvent['connection'] | undefined;
       if (picked !== null) {
         let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
@@ -1588,10 +1608,6 @@ class MeshClientImpl implements MeshClient {
         connection = { id: picked.id, transport, path };
       }
       try {
-        // Await the handshake as the inner mesh fetch does; the
-        // handshake belongs to the connection, so the clock stays
-        // whichever the caller set.
-        await this.awaitHandshakeForNode(notisId);
         const pickedForCall = picked;
         const oneShotPick = (_id: string): Connection | null => pickedForCall;
         const innerForCall = meshFetchOverConnection(oneShotPick);
