@@ -890,8 +890,10 @@ transaction, box and post ids of the reader's own writes, the hand-added node's 
 observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
 the key's as much as the key is. **Unless the reader ticks the box beside `save as file`, each is replaced by a
 placeholder** naming its class and a number — `key-1`, `tx-3` — one value one placeholder throughout the file, so the
-file still shows which entries are one thing. **The replacement is by value**: every string in the document is searched
-for every identifying value the snapshot holds, so a field no rule names carries none of them out.
+file still shows which entries are one thing. **The replacement is by value**: the identifying values are collected from the
+snapshot and from the log's own events — each write's and waiting write's transaction id and the post or box its answer
+names — and every string in the document is searched for each of them, so a field no rule names carries none of them
+out.
 
 **The log, the snapshot and the file take no permission**, and they are the extension build's alone.
 
