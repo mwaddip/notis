@@ -172,4 +172,54 @@ describe('mesh client — a mesh request over a real connection', () => {
       expect(ids, 'the event\'s connection id is one libp2p holds').toContain(ev.connection!.id);
     }
   }, 60_000);
+
+  it('a mesh request reports `route: "mesh"` and a connection whose id, transport and path match the connection libp2p opened the stream on', async () => {
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'mr-report-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    // Let the first check run so the client holds an open connection
+    // with its handshake passed. Then fire a mesh request of our own.
+    await client.check();
+
+    // Read the connection libp2p opened to the node from its own
+    // side (`getConnections(peerId)`), never from `ClientState` or
+    // `diagnostics()`. The WebRTC-direct dial opens exactly one
+    // connection to the node in this topology.
+    const conns = client.libp2p.getConnections(n.libp2p.peerId);
+    expect(conns.length, 'the client holds one connection to the node').toBe(1);
+    const libp2pConn = conns[0]!;
+
+    captured.length = 0;
+    const meshUrl = `${meshBaseUrl(n.id)}/blocks/current`;
+    const response = await client.fetch(meshUrl, undefined);
+    expect(response.status, 'the node answered the mesh read with 200').toBe(200);
+    await response.text();
+
+    const req = captured.find(
+      (e): e is Extract<MeshEvent, { kind: 'request' }> =>
+        e.kind === 'request' && e.url === meshUrl,
+    );
+    expect(req, 'one request event for the mesh URL').toBeDefined();
+    expect(req!.route, 'the mesh route').toBe('mesh');
+    expect(req!.head.ok, 'the request\'s head is ok').toBe(true);
+    expect(req!.connection, 'the event names the connection').toBeDefined();
+    // The id is libp2p's own id for the connection the stream opened
+    // on; transport and path are `classifyConnectionAddr`'s answer
+    // for that connection — webrtc-direct / direct, since the node
+    // listens on `/webrtc-direct` with no circuit.
+    expect(req!.connection!.id, 'the event\'s connection id matches libp2p\'s').toBe(libp2pConn.id);
+    expect(req!.connection!.transport, 'the transport is webrtc-direct').toBe('webrtc-direct');
+    expect(req!.connection!.path, 'the path is direct').toBe('direct');
+  }, 60_000);
 });
