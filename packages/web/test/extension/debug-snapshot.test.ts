@@ -119,7 +119,7 @@ function seams(overrides: Partial<SnapshotSeams> = {}): SnapshotSeams {
 }
 
 describe('the debug snapshot', () => {
-  it.fails('every part present over fake seams', async () => {
+  it('every part present over fake seams', async () => {
     const snap = await takeSnapshot(seams());
     expect(snap.build).toEqual(BUILD);
     expect(snap.settings).toEqual(SETTINGS);
@@ -136,7 +136,7 @@ describe('the debug snapshot', () => {
     });
   });
 
-  it.fails('a traffic counter moved after the snapshot does not move in it', async () => {
+  it('a traffic counter moved after the snapshot does not move in it', async () => {
     const liveState = emptyState();
     const live = seams({
       mesh: {
@@ -156,7 +156,7 @@ describe('the debug snapshot', () => {
     expect(meshPart.state.traffic.proofReads).toBe(0);
   });
 
-  it.fails('a reader seam that throws leaves every other part whole and reports the error', async () => {
+  it('a reader seam that throws leaves every other part whole and reports the error', async () => {
     const snap = await takeSnapshot(seams({
       reader: (): ReaderFacts => { throw new Error('reader is broken'); },
     }));
