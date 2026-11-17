@@ -293,11 +293,11 @@ describe("the workspace is the rev's", () => {
       write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
       sh('git', ['add', '-A'], dir);
       sh('git', ['commit', '-q', '-m', 'add c, change a'], dir);
+      sh('git', ['checkout', '-q', 'master'], dir);
       const rRev = invoke(dir, ['--rev', 'work', '--base', 'master', '--json']);
       expect(rRev.status).toEqual(0);
       const aRev = parse(rRev.stdout);
       expect(runNames(aRev)).toEqual(['a', 'b', 'c']);
-      sh('git', ['checkout', '-q', 'master'], dir);
       const rTree = invoke(dir, ['--json']);
       expect(rTree.status).toEqual(0);
       const aTree = parse(rTree.stdout);
