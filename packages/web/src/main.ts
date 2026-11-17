@@ -12,9 +12,10 @@ import { startDebugLog } from './extension/debug-start';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam, ServeSeam } from './view/settings';
-import type { WaitingStorage } from './wallet/waiting';
+import type { WaitingStorage, WaitRecorder } from './wallet/waiting';
 import type { LockManager } from './locks';
 import type { AppIdentity, TipVerifier, FiguresVerifier, NamesVerifier, PostsVerifier, PostCache, PostResolver } from './model/state';
+import type { DebugLog } from './extension/debug-log';
 
 // Theme is already on <html> from the head's theme.js; this re-applies it and
 // sets the identity tint before the first render, while transitions are still
@@ -30,7 +31,32 @@ if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 // substitution renders this a static false, so Rollup dead-code-eliminates
 // bootstrapProxy and the extension module never enters the bundle.
 const isExtension = import.meta.env.VITE_IDENTITY === 'extension';
-const idm: AppIdentity = isExtension ? await bootstrapProxy(chrome, { publicBase: BUILD_PUBLIC }) : identity;
+// WEB_INTERFACE → The extension → "The debug log" — the log starts before
+// the proxy, so every `sign` answer the proxy records lands in the one log.
+// The seams are the page's own; a build with no network reads an empty one
+// in the `page` event.
+let debugLog: DebugLog | undefined;
+if (isExtension) {
+  const started = startDebugLog({
+    indexedDB: window.indexedDB,
+    now: Date.now,
+    random: Math.random,
+    timers: {
+      setInterval: (fn: () => void, ms: number): unknown => window.setInterval(fn, ms),
+      clearInterval: (handle: unknown): void => { window.clearInterval(handle as number); },
+    },
+    document,
+    window,
+    version: chrome.runtime.getManifest().version,
+    commit: import.meta.env.VITE_COMMIT ?? '',
+    network: BUILD_NETWORK ?? '',
+    userAgent: navigator.userAgent,
+  });
+  debugLog = started.log;
+}
+const idm: AppIdentity = isExtension
+  ? await bootstrapProxy(chrome, { publicBase: BUILD_PUBLIC, debugLog })
+  : identity;
 // The extension asks the browser to grant access to the faucet's origin from
 // within the press's own call stack, before any other asynchronous work
 // (WEB_INTERFACE → The faucet step → "In the extension the press asks the
@@ -59,7 +85,12 @@ let serveSeam: ServeSeam | undefined;
 // build holds a waiting store over `window.localStorage` and the browser's
 // `navigator.locks` (the same adapter the background uses); the web build
 // hands none, and a write no node answers ends as a transport failure.
-let waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | undefined;
+let waitingSeam: {
+  storage: WaitingStorage;
+  locks: LockManager;
+  rememberedChain: () => string | null;
+  recorder?: WaitRecorder;
+} | undefined;
 
 if (isExtension && BUILD_NETWORK !== null) {
   // WEB_INTERFACE → The extension → "The post check" and "The post cache" —
@@ -72,27 +103,6 @@ if (isExtension && BUILD_NETWORK !== null) {
   // The module opens the remembered chain's database here, without naming the
   // chain — the chain is named by the first tip run, through `open(chain)`.
   void postCache.openRemembered();
-
-  // WEB_INTERFACE → The extension → "The debug log" — the page's own log,
-  // over the browser's own seams. The `page` event the start records
-  // carries the build's version, commit, network and the browser's user
-  // agent. The log is handed to the mesh start and, in a later change,
-  // to the App.
-  const { log: debugLog } = startDebugLog({
-    indexedDB: window.indexedDB,
-    now: Date.now,
-    random: Math.random,
-    timers: {
-      setInterval: (fn: () => void, ms: number): unknown => window.setInterval(fn, ms),
-      clearInterval: (handle: unknown): void => { window.clearInterval(handle as number); },
-    },
-    document,
-    window,
-    version: chrome.runtime.getManifest().version,
-    commit: import.meta.env.VITE_COMMIT ?? '',
-    network: BUILD_NETWORK,
-    userAgent: navigator.userAgent,
-  });
 
   // WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path" — the extension build starts the mesh client with the build's
@@ -126,7 +136,7 @@ if (isExtension && BUILD_NETWORK !== null) {
     // from it". The mesh client's serving reader answers `ModifierRequest`
     // from the cache the extension build carries.
     postTexts: postTextsFromCache(postCache),
-    debugLog,
+    debugLog: debugLog!,
   });
   readClient = seams.readClient;
   writeClientSeam = seams.writeClient;
@@ -136,6 +146,17 @@ if (isExtension && BUILD_NETWORK !== null) {
   postResolver = seams.postResolver;
   handNodeSeam = seams.handNodeSeam;
   serveSeam = seams.serveSeam;
+  // WEB_INTERFACE → The extension → "The debug log" — each `wait` event is
+  // the write's kind renamed to `txKind` so the `wait` debug kind is the
+  // only `kind` the stored event carries.
+  const waitRecorder: WaitRecorder = (e) => {
+    const fields: Record<string, unknown> = {
+      outcome: e.outcome, txKind: e.kind, ledger: e.ledger, txId: e.txId,
+    };
+    if (e.message !== undefined) fields['message'] = e.message;
+    if (e.cause !== undefined) fields['cause'] = e.cause;
+    debugLog!.record('wait', fields);
+  };
   waitingSeam = {
     storage: window.localStorage,
     locks: {
@@ -144,6 +165,7 @@ if (isExtension && BUILD_NETWORK !== null) {
       },
     },
     rememberedChain: (): string | null => rememberedChain(window.localStorage),
+    recorder: waitRecorder,
   };
 }
 

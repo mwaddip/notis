@@ -284,6 +284,7 @@ export class WaitingStore {
   private readonly seqKey: string;
   private readonly storage: WaitingStorage;
   private readonly locks: LockManager;
+  private readonly recorder: WaitRecorder | undefined;
 
   constructor(pubKeyHex: string, deps: Deps) {
     this.ns = K_PREFIX + pubKeyHex;
@@ -293,7 +294,7 @@ export class WaitingStore {
     this.seqKey = this.ns + K_SEQ;
     this.storage = deps.storage;
     this.locks = deps.locks;
-    void deps.recorder;
+    this.recorder = deps.recorder;
   }
 
   /** Every read-then-write of the store runs inside one exclusive lock
@@ -347,7 +348,9 @@ export class WaitingStore {
   /** Keep a waiting write — called inside `withLock` so the next seq is read
    *  and written atomically with the record. Answers the write with its seq
    *  (WEB_INTERFACE → The wallet → "The waiting store keeps every waiting
-   *  write as a record of its own"). */
+   *  write as a record of its own"). The recorder, where handed, takes one
+   *  `queued` event for the record (WEB_INTERFACE → The extension → "The
+   *  debug log"). */
   keep(w: Omit<WaitingWrite, 'seq'>): WaitingWrite {
     const last = readRaw(this.storage, this.seqKey);
     const prev = last === null ? 0 : (Number.parseInt(last, 10) || 0);
@@ -355,6 +358,9 @@ export class WaitingStore {
     const record: WaitingWrite = { ...w, seq };
     writeRaw(this.storage, this.seqKey, String(seq));
     writeRaw(this.storage, this.wPrefix + w.txId, JSON.stringify(toStoredWrite(record)));
+    if (this.recorder !== undefined) {
+      this.recorder({ outcome: 'queued', kind: record.kind, ledger: record.ledger, txId: record.txId });
+    }
     return record;
   }
 

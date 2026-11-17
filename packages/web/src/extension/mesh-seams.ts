@@ -15,7 +15,7 @@
 // to stop, and hands the seams to the App.
 
 import { NodeClient } from '../api/client.js';
-import { WriteClient } from '../api/write.js';
+import { WriteClient, type WriteObserver } from '../api/write.js';
 import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, SERVE_KEY } from './storage-keys.js';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
@@ -62,6 +62,10 @@ export interface CreateMeshSeamsOptions {
   check: (rows: unknown[]) => PostCheck[];
   /** The storage the hand-added-node address is held in. */
   storage: StorageLike;
+  /** The log the write client's walk observer writes `write` events into
+   *  (WEB_INTERFACE → The extension → "The debug log"). The extension build
+   *  hands one; tests that bypass the debug record path omit it. */
+  debugLog?: DebugLog;
 }
 
 /** Parses an address as a multiaddr ending in `/p2p/<peer id>` with no DNS
@@ -95,6 +99,7 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
   const writeClient = new WriteClient({
     bases: () => client.order('tip'),
     fetch,
+    ...(opts.debugLog !== undefined ? { observer: makeWriteObserver(opts.debugLog) } : {}),
   });
   const tipVerifier = createMeshTipVerifier({ client });
 
@@ -381,6 +386,7 @@ export async function startExtensionMesh(
     network: opts.network,
     check: opts.check,
     storage: opts.storage,
+    debugLog,
   });
   // WEB_INTERFACE → The extension → "The debug log" — each of the three
   // verifiers records a `verdict` event at its run's ending, carrying the
@@ -505,4 +511,26 @@ function base64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/** The write observer the extension hands the write client — one `write`
+ *  event per walk's ending (WEB_INTERFACE → The extension → "The debug log").
+ *  `route` and `query` are `routeShape`'s, `node` the request URL's node as
+ *  the `request` events name it, and the URL itself never reaches the store. */
+function makeWriteObserver(debugLog: DebugLog): WriteObserver {
+  return (ending): void => {
+    const shape = ending.url !== '' ? routeShape(ending.url) : { path: '', query: {} };
+    const node = ending.url !== '' ? nodeOfRequestUrl(ending.url) : null;
+    const fields: Record<string, unknown> = {
+      route: shape.path,
+      query: shape.query,
+      node,
+      tried: ending.tried,
+      status: ending.status,
+    };
+    if (ending.message !== undefined) fields['message'] = ending.message;
+    if (ending.noAnswer) fields['noAnswer'] = true;
+    if (ending.txId !== undefined) fields['txId'] = ending.txId;
+    debugLog.record('write', fields);
+  };
 }

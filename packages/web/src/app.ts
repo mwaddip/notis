@@ -35,7 +35,7 @@ import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { isNoAnswer } from './api/errors';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
-import { WaitingStore, type WaitingStorage, type WaitingWrite } from './wallet/waiting';
+import { WaitingStore, type WaitingStorage, type WaitingWrite, type WaitRecorder } from './wallet/waiting';
 import type { RepBuildContext } from './wallet/builders';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
 import type { LockManager } from './locks';
@@ -506,7 +506,7 @@ export class App {
   // extension → "The post cache"): the extension wires it to the post cache's
   // module, which keeps the last chain's name in `localStorage` under
   // `notis.posts.chain`, so the web build reads no storage key here.
-  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null;
+  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null; recorder?: WaitRecorder } | null;
   private waitingStore: WaitingStore | null;
   // The send pass flags — one pass per ledger at a time
   // (WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer").
@@ -593,7 +593,7 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
     handNodeSeam?: HandNodeSeam | null,
-    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null,
+    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null; recorder?: WaitRecorder } | null,
     serveSeam?: ServeSeam | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
@@ -5574,6 +5574,7 @@ export class App {
       write: this.writeClient,
       chain: () => this.tipChain, // the verified chain alone, never the remembered one
       tip: () => this.viewerTip || null,
+      ...(this.waitingSeam?.recorder !== undefined ? { recorder: this.waitingSeam.recorder } : {}),
     };
     const isActive = (): boolean => this.idm.current()?.pubKeyHex === keyAtPress;
     if (hasRep && !this.flushRepInFlight) {

@@ -26,7 +26,7 @@ import {
 import { flushWaiting, type FlushDeps } from '../../src/wallet/flush';
 import { PendingLedger } from '../../src/wallet/ledger';
 import { fakeChrome, fakeLockManager } from '../fake-chrome';
-import type { SignAnswer } from '../../src/extension/protocol';
+import type { SignAnswer, SignRecord } from '../../src/extension/protocol';
 import type {
   LikeSubmitResult,
   Rejection,
@@ -124,7 +124,7 @@ const CHAIN_B = 'ef'.repeat(32);
 // ---------------------------------------------------------------------------
 
 describe("the write client's walk records one `write` at its ending", () => {
-  it.fails('a walk the second base answers records one `write` with that base, two nodes tried and the status', async () => {
+  it('a walk the second base answers records one `write` with that base, two nodes tried and the status', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     let count = 0;
@@ -155,7 +155,7 @@ describe("the write client's walk records one `write` at its ending", () => {
     });
   });
 
-  it.fails('an exhausted walk records `noAnswer`', async () => {
+  it('an exhausted walk records `noAnswer`', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
@@ -171,7 +171,7 @@ describe("the write client's walk records one `write` at its ending", () => {
     expect(writes[0]).toMatchObject({ noAnswer: true, tried: 2 });
   });
 
-  it.fails("a walk's recorded route holds no 64-hex run", async () => {
+  it("a walk's recorded route holds no 64-hex run", async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     vi.stubGlobal('fetch', vi.fn(async () =>
@@ -207,7 +207,7 @@ function wireBackground(c: ReturnType<typeof fakeChrome>, answers: Record<string
 }
 
 describe("the proxy records one `sign` per answer, with the policy in force", () => {
-  it.fails('a signed `sign` records its outcome with the policy', async () => {
+  it('a signed `sign` records its outcome with the policy', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
@@ -223,23 +223,39 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
     expect(signs[0]).toMatchObject({ outcome: 'signed', policy: 'ask' });
   });
 
-  it.fails('a declined `sign` records its outcome with the policy', async () => {
+  it('a declined `sign` records its outcome with the policy', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
+    const PROMPT_ID = 'aabb' + '00'.repeat(14);
     wireBackground(c, {
       state: { pubKeyHex: PUB, locked: false, backedUp: true, policy: 'ask' },
-      sign: { declined: true } as unknown as SignAnswer,
+      sign: { pending: PROMPT_ID } as SignAnswer,
+      ack: 'ok',
     });
     const log = makeDebugLog();
     const proxy = await bootstrapProxy(c.api, { publicBase: '', debugLog: log });
-    await proxy.sign(new Uint8Array(), 'cd'.repeat(32), PUB);
+    const pending = proxy.sign(new Uint8Array(), 'cd'.repeat(32), PUB);
+    const key = 'notis.sign.' + PROMPT_ID;
+    const record: SignRecord = {
+      id: PROMPT_ID,
+      txIdHex: 'cd'.repeat(32),
+      txBytesHex: '',
+      summary: { kind: 'thread', spendRep: '5' },
+      hint: {},
+      createdAt: 0,
+      pubKeyHex: PUB,
+      result: { declined: true },
+    };
+    c.storage.session.set(key, record);
+    c.storage.fireChange('session', key, undefined, record);
+    await pending;
     await log.flush();
     const signs = (await log.list()).filter((e) => e.kind === 'sign');
     expect(signs).toHaveLength(1);
     expect(signs[0]).toMatchObject({ outcome: 'declined', policy: 'ask' });
   });
 
-  it.fails('a refused `sign` records its outcome with its reason and the policy', async () => {
+  it('a refused `sign` records its outcome with its reason and the policy', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
@@ -255,7 +271,7 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
     expect(signs[0]).toMatchObject({ outcome: 'refused', reason: 'id-mismatch', policy: 'silent' });
   });
 
-  it.fails('a locked `sign` records its outcome with the policy', async () => {
+  it('a locked `sign` records its outcome with the policy', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
@@ -277,15 +293,30 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
 // the send pass reaches.
 // ---------------------------------------------------------------------------
 
+/** The adapter the wiring builds: `WaitEvent`'s `kind` — the write's kind —
+ *  is renamed to `txKind` for the stored event, so the `wait` debug kind is
+ *  the only one carried under `kind` (WEB_INTERFACE → The extension → "The
+ *  debug log" — every event carrying the page's id "beside its wall-clock
+ *  time and its kind"). */
+function waitToLog(log: DebugLog): WaitRecorder {
+  return (e): void => {
+    const fields: Record<string, unknown> = {
+      outcome: e.outcome, txKind: e.kind, ledger: e.ledger, txId: e.txId,
+    };
+    if (e.message !== undefined) fields['message'] = e.message;
+    if (e.cause !== undefined) fields['cause'] = e.cause;
+    log.record('wait', fields);
+  };
+}
+
 describe("the waiting store records `queued` at a new write", () => {
-  it.fails('a waitable write kept in the store records `queued` with its kind, ledger and txId', async () => {
+  it('a waitable write kept in the store records `queued` with its kind, ledger and txId', async () => {
     // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
-    const recorder: WaitRecorder = (e) => log.record('wait', { ...e });
     const store = new WaitingStore(PUB, {
       storage: fakeStorage(),
       locks: fakeLockManager(),
-      recorder,
+      recorder: waitToLog(log),
     });
     store.keep({
       chain: CHAIN_A, ledger: 'rep', txId: TX_HEX, kind: 'like', postId: 'p1',
@@ -294,7 +325,7 @@ describe("the waiting store records `queued` at a new write", () => {
     await log.flush();
     const waits = (await log.list()).filter((e) => e.kind === 'wait');
     expect(waits).toHaveLength(1);
-    expect(waits[0]).toMatchObject({ outcome: 'queued', kind: 'like', ledger: 'rep', txId: TX_HEX });
+    expect(waits[0]).toMatchObject({ outcome: 'queued', txKind: 'like', ledger: 'rep', txId: TX_HEX });
   });
 });
 
@@ -358,7 +389,7 @@ function seedRepWrite(
 }
 
 describe("the send pass records each outcome and `no answer` for the write it stopped at", () => {
-  it.fails('a pass with a sent, a refused, two unsents, a `no answer` and one write after the stop records the five, and nothing for the write after', async () => {
+  it('a pass with a sent, a refused, two unsents, a `no answer` and one write after the stop records the five, and nothing for the write after', async () => {
     // plain-`it` failure: AssertionError: expected [] to deeply equal [ { outcome: 'sent', txId: 't1' }, …(4 more) ]
     const storage = fakeStorage();
     const store = new WaitingStore(PUB, { storage, locks: fakeLockManager() });
@@ -384,7 +415,7 @@ describe("the send pass records each outcome and `no answer` for the write it st
     // Seq 6: a like after the stop — never visited, never recorded.
     seedRepWrite(store, ledger, { txId: 't6', spent: ['g'], change: { boxId: 'c6', value: 99n, createdAtBlock: 500 } });
     const log = makeDebugLog();
-    const recorder: WaitRecorder = (e) => log.record('wait', { ...e });
+    const recorder = waitToLog(log);
     const script = new Map<string, unknown>([
       ['t2', { status: 409, message: 'already in the mempool' } as Rejection],
       ['t5', { status: 0, message: 'fetch failed', noAnswer: true } as Rejection],
