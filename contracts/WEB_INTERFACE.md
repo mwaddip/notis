@@ -370,8 +370,11 @@ Firefox: an event-page background and `browser_specific_settings` — under `gec
 a minimum of Firefox 140, the `update_url` (→ "The Firefox build ships signed as well") and
 `data_collection_permissions` with `personalCommunications` and `financialAndPaymentInfo` required; under
 `gecko_android` a minimum of 142. **140 is the first Firefox with the built-in consent for declared data**, and an
-add-on installable below it owes a consent screen of its own; 142 is the same release on Android, stated so that
-the desktop floor admits no Android build without it — the extension supports no Android.
+add-on installable below it owes a consent screen of its own; 142 is the same release on Android, and the
+extension runs in Firefox for Android from it: a reader there posts, replies, likes and vouches, each signed silently
+under `don't ask` (the user, 2026-11-17, Waterfox for Android). A signature that needs the prompt window there is
+unmeasured: the window is a `windows.create` popup (→ "The contexts, and what each may hold"), and a browser that
+offers no `windows` API opens none.
 `optional_host_permissions` (from 128) and content-script hosts granted at install (past 127) both hold at 140.
 The id and the `update_url` are constants of the emitter's Firefox overlay, the same in every build.
 **`optional_host_permissions` is written by the emitter**, for both browsers, from the build's faucet base: the
