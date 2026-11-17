@@ -2,7 +2,9 @@
 // a required argument, never defaulted — and reads pnpm-workspace.yaml's
 // packages: list in the <dir>/* form this repo uses, then each matched
 // directory holding a package.json. The disk reader is a TreeReader over a
-// root directory.
+// root directory; the git-tree reader is one over a rev, so --rev reads the
+// workspace from the tree the diff ends at.
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -107,6 +109,43 @@ export function diskReader(root: string): TreeReader {
         return readdirSync(resolve(root, path), { withFileTypes: true })
           .filter((e) => e.isDirectory())
           .map((e) => e.name);
+      } catch {
+        return [];
+      }
+    },
+  };
+}
+
+// TEST_MATRIX_INTERFACE → The workspace: under --rev, the workspace is
+// read from the tree the diff ends at — git show <rev>:<path> for a file,
+// git ls-tree for the subdirectories of a path.
+export function gitTreeReader(root: string, rev: string): TreeReader {
+  return {
+    file(path) {
+      try {
+        return execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch {
+        return null;
+      }
+    },
+    dirs(path) {
+      const prefix = path === '' ? '' : `${path}/`;
+      try {
+        const out = execFileSync(
+          'git',
+          ['-C', root, 'ls-tree', '--name-only', '-d', rev, prefix],
+          {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        );
+        return out
+          .split('\n')
+          .filter((s) => s !== '')
+          .map((n) => (n.startsWith(prefix) ? n.slice(prefix.length) : n));
       } catch {
         return [];
       }

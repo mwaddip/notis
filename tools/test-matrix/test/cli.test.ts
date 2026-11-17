@@ -134,7 +134,7 @@ function runNames(a: Answer): string[] {
 }
 
 describe('--rev reads what the commits carry', () => {
-  it.fails('a branch commit changing packages/a/src/x.ts selects a and b; an uncommitted change beside it is not read', () => {
+  it('a branch commit changing packages/a/src/x.ts selects a and b; an uncommitted change beside it is not read', () => {
     const { dir, cleanup } = fixture();
     try {
       sh('git', ['checkout', '-q', '-b', 'feature'], dir);
@@ -153,26 +153,44 @@ describe('--rev reads what the commits carry', () => {
 });
 
 describe('the working tree is read with no --rev', () => {
-  it.fails('a committed, a staged, an unstaged change and an untracked file inside a member — each is counted', () => {
-    const { dir, cleanup } = fixture();
+  it('a committed, a staged, an unstaged change and an untracked file inside a member — each is counted', () => {
+    const { dir, cleanup } = fixture({ withNode: true });
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
+      // Committed in packages/a reaches a and b.
       write(dir, 'packages/a/src/committed.ts', 'export const c = 1;\n');
       sh('git', ['add', 'packages/a/src/committed.ts'], dir);
       sh('git', ['commit', '-q', '-m', 'committed'], dir);
-      write(dir, 'packages/b/src/staged.ts', 'export const s = 1;\n');
-      sh('git', ['add', 'packages/b/src/staged.ts'], dir);
-      write(dir, 'packages/a/src/index.ts', '// a changed\n');
-      write(dir, 'packages/b/src/untracked.ts', 'export const u = 1;\n');
+      // A contracts file under no run, committed so the unstaged
+      // modification beside it carries only in the working tree.
+      write(dir, 'contracts/U.md', '# U\n');
+      sh('git', ['add', 'contracts/U.md'], dir);
+      sh('git', ['commit', '-q', '-m', 'add U'], dir);
+      // Staged (not committed) — a second contracts file under no run.
+      write(dir, 'contracts/S.md', '# S\n');
+      sh('git', ['add', 'contracts/S.md'], dir);
+      // Unstaged — modifies U.md on disk, no add.
+      write(dir, 'contracts/U.md', '# U changed\n');
+      // Untracked inside a member — in packages/node reaches node.
+      write(dir, 'packages/node/src/untracked.ts', 'export const u = 1;\n');
       const r = invoke(dir, ['--json']);
       expect(r.status).toEqual(0);
       const a = parse(r.stdout);
-      const paths = new Set(a.runs.map((e) => e.path));
-      expect(paths.has('packages/a/src/committed.ts')).toBe(true);
-      expect(paths.has('packages/b/src/staged.ts')).toBe(true);
-      expect(paths.has('packages/a/src/index.ts')).toBe(true);
-      expect(paths.has('packages/b/src/untracked.ts')).toBe(true);
-      expect(runNames(a)).toEqual(['a', 'b']);
+      // The rows read node at run time by check, e2e and test-state;
+      // node reached selects node:slow as well (TEST_MATRIX_INTERFACE →
+      // Reach).
+      expect([...runNames(a)].sort()).toEqual([
+        'a',
+        'b',
+        'check',
+        'e2e',
+        'node',
+        'node:slow',
+        'test-state',
+      ]);
+      const unplacedPaths = a.unplaced.map((u) => u.path);
+      expect(unplacedPaths).toContain('contracts/S.md');
+      expect(unplacedPaths).toContain('contracts/U.md');
     } finally {
       cleanup();
     }
@@ -180,7 +198,7 @@ describe('the working tree is read with no --rev', () => {
 });
 
 describe('an untracked file outside every member is named and not counted', () => {
-  it.fails('notes.txt at the root selects nothing and appears in the answer as not counted', () => {
+  it('notes.txt at the root selects nothing and appears in the answer as not counted', () => {
     const { dir, cleanup } = fixture();
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
@@ -197,7 +215,7 @@ describe('an untracked file outside every member is named and not counted', () =
 });
 
 describe('a rename counts both its paths', () => {
-  it.fails('packages/a/src/x.ts renamed to docs/x.ts selects a and b', () => {
+  it('packages/a/src/x.ts renamed to docs/x.ts selects a and b', () => {
     const { dir, cleanup } = fixture();
     try {
       write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
@@ -218,7 +236,7 @@ describe('a rename counts both its paths', () => {
 });
 
 describe('a deletion counts its path', () => {
-  it.fails('a branch that removes packages/a/src/x.ts selects a and b', () => {
+  it('a branch that removes packages/a/src/x.ts selects a and b', () => {
     const { dir, cleanup } = fixture();
     try {
       write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
@@ -238,7 +256,7 @@ describe('a deletion counts its path', () => {
 });
 
 describe('--base names the base', () => {
-  it.fails('a diff from a base other than master reads only what changed after it', () => {
+  it('a diff from a base other than master reads only what changed after it', () => {
     const { dir, cleanup } = fixture();
     try {
       write(dir, 'packages/a/src/x.ts', 'export const x = 1;\n');
@@ -259,7 +277,7 @@ describe('--base names the base', () => {
 });
 
 describe("the workspace is the rev's", () => {
-  it.fails('a branch that adds @dagsocial/c declaring a and changes packages/a/src/x.ts selects a, b and c', () => {
+  it('a branch that adds @dagsocial/c declaring a and changes packages/a/src/x.ts selects a, b and c', () => {
     const { dir, cleanup } = fixture();
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
@@ -292,7 +310,7 @@ describe("the workspace is the rev's", () => {
 });
 
 describe('--members prints member names in build order', () => {
-  it.fails('a change reaching node prints node, without node:slow or check', () => {
+  it('a change reaching node prints node, without node:slow or check', () => {
     const { dir, cleanup } = fixture({ withNode: true });
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
@@ -307,7 +325,7 @@ describe('--members prints member names in build order', () => {
     }
   });
 
-  it.fails('a change selecting no member prints an empty line', () => {
+  it('a change selecting no member prints an empty line', () => {
     const { dir, cleanup } = fixture();
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
@@ -327,7 +345,7 @@ describe('--members prints member names in build order', () => {
 });
 
 describe('--json', () => {
-  it.fails('parses as one object and carries the same runs as the text answer', () => {
+  it('parses as one object and carries the same runs as the text answer', () => {
     const { dir, cleanup } = fixture();
     try {
       sh('git', ['checkout', '-q', '-b', 'work'], dir);
@@ -355,7 +373,7 @@ describe('--json', () => {
 });
 
 describe('the refusals exit 2 with one stderr line', () => {
-  it.fails('an unknown option', () => {
+  it('an unknown option', () => {
     const { dir, cleanup } = fixture();
     try {
       const r = invoke(dir, ['--bogus']);
@@ -366,7 +384,7 @@ describe('the refusals exit 2 with one stderr line', () => {
     }
   });
 
-  it.fails('a --rev that does not resolve', () => {
+  it('a --rev that does not resolve', () => {
     const { dir, cleanup } = fixture();
     try {
       const r = invoke(dir, ['--rev', 'nope-not-a-rev']);
@@ -377,7 +395,7 @@ describe('the refusals exit 2 with one stderr line', () => {
     }
   });
 
-  it.fails('a tree with no pnpm-workspace.yaml', () => {
+  it('a tree with no pnpm-workspace.yaml', () => {
     const { dir, cleanup } = fixture({ withoutWorkspaceYaml: true });
     try {
       const r = invoke(dir, []);
@@ -390,7 +408,7 @@ describe('the refusals exit 2 with one stderr line', () => {
 });
 
 describe('an empty diff', () => {
-  it.fails('--rev master --base master exits 0 and selects nothing', () => {
+  it('--rev master --base master exits 0 and selects nothing', () => {
     const { dir, cleanup } = fixture();
     try {
       const r = invoke(dir, ['--rev', 'master', '--base', 'master', '--json']);
