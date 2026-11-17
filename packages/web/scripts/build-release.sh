@@ -147,6 +147,24 @@ if grep -Fnq "notis.posts." dist/assets/*.js; then
   grep -Fn "notis.posts." dist/assets/*.js | head -5
   exit 1
 fi
+# The web bundle holds no debug log — WEB_INTERFACE → The extension →
+# "The debug log", → "The build check that keeps the web bundle honest".
+# `notis.debug` is the log's IndexedDB database name, so a stray chunk that
+# pulled the store module into the page script surfaces as a hit here.
+if grep -Fnq "notis.debug" dist/assets/*.js; then
+  echo "FAIL: notis.debug reference found in the web bundle (the debug log leaked into the zip)"
+  grep -Fn "notis.debug" dist/assets/*.js | head -5
+  exit 1
+fi
+# `notis-debug/1` is the debug file's format name — WEB_INTERFACE → The
+# extension → "The debug file", → "The build check that keeps the web bundle
+# honest" — so a stray chunk that pulled the file emitter into the page
+# script surfaces as a hit here.
+if grep -Fnq "notis-debug/1" dist/assets/*.js; then
+  echo "FAIL: notis-debug/1 reference found in the web bundle (the debug file emitter leaked into the zip)"
+  grep -Fn "notis-debug/1" dist/assets/*.js | head -5
+  exit 1
+fi
 # The web bundle carries no serve-posts setting — WEB_INTERFACE → The
 # settings window → "The serve row". `notis.serve` is the `localStorage`
 # key the extension's serve seam keys on; the row renders only where the
