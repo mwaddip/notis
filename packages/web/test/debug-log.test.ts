@@ -34,11 +34,17 @@ function clock(start = 1000): { tick: () => number; now: () => number; set: (n: 
 }
 
 /** A timer pair the test drives — `setInterval` records the callback, the
- *  test invokes it on demand; `clearInterval` detaches. */
-function fakeTimers(): DebugTimers & { fire(handle: DebugTimerHandle): void; active(): number } {
+ *  test invokes it on demand; `clearInterval` detaches. The `map` is public so
+ *  a test can read the first registered handle. */
+function fakeTimers(): DebugTimers & {
+  fire(handle: DebugTimerHandle): void;
+  active(): number;
+  readonly map: Map<DebugTimerHandle, { fn: () => void; ms: number }>;
+} {
   const map = new Map<DebugTimerHandle, { fn: () => void; ms: number }>();
   let seq = 0;
   return {
+    map,
     setInterval(fn, ms): DebugTimerHandle {
       const h = ++seq;
       map.set(h, { fn, ms });
@@ -95,7 +101,7 @@ function fakeDocumentHost(initialVisibility: string): DocumentHost & { dispatch(
 }
 
 describe('debug-log — the bound and the eviction', () => {
-  it.fails('a write past the bound evicts oldest first; the total equals the stored events\' sizes', async () => {
+  it('a write past the bound evicts oldest first; the total equals the stored events\' sizes', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -120,7 +126,7 @@ describe('debug-log — the bound and the eviction', () => {
 });
 
 describe('debug-log — two pages, one total', () => {
-  it.fails('two stores over one database keep one total', async () => {
+  it('two stores over one database keep one total', async () => {
     const idb = new IDBFactory();
     const timersA = fakeTimers();
     const timersB = fakeTimers();
@@ -146,7 +152,7 @@ describe('debug-log — two pages, one total', () => {
 });
 
 describe('debug-log — the batch: size, interval, flush', () => {
-  it.fails('one write at the batch\'s size, one at the interval, one on `flush()`', async () => {
+  it('one write at the batch\'s size, one at the interval, one on `flush()`', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -176,7 +182,7 @@ describe('debug-log — the batch: size, interval, flush', () => {
 });
 
 describe('debug-log — clear', () => {
-  it.fails('`clear()` deletes every event and zeroes the total in one transaction, then records `cleared`', async () => {
+  it('`clear()` deletes every event and zeroes the total in one transaction, then records `cleared`', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -197,7 +203,7 @@ describe('debug-log — clear', () => {
 });
 
 describe('debug-log — a write the browser refuses', () => {
-  it.fails('an aborted transaction drops the batch, counts the events dropped, rejects nothing', async () => {
+  it('an aborted transaction drops the batch, counts the events dropped, rejects nothing', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -245,7 +251,7 @@ describe('debug-log — a write the browser refuses', () => {
 });
 
 describe('debug-log — no IndexedDB', () => {
-  it.fails('with no factory the stats say unavailable, no record stands', async () => {
+  it('with no factory the stats say unavailable, no record stands', async () => {
     const t = fakeTimers();
     const log = createDebugLog({
       indexedDB: undefined, now: clock().tick, pageId: PAGE,
@@ -264,7 +270,7 @@ describe('debug-log — no IndexedDB', () => {
 });
 
 describe('debug-log — the route\'s shape', () => {
-  it.fails('a 64-hex id, a name, a height and an author\'s key in a query each gone, the four allowed values kept, a mesh URL\'s id apart from its path', () => {
+  it('a 64-hex id, a name, a height and an author\'s key in a query each gone, the four allowed values kept, a mesh URL\'s id apart from its path', () => {
     const idHex = 'a'.repeat(64);
     const author = 'b'.repeat(64);
     // Variable path segments turn into parameter names; a fixed word of a
@@ -291,7 +297,7 @@ describe('debug-log — the route\'s shape', () => {
 });
 
 describe('debug-log — flush at hide', () => {
-  it.fails('`visibilitychange` when hidden and `pagehide` each flush the buffer', async () => {
+  it('`visibilitychange` when hidden and `pagehide` each flush the buffer', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -316,7 +322,7 @@ describe('debug-log — flush at hide', () => {
 });
 
 describe('debug-log — the error recorder', () => {
-  it.fails('records an `error` event for each `error` and `unhandledrejection`, each bounded', async () => {
+  it('records an `error` event for each `error` and `unhandledrejection`, each bounded', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
