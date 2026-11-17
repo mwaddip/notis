@@ -40,7 +40,7 @@ import {
 import { buildMinedBranch } from './helpers/mined-branch.js';
 import { makeBlockAt } from '../../../net/test/helpers/devnet-block.js';
 import { startMeshClient } from '../../src/mesh/mesh-client.js';
-import type { MeshClient } from '../../src/mesh/mesh-client.js';
+import type { MeshClient, MeshEvent } from '../../src/mesh/mesh-client.js';
 import { forkKey } from '../../src/mesh/memory.js';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
@@ -354,6 +354,13 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
     h.proofs.set(yBase, keptProof);
     h.proofs.set(oBase, oProof);
 
+    // The `events` sink records every report the client makes. Delivery
+    // of each block the handler sees under a standing question emits one
+    // `gossip-block` event with outcome `held` and the block's height
+    // (MESH_INTERFACE → The client's node list → "The client reports what
+    // it does" — "a gossiped block weighed", the delivery's ending "held
+    // (under a question)").
+    const events: MeshEvent[] = [];
     const client = await startMeshClient({
       firstContact: [
         { notisId: yId, addrs: [], api: yBase },
@@ -366,6 +373,7 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
       wallClock: () => NOW,
       httpFetch: h.httpFetch,
       resolve: h.resolve,
+      events: (e) => events.push(e),
     });
     clients.push(client);
     client.addByHand(yId, [], true);
@@ -377,6 +385,7 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
     for (let i = 0; i < 4; i++) await new Promise<void>((r) => setTimeout(r, 25));
     expect(client.state().disagreement).not.toBeNull();
     const checksBefore = client.state().checks;
+    const gossipBefore = events.filter((e) => e.kind === 'gossip-block').length;
 
     // A gossiped block whose parent the client does not hold: the
     // client's validator accepts it, the router delivers it, and the
@@ -421,6 +430,13 @@ describe('mesh-client — an answered branch growing asks nothing more', () => {
       await new Promise<void>((r) => setTimeout(r, 20));
     }
     expect(client.state().checks).toBe(checksBefore);
+    // One `held` gossip-block event per block delivered, with its height.
+    const heldGossip = events
+      .slice(gossipBefore)
+      .filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> =>
+        e.kind === 'gossip-block' && e.outcome.result === 'held');
+    expect(heldGossip).toHaveLength(1);
+    expect(heldGossip[0]!.height).toBe(150);
   }, 180_000);
 
   it('a competing proof equal to the answered proof (same tip) is the same branch', async () => {
