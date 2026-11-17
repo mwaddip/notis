@@ -35,7 +35,7 @@ function snapshotWithValues(): DebugSnapshot {
       serve: false,
       links: 'here',
       signPolicy: 'silent',
-      handNode: { address: HAND_ADDR, off: false },
+      handNode: { address: HAND_ADDR, off: false, key: null },
     },
     mesh: { error: `[node ${KEY_UPPER}] unreachable` },
     reader: {
@@ -150,5 +150,34 @@ describe('the debug file', () => {
       nowMs: FIXED_NOW,
     });
     expect(built.filename).toBe('notis-debug-20261117-230540.json');
+  });
+});
+
+describe('the debug file — the hand-added node\'s key', () => {
+  const HAND_KEY = '6'.repeat(64);
+
+  it('unticked: the key a dial event and a node entry name stands nowhere and reads `hand-node` where it stood; ticked it stands', () => {
+    const snapshot: DebugSnapshot = {
+      ...snapshotWithValues(),
+      settings: {
+        serve: false,
+        links: 'here',
+        signPolicy: 'silent',
+        handNode: { address: HAND_ADDR, off: false, key: HAND_KEY },
+      },
+      mesh: { error: `node entry ${HAND_KEY} unreachable` },
+    };
+    const events: DebugEvent[] = [
+      { t: 0, page: 'ab12cd34', kind: 'dial', node: HAND_KEY, ok: false },
+    ];
+    const unticked = buildDebugFile({ snapshot, events, identifying: false, savedAt: FIXED_NOW, nowMs: FIXED_NOW });
+    expect(unticked.text).not.toContain(HAND_KEY);
+    const parsed = JSON.parse(unticked.text);
+    expect(parsed.events[0].node).toBe('hand-node');
+    expect(parsed.snapshot.mesh.error).toBe('node entry hand-node unreachable');
+    expect(parsed.snapshot.settings.handNode.key).toBe('hand-node');
+
+    const ticked = buildDebugFile({ snapshot, events, identifying: true, savedAt: FIXED_NOW, nowMs: FIXED_NOW });
+    expect(ticked.text).toContain(HAND_KEY);
   });
 });

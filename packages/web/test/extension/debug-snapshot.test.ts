@@ -89,7 +89,7 @@ const SETTINGS: SettingsFacts = {
   serve: false,
   links: 'here',
   signPolicy: 'silent',
-  handNode: { address: '', off: false },
+  handNode: { address: '', off: false, key: null },
 };
 
 const CACHE: PostCacheStats = {

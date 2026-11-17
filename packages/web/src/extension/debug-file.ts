@@ -104,27 +104,8 @@ function classifyPostId(c: Collected, id: string): void {
 }
 
 function collectFromSettings(c: Collected, settings: SettingsFacts): void {
-  if (settings.handNode.address !== '') {
-    pushUnique(c, settings.handNode.address, 'addr');
-    // A multiaddr may carry the node's key as a `/p2p/<peerId>` component;
-    // the full address is one placeholder, and any 64-hex key embedded in
-    // it is caught separately as `hand-node` for its own occurrence
-    // elsewhere in the file.
-    const peer = extractNotisHexFromAddr(settings.handNode.address);
-    if (peer !== null) pushUnique(c, peer, 'hand-node');
-  }
-}
-
-function extractNotisHexFromAddr(addr: string): string | null {
-  // The hand-added address carries the peer id's base58 form in a `/p2p/`
-  // component; the hex notisId cannot be read without the keypair work the
-  // page does. The replacement pass cares only about strings present in
-  // the file: a 64-hex key the handler stores would reach the file through
-  // the reader's pending/waiting records, not through the address text.
-  // Return `null` here so a 64-hex notisId only lands in the collection
-  // where another seam carries it as a value.
-  void addr;
-  return null;
+  if (settings.handNode.address !== '') pushUnique(c, settings.handNode.address, 'addr');
+  if (settings.handNode.key !== null) pushUnique(c, settings.handNode.key, 'hand-node');
 }
 
 function collectFromEvents(c: Collected, events: readonly DebugEvent[]): void {

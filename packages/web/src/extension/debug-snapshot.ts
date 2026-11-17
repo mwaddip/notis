@@ -22,13 +22,15 @@ export interface BuildFacts {
 
 /** The settings section's own shape (WEB_INTERFACE → The extension → "The
  *  snapshot" — "the settings"). The hand-added node is read as `{ address,
- *  off }`; an extension built with no faucet reads `links` as `null`, and the
- *  row reads `null` the same way where the browser gave the page none. */
+ *  off, key }` — `key` the hex key the stored address names, `null` where
+ *  none is stored or it does not parse; an extension built with no faucet
+ *  reads `links` as `null`, and the row reads `null` the same way where the
+ *  browser gave the page none. */
 export interface SettingsFacts {
   serve: boolean;
   links: 'site' | 'here' | null;
   signPolicy: 'silent' | 'ask';
-  handNode: { address: string; off: boolean };
+  handNode: { address: string; off: boolean; key: string | null };
 }
 
 /** A pending entry as the snapshot carries it (WEB_INTERFACE → The extension →
