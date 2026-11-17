@@ -77,7 +77,7 @@ function withPlantedKeyEvent(ev: DebugEvent[]): DebugEvent[] {
 const FIXED_NOW = Date.UTC(2026, 10, 17, 23, 5, 40); // 2026-11-17 23:05:40 UTC
 
 describe('the debug file', () => {
-  it.fails('unticked: every identifying value is gone, planted fields caught, same value reads as same placeholder', () => {
+  it('unticked: every identifying value is gone, planted fields caught, same value reads as same placeholder', () => {
     const snapshot = snapshotWithValues();
     const events = withPlantedKeyEvent([
       { t: 0, page: 'ab12cd34', kind: 'wait', outcome: 'queued', txKind: 'send', ledger: 'credits', txId: TX_WAITING },
@@ -123,7 +123,7 @@ describe('the debug file', () => {
     expect(plantedWrite.txId).toBe('tx-3');
   });
 
-  it.fails('ticked: the text holds the key and the transaction id as they stand', () => {
+  it('ticked: the text holds the key and the transaction id as they stand', () => {
     const snapshot = snapshotWithValues();
     const events: DebugEvent[] = [
       { t: 0, page: 'ab12cd34', kind: 'write', txId: TX_PENDING, route: '/posts', node: 'n', tried: 1, status: 201 },
@@ -139,7 +139,7 @@ describe('the debug file', () => {
     expect(parsed.events[0].txId).toBe(TX_PENDING);
   });
 
-  it.fails('the file name from a fixed clock', () => {
+  it('the file name from a fixed clock', () => {
     const name = debugFilename(FIXED_NOW);
     expect(name).toBe('notis-debug-20261117-230540.json');
     const built = buildDebugFile({
