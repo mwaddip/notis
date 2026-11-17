@@ -2,7 +2,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readBuildCommit } from '../scripts/build-commit.mjs';
@@ -72,15 +71,15 @@ describe('build-commit — the function', () => {
     }
   });
 
-  it('a tracked file touched to a later mtime, its content unchanged, reads as clean', async () => {
+  it('a tracked file touched to a later mtime, its content unchanged, reads as clean', () => {
     const r = makeRepo();
     try {
       const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
       const path = join(r.dir, 'other.txt');
       const content = readFileSync(path, 'utf8');
       writeFileSync(path, content);
-      const later = Math.floor(Date.now() / 1000) + 3600;
-      await utimes(path, later, later);
+      const later = spawnSync('touch', ['-d', '+1 hour', path], { encoding: 'utf8' });
+      if (later.status !== 0) throw new Error(`touch exited ${later.status}: ${later.stderr}`);
       expect(readBuildCommit(r.dir)).toBe(head);
     } finally {
       r.cleanup();
