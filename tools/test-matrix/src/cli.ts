@@ -133,13 +133,11 @@ function printMembers(
   result: PlaceResult,
   workspace: Workspace,
 ): void {
-  const memberNames = new Set(workspace.members.map((m) => m.name));
-  const selected = new Set<string>();
-  for (const s of result.selected) {
-    if (memberNames.has(s.run)) selected.add(s.run);
-  }
+  // buildOrder names workspace members alone, so the order.filter is
+  // the only filter needed — members are what the output names.
+  const selectedRuns = new Set(result.selected.map((s) => s.run));
   const order = buildOrder(workspace);
-  const picked = order.filter((n) => selected.has(n));
+  const picked = order.filter((n) => selectedRuns.has(n));
   process.stdout.write(`${picked.join(' ')}\n`);
 }
 
