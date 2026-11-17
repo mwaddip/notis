@@ -97,16 +97,25 @@ declare namespace chrome {
       left?: number;
       top?: number;
     }
-    function create(props: CreateProps): Promise<Window>;
-    function update(windowId: number, props: { focused?: boolean }): Promise<Window>;
-    function remove(windowId: number): Promise<void>;
-    function get(windowId: number): Promise<Window>;
-    function getLastFocused(): Promise<Window>;
     interface OnRemovedEvent {
       addListener(listener: (windowId: number) => void): void;
     }
-    const onRemoved: OnRemovedEvent;
+    // The methods the `chrome.windows` value offers. Collected as an interface
+    // so the value itself can be optional — WEB_INTERFACE → The extension →
+    // "The contexts, and what each may hold" (the prompt window's bullet)
+    // and → "A raise focuses a window only where the browser offers `windows`".
+    interface Api {
+      create(props: CreateProps): Promise<Window>;
+      update(windowId: number, props: { focused?: boolean }): Promise<Window>;
+      remove(windowId: number): Promise<void>;
+      get(windowId: number): Promise<Window>;
+      getLastFocused(): Promise<Window>;
+      onRemoved: OnRemovedEvent;
+    }
   }
+  // Absent on browsers that offer no `windows` API (Firefox for Android).
+  // Every call site asks whether the value exists before using it.
+  const windows: windows.Api | undefined;
 
   namespace action {
     interface OnClickedEvent {

@@ -51,6 +51,8 @@ export interface SignRecord {
   hint: SignHint;        // the page's display data, verified before it is shown
   createdAt: number;     // Date.now() at write — telemetry only, never checked
   windowId?: number;     // the id windows.create returned, so onRemoved decides declined
+  tabId?: number;        // the id tabs.create returned where `windows` is absent — WEB_INTERFACE → The extension → "The contexts, and what each may hold"
+  senderTabId?: number;  // the id of the tab that sent `sign`, reactivated on every ending in the no-windows path
   result?: SignResult;
 }
 

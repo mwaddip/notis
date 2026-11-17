@@ -83,7 +83,7 @@ function pageSender(c: FakeChrome, tabId: number, windowId?: number): chrome.run
 }
 
 describe('background on the no-windows shape — the prompt as a tab', () => {
-  it.fails('install returns without throwing and state answers the loaded identity', async () => {
+  it('install returns without throwing and state answers the loaded identity', async () => {
     const c = fakeChrome(undefined, undefined, { noWindows: true });
     expect(() => install(c.api, { publicBase: '' }, { locks: fakeLockManager() })).not.toThrow();
     await c.send({ kind: 'draft' });
@@ -92,7 +92,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(snap.locked).toBe(false);
   });
 
-  it.fails('a credits sign opens one active tab at the prompt page and the record holds its id', async () => {
+  it('a credits sign opens one active tab at the prompt page and the record holds its id', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     const { txBytesHex, txIdHex } = unsignedCreditSendTx(pub);
@@ -108,7 +108,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(record.windowId).toBeUndefined();
   });
 
-  it.fails('approve signs, removes the prompt tab, and activates the sending tab', async () => {
+  it('approve signs, removes the prompt tab, and activates the sending tab', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     const SENDER_TAB = 200;
@@ -129,7 +129,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(c.windows.removed).toEqual([]);
   });
 
-  it.fails('decline writes { declined: true }, removes the prompt tab, and activates the sending tab', async () => {
+  it('decline writes { declined: true }, removes the prompt tab, and activates the sending tab', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     const SENDER_TAB = 201;
@@ -147,7 +147,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(c.tabs.updated).toContainEqual([SENDER_TAB, { active: true }]);
   });
 
-  it.fails('the prompt tab\'s close writes { declined: true }', async () => {
+  it('the prompt tab\'s close writes { declined: true }', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     const { txBytesHex, txIdHex } = unsignedCreditSendTx(pub);
@@ -161,7 +161,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(after.result).toEqual({ declined: true });
   });
 
-  it.fails('a record whose tab is gone is declined at the next sign and the next sign opens its own prompt tab', async () => {
+  it('a record whose tab is gone is declined at the next sign and the next sign opens its own prompt tab', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     await c.send({ kind: 'policy', karma: 'ask' });
@@ -179,7 +179,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(c.tabs.created).toHaveLength(2);
   });
 
-  it.fails('a second sign while a prompt tab is open answers refused: busy', async () => {
+  it('a second sign while a prompt tab is open answers refused: busy', async () => {
     const c = await bootstrappedNoWindows();
     const pub = await pubKey(c);
     await c.send({ kind: 'policy', karma: 'ask' });
@@ -197,7 +197,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(c.windows.created).toEqual([]);
   });
 
-  it.fails('the action button raises the page\'s tab with no window call', async () => {
+  it('the action button raises the page\'s tab with no window call', async () => {
     const c = await bootstrappedNoWindows();
     c.tabs.setQueryResult([{ id: 42, url: c.origin + 'index.html', discarded: false, windowId: 500 }]);
     c.fireActionClicked();
@@ -206,7 +206,7 @@ describe('background on the no-windows shape — the prompt as a tab', () => {
     expect(c.windows.focused).toEqual([]);
   });
 
-  it.fails('the landing raises the page\'s tab with no window call', async () => {
+  it('the landing raises the page\'s tab with no window call', async () => {
     const c = await bootstrappedNoWindows();
     const HEX = 'a'.repeat(64);
     c.storage.session.set('notis.open.' + HEX, { raise: true });

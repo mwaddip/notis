@@ -83,7 +83,17 @@ export function install(api: typeof chrome, config: BackgroundConfig, options: I
   api.runtime.onInstalled.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });
   api.runtime.onStartup.addListener(() => { void withPromptLock(locks, () => sweepOrphanedRecords(api)); });
   api.action.onClicked.addListener(() => { void raiseOrOpenPage(api); });
-  api.windows.onRemoved.addListener((windowId) => { void withPromptLock(locks, () => windowClosed(api, windowId)); });
+  // WEB_INTERFACE → The extension → "The contexts, and what each may hold" —
+  // the window-close listener registers only where `windows` offers it; the
+  // background asks whether the API exists, never which browser it runs in.
+  const windows = api.windows;
+  if (windows !== undefined) {
+    windows.onRemoved.addListener((windowId) => { void withPromptLock(locks, () => windowClosed(api, windowId)); });
+  }
+  // The tab-close listener registers at start the way `windows.onRemoved` is,
+  // so a prompt tab the reader closes writes declined wherever the browser
+  // offers no `windows` API.
+  api.tabs.onRemoved.addListener((tabId) => { void withPromptLock(locks, () => tabClosed(api, tabId)); });
 }
 
 /** The lock a prompt-record path runs its whole body under — WEB_INTERFACE →
@@ -119,7 +129,7 @@ async function handle(api: typeof chrome, config: BackgroundConfig, locks: LockM
     case 'takeOpen': return await takeOpen(api, sender);
     case 'arrived': return await arrived(api, config, message.id, sender);
     case 'offered': return await offered(api, config, message.id, sender);
-    case 'sign': return await signMessage(api, locks, message.txBytesHex, message.txIdHex, message.pubKeyHex, message.hint ?? {});
+    case 'sign': return await signMessage(api, locks, message.txBytesHex, message.txIdHex, message.pubKeyHex, message.hint ?? {}, sender);
     case 'ack': return await withPromptLock(locks, () => ack(api, message.id));
     case 'approve': return await withPromptLock(locks, () => approve(api, message.id, sender));
     case 'decline': return await withPromptLock(locks, () => decline(api, message.id, sender));
@@ -368,9 +378,14 @@ async function takeOpen(api: typeof chrome, sender: chrome.runtime.MessageSender
     if (typeof v === 'object' && v !== null && (v as { raise?: unknown }).raise === true) anyRaise = true;
   }
   if (keys.length > 0) await api.storage.session.remove(keys);
-  if (anyRaise && sender.tab && typeof sender.tab.id === 'number' && typeof sender.tab.windowId === 'number') {
+  if (anyRaise && sender.tab && typeof sender.tab.id === 'number') {
     await api.tabs.update(sender.tab.id, { active: true });
-    await api.windows.update(sender.tab.windowId, { focused: true });
+    // WEB_INTERFACE → The extension → "A raise focuses a window only where
+    // the browser offers `windows`".
+    const windows = api.windows;
+    if (windows !== undefined && typeof sender.tab.windowId === 'number') {
+      await windows.update(sender.tab.windowId, { focused: true });
+    }
   }
   return { ids };
 }
@@ -379,7 +394,7 @@ async function takeOpen(api: typeof chrome, sender: chrome.runtime.MessageSender
 // sign — WEB_INTERFACE → "`sign`, in the background, in order".
 // ---------------------------------------------------------------------------
 
-async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: string, txIdHex: string, pubKeyHex: string, hint: SignHint): Promise<SignAnswer> {
+async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: string, txIdHex: string, pubKeyHex: string, hint: SignHint, sender: chrome.runtime.MessageSender): Promise<SignAnswer> {
   // 1. Decode. A failure ⇒ undecodable.
   let tx: UtxoTransaction;
   try {
@@ -426,31 +441,56 @@ async function signMessage(api: typeof chrome, locks: LockManager, txBytesHex: s
       summary,
       hint: verifiedHint(tx, hint),
       createdAt: Date.now(),
+      // WEB_INTERFACE → The extension → "The contexts, and what each may hold"
+      // — the sending tab is reactivated on every ending in the no-windows
+      // path; the field is written at record creation so a close before the
+      // open returns still has it.
+      ...(typeof sender.tab?.id === 'number' ? { senderTabId: sender.tab.id } : {}),
     };
     const key = K_SIGN_PREFIX + record.id;
     await api.storage.session.set({ [key]: record });
-    // WEB_INTERFACE → The extension → "The prompt window" — the popup opens
-    // at the top-right of the last-focused browser window, under the toolbar;
-    // unplaced when the geometry is unknown (a missing or non-numeric field).
-    // A browser that does not open the window removes the record just written
+    // WEB_INTERFACE → The extension → "The prompt window". Where `windows`
+    // offers the call, the popup opens at the top-right of the last-focused
+    // browser window; unplaced when the geometry is unknown. Where it does
+    // not — Firefox for Android — the prompt opens as an active tab and
+    // the record holds its id in `tabId` instead of `windowId`. A browser
+    // that does not open the window or tab removes the record just written
     // and answers { error } with the failure's words (step 7).
-    let w: chrome.windows.Window;
-    try {
-      w = await api.windows.create({
-        type: 'popup',
-        url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
-        width: PROMPT_WIDTH,
-        height: PROMPT_HEIGHT,
-        focused: true,
-        ...await promptPlacement(api),
-      });
-    } catch (e) {
-      await api.storage.session.remove(key);
-      return { error: errorMessage(e) };
-    }
-    if (typeof w.id === 'number') {
-      record.windowId = w.id;
-      await api.storage.session.set({ [key]: record });
+    const windows = api.windows;
+    if (windows !== undefined) {
+      let w: chrome.windows.Window;
+      try {
+        w = await windows.create({
+          type: 'popup',
+          url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
+          width: PROMPT_WIDTH,
+          height: PROMPT_HEIGHT,
+          focused: true,
+          ...await promptPlacement(windows),
+        });
+      } catch (e) {
+        await api.storage.session.remove(key);
+        return { error: errorMessage(e) };
+      }
+      if (typeof w.id === 'number') {
+        record.windowId = w.id;
+        await api.storage.session.set({ [key]: record });
+      }
+    } else {
+      let t: chrome.tabs.Tab;
+      try {
+        t = await api.tabs.create({
+          url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
+          active: true,
+        });
+      } catch (e) {
+        await api.storage.session.remove(key);
+        return { error: errorMessage(e) };
+      }
+      if (typeof t.id === 'number') {
+        record.tabId = t.id;
+        await api.storage.session.set({ [key]: record });
+      }
     }
     return { pending: record.id };
   });
@@ -469,9 +509,7 @@ async function approve(api: typeof chrome, id: string, sender: chrome.runtime.Me
   if (env === null || env.pubKeyHex !== record.pubKeyHex) {
     const declined: SignRecord = { ...record, result: { declined: true } };
     await api.storage.session.set({ [K_SIGN_PREFIX + id]: declined });
-    if (typeof record.windowId === 'number') {
-      try { await api.windows.remove(record.windowId); } catch { /* already closed */ }
-    }
+    await endPromptPresence(api, record);
     return { error: 'another key is loaded now.' };
   }
   const seed = await readIdentitySeed(api, env.pubKeyHex);
@@ -479,9 +517,7 @@ async function approve(api: typeof chrome, id: string, sender: chrome.runtime.Me
   const signature = bytesToHex(ed25519.sign(hexToBytes(record.txIdHex), seed));
   const updated: SignRecord = { ...record, result: { signature } };
   await api.storage.session.set({ [K_SIGN_PREFIX + id]: updated });
-  if (typeof record.windowId === 'number') {
-    try { await api.windows.remove(record.windowId); } catch { /* already closed */ }
-  }
+  await endPromptPresence(api, record);
   return 'ok';
 }
 
@@ -491,10 +527,36 @@ async function decline(api: typeof chrome, id: string, sender: chrome.runtime.Me
   if (record === null || record.result) return { error: 'no open prompt for that id' };
   const updated: SignRecord = { ...record, result: { declined: true } };
   await api.storage.session.set({ [K_SIGN_PREFIX + id]: updated });
-  if (typeof record.windowId === 'number') {
-    try { await api.windows.remove(record.windowId); } catch { /* already gone */ }
-  }
+  await endPromptPresence(api, record);
   return 'ok';
+}
+
+/** Close the prompt window, or the prompt tab and reactivate the sending tab,
+ *  depending on how the record was opened — WEB_INTERFACE → The extension →
+ *  "The contexts, and what each may hold" ("every ending ... removes the tab
+ *  and makes the tab that sent `sign` active again where it is still open").
+ *  Called by `approve`, `decline`, the envelope-mismatch branch and the sweep. */
+async function endPromptPresence(api: typeof chrome, record: SignRecord): Promise<void> {
+  const windows = api.windows;
+  if (typeof record.windowId === 'number' && windows !== undefined) {
+    try { await windows.remove(record.windowId); } catch { /* already closed */ }
+    return;
+  }
+  if (typeof record.tabId === 'number') {
+    try { await api.tabs.remove(record.tabId); } catch { /* already closed */ }
+    await activateSenderTab(api, record);
+  }
+}
+
+/** Make the tab that sent `sign` active again where it is still open —
+ *  WEB_INTERFACE → The extension → "The contexts, and what each may hold".
+ *  The sender's id was written to the record at the sign; a tab gone since
+ *  rejects on `tabs.update` and the activation is skipped. */
+async function activateSenderTab(api: typeof chrome, record: SignRecord): Promise<void> {
+  if (typeof record.senderTabId !== 'number') return;
+  try {
+    await api.tabs.update(record.senderTabId, { active: true });
+  } catch { /* the sender tab is gone */ }
 }
 
 async function ack(api: typeof chrome, id: string): Promise<'ok'> {
@@ -514,16 +576,34 @@ async function windowClosed(api: typeof chrome, windowId: number): Promise<void>
   }
 }
 
+/** A prompt tab that closes without an answer writes `{ declined: true }` and
+ *  reactivates the sending tab — WEB_INTERFACE → The extension → "The
+ *  contexts, and what each may hold". The `tabs.onRemoved` listener fires for
+ *  every tab the browser removes; the loop only acts on records whose own
+ *  tab id this is. */
+async function tabClosed(api: typeof chrome, tabId: number): Promise<void> {
+  const records = await readAllRecords(api);
+  for (const [key, record] of records) {
+    if (record.tabId === tabId && !record.result) {
+      const updated: SignRecord = { ...record, result: { declined: true } };
+      await api.storage.session.set({ [key]: updated });
+      await activateSenderTab(api, record);
+    }
+  }
+}
+
 /** On background start, every record without a result is declined — a window
- *  that vanished with the browser (WEB_INTERFACE → "`sign`, in the background,
- *  in order"). Records are removed on `ack`, so a lingering result-less record
- *  is a crash. */
+ *  that vanished with the browser, or a tab the browser left standing while
+ *  no worker ran (WEB_INTERFACE → "`sign`, in the background, in order",
+ *  → "The contexts, and what each may hold"). Records are removed on `ack`,
+ *  so a lingering result-less record is a crash. */
 async function sweepOrphanedRecords(api: typeof chrome): Promise<void> {
   const records = await readAllRecords(api);
   for (const [key, record] of records) {
     if (!record.result) {
       const updated: SignRecord = { ...record, result: { declined: true } };
       await api.storage.session.set({ [key]: updated });
+      await endPromptPresence(api, record);
     }
   }
 }
@@ -539,7 +619,13 @@ async function raiseOrOpenPage(api: typeof chrome): Promise<void> {
   const first = tabs.find((t) => typeof t.id === 'number');
   if (first && typeof first.id === 'number') {
     await api.tabs.update(first.id, { active: true });
-    if (typeof first.windowId === 'number') await api.windows.update(first.windowId, { focused: true });
+    // WEB_INTERFACE → The extension → "A raise focuses a window only where
+    // the browser offers `windows`" — the tab update is all that happens
+    // elsewhere.
+    const windows = api.windows;
+    if (windows !== undefined && typeof first.windowId === 'number') {
+      await windows.update(first.windowId, { focused: true });
+    }
     return;
   }
   await api.tabs.create({ url: pageUrl });
@@ -601,23 +687,23 @@ async function readAllRecords(api: typeof chrome): Promise<Array<[string, SignRe
   return rows;
 }
 
-/** True when a new prompt may open: no result-less record whose window is
- *  still open. Along the way, a record naming no `windowId`, or one whose
- *  window the browser no longer has (`windows.get` rejects), is declined in
- *  place (WEB_INTERFACE → The extension → "`sign`, in the background, in
- *  order", step 7). Runs under the prompt lock. */
+/** True when a new prompt may open: no result-less record whose window or
+ *  prompt tab is still open. Along the way, a record naming neither, or one
+ *  whose window / tab the browser no longer has (`windows.get` or `tabs.get`
+ *  rejects), is declined in place (WEB_INTERFACE → The extension → "`sign`,
+ *  in the background, in order", step 7; → "The contexts, and what each may
+ *  hold"). Runs under the prompt lock. */
 async function canOpenNewPrompt(api: typeof chrome): Promise<boolean> {
   const rows = await readAllRecords(api);
+  const windows = api.windows;
   for (const [key, record] of rows) {
     if (record.result) continue;
-    const wid = record.windowId;
-    if (typeof wid !== 'number') {
-      const updated: SignRecord = { ...record, result: { declined: true } };
-      await api.storage.session.set({ [key]: updated });
-      continue;
-    }
     let open = false;
-    try { await api.windows.get(wid); open = true; } catch { open = false; }
+    if (typeof record.windowId === 'number' && windows !== undefined) {
+      try { await windows.get(record.windowId); open = true; } catch { open = false; }
+    } else if (typeof record.tabId === 'number') {
+      try { await api.tabs.get(record.tabId); open = true; } catch { open = false; }
+    }
     if (open) return false;
     const updated: SignRecord = { ...record, result: { declined: true } };
     await api.storage.session.set({ [key]: updated });
@@ -644,10 +730,11 @@ function isFromExtensionPage(api: typeof chrome, sender: chrome.runtime.MessageS
 
 // WEB_INTERFACE → The extension → "The prompt window" — top-right of the
 // last-focused browser window, under the toolbar; unplaced when the geometry
-// is unknown (a missing or non-numeric field).
-async function promptPlacement(api: typeof chrome): Promise<{ left: number; top: number } | Record<string, never>> {
+// is unknown (a missing or non-numeric field). Called only on the windows
+// branch of `signMessage`, so the API is passed in narrowed.
+async function promptPlacement(windows: chrome.windows.Api): Promise<{ left: number; top: number } | Record<string, never>> {
   let win: chrome.windows.Window | null = null;
-  try { win = await api.windows.getLastFocused(); } catch { win = null; }
+  try { win = await windows.getLastFocused(); } catch { win = null; }
   if (win === null) return {};
   const { left, top, width } = win;
   if (typeof left !== 'number' || typeof top !== 'number' || typeof width !== 'number') return {};

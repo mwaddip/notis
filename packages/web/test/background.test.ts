@@ -570,13 +570,17 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     // the lock the record has no windowId yet, so windowClosed finds no
     // match and never writes `declined`; under the lock the handler waits
     // on the open's own lock and runs after the open has written the id.
-    const originalCreate = c.api.windows.create.bind(c.api.windows);
-    c.api.windows.create = (async (props: chrome.windows.CreateProps) => {
+    // `windows` is present on the Chrome / desktop-Firefox shape the test's
+    // fake carries — WEB_INTERFACE → The extension → "The contexts, and what
+    // each may hold". The narrowing holds for the lifetime of the test.
+    const windows = c.api.windows!;
+    const originalCreate = windows.create.bind(windows);
+    windows.create = (async (props: chrome.windows.CreateProps) => {
       const w = await originalCreate(props);
       c.fireWindowRemoved(w.id!);
       await new Promise((rs) => setImmediate(rs));
       return w;
-    }) as typeof chrome.windows.create;
+    }) as chrome.windows.Api['create'];
     const r = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
     await new Promise((rs) => setImmediate(rs));
     const [, rec] = promptRecords(c).find(([, rc]) => rc.id === r.pending)!;
