@@ -17,7 +17,7 @@ answers for this side of a pull request: a gate while iterating, and the gate th
 **A member under `tools/`**, in `pnpm -r test` by the workspace glob. It declares no workspace dependency.
 
 **It runs from its source, with no build**: `node tools/test-matrix/src/cli.ts`. A gate asks the matrix before it
-builds anything, and a built copy older than its source would select by rows the tree no longer holds, with no sign.
+builds anything, and a built copy older than its source would select by rows its source does not hold, with no sign.
 Node strips the types; the source uses only erasable syntax. The member has no `build` script.
 
 ## What it reads
