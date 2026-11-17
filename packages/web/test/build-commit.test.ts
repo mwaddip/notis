@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readBuildCommit } from '../scripts/build-commit.mjs';
@@ -66,6 +66,21 @@ describe('build-commit — the function', () => {
       const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
       writeFileSync(join(r.dir, 'other.txt'), 'tracked payload changed\n');
       expect(readBuildCommit(r.dir)).toBe(`${head}-dirty`);
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  it('a tracked file touched to a later mtime, its content unchanged, reads as clean', () => {
+    const r = makeRepo();
+    try {
+      const head = runGit(r.dir, ['rev-parse', 'HEAD']).trim();
+      const path = join(r.dir, 'other.txt');
+      const content = readFileSync(path, 'utf8');
+      writeFileSync(path, content);
+      const later = Math.floor(Date.now() / 1000) + 3600;
+      utimesSync(path, later, later);
+      expect(readBuildCommit(r.dir)).toBe(head);
     } finally {
       r.cleanup();
     }
