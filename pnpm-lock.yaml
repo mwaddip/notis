@@ -408,6 +408,9 @@ importers:
         specifier: 3.5.1
         version: 3.5.1(patch_hash=f6a769aeb8b7a9b2017483baaa20d643d11641ecedc97b8f7df33388e83e5313)
     devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
