@@ -408,14 +408,15 @@ export function createDebugLog(deps: DebugLogDeps): DebugLog {
 
 export function routeShape(url: string): RouteShape {
   let pathPart: string;
-  let queryPart: string;
+  let params: URLSearchParams;
   if (url.startsWith(MESH_SCHEME)) {
     const rest = url.substring(MESH_SCHEME.length);
     const slash = rest.indexOf('/');
     const afterId = slash === -1 ? '' : rest.substring(slash);
     const q = afterId.indexOf('?');
     pathPart = q === -1 ? afterId : afterId.substring(0, q);
-    queryPart = q === -1 ? '' : afterId.substring(q + 1);
+    const queryPart = q === -1 ? '' : afterId.substring(q + 1);
+    params = new URLSearchParams(queryPart);
   } else {
     let u: URL;
     try {
@@ -424,20 +425,22 @@ export function routeShape(url: string): RouteShape {
       return { path: '', query: {} };
     }
     pathPart = u.pathname;
-    queryPart = u.search.startsWith('?') ? u.search.substring(1) : u.search;
+    params = u.searchParams;
   }
 
   const segments = pathPart.split('/').filter((s) => s.length > 0);
   const path = matchSegments(segments);
 
+  // Every query key is kept — the allowed ones with their values, every
+  // other with an empty value — so the log records what a request asked
+  // for without recording what the reader opened.
   const query: Record<string, string> = {};
-  if (queryPart.length > 0) {
-    for (const pair of queryPart.split('&')) {
-      if (pair.length === 0) continue;
-      const eq = pair.indexOf('=');
-      const k = eq === -1 ? pair : pair.substring(0, eq);
-      const v = eq === -1 ? '' : decodeURIComponent(pair.substring(eq + 1));
-      if (ALLOWED_QUERY_KEYS.has(k)) query[k] = v;
+  for (const k of params.keys()) {
+    if (ALLOWED_QUERY_KEYS.has(k)) {
+      const v = params.get(k);
+      query[k] = v !== null ? v : '';
+    } else {
+      query[k] = '';
     }
   }
 

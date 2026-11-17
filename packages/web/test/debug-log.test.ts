@@ -264,13 +264,13 @@ describe('debug-log — no IndexedDB', () => {
 });
 
 describe('debug-log — the route\'s shape', () => {
-  it('a 64-hex id, a name, a height and an author\'s key in a query each gone, the four allowed values kept, a mesh URL\'s id apart from its path', () => {
+  it('every query key is kept, the four allowed with their values, every other with an empty value; a mesh URL\'s id apart from its path', () => {
     const idHex = 'a'.repeat(64);
     const author = 'b'.repeat(64);
     // Variable path segments turn into parameter names; a fixed word of a
     // known route is kept.
     expect(routeShape(`https://notis.fun/api/posts/${idHex}/thread?viewer=${author}&limit=50`))
-      .toEqual({ path: '/posts/:id/thread', query: { limit: '50' } });
+      .toEqual({ path: '/posts/:id/thread', query: { viewer: '', limit: '50' } });
     expect(routeShape('https://notis.fun/api/usernames/alice'))
       .toEqual({ path: '/usernames/:name', query: {} });
     expect(routeShape('https://notis.fun/api/blocks/12345'))
@@ -278,15 +278,21 @@ describe('debug-log — the route\'s shape', () => {
     expect(routeShape('https://notis.fun/api/blocks/current'))
       .toEqual({ path: '/blocks/current', query: {} });
     expect(routeShape(`https://notis.fun/api/karma/${idHex}?pending=1&owner=${author}&limit=50`))
-      .toEqual({ path: '/karma/:key', query: { pending: '1', limit: '50' } });
+      .toEqual({ path: '/karma/:key', query: { pending: '1', owner: '', limit: '50' } });
     expect(routeShape(`https://notis.fun/api/posts/${idHex}?tx=1&viewer=${author}`))
-      .toEqual({ path: '/posts/:id', query: { tx: '1' } });
+      .toEqual({ path: '/posts/:id', query: { tx: '1', viewer: '' } });
     expect(routeShape('https://notis.fun/api/posts?light=1&after=aa&limit=100'))
-      .toEqual({ path: '/posts', query: { light: '1', limit: '100' } });
+      .toEqual({ path: '/posts', query: { light: '1', after: '', limit: '100' } });
+    // The author's key beside the limit: `author` is dropped, `limit` is kept.
+    expect(routeShape(`https://notis.fun/api/posts?author=${author}&limit=20`))
+      .toEqual({ path: '/posts', query: { author: '', limit: '20' } });
     // A mesh URL: the authority is the node id, dropped; the path is what the
     // request asks over the connection.
     expect(routeShape(`notis-mesh://${idHex}/blocks/current`))
       .toEqual({ path: '/blocks/current', query: {} });
+    // A malformed percent-escape in a value returns, not throws.
+    expect(routeShape('https://notis.fun/api/posts?after=%E0%A4%A&limit=10'))
+      .toEqual({ path: '/posts', query: { after: '', limit: '10' } });
   });
 });
 
