@@ -215,63 +215,73 @@ export function createDebugLog(deps: DebugLogDeps): DebugLog {
       }
       const batch = buffer.splice(0, buffer.length);
       const delta = batch.reduce((s, b) => s + b.size, 0);
-      return new Promise<void>((resolve) => {
-        let tx: IDBTransaction;
-        try {
-          tx = db!.transaction([EVENTS_STORE, META_STORE], 'readwrite');
-        } catch {
+      // WEB_INTERFACE → The extension → "The debug log" — the browser's
+      // refusals the write path absorbs are the transaction aborted
+      // (`onabort`, an `AbortError` or `QuotaExceededError` on the
+      // transaction's `error`) and no database to open; anything else
+      // reaches the caller (or the page's error handler, from inside a
+      // request callback).
+      return new Promise<void>((resolve, reject) => {
+        const tx = db!.transaction([EVENTS_STORE, META_STORE], 'readwrite');
+        let settled = false;
+        tx.onabort = (): void => {
+          if (settled) return;
+          settled = true;
           dropped += batch.length;
           resolve();
-          return;
-        }
-        let errored = false;
+        };
+        tx.onerror = (): void => {
+          if (settled) return;
+          const err = tx.error;
+          if (err === null) return;
+          const name = err.name;
+          if (name === 'AbortError' || name === 'QuotaExceededError') return;
+          settled = true;
+          reject(err);
+        };
+        tx.oncomplete = (): void => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
         const events = tx.objectStore(EVENTS_STORE);
         const meta = tx.objectStore(META_STORE);
         const getReq = meta.get(META_KEY);
         getReq.onsuccess = (): void => {
-          try {
-            const row = getReq.result as { key: string; bytes: number } | undefined;
-            const current = row !== undefined && typeof row.bytes === 'number' ? row.bytes : 0;
-            for (const b of batch) {
-              const stored: StoredEvent = {
-                t: b.event.t,
-                page: b.event.page,
-                kind: b.event.kind,
-                fields: b.event,
-                size: b.size,
-              };
-              events.add(stored);
-            }
-            let newTotal = current + delta;
+          const row = getReq.result as { key: string; bytes: number } | undefined;
+          const current = row !== undefined && typeof row.bytes === 'number' ? row.bytes : 0;
+          for (const b of batch) {
+            const stored: StoredEvent = {
+              t: b.event.t,
+              page: b.event.page,
+              kind: b.event.kind,
+              fields: b.event,
+              size: b.size,
+            };
+            events.add(stored);
+          }
+          let newTotal = current + delta;
+          if (newTotal <= boundBytes) {
+            meta.put({ key: META_KEY, bytes: newTotal });
+            return;
+          }
+          const cursorReq = events.openCursor();
+          cursorReq.onsuccess = (): void => {
             if (newTotal <= boundBytes) {
               meta.put({ key: META_KEY, bytes: newTotal });
               return;
             }
-            const cursorReq = events.openCursor();
-            cursorReq.onsuccess = (): void => {
-              if (newTotal <= boundBytes) {
-                meta.put({ key: META_KEY, bytes: newTotal });
-                return;
-              }
-              const c = cursorReq.result;
-              if (c) {
-                const victim = c.value as StoredEvent;
-                newTotal -= victim.size;
-                c.delete();
-                c.continue();
-              } else {
-                meta.put({ key: META_KEY, bytes: newTotal });
-              }
-            };
-            cursorReq.onerror = (): void => { errored = true; };
-          } catch {
-            errored = true;
-          }
+            const c = cursorReq.result;
+            if (c) {
+              const victim = c.value as StoredEvent;
+              newTotal -= victim.size;
+              c.delete();
+              c.continue();
+            } else {
+              meta.put({ key: META_KEY, bytes: newTotal });
+            }
+          };
         };
-        getReq.onerror = (): void => { errored = true; };
-        tx.oncomplete = (): void => { if (errored) dropped += batch.length; resolve(); };
-        tx.onerror = (): void => { dropped += batch.length; resolve(); };
-        tx.onabort = (): void => { dropped += batch.length; resolve(); };
       });
     });
   }

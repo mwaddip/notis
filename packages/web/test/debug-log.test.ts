@@ -202,18 +202,12 @@ describe('debug-log — clear', () => {
   });
 });
 
-describe('debug-log — a write the browser refuses', () => {
-  it('an aborted transaction drops the batch, counts the events dropped, rejects nothing', async () => {
-    const idb = new IDBFactory();
-    const t = fakeTimers();
-    const log = createDebugLog({
-      indexedDB: idb, now: clock().tick, pageId: PAGE,
-      boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: t,
-    });
-    // Force a quota: write enough bytes to exceed fake-indexeddb's limit by
-    // substituting a factory whose `transaction` throws a DOMException. We
-    // build it from the fake factory and spy on its database.
-    const real = idb;
+describe('debug-log — a transaction the browser aborts', () => {
+  it('each aborted batch drops exactly its events, counts them, rejects nothing', async () => {
+    const real = new IDBFactory();
+    // A factory whose database returns the real transaction and aborts it
+    // before it completes, so the module's `onabort` fires — the path a quota
+    // or an abort reaches in a browser.
     const factory = {
       open(name: string, version?: number): IDBOpenDBRequest {
         const req = real.open(name, version);
@@ -223,8 +217,11 @@ describe('debug-log — a write the browser refuses', () => {
           (db as unknown as { transaction: typeof db.transaction }).transaction = ((
             stores: string | string[], mode?: IDBTransactionMode,
           ) => {
-            if (mode === 'readwrite') throw new DOMException('QuotaExceededError', 'QuotaExceededError');
-            return origTx(stores, mode);
+            const tx = origTx(stores, mode);
+            // Abort through a microtask so the caller's requests queue
+            // first and `onabort` fires on an otherwise-active transaction.
+            if (mode === 'readwrite') queueMicrotask(() => tx.abort());
+            return tx;
           }) as typeof db.transaction;
         });
         return req;
@@ -233,20 +230,17 @@ describe('debug-log — a write the browser refuses', () => {
       databases: real.databases.bind(real),
       cmp: real.cmp.bind(real),
     } as unknown as IDBFactory;
-    const quota = createDebugLog({
+    const log = createDebugLog({
       indexedDB: factory, now: clock().tick, pageId: PAGE,
       boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: fakeTimers(),
     });
-    // These writes will be refused; nothing rejects.
-    quota.record('error', { message: 'x' });
-    await expect(quota.flush()).resolves.toBeUndefined();
-    quota.record('error', { message: 'y' });
-    await expect(quota.flush()).resolves.toBeUndefined();
-    const stats = await quota.stats();
-    expect(stats.dropped).toBeGreaterThan(0);
+    log.record('error', { message: 'x' });
+    await expect(log.flush()).resolves.toBeUndefined();
+    log.record('error', { message: 'y' });
+    await expect(log.flush()).resolves.toBeUndefined();
+    const stats = await log.stats();
+    expect(stats.dropped).toBe(2);
     expect(stats.events).toBe(0);
-    // Keep the two logs in the same test so the parent fake-indexeddb is used.
-    void log;
   });
 });
 
