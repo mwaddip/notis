@@ -241,4 +241,38 @@ describe('mesh client — the events sink over real libp2p', () => {
     expect(calls[0]!.asked, 'the ids asked').toBe(1);
     expect(calls[0]!.answered, 'the ids the provider found').toBe(1);
   }, 90_000);
+
+  it('diagnostics() over a real connection answers each open connection with the peer, address, direction, transport, path, limited flag, age and handshake', async () => {
+    const up = await chainUpstream(CHAIN); ups.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'ev-diag-')); dirs.push(dir);
+    const n = await startNetPublicMesh({ upstream: up.base, stateDir: dir }); nodes.push(n.node);
+    const client = await startMeshClient({
+      firstContact: [{ notisId: n.id, addrs: [n.webrtcAddr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-events',
+      resolve: chainResolve(() => CHAIN, K),
+    });
+    clients.push(client);
+    await client.check();
+
+    const d = client.diagnostics();
+    const forNode = d.connections.find((c) => c.peer === n.id);
+    expect(forNode, 'the node is one of the open connections').toBeTruthy();
+    expect(forNode!.peerKind).toBe('notis');
+    expect(forNode!.direction).toBe('outbound');
+    expect(forNode!.transport).toBe('webrtc-direct');
+    expect(forNode!.path).toBe('direct');
+    expect(forNode!.limited, 'webrtc-direct is unlimited').toBe(false);
+    expect(forNode!.ageMs, 'the age is a non-negative number').toBeGreaterThanOrEqual(0);
+    expect(forNode!.remoteAddr.length, 'the remote address is non-empty').toBeGreaterThan(0);
+    expect(forNode!.connId.length).toBeGreaterThan(0);
+    // The handshake verdict is one of the three; passed on a real node.
+    expect(forNode!.handshake.verdict).toBe('passed');
+    // gossip and iceServers read as structured values; no assertion
+    // on specific counts since they depend on live gossipsub state.
+    expect(d.gossip.meshPeers).toBeGreaterThanOrEqual(0);
+    expect(d.gossip.directPeers).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(d.iceServers)).toBe(true);
+  }, 60_000);
 });
