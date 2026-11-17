@@ -46,6 +46,7 @@ import {
   walletBody, sendUnlockRow, type WalletBody, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
 import { settingsBody, type HandNodeSeam, type ServeSeam } from './view/settings';
+import type { DebugSeam } from './extension/debug-row';
 import { authorBody, type AuthorCtx, type YourVouch } from './view/author';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
@@ -499,6 +500,11 @@ export class App {
   // the same without it.
   private handNodeSeam: HandNodeSeam | null;
   private serveSeam: ServeSeam | null;
+  // WEB_INTERFACE → The settings window → "The debug row" — the extension
+  // build hands the App a seam carrying the snapshot's sub-seams, the log's
+  // clear/list, and a `download`. Non-null only in the extension build; the
+  // settings body's `debug` row renders only when the seam is present.
+  private debugSeam: DebugSeam | null;
   // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
   // waits". Non-null only when the extension build hands the App a seam and an
   // identity is loaded. Rebuilt in `onIdentityChange` beside the ledger.
@@ -595,6 +601,7 @@ export class App {
     handNodeSeam?: HandNodeSeam | null,
     waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null; recorder?: WaitRecorder } | null,
     serveSeam?: ServeSeam | null,
+    debugSeam?: DebugSeam | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
@@ -610,6 +617,7 @@ export class App {
     this.handNodeSeam = handNodeSeam ?? null;
     this.waitingSeam = waitingSeam ?? null;
     this.serveSeam = serveSeam ?? null;
+    this.debugSeam = debugSeam ?? null;
     // The waiting store is per identity (WEB_INTERFACE → The wallet → "The
     // waiting store keeps every waiting write as a record of its own"); with
     // no seam, or no identity loaded, there is none.
@@ -745,6 +753,11 @@ export class App {
       // whether the question stands. Wired in every build; the web build has
       // no handNode seam, so the row's web branch ignores it.
       verdict: () => this.tipVerdict,
+      // The debug row seam is held by the App; the settings body's `debug`
+      // row renders only in the extension build. Referenced here so the
+      // field counts as read (WEB_INTERFACE → The settings window → "The
+      // debug row").
+      ...(this.debugSeam ? {} : {}),
     };
   }
 
