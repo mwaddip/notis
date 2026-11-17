@@ -477,6 +477,29 @@ describe('the settings window debug row', () => {
     expect(text).not.toContain('203.0.113.7');
   });
 
+  it('a node whose read took 6.199999988079071 ms reads 6 ms', async () => {
+    const node = {
+      notisId: KEY, addrs: [], api: 'https://node.example', status: 'candidate', readMs: 6.199999988079071,
+    } as unknown as NodeEntry;
+    const row = debugRow({
+      seam: makeDebugSeam(freshStub(), {
+        state: () => emptyState({ nodes: [node] }),
+        diagnostics: () => emptyDiagnostics(),
+      }),
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+    toggleWord(row).click();
+    await flush();
+    const text = row.querySelector('.debug-body')!.textContent ?? '';
+    expect(text).toContain(' · 6 ms');
+    expect(text).not.toContain('6.19');
+  });
+
   it('a node\'s copy control writes the whole 64-hex key to the clipboard', async () => {
     const writes: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {

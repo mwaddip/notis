@@ -237,7 +237,7 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
         ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`
         : node.api !== null ? node.api : 'not reached';
       line.appendChild(el('span', 'inkmute', ` · ${reach} · ${node.status}`));
-      if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${node.readMs} ms`));
+      if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${Math.round(node.readMs)} ms`));
       block.appendChild(line);
     }
     return block;
