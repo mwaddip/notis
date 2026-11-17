@@ -320,7 +320,11 @@ server that signs, no call home.
   needs a human — one at a time — as a popup the size and place of a wallet's: `windows.create({ type:
   'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
   of the last-focused browser window (`windows.getLastFocused`), under the toolbar; unplaced when that
-  geometry is unknown. It shows what is being signed, derived by the background from the transaction bytes
+  geometry is unknown. **Where the browser offers no `windows` API — Firefox for Android — the prompt is a tab**:
+  `tabs.create({ url, active: true })`, the tab's id held where the window's would be, its close read from
+  `tabs.onRemoved`, and every ending removing it and making the tab that asked active again; each rule of the prompt
+  that reads its window — its id in the record, its close as a decline, its removal — reads the tab there. The
+  background asks whether `windows` exists, never which browser it runs in. It shows what is being signed, derived by the background from the transaction bytes
   it was handed, never taken from the page. Approve signs; decline, Esc — wherever the focus stands in the window, its
   unlock form included — or closing the window is a decline; while an approval is under way Esc declines nothing.
   It is a surface, and every rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS`
@@ -335,6 +339,15 @@ server that signs, no call home.
 
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
+
+> ⚠ **AHEAD OF CODE (2026-11-17).** The background calls `windows` unguarded: on Firefox for Android a prompt opens
+> nothing and the sign answers `{ error }`, and the closed-window listener throws at every start. The prompt as a tab
+> (→ "The contexts, and what each may hold"), the raise below and the Android sentence in → "The manifest" lead the
+> code.
+
+**A raise focuses a window only where the browser offers `windows`**: the action button's, the landing's (→ "Both
+messages end in one act") and the prompt's each make the tab active, and focus its window where `windows` exists;
+the background listens for a closed window only there.
 
 **Permissions and policy, the whole list.** `storage` and `tabs`; the browser's default extension-page
 CSP, `script-src 'self'` — which is why the shell's theme script is a file the shell references and not
@@ -372,9 +385,9 @@ a minimum of Firefox 140, the `update_url` (→ "The Firefox build ships signed 
 `gecko_android` a minimum of 142. **140 is the first Firefox with the built-in consent for declared data**, and an
 add-on installable below it owes a consent screen of its own; 142 is the same release on Android, and the
 extension runs in Firefox for Android from it: a reader there posts, replies, likes and vouches, each signed silently
-under `don't ask` (the user, 2026-11-17, Waterfox for Android). A signature that needs the prompt window there is
-unmeasured: the window is a `windows.create` popup (→ "The contexts, and what each may hold"), and a browser that
-offers no `windows` API opens none.
+under `don't ask` (the user, 2026-11-17, Waterfox for Android). A signature that needs the prompt opens it as a
+tab there, since Firefox for Android offers no `windows` API (→ "The contexts, and what each may hold"; the user's
+credits send, 2026-11-17).
 `optional_host_permissions` (from 128) and content-script hosts granted at install (past 127) both hold at 140.
 The id and the `update_url` are constants of the emitter's Firefox overlay, the same in every build.
 **`optional_host_permissions` is written by the emitter**, for both browsers, from the build's faucet base: the
