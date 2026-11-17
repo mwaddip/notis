@@ -9,23 +9,10 @@
  *  serialised sizes. */
 export const DEBUG_LOG_BYTES = 2_000_000;
 
-/** WEB_INTERFACE → The extension → "The debug log" — the kinds the log
- *  records. This run fills `cleared` and `error`; the others are stubs for
- *  later runs and never written yet. */
-export type DebugEventKind =
-  | 'start'
-  | 'mesh'
-  | 'req'
-  | 'write'
-  | 'sign'
-  | 'waiting'
-  | 'tip'
-  | 'figures'
-  | 'names'
-  | 'console'
-  | 'cleared'
-  | 'error'
-  | 'page';
+/** WEB_INTERFACE → The extension → "The debug log" — a kind is the class of
+ *  event the log stores a record under. The kinds other code records join the
+ *  union with the code that records them. */
+export type DebugEventKind = 'cleared' | 'error';
 
 /** One recorded event. `t` is the clock at the record, `page` the page id
  *  drawn at load; the other fields belong to the kind. */
