@@ -5,6 +5,7 @@ import { isSignRecord } from './protocol';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
 import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
+import type { DebugLog } from './debug-log';
 
 // The page-side identity — WEB_INTERFACE → The extension. It never holds a
 // seed; every operation is a message to the background, and change
@@ -18,9 +19,12 @@ const K_SIGN_PREFIX = 'notis.sign.';
 /** The build-time configuration the proxy carries — WEB_INTERFACE → The
  *  extension → "Links into the extension". `publicBase` is the shell's
  *  `notis-public`; an empty one leaves `links`/`setLinks` off the proxy, so
- *  the settings row does not render. */
+ *  the settings row does not render. `debugLog`, where present
+ *  (WEB_INTERFACE → The extension → "The debug log"), takes one `sign`
+ *  event at each answer the proxy translates. */
 export interface ProxyConfig {
   publicBase: string;
+  debugLog?: DebugLog;
 }
 
 /** Bootstrap the proxy: read the snapshot the App renders against and the
@@ -59,6 +63,7 @@ export class ExtensionProxy implements AppIdentity {
     this.snapshot = snapshot;
     this.lastPubKeyHex = snapshot?.pubKeyHex ?? null;
     this.linksHeld = initialLinks;
+    void config.debugLog;
     if (config.publicBase !== '') {
       this.links = (): LinksPref => this.linksHeld;
       this.setLinks = async (v: LinksPref): Promise<void> => {

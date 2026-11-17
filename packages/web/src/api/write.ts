@@ -174,6 +174,28 @@ function readClaimResult(data: unknown): ClaimSubmitResult | null {
   return { txId, status, expiresAtHeight, name };
 }
 
+/** The walk's ending, passed to the observer the extension build hands
+ *  (WEB_INTERFACE → The extension → "The debug log"). `url` is the last
+ *  request's URL, or `''` where the order held nothing to send to; `tried`
+ *  the count of bases reached (0 when empty); `status` is the HTTP status
+ *  the walk ended on, or `0` on a transport failure; `message` the
+ *  rejection's words where one holds; `noAnswer` is `true` once the loop is
+ *  exhausted; `txId` the 64 hex the 2xx or the rejection body carries,
+ *  where it does. */
+export interface WriteEnding {
+  url: string;
+  tried: number;
+  status: number;
+  message?: string;
+  noAnswer: boolean;
+  txId?: string;
+}
+
+/** The observer the extension build hands to the write client — one call per
+ *  walk's ending (WEB_INTERFACE → The extension → "The debug log"). The web
+ *  build hands none. */
+export type WriteObserver = (ending: WriteEnding) => void;
+
 export class WriteClient {
   // The bases are read fresh on every send, never captured — the extension
   // hands the client's node order, the web build its one node's base
@@ -182,9 +204,10 @@ export class WriteClient {
   // is the caller's, taken once.
   private readonly bases: () => string[];
   private readonly httpFetch: HttpFetch;
-  constructor(opts: { bases: () => string[]; fetch: HttpFetch }) {
+  constructor(opts: { bases: () => string[]; fetch: HttpFetch; observer?: WriteObserver }) {
     this.bases = opts.bases;
     this.httpFetch = opts.fetch;
+    void opts.observer;
   }
 
   submitPost(tx: Record<string, unknown>, content: string): Promise<PostSubmitResult | Rejection> {

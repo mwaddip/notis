@@ -52,12 +52,34 @@ export interface WaitingWrite {
  *  as a record of its own"). */
 export type WaitingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
 
+/** One moment of a waiting write a recorder takes
+ *  (WEB_INTERFACE → The extension → "The debug log" — "each waiting write
+ *  stored, and each outcome of the send pass"). `queued` is the store's
+ *  write of a new record; the four outcomes are the send pass's (→ The
+ *  wallet → "Waiting writes go out at the first answer",
+ *  → "A refusal ends what it strands"), and `no answer` the write the walk
+ *  stopped at (`flush.ts`). */
+export interface WaitEvent {
+  outcome: 'queued' | 'sent' | 'refused' | 'unsent' | 'no answer';
+  kind: WaitingKind;
+  ledger: WaitingLedger;
+  txId: string;
+  message?: string;
+  cause?: 'chain' | 'behind-refused';
+}
+
+/** The recorder the extension build hands the waiting store and the flush
+ *  pass (WEB_INTERFACE → The extension → "The debug log"). The web build
+ *  hands none and nothing is recorded. */
+export type WaitRecorder = (event: WaitEvent) => void;
+
 /** `recordBase` and the views need the key the record names, so the store
  *  reads this seam rather than importing a type that would bring in the view
  *  reads. */
 interface Deps {
   storage: WaitingStorage;
   locks: LockManager;
+  recorder?: WaitRecorder;
 }
 
 // Storage keys — WEB_INTERFACE → The wallet → "The waiting store keeps every
@@ -271,6 +293,7 @@ export class WaitingStore {
     this.seqKey = this.ns + K_SEQ;
     this.storage = deps.storage;
     this.locks = deps.locks;
+    void deps.recorder;
   }
 
   /** Every read-then-write of the store runs inside one exclusive lock

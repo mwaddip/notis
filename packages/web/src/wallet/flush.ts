@@ -17,7 +17,7 @@ import type {
 } from '../api/write';
 import type { PendingLedger } from './ledger';
 import type { PendingEntry } from './types';
-import type { WaitingLedger, WaitingStore, WaitingWrite } from './waiting';
+import type { WaitingLedger, WaitingStore, WaitingWrite, WaitRecorder } from './waiting';
 
 /** The three endings of a waiting write in a flush (WEB_INTERFACE → The
  *  wallet → "Waiting writes go out at the first answer", → "A refusal ends
@@ -43,6 +43,11 @@ export interface FlushDeps {
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitSend'>;
   chain(): string | null;
   tip(): number | null;
+  /** The recorder the extension build hands (WEB_INTERFACE → The extension
+   *  → "The debug log"). The pass calls it with each write's outcome —
+   *  `sent`, `refused`, `unsent` (with its cause) — and with `no answer`
+   *  for the write the walk stopped at. The web build hands none. */
+  recorder?: WaitRecorder;
 }
 
 type AnyAnswer =

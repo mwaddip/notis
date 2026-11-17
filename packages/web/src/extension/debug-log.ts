@@ -25,7 +25,10 @@ export type DebugEventKind =
   | 'request'
   | 'request-body'
   | 'serving-stream'
-  | 'serving-call';
+  | 'serving-call'
+  | 'write'
+  | 'sign'
+  | 'wait';
 
 /** One recorded event. `t` is the clock at the record, `page` the page id
  *  drawn at load; the other fields belong to the kind. */
