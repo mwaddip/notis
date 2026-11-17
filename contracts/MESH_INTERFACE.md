@@ -362,9 +362,10 @@ shown, never acted on.
 a check's end — its number, its time, the tip, the agreement counts, the proofs read and each node's event in the table
 above; a gossiped block weighed — its height, its source and what became of it: it extended the chain, forked, left a
 gap, was held under a question, came before a chain settled, was refused with the lie's detail, or was ignored; a
-request settled — its URL, its route, the status or the failure's kind, the bytes and the time, and over the mesh the
-id, transport and path of the connection its stream opened on, which only the client knows (→ "A read opens no
-connection"); a serving stream — the node and the connection — and each call of the provider, by the counts of the ids
+request answered or failed — its number, its URL, its route, the status or the failure's kind and the time to the
+answer's head, and over the mesh the id, transport and path of the connection its stream opened on, which only the
+client knows (→ "A read opens no connection"); an answer's body read to its end — the request's number, its bytes and
+its time, which a body no caller reads never reports; a serving stream — the node and the connection — and each call of the provider, by the counts of the ids
 asked and answered (→ Block gossip → "A client that serves answers the nodes it reads"). **It answers its diagnostics
 when asked**: each open connection — the peer, the remote address, the direction, the transport, the path, its age,
 its handshake's verdict — the ordering-block topic's mesh and direct peers, and the ICE servers it dials with. A client
