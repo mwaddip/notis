@@ -353,6 +353,23 @@ monotonic clock, so a clock that steps never holds a node out or retries it at o
 **An entry keeps its last failure's kind and message**, for the page to show why a node is in `retry`; the message is
 shown, never acted on.
 
+> ⚠ **AHEAD OF CODE (2026-11-17).** The client takes no event sink and answers no diagnostics; its one report is the
+> `log` line of an unexpected throw. The rule below leads the code (board AQ1).
+
+**The client reports what it does.** A client handed an event sink tells it each of these as it happens: a dial's end
+— the node, each address's outcome and the time it took; a connection opened or closed — the peer, its transport
+(WebRTC-direct, WebRTC over a relay, the secure WebSocket) and path, its direction; a handshake's verdict and reason;
+a check's end — its number, its time, the tip, the agreement counts, the proofs read and each node's event in the table
+above; a gossiped block weighed — its height, its source and what became of it: it extended the chain, forked, left a
+gap, was held under a question, came before a chain settled, was refused with the lie's detail, or was ignored; a
+request settled — its URL, its route, the status or the failure's kind, the bytes and the time, and over the mesh the
+id, transport and path of the connection its stream opened on, which only the client knows (→ "A read opens no
+connection"); a serving stream — the node and the connection — and each call of the provider, by the counts of the ids
+asked and answered (→ Block gossip → "A client that serves answers the nodes it reads"). **It answers its diagnostics
+when asked**: each open connection — the peer, the remote address, the direction, the transport, the path, its age,
+its handshake's verdict — the ordering-block topic's mesh and direct peers, and the ICE servers it dials with. A client
+handed no sink reports nothing, and what it reports moves nothing it decides.
+
 **Retry.** After the `n`th failure in a row, a node is next tried after a wait drawn uniformly between half and the
 whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`, on a monotonic clock. The draw spreads the clients that failed at
 one instant — a node's restart drops every reader at once — across half the wait, so they do not return at one instant

@@ -355,8 +355,9 @@ credits send, both required; the public key rides each of them, each read as `vi
 of the posts a list names and the reader lacks go to the nodes in turn, with no key beside them (→ "The resolve"); the
 reader's handshake carries a height and a key made for the page, never the reader's (`NET_INTERFACE → Readers`), and
 the page forwards the ordering-block gossip and asks the nodes it holds for others (`MESH_INTERFACE → Block gossip`,
-`→ Discovery`); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. An
-`update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
+`→ Discovery`); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. The debug log stays at the page's origin, and a debug file
+leaves the browser only by the reader's own save or copy (→ "The debug log"), so what Firefox is told of is unchanged.
+An `update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
 the action with no popup, the permissions above, the bridge as the one `content_scripts` entry — emitted when
@@ -378,6 +379,12 @@ origin with the port dropped and `/*`, by the module that derives the bridge's m
 base.
 **The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
 they are; the bridge is built the same way.
+**The build carries its commit.** The extension build writes the commit it was built from into the bundle, beside the
+repository's version, which the manifest carries alone, since a manifest's version is numbers: forty lowercase hex,
+`-dirty` appended where a tracked file differs from the commit. **A build from `git archive` names the same commit as a
+build from a checkout**: a tracked file holds `$Format:%H$` under `export-subst`, which the archive expands, and a
+checkout takes `git rev-parse HEAD` where the file still holds the placeholder — so a rebuild from the source archive
+equals the release's files (→ "The Firefox build ships signed as well"). The web build carries no commit.
 
 **The seed list, the faucet's base and the network's name** are the per-network facts the build carries, all in the
 shell (→ The client is served from the node's own origin): `notis-nodes`, testnet's two nodes — notis.fun's and
@@ -432,7 +439,8 @@ and is reached at its base alone (→ The faucet step).
 **The mesh client's faults reach the page's console.** The extension hands its mesh client a log that writes each line
 to the page's console as an error: a check that threw, a state listener that threw, an accepted gossiped block with no
 value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
-log logs nothing, so the extension never starts one without it.
+log logs nothing, so the extension never starts one without it. Each line is also an error event in the debug log
+(→ "The debug log").
 
 **Every answer is read under its route's cap.** Each read the light client makes — `@dagsocial/nipopow-client`'s,
 which the command line and the extension both run — and the resolve's batch read (→ "The resolve") is read, over the
@@ -811,6 +819,66 @@ recently seen first and the reader's own never, and a put that still does not fi
 dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
 permission, and it is the extension build's alone.
 
+> ⚠ **AHEAD OF CODE (2026-11-17).** No debug log, snapshot, debug file or `debug` row exists; the extension build carries
+> no commit and the mesh client reports nothing (`MESH_INTERFACE → The client's node list → "The client reports what it
+> does"`). This passage leads the code, with → "The build carries its commit", the debug log's line in → "Permissions and
+> policy, the whole list" and in → "The mesh client's faults reach the page's console", the two debug names in → "The
+> build check that keeps the web bundle honest", → The settings window → "The debug row", `CONSTANTS → Client
+> defaults`' `DEBUG_LOG_BYTES` row and `HOUSE_STYLE → Interaction`'s debug values.
+
+**The debug log.** The extension keeps a record of what its pages did, for whoever reads a report of a fault, in
+IndexedDB at the page's own origin: the database `notis.debug`, apart from `localStorage`, which holds the waiting
+writes a full log must never crowd out. **It records always**, from a page's load, since the fault it is read for is
+the one nobody expected. **Every page of the extension writes to the one log**, each event carrying the page's id —
+eight hex drawn at load — beside its wall-clock time and its kind. **The background writes nothing**: every outcome it
+decides reaches a page as an answer (→ "Every message is answered"), and the page records it, so the context that
+holds the seed is outside the log's path. **A page writes its events in batches**, and at once when it is hidden
+(`visibilitychange`) and at `pagehide`; a page the browser ends loses what it held since its last write.
+
+**What the log records**: a page's start — the version, the commit, the network, the browser's user agent; each of
+the mesh client's reports (`MESH_INTERFACE → The client's node list → "The client reports what it does"`) — a dial's
+end, a connection opened or closed, a handshake's verdict, a check's end, a gossiped block weighed, a request settled
+with its route and, over the mesh, the transport and path of its connection, a serving stream and its counts; a
+write's walk from the press to its ending, each node it tried a request of its own (→ "The mesh is the extension's
+first path"); each `sign` answer the page reads, with the policy in force (→ "`sign`, in the background, in order");
+each waiting write stored, and each outcome of the send pass, a walk no node answered among them (→ The wallet →
+"Waiting writes go out at the first answer"); each tip, figures and names run's ending; each line the mesh client logs
+(→ "The mesh client's faults reach the page's console"); and each error and unhandled rejection the page raises.
+
+**What the log never holds**: the seed, the passphrase, the identity file, a post's text, a signed transaction's bytes
+— and **what the reader reads**. A request is recorded by its route's shape: each variable path segment becomes its
+parameter's name (`/posts/:id/thread`, `/usernames/:name`) and each query value is dropped but those of `limit`,
+`light`, `pending` and `tx`, so no post, thread or author the reader opened is in the log. The reader's own writes
+keep their transaction ids.
+
+**Size**: `DEBUG_LOG_BYTES` (`CONSTANTS → Client defaults`) over the events' serialised sizes, the total kept in a
+record of its own written with every write and eviction — a write past it evicts the oldest events first. **`clear
+log`** (→ The settings window → "The debug row") deletes every event and zeroes the total in one transaction, then
+records that it did. Where the browser gives the page no IndexedDB the extension runs without a log and says so in
+the row.
+
+**The snapshot** is what a page holds at one moment, taken at the debug row's `show` and at each `refresh`: the build —
+version, commit, network, user agent; the settings — serve, links, the sign policy, the hand-added node and whether it
+is off; the mesh client's state, each node entry as the client keeps it, and the client's diagnostics — each open
+connection, the gossip topic's mesh and direct peers, the ICE servers (`MESH_INTERFACE → The client's node list → "The
+client reports what it does"`); the reader — whether an identity is loaded and unlocked, the public key, the name, each
+pending entry's kind, transaction id, expiry and stage, and each waiting write's kind, transaction id, sequence, ledger
+and chain, never its bytes; the post cache — its database's name, its entries, its bytes, the reader's own, those kept
+before a chain is named; the last tip, figures and names runs; and the log — its events, its bytes, its oldest event's
+time. **A snapshot is a copy**: nothing in it moves until the next `refresh`.
+
+**The debug file** is the snapshot and every event, oldest first, as one JSON document — `format` `notis-debug/1`,
+`savedAt`, whether the identifying values are in it, `snapshot`, `events` — saved by the reader as
+`notis-debug-<YYYYMMDD-HHMMSS>.json`. **The identifying values** are the reader's public key, the reader's name, the
+transaction, box and post ids of the reader's own writes, the hand-added node's key and address, and the address a node
+observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
+the key's as much as the key is. **Unless the reader ticks the box beside `save as file`, each is replaced by a
+placeholder** naming its class and a number — `key-1`, `tx-3` — one value one placeholder throughout the file, so the
+file still shows which entries are one thing. **The replacement is by value**: every string in the document is searched
+for every identifying value the snapshot holds, so a field no rule names carries none of them out.
+
+**The log, the snapshot and the file take no permission**, and they are the extension build's alone.
+
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
 (`TYPES_INTERFACE → Layout — UtxoTransaction`), so the read is output-side by necessity, and it is
@@ -949,7 +1017,7 @@ preference.
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference, none of the verifiers' request paths — `nipopow/proof`, the tip's; `api/v1/proof`, the figures' and
 the names'; `api/v1/range`, the figures' — no `posts/batch`, the resolve's, no `notis.posts.`, the post cache's
-name, and no mesh — no `notis-mesh://`, no `webrtc-direct`, no `/meshsub/`, the mesh client's and libp2p's — in a build
+name, no `notis.debug`, the debug log's, no `notis-debug/1`, the debug file's format, and no mesh — no `notis-mesh://`, no `webrtc-direct`, no `/meshsub/`, the mesh client's and libp2p's — in a build
 that is handed no verifier.
 `build-release.sh` checks each, and that the shell's `notis-network` is empty; `build-extension.sh` checks the
 extension's shell has no inline
@@ -960,7 +1028,8 @@ carries none, both manifests' `optional_host_permissions` is the pattern the bui
 absent under an empty base — and the package's own `web-ext` (→ "The Firefox build ships signed as well") lints the
 Firefox stage clean with `--self-hosted`; without the flag the lint reads the manifest as a listed add-on's, where an
 `update_url` is an error. It checks the shell's `notis-network` at the build's value too, and refuses a name no network
-profile answers to.
+profile answers to, and a commit that is not forty lowercase hex, with or without `-dirty` (→ "The build carries its
+commit").
 
 **Every pull request runs both build checks.** The ci workflow's `@dagsocial/web` job runs `build-release.sh` and
 `build-extension.sh` after the package's tests, as the release workflow's linux job does, so a module both builds share
@@ -2053,6 +2122,7 @@ node            the node this client reads — blank resets to the build's
 sign each rep action · don't ask / ask — in the extension only (→ The extension)
 a Notis link opens · on the site / here — in the extension only (→ The extension)
 serve posts · off / on — in the extension only (→ The extension)
+debug           show / hide — in the extension only (→ The extension → "The debug log")
 ```
 
 **The `theme` row is the phone's theme control**: at one column the workspace header carries none
@@ -2089,6 +2159,19 @@ other value or none off — with or without an identity. While on, a hint stands
 may ask it for posts, and learn which ones you hold and your address.* A press that changes it redials every node at
 once, and the row reads the choice as the press left it. It renders only where the build hands the client a way to
 serve — the extension, which holds a post cache — so the web build has no such row.
+
+**The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
+press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person
+glances at — the build and its commit; each node, how it is reached (its transport and path, or its API base), its
+standing and its read time; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
+its bound — then the box *include my key, name and transaction ids* with `save as file`, `clear log`, and `refresh`,
+which takes the snapshot again. **Each value is a copy control**, the key row's pattern (→ The profile window → "The
+key is a control, and a press copies it"): a press copies the value the snapshot shows, whatever the box says — the
+reader sees what they copy — `copied` follows it muted until the window is next drawn, and where the clipboard refuses
+it the value stands as selectable mono text followed by *— copy it by hand*. `clear log` asks in place — *clear the
+log?* with `clear` and `keep`, focus on `keep`, Esc keeps — as `forget` does. Machine data is mono
+(`HOUSE_STYLE → Typography`). It renders only where the build hands the client a debug log — the extension — so the web
+build has no such row.
 
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).
