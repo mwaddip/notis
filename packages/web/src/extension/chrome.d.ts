@@ -73,6 +73,7 @@ declare namespace chrome {
     function update(tabId: number, props: { active?: boolean; url?: string }): Promise<Tab>;
     function create(props: { url: string; active?: boolean }): Promise<Tab>;
     function remove(tabId: number): Promise<void>;
+    function get(tabId: number): Promise<Tab>;
     interface OnRemovedEvent {
       addListener(listener: (tabId: number) => void): void;
     }

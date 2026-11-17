@@ -63,9 +63,16 @@ export interface FakeChrome {
   tabs: {
     queried: Array<{ url?: string | string[] }>;
     updated: Array<[number, { active?: boolean; url?: string }]>;
-    created: Array<{ url: string }>;
+    created: Array<{ url: string; active?: boolean }>;
     removed: number[];
     setQueryResult(result: chrome.tabs.Tab[]): void;
+    /** Close a tab the browser opened without firing `onRemoved` — the tab
+     *  the browser dropped while no worker ran (WEB_INTERFACE → The extension →
+     *  "The contexts, and what each may hold"). `tabs.get` on this id rejects. */
+    closeSilently(id: number): void;
+    /** True for a tab the fake opened through `tabs.create` that has not been
+     *  removed — the set `tabs.get` currently answers over. */
+    isOpen(id: number): boolean;
   };
   permissions: {
     requested: Array<{ origins?: string[]; permissions?: string[] }>;
@@ -82,6 +89,13 @@ export interface FakeChromeOptions {
    *  stays open to the bridge's process. The default is Chrome's shape, where
    *  the method is present and each call is recorded. */
   firefoxShape?: boolean;
+  /** A browser whose `windows` API is absent — the shape Firefox for Android
+   *  presents. The `windows` field is left off the api entirely, so
+   *  `typeof api.windows === 'undefined'`; callers that ask whether the API
+   *  exists read false (WEB_INTERFACE → The extension → "The contexts, and
+   *  what each may hold"; → "A raise focuses a window only where the browser
+   *  offers `windows`"). The default includes the API. */
+  noWindows?: boolean;
 }
 
 /** Build a fake chrome API. Two instances built with the same `fixture` share
@@ -129,7 +143,10 @@ export function fakeChrome(
       openWindowIds.delete(windowId);
       for (const l of onWindowRemovedListeners) l(windowId);
     },
-    fireTabRemoved: (tabId) => { for (const l of onTabRemovedListeners) l(tabId); },
+    fireTabRemoved: (tabId) => {
+      openTabIds.delete(tabId);
+      for (const l of onTabRemovedListeners) l(tabId);
+    },
     windows: {
       created: [],
       removed: [],
@@ -146,6 +163,8 @@ export function fakeChrome(
       created: [],
       removed: [],
       setQueryResult: (result) => { queryResult = result; },
+      closeSilently: (id) => { openTabIds.delete(id); },
+      isOpen: (id) => openTabIds.has(id),
     },
     permissions: {
       requested: [],
@@ -174,6 +193,12 @@ export function fakeChrome(
   // reads a vanished window through that rejection (WEB_INTERFACE → The
   // extension → "`sign`, in the background, in order").
   const openWindowIds = new Set<number>();
+  // The ids `tabs.create` has opened and that have not been removed — the
+  // set `tabs.get` answers over, for the pre-prompt check on the no-windows
+  // shape where the record holds a tab's id (WEB_INTERFACE → The extension →
+  // "The contexts, and what each may hold"). `fireTabRemoved`, `tabs.remove`
+  // and `closeSilently` all leave the set.
+  const openTabIds = new Set<number>();
   // The error the next `windows.create` throws; cleared after the one throw.
   let nextCreateThrow: Error | undefined;
 
@@ -237,7 +262,43 @@ export function fakeChrome(
       : {}),
   });
 
-  const api: typeof chrome = {
+  // The `windows` surface the shape offers — omitted entirely for the
+  // `noWindows` shape, so `api.windows` reads as undefined. The default
+  // keeps the Chrome and Firefox desktop shape.
+  const windowsApi = options.noWindows === true ? undefined : {
+    async create(props: chrome.windows.CreateProps): Promise<chrome.windows.Window> {
+      if (nextCreateThrow !== undefined) {
+        const err = nextCreateThrow;
+        nextCreateThrow = undefined;
+        throw err;
+      }
+      state.windows.created.push(props);
+      const id = nextWindowId++;
+      openWindowIds.add(id);
+      return { id };
+    },
+    async update(id: number, props: { focused?: boolean }): Promise<chrome.windows.Window> {
+      state.windows.focused.push([id, props]);
+      return {};
+    },
+    async remove(id: number): Promise<void> {
+      state.windows.removed.push(id);
+      openWindowIds.delete(id);
+    },
+    async get(id: number): Promise<chrome.windows.Window> {
+      if (!openWindowIds.has(id)) throw new Error('No window with id: ' + id);
+      return { id };
+    },
+    async getLastFocused(): Promise<chrome.windows.Window> {
+      if (lastFocused === null) throw new Error('no last-focused window');
+      return lastFocused;
+    },
+    onRemoved: {
+      addListener(listener: (id: number) => void) { onWindowRemovedListeners.push(listener); },
+    } as unknown as chrome.windows.OnRemovedEvent,
+  };
+
+  const api = {
     runtime: {
       onMessage: {
         addListener(listener: (message: unknown, sender: chrome.runtime.MessageSender, sendResponse: (v?: unknown) => void) => boolean | void) {
@@ -276,67 +337,53 @@ export function fakeChrome(
       } as unknown as chrome.storage.OnChangedEvent,
     },
     tabs: {
-      async query(info) {
+      async query(info: { url?: string | string[] }): Promise<chrome.tabs.Tab[]> {
         state.tabs.queried.push(info);
         return queryResult;
       },
-      async update(tabId, props) {
+      async update(tabId: number, props: { active?: boolean; url?: string }): Promise<chrome.tabs.Tab> {
         state.tabs.updated.push([tabId, props]);
         return { id: tabId };
       },
-      async create(props) {
-        state.tabs.created.push({ url: props.url });
-        return { id: nextWindowId++, url: props.url };
+      async create(props: { url: string; active?: boolean }): Promise<chrome.tabs.Tab> {
+        // `active` is recorded only when the caller passed it, so an existing
+        // call that passes { url } alone keeps its one-field entry.
+        state.tabs.created.push(
+          props.active !== undefined ? { url: props.url, active: props.active } : { url: props.url },
+        );
+        const id = nextWindowId++;
+        openTabIds.add(id);
+        return { id, url: props.url };
       },
-      async remove(tabId) {
+      async remove(tabId: number): Promise<void> {
         state.tabs.removed.push(tabId);
+        openTabIds.delete(tabId);
+      },
+      async get(tabId: number): Promise<chrome.tabs.Tab> {
+        if (!openTabIds.has(tabId)) throw new Error('No tab with id: ' + tabId);
+        return { id: tabId };
       },
       onRemoved: {
         addListener(listener: (tabId: number) => void) { onTabRemovedListeners.push(listener); },
       } as unknown as chrome.tabs.OnRemovedEvent,
     },
-    windows: {
-      async create(props) {
-        if (nextCreateThrow !== undefined) {
-          const err = nextCreateThrow;
-          nextCreateThrow = undefined;
-          throw err;
-        }
-        state.windows.created.push(props);
-        const id = nextWindowId++;
-        openWindowIds.add(id);
-        return { id };
-      },
-      async update(id, props) { state.windows.focused.push([id, props]); return {}; },
-      async remove(id) { state.windows.removed.push(id); openWindowIds.delete(id); },
-      async get(id) {
-        if (!openWindowIds.has(id)) throw new Error('No window with id: ' + id);
-        return { id };
-      },
-      async getLastFocused() {
-        if (lastFocused === null) throw new Error('no last-focused window');
-        return lastFocused;
-      },
-      onRemoved: {
-        addListener(listener: (id: number) => void) { onWindowRemovedListeners.push(listener); },
-      } as unknown as chrome.windows.OnRemovedEvent,
-    },
+    ...(windowsApi !== undefined ? { windows: windowsApi } : {}),
     action: {
       onClicked: {
         addListener(listener: (t: chrome.tabs.Tab) => void) { onActionClickedListeners.push(listener); },
       } as unknown as chrome.action.OnClickedEvent,
     },
     permissions: {
-      async request(perms) {
+      async request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean> {
         state.permissions.requested.push(perms);
         return nextRequestOutcome;
       },
-      async contains() { return false; },
+      async contains(): Promise<boolean> { return false; },
     },
     extension: {
       inIncognitoContext: false,
     },
-  };
+  } as unknown as typeof chrome;
 
   state.api = api;
   return state;
