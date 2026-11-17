@@ -383,7 +383,7 @@ describe('the settings window debug row', () => {
     clearWord.click();
     await flush();
     expect(stub.clears).toBe(1);
-    // the log line re-reads as 0 events now that the stub's events are empty.
+    // the log line re-reads as 0 events once the stub's events are empty.
     expect(debugBody(row)!.textContent).toMatch(/0 events/);
   });
 
