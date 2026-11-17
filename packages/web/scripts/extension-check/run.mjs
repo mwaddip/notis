@@ -9942,9 +9942,46 @@ async function runMeshStepM1(bcx) {
       return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
     }).length;
     const reportAfter = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
+    // Settings → debug row → `show`: the nodes block names each node by its
+    // shortened key and how it is reached — a mesh connection reads
+    // `<transport> · <path>`, so A' and B' each read `webrtc-direct ·
+    // direct` (WEB_INTERFACE → The settings window → "The debug row"). The
+    // press is `btn.click()` inside `cx.eval(..., true)` — the settings-row
+    // press pattern `setLinksPrefViaUi` uses.
+    await page.cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+    await page.cx.waitFor(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      return !!row && row.querySelector('label')?.textContent === 'debug';
+    })()`, 'settings debug row m1', 10000);
+    await page.cx.eval(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'show');
+      btn.click();
+    })()`, true);
+    await page.cx.waitFor(`!!document.querySelector('.row.debug-row .debug-lines')`, 'debug lines m1', 10000);
+    // Match each node's line by its key's shortening — `shortHex(hex, 16)`
+    // in `dom.ts`: the first 16 hex characters and the ellipsis.
+    const apShort = meshNodes.ap.identity.notisId.slice(0, 16);
+    const bpShort = meshNodes.bp.identity.notisId.slice(0, 16);
+    const nodeLines = await page.cx.eval(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      if (!row) return [];
+      const heads = [...row.querySelectorAll('.debug-block .debug-head')];
+      const nodesHead = heads.find((h) => h.textContent === 'nodes');
+      if (!nodesHead) return [];
+      const block = nodesHead.parentElement;
+      return [...block.querySelectorAll('.debug-line')].map((l) => ({
+        copy: l.querySelector('.debug-copy')?.textContent ?? null,
+        rest: [...l.querySelectorAll('.inkmute')].map((s) => s.textContent).join(''),
+      }));
+    })()`);
+    const apLine = nodeLines.find((l) => typeof l.copy === 'string' && l.copy.startsWith(apShort));
+    const bpLine = nodeLines.find((l) => typeof l.copy === 'string' && l.copy.startsWith(bpShort));
+    const apReachOk = typeof apLine?.rest === 'string' && apLine.rest.includes('webrtc-direct · direct');
+    const bpReachOk = typeof bpLine?.rest === 'string' && bpLine.rest.includes('webrtc-direct · direct');
     record('M1',
-      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0,
-      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")`);
+      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0 && apReachOk && bpReachOk,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"), debug row A' (${apShort}…): ${JSON.stringify(apLine?.rest ?? null)} (expect "webrtc-direct · direct"), debug row B' (${bpShort}…): ${JSON.stringify(bpLine?.rest ?? null)}`);
   } catch (e) {
     record('M1', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
