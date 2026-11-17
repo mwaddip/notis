@@ -32,6 +32,7 @@ import { decodeNipopowProof } from '@dagsocial/nipopow';
 import type { MeshClient, MeshContact, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import type { PostTextProvider } from '@dagsocial/net/browser';
+import type { DebugLog } from './debug-log.js';
 export type { StorageLike };
 import type {
   FiguresVerifier,
@@ -249,6 +250,15 @@ export interface StartExtensionMeshOptions {
    * `startMeshClient`.
    */
   postTexts: PostTextProvider;
+  /**
+   * WEB_INTERFACE → The extension → "The debug log" — the page's own log.
+   * The start builds the mesh client's events sink over it, tees the mesh
+   * client's log lines through it as `error` events, and wraps the three
+   * verifiers so a run's ending records a `verdict` event. Optional in
+   * this scaffold; `main.ts` and the test cases that drive the behaviour
+   * pass one, and the behaviour lands with the cases.
+   */
+  debugLog?: DebugLog;
 }
 
 export async function startExtensionMesh(

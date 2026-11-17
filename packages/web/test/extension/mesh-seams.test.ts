@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
-import type { PostCheck } from '@dagsocial/nipopow-client';
-import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshContact, StartMeshClientOptions } from '../../src/mesh/index.js';
+import { IDBFactory } from 'fake-indexeddb';
+import type { Anchor, NameClaim, PostCheck } from '@dagsocial/nipopow-client';
+import type { BlockHeader } from '@dagsocial/types';
+import type { MeshClient, ClientState, ClientTraffic, ReadNeed, MeshContact, StartMeshClientOptions, MeshEvent } from '../../src/mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import type { PostTextProvider } from '@dagsocial/net/browser';
 import { createMeshSeams, startExtensionMesh, parseHandNodeAddress, type StorageLike } from '../../src/extension/mesh-seams.js';
 import { HAND_NODE_KEY, SERVE_KEY } from '../../src/extension/storage-keys.js';
+import { createDebugLog, type DebugLog, type DebugTimerHandle, type DebugTimers } from '../../src/extension/debug-log.js';
 
 const emptyPostTexts: PostTextProvider = async () => new Map<string, string>();
 
@@ -471,5 +474,278 @@ describe('startExtensionMesh — the lifecycle', () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+});
+
+// WEB_INTERFACE → The extension → "The debug log" — the cases below assert
+// the wiring of three paths into the page's log:
+//
+//   • The mesh client's `events` sink records each report under the report's
+//     own kind, with its fields as the client gives them, except that a
+//     `request` is stored with the node (the mesh id or the api base's
+//     origin) and `routeShape`'s path and query in the URL's place — no id
+//     the reader read reaches the store (→ "What the log never holds").
+//   • The mesh client's `log` lines are teed: each line is written to the
+//     console as an error and recorded as an `error` event naming the mesh
+//     client as its source.
+//   • The three verifiers record a `verdict` event at each run's ending —
+//     the run's name, its own answer read field by field (never the posts,
+//     names or amounts it proved), and its time.
+//
+// The fixtures spin a real `DebugLog` over `fake-indexeddb` so the cases
+// read the log through its own `list()`.
+
+function fakeDebugTimers(): DebugTimers {
+  let seq = 0;
+  const map = new Map<DebugTimerHandle, () => void>();
+  return {
+    setInterval(fn, _ms): DebugTimerHandle {
+      const h = ++seq;
+      map.set(h, fn);
+      return h;
+    },
+    clearInterval(handle): void {
+      map.delete(handle);
+    },
+  };
+}
+
+function makeDebugLog(): DebugLog {
+  return createDebugLog({
+    indexedDB: new IDBFactory(),
+    now: () => 1_000,
+    pageId: 'ab12cd34',
+    boundBytes: 2_000_000,
+    batchSize: 1,
+    batchInterval: 60_000,
+    timers: fakeDebugTimers(),
+  });
+}
+
+async function startWithDebug(
+  storage: StorageLike,
+  startMeshClient: (o: StartMeshClientOptions) => Promise<MeshClient>,
+  debugLog: DebugLog,
+): Promise<StartMeshClientOptions> {
+  let captured: StartMeshClientOptions | null = null;
+  const capturing: typeof startMeshClient = async (opts) => {
+    captured = opts;
+    return startMeshClient(opts);
+  };
+  await startExtensionMesh({
+    firstContact: [],
+    network: 'devnet',
+    agentName: 'notis-extension',
+    httpFetch: fetch.bind(globalThis),
+    check,
+    storage,
+    locks: fakeLocks(),
+    window: { addEventListener: () => {} },
+    startMeshClient: capturing,
+    postTexts: emptyPostTexts,
+    debugLog,
+  });
+  if (captured === null) throw new Error('startMeshClient was not called');
+  return captured;
+}
+
+const HEX64_P = 'a'.repeat(64);
+const HEX64_Q = 'b'.repeat(64);
+const HEX33 = '00'.repeat(33);
+
+function stubHeader(height: number): BlockHeader {
+  return {
+    protocolVersion: 1,
+    height,
+    prevBlockHash: 'e'.repeat(64),
+    utxoTxRoot: 'd'.repeat(64),
+    stateRoot: HEX33,
+    validatorId: new Uint8Array(32),
+    powNonce: 0,
+    powTargetBits: 1,
+    createdAt: 0,
+    interlinkRoot: 'c'.repeat(64),
+    adProofsRoot: 'b'.repeat(64),
+  };
+}
+
+describe("mesh client's reports in the debug log — a request is stored without its URL", () => {
+  it.fails('a `request` report whose URL names a 64-hex post id and `?author=<64 hex>&limit=20` is stored with no 64-hex run anywhere and with `limit` kept', async () => {
+    const log = makeDebugLog();
+    const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
+    const opts = await startWithDebug(fakeStorage(), start, log);
+    expect(typeof opts.events).toBe('function');
+    const url = `https://a.example/posts/${HEX64_P}/thread?author=${HEX64_Q}&limit=20`;
+    const ev: MeshEvent = {
+      kind: 'request',
+      number: 7,
+      url,
+      route: 'api',
+      head: { ok: true, status: 200, ms: 42 },
+    };
+    opts.events!(ev);
+    await log.flush();
+    const list = await log.list();
+    const requests = list.filter((e) => e.kind === 'request');
+    expect(requests).toHaveLength(1);
+    const stored = requests[0]!;
+    const asJson = JSON.stringify(stored);
+    expect(/[0-9a-f]{64}/.test(asJson)).toBe(false);
+    expect(stored.query).toMatchObject({ limit: '20' });
+  });
+});
+
+describe("mesh client's reports in the debug log — a dial is stored with its fields", () => {
+  it.fails('a `dial` report is stored under kind `dial` with its fields', async () => {
+    const log = makeDebugLog();
+    const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
+    const opts = await startWithDebug(fakeStorage(), start, log);
+    expect(typeof opts.events).toBe('function');
+    const ev: MeshEvent = {
+      kind: 'dial',
+      nodeId: HEX64_P,
+      outcome: { result: 'connected' },
+      ms: 123,
+    };
+    opts.events!(ev);
+    await log.flush();
+    const list = await log.list();
+    const dials = list.filter((e) => e.kind === 'dial');
+    expect(dials).toHaveLength(1);
+    expect(dials[0]).toMatchObject({ nodeId: HEX64_P, ms: 123 });
+  });
+});
+
+describe("mesh client's log lines reach the console and the debug log", () => {
+  it.fails('a `log` line is written to `console.error` and recorded as an `error` event naming the mesh client', async () => {
+    const log = makeDebugLog();
+    const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const opts = await startWithDebug(fakeStorage(), start, log);
+      expect(typeof opts.log).toBe('function');
+      const line = '[mesh-client] accepted gossip delivery without a kept value — this node\'s bug';
+      opts.log!(line);
+      expect(consoleSpy).toHaveBeenCalledWith(line);
+      await log.flush();
+      const list = await log.list();
+      const errors = list.filter((e) => e.kind === 'error');
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      const found = errors.find((e) => e.message === line);
+      expect(found).toBeTruthy();
+      expect(found!.source).toBe('mesh-client');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+});
+
+describe("the runs' verdicts — one `verdict` event per run, holding none of the proven values", () => {
+  it.fails('the tip verifier records a `verdict` event for the run naming `tip`, with no proven text or key', async () => {
+    const log = makeDebugLog();
+    const start = async (): Promise<MeshClient> => fakeClient({
+      state: () => emptyState(),
+    });
+    const { seams } = await (async () => {
+      let captured: StartMeshClientOptions | null = null;
+      const cap: (o: StartMeshClientOptions) => Promise<MeshClient> = async (o) => {
+        captured = o;
+        return start();
+      };
+      const r = await startExtensionMesh({
+        firstContact: [], network: 'devnet', agentName: 'notis-extension',
+        httpFetch: fetch.bind(globalThis), check,
+        storage: fakeStorage(), locks: fakeLocks(),
+        window: { addEventListener: () => {} },
+        startMeshClient: cap, postTexts: emptyPostTexts, debugLog: log,
+      });
+      void captured;
+      return r;
+    })();
+    await seams.tipVerifier.run();
+    await log.flush();
+    const list = await log.list();
+    const verdicts = list.filter((e) => e.kind === 'verdict' && e.run === 'tip');
+    expect(verdicts).toHaveLength(1);
+    expect(typeof verdicts[0]!.ms).toBe('number');
+    expect(JSON.stringify(verdicts[0])).not.toMatch(/[0-9a-f]{64}/);
+  });
+
+  it.fails('the figures verifier records a `verdict` event for the run naming `figures`, with no proven amounts', async () => {
+    const log = makeDebugLog();
+    const start = async (): Promise<MeshClient> => fakeClient({
+      state: () => emptyState(),
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ error: 'no' }), { status: 404, headers: { 'content-type': 'application/json' } })),
+    });
+    let captured: StartMeshClientOptions | null = null;
+    const cap: (o: StartMeshClientOptions) => Promise<MeshClient> = async (o) => {
+      captured = o;
+      return start();
+    };
+    const { seams } = await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension',
+      httpFetch: fetch.bind(globalThis), check,
+      storage: fakeStorage(), locks: fakeLocks(),
+      window: { addEventListener: () => {} },
+      startMeshClient: cap, postTexts: emptyPostTexts, debugLog: log,
+    });
+    void captured;
+    // The run is driven with a minimum-shape listing and anchor; the real
+    // `proveFigures` is called through the seam but the fetch answers 404,
+    // so every read fails and the run ends in a status — total.
+    const anchor: Anchor = {
+      tip: stubHeader(10),
+      suffixHead: stubHeader(5),
+    };
+    try {
+      await seams.figuresVerifier.run('https://a.example', HEX64_P, { karma: { boxes: [], height: 10, effective: '0' }, credits: null }, anchor);
+    } catch {
+      /* a total run does not throw; a throw is noise in this scaffold */
+    }
+    await log.flush();
+    const list = await log.list();
+    const verdicts = list.filter((e) => e.kind === 'verdict' && e.run === 'figures');
+    expect(verdicts).toHaveLength(1);
+    expect(typeof verdicts[0]!.ms).toBe('number');
+    // No amounts leak.
+    const asJson = JSON.stringify(verdicts[0]);
+    expect(/"\d+n"/.test(asJson)).toBe(false);
+    expect(asJson).not.toContain('bigint');
+  });
+
+  it.fails('the names verifier records a `verdict` event for the run naming `names`, with no proven name or key', async () => {
+    const log = makeDebugLog();
+    const start = async (): Promise<MeshClient> => fakeClient({
+      state: () => emptyState(),
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ error: 'no' }), { status: 404, headers: { 'content-type': 'application/json' } })),
+    });
+    const cap: (o: StartMeshClientOptions) => Promise<MeshClient> = async () => start();
+    const { seams } = await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension',
+      httpFetch: fetch.bind(globalThis), check,
+      storage: fakeStorage(), locks: fakeLocks(),
+      window: { addEventListener: () => {} },
+      startMeshClient: cap, postTexts: emptyPostTexts, debugLog: log,
+    });
+    const anchor: Anchor = {
+      tip: stubHeader(10),
+      suffixHead: stubHeader(5),
+    };
+    const claim: NameClaim = { name: 'alice' };
+    try {
+      await seams.namesVerifier.run('https://a.example', claim, anchor);
+    } catch {
+      /* total — see above */
+    }
+    await log.flush();
+    const list = await log.list();
+    const verdicts = list.filter((e) => e.kind === 'verdict' && e.run === 'names');
+    expect(verdicts).toHaveLength(1);
+    expect(typeof verdicts[0]!.ms).toBe('number');
+    // No 64-hex (a key) in the stored event.
+    const asJson = JSON.stringify(verdicts[0]);
+    expect(/[0-9a-f]{64}/.test(asJson)).toBe(false);
+    // The lookup name does not leak as a field.
+    expect(asJson).not.toContain('alice');
   });
 });

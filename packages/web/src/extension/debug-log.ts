@@ -12,7 +12,20 @@ export const DEBUG_LOG_BYTES = 2_000_000;
 /** WEB_INTERFACE → The extension → "The debug log" — a kind is the class of
  *  event the log stores a record under. The kinds other code records join the
  *  union with the code that records them. */
-export type DebugEventKind = 'cleared' | 'error';
+export type DebugEventKind =
+  | 'cleared'
+  | 'error'
+  | 'page'
+  | 'verdict'
+  | 'dial'
+  | 'connection'
+  | 'handshake'
+  | 'check'
+  | 'gossip-block'
+  | 'request'
+  | 'request-body'
+  | 'serving-stream'
+  | 'serving-call';
 
 /** One recorded event. `t` is the clock at the record, `page` the page id
  *  drawn at load; the other fields belong to the kind. */
