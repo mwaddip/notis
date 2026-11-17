@@ -353,9 +353,6 @@ monotonic clock, so a clock that steps never holds a node out or retries it at o
 **An entry keeps its last failure's kind and message**, for the page to show why a node is in `retry`; the message is
 shown, never acted on.
 
-> ⚠ **AHEAD OF CODE (2026-11-17).** The client takes no event sink and answers no diagnostics; its one report is the
-> `log` line of an unexpected throw. The rule below leads the code (board AQ1).
-
 **The client reports what it does.** A client handed an event sink tells it each of these as it happens: a dial's end
 — the node, each address's outcome and the time it took; a connection opened or closed — the peer, its transport
 (WebRTC-direct, WebRTC over a relay, the secure WebSocket) and path, its direction; a handshake's verdict and reason;

@@ -340,11 +340,6 @@ server that signs, no call home.
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
 
-> ⚠ **AHEAD OF CODE (2026-11-17).** The background calls `windows` unguarded: on Firefox for Android a prompt opens
-> nothing and the sign answers `{ error }`, and the closed-window listener throws at every start. The prompt as a tab
-> (→ "The contexts, and what each may hold"), the raise below and the Android sentence in → "The manifest" lead the
-> code.
-
 **A raise focuses a window only where the browser offers `windows`**: the action button's, the landing's (→ "Both
 messages end in one act") and the prompt's each make the tab active, and focus its window where `windows` exists;
 the background listens for a closed window only there.
@@ -834,13 +829,6 @@ its own written with every put, withdrawal and eviction — a put past it evicts
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
 dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
 permission, and it is the extension build's alone.
-
-> ⚠ **AHEAD OF CODE (2026-11-17).** No debug log, snapshot, debug file or `debug` row exists; the extension build carries
-> no commit and the mesh client reports nothing (`MESH_INTERFACE → The client's node list → "The client reports what it
-> does"`). This passage leads the code, with → "The build carries its commit", the debug log's line in → "Permissions and
-> policy, the whole list" and in → "The mesh client's faults reach the page's console", the two debug names in → "The
-> build check that keeps the web bundle honest", → The settings window → "The debug row", `CONSTANTS → Client
-> defaults`' `DEBUG_LOG_BYTES` row and `HOUSE_STYLE → Interaction`'s debug values.
 
 **The debug log.** The extension keeps a record of what its pages did, for whoever reads a report of a fault, in
 IndexedDB at the page's own origin: the database `notis.debug`, apart from `localStorage`, which holds the waiting
@@ -2180,8 +2168,8 @@ serve — the extension, which holds a post cache — so the web build has no su
 
 **The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
 press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person
-glances at — the build and its commit; each node, how it is reached (its transport and path, or its API base), its
-standing and its read time; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
+glances at — the build and its commit; each node, how it is reached (its transport and path, or its API base, or that it is
+not reached), its standing and its read time in whole milliseconds; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
 its bound — then the box *include my key, name and transaction ids* with `save as file`, `clear log`, and `refresh`,
 which takes the snapshot again. **Each value is a copy control**, the key row's pattern (→ The profile window → "The
 key is a control, and a press copies it"): a press copies the value the snapshot shows, whatever the box says — the
