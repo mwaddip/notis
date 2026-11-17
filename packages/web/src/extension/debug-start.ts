@@ -1,10 +1,14 @@
 // WEB_INTERFACE → The extension → "The debug log". The module that starts the
-// page's debug log over required seams; `main.ts`'s extension branch calls it
-// with the browser's own values. This file is the scaffold: the behaviour it
-// commits to is described by the cases in `test/extension/debug-start.test.ts`
-// and lands with them.
+// page's debug log over required seams: it draws the page id (eight lowercase
+// hex), builds the log with `DEBUG_LOG_BYTES` and a batch of 50 events or 2 s,
+// attaches the hide flush and the error recorder, and records one `page`
+// event carrying the build's version, the build's commit, the network and
+// the browser's user agent. `main.ts`'s extension branch calls this with the
+// browser's own values.
 
 import {
+  attachErrorRecorder,
+  attachFlushOnHide,
   createDebugLog,
   DEBUG_LOG_BYTES,
   type DebugLog,
@@ -56,6 +60,14 @@ export function startDebugLog(deps: DebugStartDeps): DebugStart {
     batchSize: BATCH_SIZE,
     batchInterval: BATCH_INTERVAL_MS,
     timers: deps.timers,
+  });
+  attachFlushOnHide(log, deps.document, deps.window);
+  attachErrorRecorder(log, deps.window);
+  log.record('page', {
+    version: deps.version,
+    commit: deps.commit,
+    network: deps.network,
+    userAgent: deps.userAgent,
   });
   return { log, pageId };
 }

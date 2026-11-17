@@ -9,6 +9,7 @@ import {
   startExtensionMesh,
   type StorageLike,
 } from '../../src/extension/mesh-seams.js';
+import type { DebugLog } from '../../src/extension/debug-log.js';
 import { profileFor } from '@dagsocial/types';
 import type { PostCheck } from '@dagsocial/nipopow-client';
 
@@ -77,6 +78,20 @@ function immediateLocks(): { request(name: string, fn: () => Promise<void>): Pro
   return { request: (_n, fn) => fn() };
 }
 
+/** No-op log — the memory-wiring cases do not read it. */
+function noopDebugLog(): DebugLog {
+  return {
+    record(): void {},
+    flush(): Promise<void> { return Promise.resolve(); },
+    clear(): Promise<void> { return Promise.resolve(); },
+    stats(): Promise<{ events: number; bytes: number; oldestT: number | null; dropped: number; open: boolean; unavailable: boolean }> {
+      return Promise.resolve({ events: 0, bytes: 0, oldestT: null, dropped: 0, open: false, unavailable: true });
+    },
+    list(): Promise<never[]> { return Promise.resolve([]); },
+    stop(): void {},
+  };
+}
+
 const check: (rows: unknown[]) => PostCheck[] = (rows) =>
   rows.map((): PostCheck => ({ status: 'unbound', reason: 'no-tx', verdict: 'no-tx' }));
 
@@ -111,7 +126,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'testnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks: immediateLocks(),
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     await startExtensionMesh(opts);
     expect(captured).not.toBeNull();
@@ -138,7 +153,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'testnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks: immediateLocks(),
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     await startExtensionMesh(opts);
     expect(captured!.seeds).toBeUndefined();
@@ -156,7 +171,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'testnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks: immediateLocks(),
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     await startExtensionMesh(opts);
     expect(captured!.seeds).toBeUndefined();
@@ -181,7 +196,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'testnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks,
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     await startExtensionMesh(opts);
     expect(onChecked).toBeDefined();
@@ -219,7 +234,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'devnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks: immediateLocks(),
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     await startExtensionMesh(opts);
     expect(onChecked).toBeDefined();
@@ -256,7 +271,7 @@ describe('startExtensionMesh — memory wiring', () => {
     const opts: Opts = {
       firstContact: [], network: 'testnet', agentName: 'notis-extension',
       httpFetch: fetch.bind(globalThis), check, storage, locks: immediateLocks(),
-      window: { addEventListener: () => {} }, startMeshClient,
+      window: { addEventListener: () => {} }, startMeshClient, debugLog: noopDebugLog(),
     };
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {

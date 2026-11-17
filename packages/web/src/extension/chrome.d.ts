@@ -31,6 +31,7 @@ declare namespace chrome {
     const onStartup: OnStartupEvent;
     function sendMessage(message: unknown): Promise<unknown>;
     function getURL(path: string): string;
+    function getManifest(): { version: string };
     const id: string;
   }
 

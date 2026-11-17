@@ -93,6 +93,21 @@ function fakeLocks(): { request(name: string, fn: () => Promise<void>): Promise<
 
 const check: (rows: unknown[]) => PostCheck[] = (rows) => rows.map((): PostCheck => ({ status: 'unbound', reason: 'no-tx', verdict: 'no-tx' }));
 
+/** A no-op log the lifecycle cases do not read — the behaviour cases below
+ *  spin a real log over fake-indexeddb for their reads. */
+function noopDebugLog(): DebugLog {
+  return {
+    record(): void {},
+    flush(): Promise<void> { return Promise.resolve(); },
+    clear(): Promise<void> { return Promise.resolve(); },
+    stats(): Promise<{ events: number; bytes: number; oldestT: number | null; dropped: number; open: boolean; unavailable: boolean }> {
+      return Promise.resolve({ events: 0, bytes: 0, oldestT: null, dropped: 0, open: false, unavailable: true });
+    },
+    list(): Promise<never[]> { return Promise.resolve([]); },
+    stop(): void {},
+  };
+}
+
 describe('parseHandNodeAddress', () => {
   it('parses an ip4 webrtc-direct address ending in /p2p/<peer id>', () => {
     const r = parseHandNodeAddress(VALID_PEER_ADDR);
@@ -239,7 +254,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const window = { addEventListener: addHandler };
     await startExtensionMesh({
       firstContact, network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window, startMeshClient, postTexts: emptyPostTexts,
+      check, storage, locks: fakeLocks(), window, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
     });
     expect(startMeshClient).toHaveBeenCalledTimes(1);
     expect(startOpts!.network).toBe('devnet');
@@ -260,7 +275,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const storage = fakeStorage({ [HAND_NODE_KEY]: VALID_PEER_ADDR });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
     });
     expect(addCalls).toEqual([PEER_HEX]);
   });
@@ -303,7 +318,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
+      check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
     });
     expect(capturedOnChecked).not.toBeNull();
     // Trigger the check-end callback with a snapshot carrying a decodable
@@ -347,11 +362,11 @@ describe('startExtensionMesh — the lifecycle', () => {
       .mockImplementationOnce(async (): Promise<MeshClient> => client2);
     const { seams: seams1 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient, postTexts: emptyPostTexts,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window1, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
     });
     const { seams: seams2 } = await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient, postTexts: emptyPostTexts,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: window2, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
     });
 
     // Both seams read their own client's base.
@@ -381,7 +396,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     let captured1: StartMeshClientOptions | null = null;
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start1, postTexts: texts,
+      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start1, postTexts: texts, debugLog: noopDebugLog(),
     });
     expect(captured1!.serving).toBeDefined();
     expect(captured1!.serving!.on).toBe(false);
@@ -392,7 +407,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     const start2 = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { captured2 = opts; return client2; });
     await startExtensionMesh({
       firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-      check, storage: fakeStorage({ [SERVE_KEY]: '1' }), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start2, postTexts: texts,
+      check, storage: fakeStorage({ [SERVE_KEY]: '1' }), locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start2, postTexts: texts, debugLog: noopDebugLog(),
     });
     expect(captured2!.serving!.on).toBe(true);
     expect(captured2!.serving!.texts).toBe(texts);
@@ -407,7 +422,7 @@ describe('startExtensionMesh — the lifecycle', () => {
       const storage = fakeStorage();
       const { seams } = await startExtensionMesh({
         firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
       });
       expect(seams.serveSeam.on()).toBe(false);
     }
@@ -416,7 +431,7 @@ describe('startExtensionMesh — the lifecycle', () => {
       const storage = fakeStorage({ [SERVE_KEY]: '1' });
       const { seams } = await startExtensionMesh({
         firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
       });
       expect(seams.serveSeam.on()).toBe(true);
     }
@@ -425,7 +440,7 @@ describe('startExtensionMesh — the lifecycle', () => {
       const storage = fakeStorage({ [SERVE_KEY]: 'yes' });
       const { seams } = await startExtensionMesh({
         firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
-        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts,
+        check, storage, locks: fakeLocks(), window: { addEventListener: () => {} }, startMeshClient: start, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
       });
       expect(seams.serveSeam.on()).toBe(false);
     }
@@ -466,7 +481,7 @@ describe('startExtensionMesh — the lifecycle', () => {
         firstContact: [], network: 'devnet', agentName: 'notis-extension',
         httpFetch: fetch.bind(globalThis),
         check, storage: fakeStorage(), locks: fakeLocks(),
-        window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts,
+        window: { addEventListener: () => {} }, startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
       });
       expect(typeof startOpts!.log).toBe('function');
       startOpts!.log!('[mesh-client] fault line');
@@ -570,7 +585,7 @@ function stubHeader(height: number): BlockHeader {
 }
 
 describe("mesh client's reports in the debug log — a request is stored without its URL", () => {
-  it.fails('a `request` report whose URL names a 64-hex post id and `?author=<64 hex>&limit=20` is stored with no 64-hex run anywhere and with `limit` kept', async () => {
+  it('a `request` report whose URL names a 64-hex post id and `?author=<64 hex>&limit=20` is stored with no 64-hex run anywhere and with `limit` kept', async () => {
     const log = makeDebugLog();
     const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
     const opts = await startWithDebug(fakeStorage(), start, log);
@@ -596,7 +611,7 @@ describe("mesh client's reports in the debug log — a request is stored without
 });
 
 describe("mesh client's reports in the debug log — a dial is stored with its fields", () => {
-  it.fails('a `dial` report is stored under kind `dial` with its fields', async () => {
+  it('a `dial` report is stored under kind `dial` with its fields', async () => {
     const log = makeDebugLog();
     const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
     const opts = await startWithDebug(fakeStorage(), start, log);
@@ -617,7 +632,7 @@ describe("mesh client's reports in the debug log — a dial is stored with its f
 });
 
 describe("mesh client's log lines reach the console and the debug log", () => {
-  it.fails('a `log` line is written to `console.error` and recorded as an `error` event naming the mesh client', async () => {
+  it('a `log` line is written to `console.error` and recorded as an `error` event naming the mesh client', async () => {
     const log = makeDebugLog();
     const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -641,7 +656,7 @@ describe("mesh client's log lines reach the console and the debug log", () => {
 });
 
 describe("the runs' verdicts — one `verdict` event per run, holding none of the proven values", () => {
-  it.fails('the tip verifier records a `verdict` event for the run naming `tip`, with no proven text or key', async () => {
+  it('the tip verifier records a `verdict` event for the run naming `tip`, with no proven text or key', async () => {
     const log = makeDebugLog();
     const start = async (): Promise<MeshClient> => fakeClient({
       state: () => emptyState(),
@@ -671,7 +686,7 @@ describe("the runs' verdicts — one `verdict` event per run, holding none of th
     expect(JSON.stringify(verdicts[0])).not.toMatch(/[0-9a-f]{64}/);
   });
 
-  it.fails('the figures verifier records a `verdict` event for the run naming `figures`, with no proven amounts', async () => {
+  it('the figures verifier records a `verdict` event for the run naming `figures`, with no proven amounts', async () => {
     const log = makeDebugLog();
     const start = async (): Promise<MeshClient> => fakeClient({
       state: () => emptyState(),
@@ -713,7 +728,7 @@ describe("the runs' verdicts — one `verdict` event per run, holding none of th
     expect(asJson).not.toContain('bigint');
   });
 
-  it.fails('the names verifier records a `verdict` event for the run naming `names`, with no proven name or key', async () => {
+  it('the names verifier records a `verdict` event for the run naming `names`, with no proven name or key', async () => {
     const log = makeDebugLog();
     const start = async (): Promise<MeshClient> => fakeClient({
       state: () => emptyState(),

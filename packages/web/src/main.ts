@@ -8,6 +8,7 @@ import { wrapTabs } from './extension/handover';
 import { createPostsVerifier } from './extension/posts-verifier';
 import { createPostCache, rememberedChain } from './extension/post-cache';
 import { postTextsFromCache } from './extension/post-texts';
+import { startDebugLog } from './extension/debug-start';
 import type { Api } from './api/client';
 import type { WriteClient } from './api/write';
 import type { HandNodeSeam, ServeSeam } from './view/settings';
@@ -72,6 +73,27 @@ if (isExtension && BUILD_NETWORK !== null) {
   // chain — the chain is named by the first tip run, through `open(chain)`.
   void postCache.openRemembered();
 
+  // WEB_INTERFACE → The extension → "The debug log" — the page's own log,
+  // over the browser's own seams. The `page` event the start records
+  // carries the build's version, commit, network and the browser's user
+  // agent. The log is handed to the mesh start and, in a later change,
+  // to the App.
+  const { log: debugLog } = startDebugLog({
+    indexedDB: window.indexedDB,
+    now: Date.now,
+    random: Math.random,
+    timers: {
+      setInterval: (fn: () => void, ms: number): unknown => window.setInterval(fn, ms),
+      clearInterval: (handle: unknown): void => { window.clearInterval(handle as number); },
+    },
+    document,
+    window,
+    version: chrome.runtime.getManifest().version,
+    commit: import.meta.env.VITE_COMMIT ?? '',
+    network: BUILD_NETWORK,
+    userAgent: navigator.userAgent,
+  });
+
   // WEB_INTERFACE → The extension → "The mesh is the extension's first
   // path" — the extension build starts the mesh client with the build's
   // nodes, and the seams module wraps its `fetch` and `base`/`order` as
@@ -104,6 +126,7 @@ if (isExtension && BUILD_NETWORK !== null) {
     // from it". The mesh client's serving reader answers `ModifierRequest`
     // from the cache the extension build carries.
     postTexts: postTextsFromCache(postCache),
+    debugLog,
   });
   readClient = seams.readClient;
   writeClientSeam = seams.writeClient;

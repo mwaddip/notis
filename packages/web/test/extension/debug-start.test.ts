@@ -76,7 +76,7 @@ const NETWORK = 'devnet';
 const USER_AGENT = 'Mozilla/5.0';
 
 describe('debug-start — the page event', () => {
-  it.fails('records one `page` event carrying the version, commit, network and user agent', async () => {
+  it('records one `page` event carrying the version, commit, network and user agent', async () => {
     const idb = new IDBFactory();
     const { log } = startDebugLog({
       indexedDB: idb,
@@ -104,7 +104,7 @@ describe('debug-start — the page event', () => {
 });
 
 describe('debug-start — the hide flush and the error recorder', () => {
-  it.fails('a dispatched `pagehide` writes the buffer, and a dispatched `error` records one `error` event', async () => {
+  it('a dispatched `pagehide` writes the buffer, and a dispatched `error` records one `error` event', async () => {
     const idb = new IDBFactory();
     const doc = fakeDoc('visible');
     const win = fakeHost();
