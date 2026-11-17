@@ -33,7 +33,6 @@ export interface TreeReader {
 export type Rule =
   | 'every run'
   | 'no run'
-  | 'check harness'
   | 'test/'
   | 'slow/'
   | 'shadow/'
@@ -42,8 +41,7 @@ export type Rule =
   | 'other'
   | 'matrix'
   | 'row at run time'
-  | 'row in a suite'
-  | 'row by no run';
+  | 'row in a suite';
 
 // TEST_MATRIX_INTERFACE → The output
 export interface Selected {
