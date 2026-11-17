@@ -296,6 +296,40 @@ describe('debug-log — the route\'s shape', () => {
   });
 });
 
+describe('debug-log — a closed connection is reopened', () => {
+  it('two stores over one factory; one receives `versionchange` from a `deleteDatabase`; the next `record` and `flush` lands and `list` holds it', async () => {
+    const idb = new IDBFactory();
+    const timersA = fakeTimers();
+    const timersB = fakeTimers();
+    const logA = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: timersA,
+    });
+    const logB = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: OTHER_PAGE,
+      boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: timersB,
+    });
+    // Both stores open their connections.
+    logA.record('error', { message: 'before-a' });
+    await logA.flush();
+    logB.record('error', { message: 'before-b' });
+    await logB.flush();
+    // `deleteDatabase` fires `versionchange` on each open connection; each
+    // closes, the delete succeeds, and the next write opens a fresh
+    // database.
+    await new Promise<void>((resolve, reject) => {
+      const delReq = idb.deleteDatabase('notis.debug');
+      delReq.onsuccess = (): void => resolve();
+      delReq.onerror = (): void => reject(new Error('delete failed'));
+      delReq.onblocked = (): void => reject(new Error('delete blocked'));
+    });
+    logA.record('error', { message: 'after' });
+    await logA.flush();
+    const list = await logA.list();
+    expect(list.map((e) => e.message)).toEqual(['after']);
+  });
+});
+
 describe('debug-log — flush at hide', () => {
   it('`visibilitychange` when hidden and `pagehide` each flush the buffer', async () => {
     const idb = new IDBFactory();

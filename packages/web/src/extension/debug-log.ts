@@ -182,7 +182,24 @@ export function createDebugLog(deps: DebugLogDeps): DebugLog {
           d.createObjectStore(META_STORE, { keyPath: 'key' });
         }
       };
-      req.onsuccess = (): void => { db = req.result; resolve(); };
+      req.onsuccess = (): void => {
+        const opened = req.result;
+        // The module closes its connection on `versionchange` (so a delete
+        // another page asks for is never blocked by it, as the post cache
+        // does) and on the connection's `close`; the next write opens
+        // again.
+        const releaseConnection = (): void => {
+          if (db === opened) {
+            db = null;
+            openPromise = null;
+          }
+          try { opened.close(); } catch { /* ignore */ }
+        };
+        opened.addEventListener('versionchange', releaseConnection);
+        opened.addEventListener('close', releaseConnection);
+        db = opened;
+        resolve();
+      };
       req.onerror = (): void => resolve();
       req.onblocked = (): void => resolve();
     });
