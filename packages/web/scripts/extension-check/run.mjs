@@ -2204,8 +2204,8 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // (EXTENSION_CHECK_INTERFACE → Blocks); each block's own steps follow.
 // ---------------------------------------------------------------------------
 
-// writes — steps 3–12, with step 12 recorded as its four sub-parts (12a–d).
-const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d'];
+// writes — steps 3–12, with step 12 recorded as its five sub-parts (12a–e).
+const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d', '12e'];
 // links — 13a, 13, 14, 15, 16, and the browser-context arm 13-uncancelled.
 const LINKS_STEPS = ['13a', 13, 14, 15, 16, '13-uncancelled'];
 // tip — 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
@@ -11524,6 +11524,117 @@ async function writesSteps(cx2, pageId) {
   record('12d',
     lockedSession12d === null && unlockMounted12d && noConfirmLocked12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && noConfirmSecond12d && !!prompt12dSecond,
     `session empty=${lockedSession12d === null}, unlock under form=${unlockMounted12d}, no .pf-confirm under lock=${noConfirmLocked12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send .card-unlock absent=${!unlockMounted12dSecond}, second-send .pf-confirm absent=${noConfirmSecond12d}, second-send prompt seen=${!!prompt12dSecond}`);
+
+  // --- Step 12e — the debug file: unticked drops identifying values,
+  // ticked keeps them. WEB_INTERFACE → The extension → "The debug file",
+  // → The settings window → "The debug row". The box is unticked at every
+  // open; `save as file` hands the file to an `<a download>` over a
+  // `data:` URL — the download lands in the block's own out directory
+  // under `Browser.setDownloadBehavior({ behavior: 'allow', downloadPath })`
+  // set before the presses. The directory's listing names the file
+  // (`notis-debug-*.json`).
+  const postId12e = await pickOwnRootPostId();
+  const postRow12e = postId12e !== null
+    ? await fetch(`${NODE}/posts/${postId12e}`).then((r) => r.json()).catch(() => null)
+    : null;
+  const postTxId12e = postRow12e && typeof postRow12e.txId === 'string' ? postRow12e.txId : null;
+  if (postTxId12e === null) {
+    record('12e', false, `no R root post with txId on /posts (postId=${postId12e === null ? 'null' : postId12e.slice(0, 8) + '…'}, row=${JSON.stringify(postRow12e)})`);
+  } else {
+    const dlDir12e = join(SCRATCH, 'downloads-12e');
+    mkdirSync(dlDir12e, { recursive: true });
+    const bcx12e = await openBrowserSession();
+    try {
+      await bcx12e.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir12e });
+      // Open settings, then press `show` on the debug row — the box is
+      // unticked at every `show` (debug-row.ts sets `ticked = false` on
+      // open). Press the settings control first so the row is in the DOM.
+      await cx10.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+      await cx10.waitFor(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        return !!row && row.querySelector('label')?.textContent === 'debug';
+      })()`, 'settings debug row 12e', 10000);
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'show');
+        btn.click();
+      })()`, true);
+      await cx10.waitFor(`!!document.querySelector('.row.debug-row .debug-include input[type=checkbox]') && !!document.querySelector('.row.debug-row .debug-controls')`, 'debug-row open 12e', 10000);
+      // Press `save as file` with the box unticked.
+      const beforeUnticked = new Set(readdirSync(dlDir12e));
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const ctrls = row.querySelector('.debug-controls');
+        const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
+        btn.click();
+      })()`, true);
+      const file1 = await recordWait('12e debug file unticked', 20000, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < 20000) {
+          const names = readdirSync(dlDir12e).filter((n) =>
+            /^notis-debug-.*\.json$/.test(n) && !beforeUnticked.has(n));
+          if (names.length > 0) return names[0];
+          await sleep(100);
+        }
+        return null;
+      });
+      // Tick the box and press `save as file` again.
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const box = row.querySelector('.debug-include input[type=checkbox]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`, true);
+      const beforeTicked = new Set(readdirSync(dlDir12e));
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const ctrls = row.querySelector('.debug-controls');
+        const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
+        btn.click();
+      })()`, true);
+      const file2 = await recordWait('12e debug file ticked', 20000, async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < 20000) {
+          const names = readdirSync(dlDir12e).filter((n) =>
+            /^notis-debug-.*\.json$/.test(n) && !beforeTicked.has(n));
+          if (names.length > 0) return names[0];
+          await sleep(100);
+        }
+        return null;
+      });
+      let parse1 = null, parse2 = null, text1 = '', text2 = '';
+      try {
+        if (file1 !== null) {
+          text1 = readFileSync(join(dlDir12e, file1), 'utf8');
+          parse1 = JSON.parse(text1);
+        }
+      } catch (e) { parse1 = { error: e?.message ?? String(e) }; }
+      try {
+        if (file2 !== null) {
+          text2 = readFileSync(join(dlDir12e, file2), 'utf8');
+          parse2 = JSON.parse(text2);
+        }
+      } catch (e) { parse2 = { error: e?.message ?? String(e) }; }
+      const keyLc = R_JSON.pubKeyHex.toLowerCase();
+      const txLc = postTxId12e.toLowerCase();
+      const text1Lc = text1.toLowerCase();
+      const text2Lc = text2.toLowerCase();
+      const fmtOk1 = parse1 !== null && parse1.format === 'notis-debug/1';
+      const fmtOk2 = parse2 !== null && parse2.format === 'notis-debug/1';
+      const untickedDropsKey = !text1Lc.includes(keyLc);
+      const untickedDropsTx = !text1Lc.includes(txLc);
+      const tickedHoldsKey = text2Lc.includes(keyLc);
+      const tickedHoldsTx = text2Lc.includes(txLc);
+      const events1 = Array.isArray(parse1?.events) ? parse1.events : [];
+      const hasSign = events1.some((e) => e && e.kind === 'sign');
+      const hasWrite = events1.some((e) => e && e.kind === 'write');
+      record('12e',
+        fmtOk1 && fmtOk2 && untickedDropsKey && untickedDropsTx && tickedHoldsKey && tickedHoldsTx && hasSign && hasWrite,
+        `postId=${postId12e.slice(0, 8)}…, txId=${postTxId12e.slice(0, 8)}…, unticked=${JSON.stringify(file1)} (format=${JSON.stringify(parse1?.format ?? null)}, drops key=${untickedDropsKey}, drops tx=${untickedDropsTx}, events sign=${hasSign}, write=${hasWrite}), ticked=${JSON.stringify(file2)} (format=${JSON.stringify(parse2?.format ?? null)}, holds key=${tickedHoldsKey}, holds tx=${tickedHoldsTx})`);
+    } finally {
+      try { bcx12e.s.close(); } catch {}
+    }
+  }
 
   // The writes block ends here — every block prints the `[diag]` line at
   // its end (EXTENSION_CHECK_INTERFACE → Blocks).
