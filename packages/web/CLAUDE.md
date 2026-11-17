@@ -71,7 +71,10 @@ unlocked seed in `storage.session`, never a worker global, a seed counting only 
 every write signed there through the `Signer` seam's proxy, every message answered — a handler's failure is `{ error }`,
 and the proxy reads a `sign` that ends without an answer as `refused`; every read and write of a prompt record under the
 Web Lock `notis.prompt` (`navigator.locks`, which `install` takes; the tests pass `fakeLockManager()`), one prompt at a
-time and a record whose window is gone declined; credits always prompted in the prompt window, rep silent while unlocked unless the
+time and a record whose window is gone declined; credits always prompted in the prompt window — **a tab where the browser
+offers no `windows` API** (Firefox for Android: `tabs.create`, the record's `tabId` and `senderTabId`, the close read from
+`tabs.onRemoved`, registered only there, every ending activating the asking tab; `chrome.d.ts` types `windows` as
+possibly absent, so every use asks), rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
 the shell's `notis-nodes` seed list (strings and nodes alike parsed to `BUILD_NODE_BASES` and `BUILD_NODES`) and
 `notis-public` link origin; one manifest template → two zips; **the chain it reads checked by the mesh client's own
@@ -601,6 +604,31 @@ key the flow receives is `recipientVerdict`'s, the owner proven at `suffixHead`,
 (`readerGen`) ends a press with nothing landing. The web build takes the node's answer at the press, with its confirm
 row.
 
+**The debug section** (`WEB_INTERFACE → The extension → "The debug log"`, `→ The settings window → "The debug row"`,
+`MESH_INTERFACE → The client's node list → "The client reports what it does"`): the extension build alone keeps a log of
+what its pages did and shows a snapshot in the settings window. `src/extension/debug-log.ts` is the store — IndexedDB
+`notis.debug`, `DEBUG_LOG_BYTES` (2 MB, oldest evicted first, the total a record written with every write), batches of
+50 events or 2 s and at hide (`attachFlushOnHide`), `clear()`, `attachErrorRecorder`, the browser's abort and quota
+refusals counted as `dropped` and nothing else absorbed, the connection reopened after `versionchange` or `close` — and
+`routeShape`, the one way a URL enters the log: each variable path segment its parameter's name, each query value but
+`limit`, `light`, `pending` and `tx` dropped, so nothing the reader read is in it. `debug-start.ts` starts a page's log
+(page id, the `page` event: version, commit, network, user agent) before the proxy, in `main.ts`'s extension branch; the
+mesh client's `events` sink (`MeshEvent`: `dial`, `connection`, `handshake`, `check`, `gossip-block`, `request` with the
+connection's id, transport and path, `request-body`, `serving-stream`, `serving-call`) records through
+`startExtensionMesh`, a `request` as its node and route shape; the `log` option writes the console and an `error`
+event; the three verifiers record a `verdict` (statuses only); `WriteClient`'s optional observer a `write` per walk; the
+proxy a `sign` per answer; the waiting store and `flushWaiting` a `wait` (`queued`, `sent`, `refused`, `unsent`,
+`no answer`). `debug-snapshot.ts` composes the snapshot (a deep copy; a seam that throws is that part's `{ error }`) —
+build, settings (the sign policy and links through the identity module, the hand-added node with its `key`), the mesh
+client's `state()` and `diagnostics()`, the App's `readerFacts()`, the post cache's `stats()`, the log's stats;
+`debug-file.ts` the file — `notis-debug/1`, `notis-debug-<YYYYMMDD-HHMMSS>.json`, every identifying value (from the
+snapshot and the events' `txId`s) replaced by value, at any depth, unless the box is ticked; `debug-row.ts` the row the
+settings view appends through its one hook, `SettingsHandlers.debug`, so the web bundle carries none of it
+(`build-release.sh` refuses `notis.debug` and `notis-debug/1`). **The build's commit**: `scripts/build-commit.mjs` reads
+`extension/commit.txt` — `$Format:%H$` under `export-subst` (`.gitattributes`), expanded by `git archive`, else `git
+rev-parse HEAD` with `-dirty` where `git diff --quiet HEAD --` says a tracked file differs — and `build-extension.sh`
+exports it as `VITE_COMMIT`, refusing any other form.
+
 Three Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
 as one IIFE file through `vite.background.config.ts`, and, when `VITE_PUBLIC` is not empty, the bridge as one IIFE
 file through `vite.bridge.config.ts` — then `extension/emit-manifests.mjs <version> <chrome-outdir>
@@ -673,10 +701,13 @@ a block runs on`). Every node and miner the harness spawns reads the stack's clo
 Testing; no Playwright) against the unpacked Chrome build, with `TMPDIR=/tmp` in the harness's environment
 (`EXTENSION_CHECK_INTERFACE → The command`). **The `writes` block** drives steps 1–12 through the real UI — the
 composer, the like word, the profile and wallet rows, the prompt window — the eleventh the wallet's faucet press
-asking the browser for the origin and refused, the twelfth in four measured parts (the same press granted and the
+asking the browser for the origin and refused, the twelfth in five measured parts (the same press granted and the
 faucet's `$NOTIS` step, a send whose row figure moves to 87.5 at the transfer's 2xx — the pending view's spendable
 sum — and whose payment lands on the faucet's plain `/credits`, a send declined, a send after a lock pressed in the
-profile). **The `links` block** drives 13–16 and `13-uncancelled` for the four steps of links into the extension, on
+profile, and **12e** the debug file — the settings window's `debug` row shown, `save as file` pressed with the box
+unticked and ticked, each file read through Chromium's own download (`Browser.setDownloadBehavior` into the block's
+out directory) the moment its name appears and moved aside before the next press: the unticked file holds neither R's
+key nor R's post's `txId`, the ticked one both, the unticked one's events a `sign` and a `write`). **The `links` block** drives 13–16 and `13-uncancelled` for the four steps of links into the extension, on
 the hosted-page origin the check binds and serves a web build at (`<base>p/<64 hex>` answering the shell, a plain
 page with a same-tab and a `target="_blank"` link); the harness refuses a shell whose `notis-public` or a manifest
 whose one match differs from that origin, sets the preference through the settings row, and presses with
@@ -852,7 +883,8 @@ not a product setting, without which a browser refuses the `RTCPeerConnection` t
 fresh extension
 page: **M1** *verified across 2 nodes*, then a refresh of the feed and a press of the corner after the verdict — the
 report text updates and **no HTTP request reaches A′ or B′ after the mark** (a page's first reads, before its WebRTC
-connections are up, go to the API bases and are counted, not asserted); **M2** both nodes restarted without
+connections are up, go to the API bases and are counted, not asserted) — and the settings window's `debug` row, shown,
+names A′ and B′ each reached `webrtc-direct · direct`; **M2** both nodes restarted without
 `MESH_ROLE` — the dials fail, the entries are read at their API bases, the verdict is `verified` and the page made HTTP
 requests to the nodes; **M3** both back with the mesh role, each node's admin `GET /health` holding
 `peers_connected ≥ 1` under a 60 s bound before the press (`waitForPeers` on `AP_ADMIN_PORT` and `BP_ADMIN_PORT` — the
