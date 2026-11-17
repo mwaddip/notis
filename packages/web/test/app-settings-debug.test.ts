@@ -14,6 +14,7 @@ import type {
 } from '../src/extension/debug-snapshot';
 import type { PostCacheStats } from '../src/extension/post-cache';
 import type { DebugEvent, DebugLogStats } from '../src/extension/debug-log';
+import type { NodeEntry } from '../src/mesh/node-list';
 import type { ClientState, ClientTraffic, MeshDiagnostics } from '../src/mesh/mesh-client';
 
 // The @settings window's debug row driven from the App — the row renders
@@ -450,5 +451,29 @@ describe('the settings window debug row', () => {
     const chain = [...row.querySelectorAll<HTMLElement>('.debug-block')]
       .find((b) => b.querySelector('.debug-head')?.textContent === 'chain')!;
     expect(chain.textContent).toContain('verified');
+  });
+
+  it('a node with addresses, an API base and no connection reads its API base and no address', async () => {
+    const addr = '/ip4/203.0.113.7/udp/9000/webrtc-direct/certhash/uEiAAA';
+    const node = {
+      notisId: KEY, addrs: [addr], api: 'https://node.example', status: 'candidate', readMs: null,
+    } as unknown as NodeEntry;
+    const row = debugRow({
+      seam: makeDebugSeam(freshStub(), {
+        state: () => emptyState({ nodes: [node] }),
+        diagnostics: () => emptyDiagnostics(),
+      }),
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+    toggleWord(row).click();
+    await flush();
+    const text = row.querySelector('.debug-body')!.textContent ?? '';
+    expect(text).toContain('https://node.example');
+    expect(text).not.toContain('203.0.113.7');
   });
 });

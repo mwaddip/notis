@@ -233,7 +233,7 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
       const conn = diag.connections.find((c) => c.peer === node.notisId);
       const reach = conn !== undefined
         ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`
-        : node.addrs.length > 0 ? node.addrs[0]! : '(api base)';
+        : node.api !== null ? node.api : 'not reached';
       line.appendChild(el('span', 'inkmute', ` · ${reach} · ${node.status}`));
       if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${node.readMs} ms`));
       block.appendChild(line);
