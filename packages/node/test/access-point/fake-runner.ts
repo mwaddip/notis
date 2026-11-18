@@ -20,6 +20,7 @@ export class FakeRunner implements Runner {
   writes: Array<{ path: string; text: string }> = [];
   removes: string[] = [];
   reads: string[] = [];
+  sleeps: number[] = [];
   files: Map<string, string> = new Map();
   logs: string[] = [];
   root = true;
@@ -27,6 +28,13 @@ export class FakeRunner implements Runner {
 
   on(match: RunMatch, response: RunResponse = {}): this {
     this.responses.push({ match, response });
+    return this;
+  }
+
+  // `prependOn` wins over an earlier `on`, so a test can override a
+  // primePi default without reshuffling the fixture.
+  prependOn(match: RunMatch, response: RunResponse = {}): this {
+    this.responses.unshift({ match, response });
     return this;
   }
 
@@ -53,7 +61,24 @@ export class FakeRunner implements Runner {
 
   async remove(path: string): Promise<void> {
     this.removes.push(path);
-    this.files.delete(path);
+    if (this.files.has(path)) {
+      this.files.delete(path);
+      return;
+    }
+    // Directory-style removal: if any file lives under this path,
+    // throw ENOTEMPTY; otherwise succeed (empty dir or absent path).
+    const prefix = path.endsWith('/') ? path : path + '/';
+    for (const key of this.files.keys()) {
+      if (key.startsWith(prefix)) {
+        const err = new Error(`ENOTEMPTY: directory not empty, rmdir '${path}'`) as NodeJS.ErrnoException;
+        err.code = 'ENOTEMPTY';
+        throw err;
+      }
+    }
+  }
+
+  async sleep(ms: number): Promise<void> {
+    this.sleeps.push(ms);
   }
 
   isRoot(): boolean {

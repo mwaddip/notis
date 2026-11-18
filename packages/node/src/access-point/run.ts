@@ -13,7 +13,12 @@ export interface Runner {
   run(cmd: string, args: readonly string[]): Promise<RunResult>;
   write(path: string, text: string): Promise<void>;
   read(path: string): Promise<string | null>;
+  // `remove(path)` on a file unlinks it; on a directory it rmdir's it,
+  // propagating `ENOTEMPTY` so a caller can decide.
   remove(path: string): Promise<void>;
+  // `sleep(ms)` waits that many milliseconds; the fake records the call
+  // and resolves at once.
+  sleep(ms: number): Promise<void>;
   isRoot(): boolean;
   log(msg: string): void;
 }

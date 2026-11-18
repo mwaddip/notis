@@ -71,6 +71,16 @@ function primePi(r: FakeRunner): FakeRunner {
       && a.includes('netplan-wlan0-HomeNetwork'),
     { stdout: 'a\n' },
   );
+  // The DEVICE-only poll `nmcli -t -f DEVICE dev` the tool runs between
+  // `systemctl start dagsocial-ap-iface.service` and `nmcli con add` —
+  // defaults to uap0 present, so existing cases do not loop. Specific
+  // cases override via `prependOn`.
+  r.on(
+    (c, a) =>
+      c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+      && a[2] === 'DEVICE' && a[3] === 'dev',
+    { stdout: 'uap0\nwlan0\nlo\n' },
+  );
   return r;
 }
 
@@ -558,5 +568,79 @@ describe('status — reads each step back from the box', () => {
     expect(text).toMatch(/uap0/);
     expect(text).toMatch(/dagsocial_ap|table/);
     expect(text).toMatch(/band/);
+  });
+});
+
+// NODE_INTERFACE → The access-point tool — fix-round 2 cases, main's
+// Pi measurement 2026-11-18: the tool races NetworkManager over uap0
+// between `systemctl start dagsocial-ap-iface.service` and `nmcli con
+// up dagsocial-ap`; `remove` leaves the tool's directory behind.
+
+describe('setup — waits for NetworkManager to list uap0', () => {
+  it.fails('lists uap0 only from its third nmcli dev read: con add runs after, two sleep(500) recorded', async () => {
+    const r = primePi(new FakeRunner());
+    let count = 0;
+    r.prependOn(
+      (c, a) =>
+        c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE' && a[3] === 'dev',
+      () => ({ stdout: ++count >= 3 ? 'uap0\nwlan0\nlo\n' : 'wlan0\nlo\n' }),
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    // Two sleep(500) during the device wait.
+    expect(r.sleeps).toContain(500);
+    expect(r.sleeps.filter((s) => s === 500).length).toBe(2);
+    // con add dagsocial-ap ran after the wait.
+    const nmAdd = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args.includes('add')
+        && c.args.includes('wifi') && c.args.includes('dagsocial-ap'),
+    );
+    expect(nmAdd).toBeTruthy();
+  });
+
+  it.fails('never lists uap0: exit 1 after the 20 s budget, no con add', async () => {
+    const r = primePi(new FakeRunner());
+    r.prependOn(
+      (c, a) =>
+        c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE' && a[3] === 'dev',
+      { stdout: 'wlan0\nlo\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(1);
+    // No con add for dagsocial-ap.
+    const nmAdd = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args.includes('add')
+        && c.args.includes('wifi') && c.args.includes('dagsocial-ap'),
+    );
+    expect(nmAdd).toBeUndefined();
+    // The record is kept incomplete without nmConnectionAdded.
+    const rec = parseRecord(r.files.get(RECORD_PATH)!);
+    expect(rec.complete).toBe(false);
+    expect(rec.entries.some((e) => e.kind === 'nmConnectionAdded')).toBe(false);
+    // 40 sleep(500) during the budget's polls.
+    expect(r.sleeps.filter((s) => s === 500).length).toBe(40);
+    expect(r.logs.join('\n')).toMatch(/uap0.*20/i);
+  });
+});
+
+describe('remove — the tool\'s directory is removed when empty', () => {
+  it.fails('after remove, /etc/dagsocial/access-point is gone and no file lives under it', async () => {
+    const r = primePi(new FakeRunner());
+    await main(['setup'], r);
+    const beforeRemoveRemoves = r.removes.length;
+    const code = await main(['remove'], r);
+    expect(code).toBe(0);
+    // The record file and the tool's directory are both removed.
+    const after = r.removes.slice(beforeRemoveRemoves);
+    expect(after).toContain(RECORD_PATH);
+    expect(after).toContain('/etc/dagsocial/access-point');
+    // No file under the tool's directory remains in the fake's filesystem.
+    for (const key of r.files.keys()) {
+      expect(key.startsWith('/etc/dagsocial/access-point/')).toBe(false);
+    }
   });
 });

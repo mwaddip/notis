@@ -524,11 +524,22 @@ function realRunner(): Runner {
       }
     },
     async remove(path): Promise<void> {
+      // Try as a file first; on EISDIR / EPERM (Linux / macOS), fall
+      // back to rmdir, which propagates ENOTEMPTY.
       try {
         await fs.unlink(path);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') return;
+        if (code === 'EISDIR' || code === 'EPERM') {
+          await fs.rmdir(path);
+          return;
+        }
+        throw err;
       }
+    },
+    async sleep(ms): Promise<void> {
+      await new Promise<void>((resolve) => setTimeout(resolve, ms));
     },
     isRoot(): boolean {
       return typeof process.getuid === 'function' && process.getuid() === 0;
