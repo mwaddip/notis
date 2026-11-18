@@ -71,6 +71,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     chain: null,
     notContinued: false,
     disagreement: null,
+    localLookup: { reads: 0, last: null },
     ...overrides,
   };
 }

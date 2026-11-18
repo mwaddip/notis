@@ -59,6 +59,7 @@ function entry(over: Partial<NodeEntry>): NodeEntry {
     known: false,
     byHand: false,
     yours: false,
+    local: false,
     status: 'ok',
     failures: 0,
     retryAtMs: 0,

@@ -1014,6 +1014,7 @@ describe('a waitable write is held while the question stands before any chain is
         other: null,
         fork: 'cc'.repeat(32),
       },
+      localLookup: { reads: 0, last: null },
     };
     const run = h.tipRuns[h.tipRuns.length - 1]!;
     run.resolve({ verdict: meshVerdict(state), anchor: null, chain: null });

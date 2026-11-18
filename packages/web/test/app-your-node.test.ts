@@ -257,6 +257,7 @@ const unseatedWithQuestion = (): ClientState => ({
     other: null,
     fork: 'cc'.repeat(32),
   },
+  localLookup: { reads: 0, last: null },
 });
 
 describe('a question standing before any chain is seated', () => {
