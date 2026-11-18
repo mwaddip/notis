@@ -21,7 +21,9 @@ import {
   parseGeneralConnection,
   parsePhy,
   parseFirstInterface,
+  parseDeviceState,
   type Uplink,
+  type DeviceState,
 } from './access-point/radio.js';
 import { chooseChannel, nodeEnvPlan } from './access-point/plan.js';
 import {
@@ -243,23 +245,28 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   const stIface = await runner.run('systemctl', ['start', 'dagsocial-ap-iface.service']);
   if (!check(stIface, 'systemctl start dagsocial-ap-iface.service')) return 1;
 
-  // Wait for NetworkManager to list uap0 before the profile goes up
-  // (NODE_INTERFACE → The access-point tool): NetworkManager registers
-  // the interface the systemd unit made on its own time, and the profile
-  // goes up once NetworkManager lists it. Poll `nmcli -t -f DEVICE dev`
-  // every 500 ms for at most 20 s.
-  let uap0Seen = false;
+  // Wait until NetworkManager can activate uap0
+  // (NODE_INTERFACE → The access-point tool): NetworkManager lists a
+  // new device as `unavailable` before it moves to `disconnected`; the
+  // profile goes up once the state is `disconnected`, `connecting` or
+  // `connected`. Poll `nmcli -t -f DEVICE,STATE,CONNECTION dev` every
+  // 500 ms for at most 20 s.
+  let uap0: DeviceState | null = null;
   for (let i = 0; i < DEVICE_WAIT_ITERATIONS; i++) {
-    const dev = await runner.run('nmcli', ['-t', '-f', 'DEVICE', 'dev']);
-    if (dev.stdout.split('\n').some((l) => l.trim() === 'uap0')) {
-      uap0Seen = true;
+    const out = await runner.run(
+      'nmcli',
+      ['-t', '-f', 'DEVICE,STATE,CONNECTION', 'dev'],
+    );
+    const s = parseDeviceState(out.stdout, 'uap0');
+    if (s !== null && (s.state === 'disconnected' || s.state === 'connecting' || s.state === 'connected')) {
+      uap0 = s;
       break;
     }
     await runner.sleep(DEVICE_POLL_MS);
   }
-  if (!uap0Seen) {
+  if (uap0 === null) {
     runner.log(
-      `dagsocial-access-point: NetworkManager never listed uap0 after ${(DEVICE_WAIT_ITERATIONS * DEVICE_POLL_MS) / 1000} s`,
+      `dagsocial-access-point: NetworkManager never made uap0 activatable after ${(DEVICE_WAIT_ITERATIONS * DEVICE_POLL_MS) / 1000} s`,
     );
     return 1;
   }
@@ -284,8 +291,30 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   await push({ kind: 'nmConnectionAdded', name: NM_PROFILE_NAME });
   const nmAdd = await runner.run('nmcli', nmArgs);
   if (!check(nmAdd, 'nmcli con add dagsocial-ap')) return 1;
-  const nmUp = await runner.run('nmcli', ['con', 'up', NM_PROFILE_NAME]);
-  if (!check(nmUp, 'nmcli con up dagsocial-ap')) return 1;
+  // Skip `con up` where autoconnect brought the profile up already; on
+  // a non-zero code, re-read once and take `connected:dagsocial-ap` as
+  // success — `con up` loses the race with autoconnect after `con add`
+  // (NODE_INTERFACE → The access-point tool).
+  if (!(uap0.state === 'connected' && uap0.connection === NM_PROFILE_NAME)) {
+    const nmUp = await runner.run('nmcli', ['con', 'up', NM_PROFILE_NAME]);
+    if (nmUp.code !== 0) {
+      const after = await runner.run(
+        'nmcli',
+        ['-t', '-f', 'DEVICE,STATE,CONNECTION', 'dev'],
+      );
+      const retry = parseDeviceState(after.stdout, 'uap0');
+      if (retry !== null && retry.state === 'connected' && retry.connection === NM_PROFILE_NAME) {
+        runner.log(
+          `dagsocial-access-point: nmcli con up ${NM_PROFILE_NAME} returned ${nmUp.code} but uap0 is already connected to ${NM_PROFILE_NAME}`,
+        );
+      } else {
+        runner.log(
+          `dagsocial-access-point: nmcli con up ${NM_PROFILE_NAME} failed (code ${nmUp.code}): ${nmUp.stderr.trim()}`,
+        );
+        return 1;
+      }
+    }
+  }
 
   // Step 6: the dnsmasq instance.
   await writeFileChange(runner, record, DNSMASQ_CONF_PATH, dnsmasqConf({

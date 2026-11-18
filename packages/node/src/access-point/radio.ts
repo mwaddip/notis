@@ -161,6 +161,26 @@ export function parseFirstInterface(iwDev: string): string | null {
   return null;
 }
 
+export interface DeviceState {
+  state: string;
+  connection: string | null;
+}
+
+// `nmcli -t -f DEVICE,STATE,CONNECTION dev` lists every device as
+// `<device>:<state>:<connection>`; `<connection>` is empty for a
+// device that holds none. Reads the line for `<iface>`.
+export function parseDeviceState(nmcliOut: string, iface: string): DeviceState | null {
+  for (const raw of nmcliOut.split('\n')) {
+    const fields = splitNmcliTerse(raw.replace(/\r$/, ''));
+    if (fields.length < 2) continue;
+    if (fields[0] !== iface) continue;
+    const state = (fields[1] ?? '').trim();
+    const conn = (fields[2] ?? '').trim();
+    return { state, connection: conn === '' || conn === '--' ? null : conn };
+  }
+  return null;
+}
+
 // `nmcli -t -f GENERAL.CONNECTION dev show <dev>` prints one line,
 // `GENERAL.CONNECTION:<profile>`.
 export function parseGeneralConnection(nmcliShow: string): string | null {

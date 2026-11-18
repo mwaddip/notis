@@ -71,15 +71,16 @@ function primePi(r: FakeRunner): FakeRunner {
       && a.includes('netplan-wlan0-HomeNetwork'),
     { stdout: 'a\n' },
   );
-  // The DEVICE-only poll `nmcli -t -f DEVICE dev` the tool runs between
-  // `systemctl start dagsocial-ap-iface.service` and `nmcli con add` —
-  // defaults to uap0 present, so existing cases do not loop. Specific
-  // cases override via `prependOn`.
+  // The STATE poll `nmcli -t -f DEVICE,STATE,CONNECTION dev` the tool
+  // runs between `systemctl start dagsocial-ap-iface.service` and
+  // `nmcli con add` — defaults to uap0 `disconnected` (activatable),
+  // so existing cases do not loop. Specific cases override via
+  // `prependOn`.
   r.on(
     (c, a) =>
       c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
-      && a[2] === 'DEVICE' && a[3] === 'dev',
-    { stdout: 'uap0\nwlan0\nlo\n' },
+      && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+    { stdout: 'uap0:disconnected:\nwlan0:connected:netplan-wlan0-HomeNetwork\n' },
   );
   // The uplink's IPv4 networks, read before the first change so the
   // tool refuses an overlap with the access point's 10.78.79.0/24. The
@@ -501,8 +502,8 @@ describe('remove — the uplink-drop warning fires whenever nmConnectionAdded is
     r.on(
       (c, a) =>
         c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
-        && a[2] === 'DEVICE' && a[3] === 'dev',
-      { stdout: 'uap0\nwlan0\nlo\n' },
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      { stdout: 'uap0:disconnected:\nwlan0:connected:netplan-wlan0-HomeNetwork\n' },
     );
     await main(['setup'], r);
     const beforeRemoveLogs = r.logs.length;
@@ -593,37 +594,14 @@ describe('status — reads each step back from the box', () => {
 // `nmcli con up dagsocial-ap`; `remove` removes the tool's directory
 // when empty.
 
-describe('setup — waits for NetworkManager to list uap0', () => {
-  it('lists uap0 only from its third nmcli dev read: con add runs after, two sleep(500) recorded', async () => {
-    const r = primePi(new FakeRunner());
-    let count = 0;
-    r.prependOn(
-      (c, a) =>
-        c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
-        && a[2] === 'DEVICE' && a[3] === 'dev',
-      () => ({ stdout: ++count >= 3 ? 'uap0\nwlan0\nlo\n' : 'wlan0\nlo\n' }),
-    );
-    const code = await main(['setup'], r);
-    expect(code).toBe(0);
-    // Two sleep(500) during the device wait.
-    expect(r.sleeps).toContain(500);
-    expect(r.sleeps.filter((s) => s === 500).length).toBe(2);
-    // con add dagsocial-ap ran after the wait.
-    const nmAdd = r.calls.find(
-      (c) =>
-        c.cmd === 'nmcli' && c.args.includes('add')
-        && c.args.includes('wifi') && c.args.includes('dagsocial-ap'),
-    );
-    expect(nmAdd).toBeTruthy();
-  });
-
-  it('never lists uap0: exit 1 after the 20 s budget, no con add', async () => {
+describe('setup — never makes uap0 activatable', () => {
+  it('always unavailable: exit 1 after the 20 s budget, no con add', async () => {
     const r = primePi(new FakeRunner());
     r.prependOn(
       (c, a) =>
         c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
-        && a[2] === 'DEVICE' && a[3] === 'dev',
-      { stdout: 'wlan0\nlo\n' },
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      { stdout: 'uap0:unavailable:\nwlan0:connected:netplan-wlan0-HomeNetwork\n' },
     );
     const code = await main(['setup'], r);
     expect(code).toBe(1);
@@ -725,7 +703,7 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
 // where `nmcli con up` loses a race with autoconnect.
 
 describe('setup — the wait reads uap0 STATE, and con up can race autoconnect', () => {
-  it.fails('uap0 unavailable twice then disconnected: con up runs after the third read, two sleep(500) recorded', async () => {
+  it('uap0 unavailable twice then disconnected: con up runs after the third read, two sleep(500) recorded', async () => {
     const r = primePi(new FakeRunner());
     let count = 0;
     r.prependOn(
@@ -748,7 +726,7 @@ describe('setup — the wait reads uap0 STATE, and con up can race autoconnect',
     expect(conUp).toBeTruthy();
   });
 
-  it.fails('uap0 already connected:dagsocial-ap: setup skips con up and continues', async () => {
+  it('uap0 already connected:dagsocial-ap: setup skips con up and continues', async () => {
     const r = primePi(new FakeRunner());
     r.prependOn(
       (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
@@ -765,7 +743,7 @@ describe('setup — the wait reads uap0 STATE, and con up can race autoconnect',
     expect(conUp).toBeUndefined();
   });
 
-  it.fails('con up fails but the re-read answers uap0:connected:dagsocial-ap: setup continues', async () => {
+  it('con up fails but the re-read answers uap0:connected:dagsocial-ap: setup continues', async () => {
     const r = primePi(new FakeRunner());
     let dsCount = 0;
     r.prependOn(
@@ -789,7 +767,7 @@ describe('setup — the wait reads uap0 STATE, and con up can race autoconnect',
     expect(dnsWrite).toBeTruthy();
   });
 
-  it.fails('con up fails and the re-read answers uap0:disconnected: exit 1', async () => {
+  it('con up fails and the re-read answers uap0:disconnected: exit 1', async () => {
     const r = primePi(new FakeRunner());
     r.prependOn(
       (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
