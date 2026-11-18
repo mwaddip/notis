@@ -140,7 +140,7 @@ systemctl start dagsocial-ap-firewall.service</pre>
     <section>
       <h2>What to expect</h2>
       <p>Stopping the access point drops the box's own Wi-Fi for a few seconds: one radio carries both links, and the client link reconnects on its own after the access point ends. <span class="w">remove</span> says so before it starts. An upgrade of the <code>.deb</code> keeps the access point: the tool's files live outside the package's tree, and <code>node.env</code> is the package's conffile, which the package keeps across upgrades.</p>
-      <p>The box's own Wi-Fi is slower on 2.4 GHz than on 5 GHz. Where the box's router channel was flagged for radar detection, step 3 moved the uplink to 2.4 GHz — <span class="w">remove</span> moves it back.</p>
+      <p>The box's own Wi-Fi is slower on 2.4 GHz than on 5 GHz. Where the box's router channel was flagged for radar detection, step 3 moved the uplink to 2.4 GHz — <span class="w">remove</span> moves it back. Where netplan writes the box's Wi-Fi profile, NetworkManager adds a timestamp to the profile's netplan file whenever the profile changes: after <span class="w">remove</span> the profile's settings are as they were, and the file carries that timestamp.</p>
     </section>
 
     <section>

@@ -5956,7 +5956,10 @@ takes is one an operator can take by hand, and the documentation names each.
 written, each unit enabled, the profile added — is written to `/etc/dagsocial/access-point/record.json` as it is
 made, so a `setup` that stopped half way is undone as far as it went. A `setup` on a box already set up changes
 nothing. **`remove` undoes what the record holds, in reverse, and nothing else**, warning first that stopping the
-access point drops the uplink for a few seconds on a radio that carries both. **`status` reads each step back.** The
+access point drops the uplink for a few seconds on a radio that carries both. **The uplink's profile is set back through
+NetworkManager**, its settings as they were: where netplan writes the profile, NetworkManager rewrites the profile's
+netplan file on any change and adds its own bookkeeping to it — a timestamp — so the file's settings return and its
+bytes do not; the tool writes no file NetworkManager owns. **`status` reads each step back.** The
 tool's files live outside the package's tree, and `node.env` is the package's conffile, so an upgrade keeps them.
 
 ---
