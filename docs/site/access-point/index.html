@@ -57,7 +57,7 @@
 
     <section>
       <h2>What it is for</h2>
-      <p>The access point is a second Wi-Fi network on a box that already runs a Notis node. A phone joining it reaches the box's node and nothing else: a lookup of any other name is answered at once, and a packet for any other address is refused at once. The box keeps its own connection — a router over Wi-Fi, or none — and uses it to carry the mesh on the phone's behalf. Nothing on the access point reaches the internet.</p>
+      <p>The access point is a second Wi-Fi network on a box that already runs a Notis node. A phone joining it reaches the box's node and nothing else: every name lookup is refused at once, and a packet for any other address is refused within seconds. The box keeps its own connection — a router over Wi-Fi, or none — and uses it to carry the mesh on the phone's behalf. Nothing on the access point reaches the internet.</p>
       <p>The name a joiner sees is the one you choose for the network, and if you set no password anyone nearby can join. Notis's own traffic is encrypted either way — the password decides who joins the network, not who can read what Notis carries.</p>
     </section>
 
@@ -108,26 +108,26 @@ systemctl enable dagsocial-ap-iface.service
 systemctl start dagsocial-ap-iface.service</pre>
 
       <h3>5. The NetworkManager profile</h3>
-      <p>Add a NetworkManager profile named <code>dagsocial-ap</code> that runs the access point on <code>uap0</code> at <code>10.42.0.1/24</code>, connects at boot, and carries the name and the password you chose. The band and channel are the ones step 3 picked:</p>
+      <p>Add a NetworkManager profile named <code>dagsocial-ap</code> that runs the access point on <code>uap0</code> at <code>10.78.79.1/24</code> — the address every box answers at, outside the ranges routers and hotspots take by default; where the box's router uses <code>10.78.79.0/24</code> itself, <span class="w">setup</span> stops before its first change and says why — connects at boot, and carries the name and the password you chose. The band and channel are the ones step 3 picked:</p>
       <pre class="cmd">nmcli con add type wifi ifname uap0 con-name dagsocial-ap \
   autoconnect yes ssid "Notis" \
   802-11-wireless.mode ap \
   802-11-wireless.band bg \
   802-11-wireless.channel 1 \
-  ipv4.method manual ipv4.addresses 10.42.0.1/24 \
+  ipv4.method manual ipv4.addresses 10.78.79.1/24 \
   ipv6.method disabled
 nmcli con up dagsocial-ap</pre>
       <p>NetworkManager registers the new <code>uap0</code> on its own time, so wait until <code>nmcli dev</code> lists it before <code>nmcli con up</code>; at boot the interface unit runs before NetworkManager starts, and the profile comes up by itself.</p>
       <p>Where you set a password, the <code>add</code> command carries two more fields, <code>wifi-sec.key-mgmt wpa-psk</code> and <code>wifi-sec.psk &lt;password&gt;</code>. NetworkManager's <code>ipv4.method shared</code> is never used: it forwards to the internet.</p>
 
-      <h3>6. Addresses and the one name</h3>
-      <p>Write a dnsmasq configuration and a systemd unit for a dnsmasq instance bound to <code>uap0</code> alone. It hands out addresses between <code>10.42.0.10</code> and <code>10.42.0.254</code>, names the box as the router and the DNS server, answers <code>notis.internal</code> with <code>10.42.0.1</code>, and refuses every other name at once — never a timeout. The files are <code>/etc/dagsocial/access-point/dnsmasq.conf</code> and <code>/etc/systemd/system/dagsocial-ap-dnsmasq.service</code>. Enable and start it:</p>
+      <h3>6. Addresses, and no names</h3>
+      <p>Write a dnsmasq configuration and a systemd unit for a dnsmasq instance bound to <code>uap0</code> alone. It hands out addresses between <code>10.78.79.10</code> and <code>10.78.79.254</code>, names the box as the router and the DNS server, and refuses every name at once — never a timeout. The extension reaches the box by its address alone. The files are <code>/etc/dagsocial/access-point/dnsmasq.conf</code> and <code>/etc/systemd/system/dagsocial-ap-dnsmasq.service</code>. Enable and start it:</p>
       <pre class="cmd">systemctl daemon-reload
 systemctl enable dagsocial-ap-dnsmasq.service
 systemctl start dagsocial-ap-dnsmasq.service</pre>
 
       <h3>7. Nothing past the box</h3>
-      <p>Write an nftables ruleset and a systemd unit for one table, <code>inet dagsocial_ap</code>, that accepts from <code>uap0</code> DHCP, DNS, port 80 at <code>10.42.0.1</code> — redirected to the node's HTTP port — and the node's WebRTC-direct UDP port, and refuses the rest. The box forwards nothing: with forwarding off, as it is on Debian unless something turns it on, the kernel answers a packet for any other address as unreachable, and a device on the access point learns within seconds that nothing beyond it answers. The table also refuses every forwarded packet, should anything turn forwarding on. The files are <code>/etc/dagsocial/access-point/firewall.nft</code> and <code>/etc/systemd/system/dagsocial-ap-firewall.service</code>. Enable and start it:</p>
+      <p>Write an nftables ruleset and a systemd unit for one table, <code>inet dagsocial_ap</code>, that accepts from <code>uap0</code> DHCP, DNS, port 80 at <code>10.78.79.1</code> — redirected to the node's HTTP port — and the node's WebRTC-direct UDP port, and refuses the rest. The box forwards nothing: with forwarding off, as it is on Debian unless something turns it on, the kernel answers a packet for any other address as unreachable, and a device on the access point learns within seconds that nothing beyond it answers. The table also refuses every forwarded packet, should anything turn forwarding on. The files are <code>/etc/dagsocial/access-point/firewall.nft</code> and <code>/etc/systemd/system/dagsocial-ap-firewall.service</code>. Enable and start it:</p>
       <pre class="cmd">systemctl daemon-reload
 systemctl enable dagsocial-ap-firewall.service
 systemctl start dagsocial-ap-firewall.service</pre>
@@ -145,8 +145,8 @@ systemctl start dagsocial-ap-firewall.service</pre>
 
     <section>
       <h2>For a reader on a phone</h2>
-      <p>Join the network by its name. On Android a notification says the network has no internet access: tap it, tick <em>Don’t ask again for this network</em> and choose <em>Yes</em> to stay connected. Until you do, apps cannot use the network, and a phone that knows another network with internet in range switches back to it within a minute. On a phone where a <em>Private DNS</em> is set to a named provider, <code>notis.internal</code> is looked up on that provider and hidden — set <em>Private DNS</em> to automatic or off while you are on the access point.</p>
-      <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity on <code>http://notis.internal/mesh/identity</code> and adds the node it names. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
+      <p>Join the network by its name. On Android a notification says the network has no internet access: tap it, tick <em>Don’t ask again for this network</em> and choose <em>Yes</em> to stay connected. Until you do, apps cannot use the network, and a phone that knows another network with internet in range switches back to it within a minute.</p>
+      <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity at <code>http://10.78.79.1/mesh/identity</code> and adds the node it names. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
     </section>
 
     <section>
