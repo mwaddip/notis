@@ -46,6 +46,16 @@ describe('dnsmasqConf', () => {
     });
     expect(t).toContain('except-interface=lo');
   });
+
+  it.fails('names no name — every name is refused at once via local=/#/, no-resolv, no-hosts', () => {
+    const t = dnsmasqConf({
+      iface: 'uap0',
+      address: '10.42.0.1',
+      range: ['10.42.0.10', '10.42.0.254'],
+    });
+    // No `address=/<domain>/<ip>` line; dnsmasq hands out no DNS mappings.
+    expect(t).not.toMatch(/^address=/m);
+  });
 });
 
 describe('firewall', () => {

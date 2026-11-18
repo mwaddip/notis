@@ -650,3 +650,60 @@ describe('remove — the tool\'s directory is removed when empty', () => {
     }
   });
 });
+
+// NODE_INTERFACE → The access-point tool — the uplink's IPv4 networks
+// must not overlap the access point's 10.78.79.0/24. `setup` reads them
+// before the first change through `nmcli -g IP4.ADDRESS dev show
+// <uplink>` and refuses the overlapping ones.
+
+describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', () => {
+  function primePiAt(cidr: string | null): FakeRunner {
+    const r = primePi(new FakeRunner());
+    if (cidr !== null) {
+      r.prependOn(
+        (c, a) =>
+          c === 'nmcli' && a.includes('-g')
+          && a.includes('IP4.ADDRESS')
+          && a.includes('wlan0'),
+        { stdout: cidr + '\n' },
+      );
+    }
+    return r;
+  }
+
+  it.fails('an uplink at 192.168.1.23/24 proceeds; the overlap check runs through nmcli -g IP4.ADDRESS', async () => {
+    const r = primePiAt('192.168.1.23/24');
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    const checkCall = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args.includes('-g')
+        && c.args.includes('IP4.ADDRESS'),
+    );
+    expect(checkCall).toBeTruthy();
+  });
+
+  it.fails('an uplink at 10.78.79.200/24 is refused — same /24 as the access point', async () => {
+    const r = primePiAt('10.78.79.200/24');
+    const code = await main(['setup'], r);
+    expect(code).not.toBe(0);
+    expect(r.writes).toEqual([]);
+    expect(r.logs.join('\n')).toMatch(/10\.78\.79\.200\/24|overlap/i);
+  });
+
+  it.fails('an uplink at 10.78.0.5/16 is refused — contains 10.78.79.0/24', async () => {
+    const r = primePiAt('10.78.0.5/16');
+    const code = await main(['setup'], r);
+    expect(code).not.toBe(0);
+    expect(r.writes).toEqual([]);
+    expect(r.logs.join('\n')).toMatch(/10\.78\.0\.5\/16|overlap/i);
+  });
+
+  it.fails('an uplink at 10.78.79.0/25 is refused — a /25 that falls inside 10.78.79.0/24', async () => {
+    const r = primePiAt('10.78.79.0/25');
+    const code = await main(['setup'], r);
+    expect(code).not.toBe(0);
+    expect(r.writes).toEqual([]);
+    expect(r.logs.join('\n')).toMatch(/10\.78\.79\.0\/25|overlap/i);
+  });
+});
