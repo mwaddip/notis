@@ -1,0 +1,4 @@
+netplan-wlan0-HomeNetwork:00000000-0000-4000-8000-00000000000X:802-11-wireless:wlan0
+lo:00000000-0000-4000-8000-00000000000X:loopback:lo
+Wired connection 1:00000000-0000-4000-8000-00000000000X:802-3-ethernet:
+GENERAL.CONNECTION:netplan-wlan0-HomeNetwork
