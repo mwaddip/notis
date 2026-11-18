@@ -1,12 +1,15 @@
 name: release
 
-# Manual only. Each job builds its packages on its own OS for the native
-# binaries it carries — the Linux job builds the tarball and the .deb
-# (NODE_INTERFACE → "The .deb and the tarball run the system's Node"), the
-# Windows job the installer with node.exe bundled. On a tagged run the
-# release job attaches every artifact to a public GitHub Release; a dry run
-# builds and uploads the artifacts as workflow artifacts alone and skips
-# the release job.
+# Manual only. Each job builds its packages on its own OS and architecture
+# for the native binaries it carries — the `linux` job builds the x64
+# tarball and `.deb` on an x64 runner, with the web and extension zips
+# beside them; the `linux-arm64` job builds the arm64 tarball and `.deb`
+# on an arm64 runner; the `windows` job builds the installer with
+# `node.exe` bundled (NODE_INTERFACE → "The Linux packages are built for
+# x64 and for arm64, each on a machine of its own architecture."). On a
+# tagged run the release job attaches every artifact to a public GitHub
+# Release; a dry run builds and uploads the artifacts as workflow
+# artifacts alone and skips the release job.
 on:
   workflow_dispatch:
     inputs:
@@ -48,6 +51,28 @@ jobs:
             notis-web-*.zip
             notis-extension-*.zip
 
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/build-tarball.sh
+      - run: bash scripts/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          if-no-files-found: error
+          path: |
+            notis-node-*-linux-arm64.tar.gz
+            dagsocial-node_*_arm64.deb
+
   windows:
     runs-on: windows-latest
     steps:
@@ -68,7 +93,7 @@ jobs:
           path: notis-node-*-win-x64-setup.exe
 
   release:
-    needs: [linux, windows]
+    needs: [linux, linux-arm64, windows]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
