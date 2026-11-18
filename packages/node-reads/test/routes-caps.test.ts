@@ -400,7 +400,7 @@ function longestMeshIdentityAnswer(): string {
 describe('MESH_IDENTITY_READ_BYTES', () => {
   it('reads the longest honest answer under the cap', async () => {
     const body = longestMeshIdentityAnswer();
-expect(byteLength(body)).toBeLessThanOrEqual(MESH_IDENTITY_READ_BYTES);
+    expect(byteLength(body)).toBeLessThanOrEqual(MESH_IDENTITY_READ_BYTES);
     const res = new Response(body, { status: 200 });
     const result = await readCappedJson(res, MESH_IDENTITY_READ_BYTES);
     expect(result.ok).toBe(true);
