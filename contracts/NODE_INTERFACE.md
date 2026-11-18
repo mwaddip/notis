@@ -1020,6 +1020,24 @@ defect. **It belongs to the supply set.**
 > which the node generated keypairs server-side, which is also why the dead router expected an
 > `identities` table.
 
+### Mesh identity
+
+> ⚠ **AHEAD OF CODE (2026-11-18).** No route answers `/mesh/identity`; the node's identity reaches its operator through its start
+> line alone (→ Configuration → "A mesh node prints its identity line"). The rule below leads the code (the mesh access
+> point).
+
+| Method | Path | Response | Errors |
+|--------|------|----------|--------|
+| `GET` | `/mesh/identity` | `{ notisId, peerId, multiaddrs, localAddrs }` — the node's mesh identity, the identity line's four fields in its order | 404 `{ error }` on a node that runs no mesh, or before its mesh has started |
+
+**A mesh node answers its identity.** `GET /mesh/identity` answers what the node prints as its identity line — its key
+in the Notis spelling and as a peer id, the addresses it announces, and, for a `private` node, its local WebRTC-direct
+addresses with their certificate hash and `/p2p/` id (→ Configuration → "A mesh node prints its identity line") — read
+from `net` at the request, so an address that changed answers changed. An operator reads the node's identity without
+its journal; a client on the node's local network finds a private node by it (`MESH_INTERFACE → Discovery → "A node
+the access point answers"`). It is the node's data, as every route's answer is; over the mesh endpoint it answers as
+every `GET` does (`MESH_INTERFACE → The node endpoint`).
+
 ### Link previews
 
 | Method | Path | Response |
@@ -5851,6 +5869,7 @@ and its installed dependencies — the patched ones (`patches/`) as patched:
 - `dist/node.js` — the node: its entry and every module it imports, as one ES module.
 - `dist/miner-consolidate.js` — the consolidation `scripts/miner.mjs` loads with a key file, bundled the same way
   (`MINING_INTERFACE → Consolidation`).
+- `dist/access-point.js` — the access-point tool (→ The access-point tool), bundled the same way.
 - `dist/faucet.js` — the faucet, bundled the same way; in the `.deb` alone, the one package with a faucet unit.
 - `scripts/miner.mjs` and `scripts/gen-miner-key.mjs`, as written; they import Node built-ins alone.
 - `node_modules/` — the three native modules the bundles load and do not carry, `better-sqlite3`, `node-datachannel`
@@ -5890,6 +5909,49 @@ built"). Each file names its architecture — the tarball by Node's name, `notis
 the `.deb` by Debian's, `dagsocial-node_<version>_<amd64|arm64>.deb`, which its control file's `Architecture` field
 carries. The web zip and the extension zips are built once, on the x64 runner; the Windows installer is built for x64
 alone.
+
+---
+
+## The access-point tool — a box's Wi-Fi network that carries the mesh and nothing else
+
+> ⚠ **AHEAD OF CODE (2026-11-18).** No tool exists: the `.deb` installs no `dagsocial-access-point`, and the tree carries no
+> `dist/access-point.js`. The rules below lead the code (the mesh access point).
+
+**The tool is opt-in.** The `.deb` installs `/usr/bin/dagsocial-access-point`, which runs `dist/access-point.js` on the
+system's Node; the package's install and upgrade never run it, so a box that never runs it is unchanged by the package.
+It runs as root alone — any other user is refused — with three commands: `setup`, `status` and `remove`. Each step it
+takes is one an operator can take by hand, and the documentation names each.
+
+**`setup` turns a box into an access point, in order**, printing each step as it takes it:
+
+1. **The node's mesh role.** A node with no `MESH_ROLE` becomes `private`; a `private` node keeps its role and its
+   `MESH_LISTEN`, the access point's WebRTC-direct address added where the list names none the access point reaches;
+   a `public` node is refused, saying why — a public node lists no local addresses (→ Configuration → "A mesh node
+   prints its identity line").
+2. **The radio.** `iw` must list a client link and an access point in one interface combination; a radio that does
+   not is refused, saying so.
+3. **The channel.** With an uplink, the access point runs on the uplink's channel — one radio offers one channel to
+   both. On a channel flagged for radar detection, where no access point starts, the uplink's profile is moved to the
+   2.4 GHz band where its network offers one there, and `setup` stops, saying why, where it does not. With no uplink,
+   the tool picks a 2.4 GHz channel no radar flag holds.
+4. **The interface.** `uap0` is made from the uplink's interface at every boot, before NetworkManager starts.
+5. **The network.** A NetworkManager profile, `dagsocial-ap`, runs the access point on `uap0` at `10.42.0.1/24`,
+   connecting at boot: named `Notis` and open, unless the operator gives `--name` or `--password` (WPA2).
+6. **Addresses and the one name.** A dnsmasq instance of the tool's own, bound to `uap0` alone, hands out addresses —
+   naming the box as the router and the DNS server — and answers `notis.internal` with `10.42.0.1` and **every other
+   name at once with a refusal**. NetworkManager's `ipv4.method shared` is never used: it forwards to the internet.
+7. **Nothing past the box.** One nftables table, `inet dagsocial_ap`, rejects every packet forwarded from `uap0` with
+   an ICMP unreachable, so a device on the access point learns at once that nothing beyond it answers; from `uap0` the
+   box accepts DHCP, DNS, TCP 80 — redirected to the node's `PORT` — and the node's WebRTC-direct UDP port, and rejects
+   the rest. `ip_forward` is left as it is.
+8. **The node restarts** on its new `node.env`.
+
+**The record.** Every change `setup` makes — the uplink profile's band as it was, `node.env` as it was, each file
+written, each unit enabled, the profile added — is written to `/etc/dagsocial/access-point/record.json` as it is
+made, so a `setup` that stopped half way is undone as far as it went. A `setup` on a box already set up changes
+nothing. **`remove` undoes what the record holds, in reverse, and nothing else**, warning first that stopping the
+access point drops the uplink for a few seconds on a radio that carries both. **`status` reads each step back.** The
+tool's files live outside the package's tree, and `node.env` is the package's conffile, so an upgrade keeps them.
 
 ---
 
