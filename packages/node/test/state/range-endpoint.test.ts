@@ -11,6 +11,7 @@ import {TREE_KEY_LENGTH,
 } from '@dagsocial/types';
 import { holdingsPage, treeStateView, verifierSession } from '@dagsocial/consensus';
 import type { CreditBox } from '@dagsocial/types';
+import { NO_MESH } from '../helpers.js';
 
 /**
  * The range route and the single-key route share one implementation on the
@@ -55,7 +56,7 @@ async function setup() {
   insertBox(karma);
 
   const handle = await activateProverOverStore();
-  const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+  const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
   return { app, db, handle, owner, empty, credit, karma };
 }
 
@@ -154,7 +155,7 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     expect(block2!.header.height).toBe(2);
 
     const { createApp } = await import('../../src/server.js');
-    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+    const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
     const ownerHex = bytesToHex(owner.userId);
 
     async function pageAt(h: number) {
@@ -220,7 +221,7 @@ describe('GET /api/v1/range/:kind/:owner — the range route', () => {
     }
     const freshHandle = await activateProverOverStore();
     const { createApp } = await import('../../src/server.js');
-    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+    const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
 
     const freshStorageSpy = vi.spyOn(freshHandle.storage, 'rollback');
     const freshProverSpy = vi.spyOn(freshHandle.prover, 'rollback');

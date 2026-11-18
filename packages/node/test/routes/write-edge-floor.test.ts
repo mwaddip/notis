@@ -5,7 +5,7 @@
 // its own `vi.doMock` of `src/config.js` so a mocked floor takes effect at the
 // admission seam. ⚠ `vi.doMock` outlives `vi.restoreAllMocks` and
 // `vi.resetModules` — `vi.doUnmock` in the `afterEach` ends it.
-import { makeTestConfig, seedProvenance, toHex, txToJson } from '../helpers.js';
+import { makeTestConfig, seedProvenance, toHex, txToJson, NO_MESH} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
@@ -128,7 +128,7 @@ describe('write edge — floor above zero', () => {
       bootstrapPeers: [],
       listenAddrs: '/ip4/127.0.0.1/tcp/0',
       maxPeers: 50,
-    }));
+    }), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${addr.port}`;

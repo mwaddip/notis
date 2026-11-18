@@ -1,6 +1,6 @@
 // NODE_INTERFACE → HTTP API → "A write request's transaction is checked whole
 // before anything reads it"
-import { makeTestConfig, seedProvenance, toHex, txToJson } from '../helpers.js';
+import { makeTestConfig, seedProvenance, toHex, txToJson, NO_MESH} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
@@ -135,7 +135,7 @@ describe('write edge — a write request\'s transaction is checked whole', () =>
     }, 1, 103);
     insertBox(karmaBox);
 
-    const app = createApp(makeConfig());
+    const app = createApp(makeConfig(), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${addr.port}`;

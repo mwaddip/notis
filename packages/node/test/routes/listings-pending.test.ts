@@ -11,7 +11,7 @@ import { insertBox } from '../../src/store/utxo.js';
 import { putIdentityRecord } from '../../src/store/identity-records.js';
 import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
-import { makeTestConfig, seedProvenance, toHex, txToJson } from '../helpers.js';
+import { makeTestConfig, seedProvenance, toHex, txToJson, NO_MESH} from '../helpers.js';
 import { config as nodeConfig } from '../../src/config.js';
 import {
   computeCandidateBoxId,
@@ -181,7 +181,7 @@ describe('the listings under pending=1', () => {
     initDb(':memory:');
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const app = createApp(makeConfig());
+    const app = createApp(makeConfig(), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${addr.port}`;

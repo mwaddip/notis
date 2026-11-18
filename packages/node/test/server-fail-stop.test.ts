@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AddressInfo } from 'net';
-import { makeTestConfig, makeBlock, insertPoisonedBlock } from './helpers.js';
+import { makeTestConfig, makeBlock, insertPoisonedBlock, NO_MESH} from './helpers.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 
 function makeConfig() {
@@ -43,7 +43,7 @@ describe('server /blocks guardStoreRead wiring', () => {
       }
     }
     const { createApp } = await import('../src/server.js');
-    const app = createApp(makeConfig());
+    const app = createApp(makeConfig(), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as AddressInfo;
     return {

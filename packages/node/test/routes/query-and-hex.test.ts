@@ -24,7 +24,7 @@ import {
 import type { MockInstance } from 'vitest';
 import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import { createApp } from '../../src/server.js';
-import { makeTestConfig, activateProverOverStore } from '../helpers.js';
+import { makeTestConfig, activateProverOverStore, NO_MESH} from '../helpers.js';
 
 // A valid 64-char lowercase hex key, and its uppercase spelling.
 const LOWER_KEY = 'ab'.repeat(32);
@@ -64,7 +64,7 @@ describe('a query parameter is one string, and hex is lowercase', () => {
     // The AVL prover's singleton is what createApp reads to mount
     // /api/v1/proof and /api/v1/range (NODE_INTERFACE → AVL+ State Root).
     await activateProverOverStore();
-    const app = createApp(makeTestConfig({ webShellPath: shellPath }));
+    const app = createApp(makeTestConfig({ webShellPath: shellPath }), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://localhost:${addr.port}`;

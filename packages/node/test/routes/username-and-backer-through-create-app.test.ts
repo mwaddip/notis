@@ -31,8 +31,7 @@ import {
   seedProvenance,
   signTransaction,
   toHex,
-  txToJson,
-} from '../helpers.js';
+  txToJson, NO_MESH} from '../helpers.js';
 import { getHeldEntry } from '../../src/store/mempool.js';
 
 function makeConfig(overrides?: Partial<Config>): Config {
@@ -137,7 +136,7 @@ describe('the username and backer routes read through createApp', () => {
 
     await liveProver();
 
-    const app = createApp(makeConfig());
+    const app = createApp(makeConfig(), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${addr.port}`;

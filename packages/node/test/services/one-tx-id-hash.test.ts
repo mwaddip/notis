@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { NO_MESH } from '../helpers.js';
 
 /**
  * One hash a transaction, where its bytes are proven (CONSENSUS_INTERFACE →
@@ -151,7 +152,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     const app = createApp(makeTestConfig({
       port: 0, dbPath: ':memory:', nodeRole: 'server',
       bootstrapPeers: [], listenAddrs: '/ip4/127.0.0.1/tcp/0', maxPeers: 50,
-    }));
+    }), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as AddressInfo;
     try {
@@ -246,7 +247,7 @@ describe('one hash a transaction, where its bytes are proven', () => {
     const app = createApp(makeTestConfig({
       port: 0, dbPath: ':memory:', nodeRole: 'server',
       bootstrapPeers: [], listenAddrs: '/ip4/127.0.0.1/tcp/0', maxPeers: 50,
-    }));
+    }), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as AddressInfo;
     try {

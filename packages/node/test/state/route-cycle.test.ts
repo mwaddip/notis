@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { bytesToHex, hash32, networkKey } from '@dagsocial/types';
+import { NO_MESH } from '../helpers.js';
 
 /**
  * Both routes called several times at several heights, including a call that
@@ -57,7 +58,7 @@ describe('a route\'s cycle does not leak into the next block\'s', () => {
 
     const liveDigestBefore = bytesToHex(handle.prover.digest()!);
 
-    const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+    const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
 
     const ownerHex = bytesToHex(owner.userId);
     const anyKey = bytesToHex(networkKey());

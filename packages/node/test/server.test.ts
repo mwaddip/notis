@@ -1,4 +1,4 @@
-import { makeTestConfig, makePostCommit, fixturePostId, fixtureTxId, uid } from './helpers.js';
+import { makeTestConfig, makePostCommit, fixturePostId, fixtureTxId, uid, NO_MESH} from './helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
@@ -47,7 +47,7 @@ describe('server', () => {
   beforeAll(async () => {
     initDb(':memory:');
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const app = createApp(makeConfig());
+    const app = createApp(makeConfig(), NO_MESH);
     server = app.listen(0);
     const addr = server.address() as AddressInfo;
     baseUrl = `http://localhost:${addr.port}`;
@@ -96,7 +96,7 @@ describe('server', () => {
     async function postFaucet(networkType: 'mainnet' | 'testnet' | 'devnet') {
       const app = createApp(
         makeConfig({ networkType, profile: profileFor(networkType) }),
-      );
+       NO_MESH);
       const gateServer = app.listen(0);
       try {
         const addr = gateServer.address() as AddressInfo;
@@ -123,7 +123,7 @@ describe('server', () => {
       it(`${networkType}: POST /credits/faucet is 404`, async () => {
         const app = createApp(
           makeConfig({ networkType, profile: profileFor(networkType) }),
-        );
+         NO_MESH);
         const gateServer = app.listen(0);
         try {
           const addr = gateServer.address() as AddressInfo;
@@ -298,7 +298,7 @@ describe('server', () => {
       fs.writeFileSync(shellPath, '<!doctype html><html><body></body></html>', 'utf-8');
       let throwingServer: http.Server | undefined;
       try {
-        throwingServer = createApp(makeConfig({ webShellPath: shellPath })).listen(0);
+        throwingServer = createApp(makeConfig({ webShellPath: shellPath }), NO_MESH).listen(0);
         await new Promise<void>((resolve) => {
           if (throwingServer!.listening) { resolve(); return; }
           throwingServer!.once('listening', resolve);
@@ -404,7 +404,7 @@ describe('nosniff and no X-Powered-By', () => {
     livePostId = fixturePostId(commit);
     insertPost(livePostId, fixtureTxId(commit), commit, content);
     confirmPost(livePostId, 30, 0);
-    const app = createApp(makeTestConfig({ port: 0, webShellPath: shellPath }));
+    const app = createApp(makeTestConfig({ port: 0, webShellPath: shellPath }), NO_MESH);
     publicServer = app.listen(0);
     await new Promise<void>((resolve) => {
       if (publicServer.listening) { resolve(); return; }
@@ -582,7 +582,7 @@ describe('body bound at HTTP_BODY_MAX_BYTES', () => {
   beforeAll(async () => {
     initDb(':memory:');
     getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const app = createApp(makeTestConfig({ port: 0 }));
+    const app = createApp(makeTestConfig({ port: 0 }), NO_MESH);
     server = app.listen(0);
     await new Promise<void>((resolve) => {
       if (server.listening) { resolve(); return; }

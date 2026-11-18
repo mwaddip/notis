@@ -48,7 +48,7 @@ import {
 } from '../../net/src/browser.js';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp, listenPublic, HTTP_BODY_MAX_BYTES } from '../src/server.js';
-import { makeTestConfig } from './helpers.js';
+import { makeTestConfig, NO_MESH} from './helpers.js';
 
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
@@ -103,7 +103,7 @@ describe(`NODE_INTERFACE → Configuration → "The node's mesh endpoint forward
       maxPeers: 50,
       mesh: null,
     });
-    const app = createApp(cfg);
+    const app = createApp(cfg, NO_MESH);
     server = listenPublic(app, 0);
     await new Promise<void>((r) => server!.once('listening', r));
     const addr = server.address() as AddressInfo;

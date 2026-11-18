@@ -19,6 +19,7 @@ import {computeBoxId,
   type CreditBox,
   computeTxId,
 } from '@dagsocial/types';
+import { NO_MESH } from '../helpers.js';
 
 async function importDbFresh() {
   const mod = await import('../../src/store/db.js');
@@ -847,7 +848,7 @@ describe('/status\'s sums stay on the owner index', () => {
       },
     });
 
-    const app = createApp(makeTestConfig({ port: 0, dbPath: dbFile, nodeRole: 'server' }));
+    const app = createApp(makeTestConfig({ port: 0, dbPath: dbFile, nodeRole: 'server' }), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as { port: number };
     try {

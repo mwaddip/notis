@@ -8,7 +8,7 @@ import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp } from '../src/server.js';
 import { insertPost, confirmPost, withdrawPost } from '../src/store/posts.js';
 import { putUsername } from '../src/store/usernames.js';
-import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex, fixtureTxId} from './helpers.js';
+import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex, fixtureTxId, NO_MESH} from './helpers.js';
 
 // NODE_INTERFACE → Link previews: GET /shell/:id answers the web client's
 // shell with a post's preview tags injected, gated by WEB_SHELL_PATH
@@ -49,7 +49,7 @@ describe('GET /shell/:id', () => {
   });
 
   function startApp(webShellPath: string): { port: number; close: () => void } {
-    const app = createApp(makeTestConfig({ webShellPath }));
+    const app = createApp(makeTestConfig({ webShellPath }), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as AddressInfo;
     return { port: addr.port, close: () => server.close() };

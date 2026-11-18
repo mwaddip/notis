@@ -4,7 +4,7 @@ import { label, newLeaf } from '@dagsocial/avltree';
 import { bytesToHex } from '@dagsocial/types';
 import { RecentRoots } from '../../src/state/recent-roots.js';
 import type { KeptRoot } from '../../src/state/recent-roots.js';
-import { ringHas, ringHeights, ringSize } from '../helpers.js';
+import { ringHas, ringHeights, ringSize, NO_MESH} from '../helpers.js';
 
 /** The 33-byte digest of a kept root — the root's label and the tree height, hex. */
 function keptDigest(kept: KeptRoot): string {
@@ -499,7 +499,7 @@ describe('the ring tracks the chain the node holds', () => {
 
       const { createApp } = await import('../../src/server.js');
       const supertest = await import('supertest');
-      const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+      const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
       const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
       const key = bh(networkKey());
       for (const h of [3, 4, 5]) {
@@ -529,7 +529,7 @@ describe('the ring tracks the chain the node holds', () => {
 
       const { createApp } = await import('../../src/server.js');
       const supertest = await import('supertest');
-      const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+      const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
       const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
       const key = bh(networkKey());
       await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
@@ -704,7 +704,7 @@ describe('the ring tracks the chain the node holds', () => {
         // a version of — heights 1 and 0 among them, served from the store.
         const { createApp } = await import('../../src/server.js');
         const supertest = await import('supertest');
-        const app = createApp(makeTestConfig({ nodeRole: 'server' }));
+        const app = createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
         const { bytesToHex: bh, networkKey } = await import('@dagsocial/types');
         const key = bh(networkKey());
         await supertest.default(app).get(`/api/v1/proof/${key}`).expect(200);
