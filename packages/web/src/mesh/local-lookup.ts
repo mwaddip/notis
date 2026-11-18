@@ -1,5 +1,5 @@
 // MESH_INTERFACE → Discovery → "A node the access point answers" — the
-// mesh client's read of `http://notis.internal/mesh/identity`: the
+// mesh client's read of `http://10.78.79.1/mesh/identity`: the
 // answer held to its fields, loopback addresses dropped from
 // `localAddrs`, and the `noNodeAnswered` predicate the client decides
 // a check's tip events by. Pure, browser-safe
@@ -15,11 +15,15 @@ import type { TipEvent } from './tip-events.js';
 
 /**
  * MESH_INTERFACE → Discovery → "A node the access point answers" — the
- * URL the client reads; one constant whatever port an operator runs
- * the node on, since the access point's tool maps it to the node's own
- * (`NODE_INTERFACE → "A mesh node answers its identity"`).
+ * URL the client reads. Every access point answers at `10.78.79.1`, so
+ * the URL is one constant whatever port an operator runs the node on,
+ * since the access point's tool maps it to the node's own
+ * (`NODE_INTERFACE → "A mesh node answers its identity"`). The URL names
+ * an address, never a name: a browser's HTTPS-only mode upgrades a
+ * plain-`http:` request to a name and leaves one to a private address
+ * alone, and an address asks nothing of DNS.
  */
-export const LOCAL_IDENTITY_URL = 'http://notis.internal/mesh/identity';
+export const LOCAL_IDENTITY_URL = 'http://10.78.79.1/mesh/identity';
 
 /**
  * MESH_INTERFACE → Discovery → "A node the access point answers" — the

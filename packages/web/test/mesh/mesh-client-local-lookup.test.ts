@@ -96,7 +96,7 @@ async function startTipServer(
 interface IdentityStub {
   // The response the next call to the identity URL answers with; set by
   // the test before each phase it cares about. Default: a transport
-  // failure (nothing is listening on `notis.internal`).
+  // failure (nothing is listening on `10.78.79.1`).
   next: () => Promise<Response>;
 }
 
@@ -392,7 +392,7 @@ describe('mesh client — local lookup', () => {
   it("a local entry's addresses are not in `toRemember()`", async () => {
     // MESH_INTERFACE → What the client remembers: the remembered list
     // carries no private address. A `local` entry's addresses are
-    // private (`10.42.0.1`, `192.168.x`, etc.), so the existing
+    // private (`10.78.79.1`, `192.168.x`, etc.), so the existing
     // `wouldDial` rule in `nodesToRemember` leaves them out. Verify
     // by rule, not by probing an entry that reached `ok`.
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });

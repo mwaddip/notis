@@ -485,8 +485,8 @@ describe('node-list', () => {
 
   // MESH_INTERFACE → Discovery → "A node the access point answers" —
   // addLocal cases.
-  const localAddr = '/ip4/10.42.0.1/udp/9733/webrtc-direct/certhash/uEiA/p2p/A';
-  const localAddr2 = '/ip4/10.42.0.1/udp/9734/webrtc-direct/certhash/uEiB/p2p/A';
+  const localAddr = '/ip4/10.78.79.1/udp/9733/webrtc-direct/certhash/uEiA/p2p/A';
+  const localAddr2 = '/ip4/10.78.79.1/udp/9734/webrtc-direct/certhash/uEiB/p2p/A';
 
   it('addLocal adds a local candidate the gater allows for that key alone', () => {
     // A new entry carries `local: true`, `byHand: false`, `yours: false`,
