@@ -5946,7 +5946,7 @@ takes is one an operator can take by hand, and the documentation names each.
    the rest. `ip_forward` is left as it is.
 8. **The node restarts** on its new `node.env`.
 
-**The record.** Every change `setup` makes — the uplink profile's band as it was, `node.env` as it was, each file
+**The tool's record.** Every change `setup` makes — the uplink profile's band as it was, `node.env` as it was, each file
 written, each unit enabled, the profile added — is written to `/etc/dagsocial/access-point/record.json` as it is
 made, so a `setup` that stopped half way is undone as far as it went. A `setup` on a box already set up changes
 nothing. **`remove` undoes what the record holds, in reverse, and nothing else**, warning first that stopping the
