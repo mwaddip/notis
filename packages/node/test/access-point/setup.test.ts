@@ -488,6 +488,12 @@ describe('remove — the uplink-drop warning fires whenever nmConnectionAdded is
       (c, a) => c === 'nmcli' && a.includes('SSID,CHAN,FREQ'),
       { stdout: 'HomeNetwork:1:2412 MHz\n' },
     );
+    r.on(
+      (c, a) =>
+        c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE' && a[3] === 'dev',
+      { stdout: 'uap0\nwlan0\nlo\n' },
+    );
     await main(['setup'], r);
     const beforeRemoveLogs = r.logs.length;
     const code = await main(['remove'], r);
@@ -577,7 +583,7 @@ describe('status — reads each step back from the box', () => {
 // up dagsocial-ap`; `remove` leaves the tool's directory behind.
 
 describe('setup — waits for NetworkManager to list uap0', () => {
-  it.fails('lists uap0 only from its third nmcli dev read: con add runs after, two sleep(500) recorded', async () => {
+  it('lists uap0 only from its third nmcli dev read: con add runs after, two sleep(500) recorded', async () => {
     const r = primePi(new FakeRunner());
     let count = 0;
     r.prependOn(
@@ -600,7 +606,7 @@ describe('setup — waits for NetworkManager to list uap0', () => {
     expect(nmAdd).toBeTruthy();
   });
 
-  it.fails('never lists uap0: exit 1 after the 20 s budget, no con add', async () => {
+  it('never lists uap0: exit 1 after the 20 s budget, no con add', async () => {
     const r = primePi(new FakeRunner());
     r.prependOn(
       (c, a) =>
@@ -628,7 +634,7 @@ describe('setup — waits for NetworkManager to list uap0', () => {
 });
 
 describe('remove — the tool\'s directory is removed when empty', () => {
-  it.fails('after remove, /etc/dagsocial/access-point is gone and no file lives under it', async () => {
+  it('after remove, /etc/dagsocial/access-point is gone and no file lives under it', async () => {
     const r = primePi(new FakeRunner());
     await main(['setup'], r);
     const beforeRemoveRemoves = r.removes.length;

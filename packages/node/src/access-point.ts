@@ -35,6 +35,7 @@ import {
   parseRecord,
   serializeRecord,
   RECORD_PATH,
+  RECORD_DIR,
   type AccessPointRecord,
   type RecordEntry,
 } from './access-point/record.js';
@@ -50,6 +51,8 @@ const MESH_DEFAULT_UDP_PORT = 9733;
 const MAX_NAME_BYTES = 32;
 const MIN_PASSWORD_LEN = 8;
 const MAX_PASSWORD_LEN = 63;
+const DEVICE_POLL_MS = 500;
+const DEVICE_WAIT_ITERATIONS = 40; // 40 × 500 ms = 20 s
 
 interface SetupFlags {
   name: string;
@@ -216,6 +219,27 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   await push({ kind: 'unitStarted', unit: 'dagsocial-ap-iface.service' });
   const stIface = await runner.run('systemctl', ['start', 'dagsocial-ap-iface.service']);
   if (!check(stIface, 'systemctl start dagsocial-ap-iface.service')) return 1;
+
+  // Wait for NetworkManager to register uap0 before the profile goes up —
+  // the measured Pi races (2026-11-18): the systemd unit made uap0 but
+  // `nmcli con up dagsocial-ap` runs before NetworkManager has registered
+  // it, and fails with "No suitable device". Poll `nmcli -t -f DEVICE dev`
+  // every 500 ms for at most 20 s.
+  let uap0Seen = false;
+  for (let i = 0; i < DEVICE_WAIT_ITERATIONS; i++) {
+    const dev = await runner.run('nmcli', ['-t', '-f', 'DEVICE', 'dev']);
+    if (dev.stdout.split('\n').some((l) => l.trim() === 'uap0')) {
+      uap0Seen = true;
+      break;
+    }
+    await runner.sleep(DEVICE_POLL_MS);
+  }
+  if (!uap0Seen) {
+    runner.log(
+      `dagsocial-access-point: NetworkManager never listed uap0 after ${(DEVICE_WAIT_ITERATIONS * DEVICE_POLL_MS) / 1000} s`,
+    );
+    return 1;
+  }
 
   // Step 5: the NetworkManager profile dagsocial-ap.
   const band = apChannel <= 14 ? 'bg' : 'a';
@@ -388,6 +412,18 @@ async function remove(runner: Runner): Promise<number> {
     await runner.run('systemctl', ['restart', 'dagsocial-node']);
   }
   await runner.remove(RECORD_PATH);
+  // Remove the tool's directory if nothing else is in it. ENOTEMPTY
+  // leaves it and is logged; ENOENT is nothing.
+  try {
+    await runner.remove(RECORD_DIR);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOTEMPTY') {
+      runner.log(`dagsocial-access-point: ${RECORD_DIR} is not empty; leaving it`);
+    } else if (code !== 'ENOENT') {
+      throw err;
+    }
+  }
   runner.log('dagsocial-access-point: removed');
   return 0;
 }
