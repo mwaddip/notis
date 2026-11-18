@@ -58,6 +58,19 @@ function primePi(r: FakeRunner): FakeRunner {
     (c, a) => c === 'nmcli' && a.includes('SSID,CHAN,FREQ'),
     { stdout: nmcliWifi },
   );
+  // The uplink profile's current band — the fix reads this from
+  // `nmcli -g 802-11-wireless.band con show <profile>` before setting it
+  // to `bg`, and records what it read. A profile with `802-11-wireless.band`
+  // left unset answers an empty line (the measured Pi); this fixture
+  // simulates a profile that declared `a` so the existing remove case can
+  // assert the band back.
+  r.on(
+    (c, a) =>
+      c === 'nmcli' && a.includes('-g')
+      && a.includes('802-11-wireless.band')
+      && a.includes('netplan-wlan0-HomeNetwork'),
+    { stdout: 'a\n' },
+  );
   return r;
 }
 
@@ -306,5 +319,244 @@ describe('status', () => {
     const code = await main(['status'], r);
     expect(code).not.toBe(0);
     expect(r.logs.join('\n')).toMatch(/root/i);
+  });
+});
+
+// NODE_INTERFACE → The access-point tool — fix-round cases, main's review
+// 2026-11-18: the prior band is read, not fixed; every command's result is
+// checked; record entries land before the commands they name; `remove` is
+// harmless over entries whose commands never ran, warns about the uplink
+// drop whenever `nmConnectionAdded` is present, and runs `daemon-reload`
+// after the walk; `status` reads uap0, the firewall table and the uplink's
+// band.
+
+describe('setup — the prior band is read, not fixed', () => {
+  it.fails('records the band read from nmcli -g, empty string included', async () => {
+    const r = primePi(new FakeRunner());
+    // The measured Pi profile answers "" — override.
+    r.responses = r.responses.filter((x) => {
+      // keep every response except the primePi band-g answer
+      const ex = x;
+      return !(ex.match && (() => {
+        const dummy: string[] = ['-g', '802-11-wireless.band', 'con', 'show', 'netplan-wlan0-HomeNetwork'];
+        try { return ex.match('nmcli', dummy); } catch { return false; }
+      })());
+    });
+    r.on(
+      (c, a) =>
+        c === 'nmcli' && a.includes('-g')
+        && a.includes('802-11-wireless.band')
+        && a.includes('netplan-wlan0-HomeNetwork'),
+      { stdout: '\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    const rec = parseRecord(r.files.get(RECORD_PATH)!);
+    const band = rec.entries.find((e) => e.kind === 'uplinkBandSet');
+    expect(band).toBeTruthy();
+    if (band && band.kind === 'uplinkBandSet') {
+      expect(band.priorBand).toBe('');
+    }
+    // remove then sets the band back to "" — the same empty string.
+    const code2 = await main(['remove'], r);
+    expect(code2).toBe(0);
+    const bandBack = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args[0] === 'con' && c.args[1] === 'modify'
+        && c.args.includes('802-11-wireless.band')
+        && c.args[c.args.length - 1] === '',
+    );
+    expect(bandBack).toBeTruthy();
+  });
+});
+
+describe('setup — every command\'s result is checked', () => {
+  it.fails('nmcli con up dagsocial-ap failing returns 1 and leaves no complete record', async () => {
+    const r = primePi(new FakeRunner());
+    r.on(
+      (c, a) => c === 'nmcli' && a[0] === 'con' && a[1] === 'up' && a[2] === 'dagsocial-ap',
+      { code: 4, stderr: 'cannot bring up profile\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(1);
+    const rec = parseRecord(r.files.get(RECORD_PATH)!);
+    expect(rec.complete).toBe(false);
+    // The nmConnectionAdded entry lands before the con up call — so it
+    // appears in the record even though `con up` failed.
+    expect(rec.entries.some((e) => e.kind === 'nmConnectionAdded')).toBe(true);
+    // remove then walks the record and deletes the profile.
+    const code2 = await main(['remove'], r);
+    expect(code2).toBe(0);
+    const del = r.calls.find(
+      (c) => c.cmd === 'nmcli' && c.args.includes('delete') && c.args.includes('dagsocial-ap'),
+    );
+    expect(del).toBeTruthy();
+    // setup complete is NOT printed.
+    expect(r.logs.join('\n')).not.toMatch(/setup complete/i);
+  });
+
+  it.fails('systemctl start dagsocial-ap-dnsmasq.service failing returns 1 and keeps the record', async () => {
+    const r = primePi(new FakeRunner());
+    r.on(
+      (c, a) =>
+        c === 'systemctl' && a[0] === 'start'
+        && a[1] === 'dagsocial-ap-dnsmasq.service',
+      { code: 1, stderr: 'Failed to start dagsocial-ap-dnsmasq.service\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(1);
+    const rec = parseRecord(r.files.get(RECORD_PATH)!);
+    expect(rec.complete).toBe(false);
+    // unitStarted was pushed before `systemctl start`, so the record
+    // holds it.
+    expect(
+      rec.entries.some(
+        (e) => e.kind === 'unitStarted' && e.unit === 'dagsocial-ap-dnsmasq.service',
+      ),
+    ).toBe(true);
+    // The firewall unit is NEVER reached.
+    expect(
+      rec.entries.some(
+        (e) => e.kind === 'unitStarted' && e.unit === 'dagsocial-ap-firewall.service',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('remove — harmless over entries whose commands never ran', () => {
+  it('a `systemctl disable` that fails is logged and the walk goes on', async () => {
+    const r = new FakeRunner();
+    r.files.set(
+      RECORD_PATH,
+      serializeRecord({
+        entries: [
+          { kind: 'unitEnabled', unit: 'phantom-a.service' },
+          { kind: 'unitEnabled', unit: 'phantom-b.service' },
+        ],
+        complete: false,
+      }),
+    );
+    r.on(
+      (c, a) => c === 'systemctl' && a[0] === 'disable' && a[1] === 'phantom-a.service',
+      { code: 1, stderr: 'Failed to disable unit: Unit phantom-a.service does not exist.\n' },
+    );
+    const code = await main(['remove'], r);
+    expect(code).toBe(0);
+    // Both disables were called despite the first one failing.
+    const disables = r.calls.filter(
+      (c) => c.cmd === 'systemctl' && c.args[0] === 'disable',
+    );
+    expect(disables.map((c) => c.args[1])).toEqual([
+      'phantom-b.service',
+      'phantom-a.service',
+    ]);
+    expect(r.removes).toContain(RECORD_PATH);
+  });
+});
+
+describe('remove — the uplink-drop warning fires whenever nmConnectionAdded is in the record', () => {
+  it.fails('fires after a follow setup with no band move', async () => {
+    const r = primePi(new FakeRunner());
+    // Replace the uplink's channel to a non-radar one so the choice is
+    // `follow` and no band move happens.
+    r.responses = [];
+    r.files.set('/etc/dagsocial/node.env', 'PORT=3000\n');
+    r.on((c, a) => c === 'iw' && a[0] === 'list', { stdout: iwList });
+    r.on(
+      (c, a) => c === 'nmcli' && a.includes('DEVICE,TYPE,STATE'),
+      { stdout: 'wlan0:wifi:connected\n' },
+    );
+    r.on(
+      (c, a) => c === 'nmcli' && a.includes('GENERAL.CONNECTION') && a.includes('wlan0'),
+      { stdout: 'GENERAL.CONNECTION:netplan-wlan0-HomeNetwork\n' },
+    );
+    r.on(
+      (c, a) => c === 'iw' && a[0] === 'dev' && a[1] === 'wlan0' && a[2] === 'info',
+      { stdout: iwDevWlan0_2g }, // channel 1 — a non-radar follow
+    );
+    r.on(
+      (c, a) => c === 'nmcli' && a.includes('SSID,CHAN,FREQ'),
+      { stdout: 'HomeNetwork:1:2412 MHz\n' },
+    );
+    await main(['setup'], r);
+    const beforeRemoveLogs = r.logs.length;
+    const code = await main(['remove'], r);
+    expect(code).toBe(0);
+    expect(r.logs.slice(beforeRemoveLogs).join('\n')).toMatch(/uplink|drop/i);
+  });
+});
+
+describe('remove — runs systemctl daemon-reload after the walk', () => {
+  it.fails('a daemon-reload call appears after the disables', async () => {
+    const r = primePi(new FakeRunner());
+    await main(['setup'], r);
+    const beforeRemoveCalls = r.calls.length;
+    await main(['remove'], r);
+    const after = r.calls.slice(beforeRemoveCalls);
+    const reloadIdx = after.findIndex(
+      (c) => c.cmd === 'systemctl' && c.args[0] === 'daemon-reload',
+    );
+    expect(reloadIdx).toBeGreaterThanOrEqual(0);
+    // At least one disable preceded daemon-reload.
+    const lastDisableIdx = after
+      .map((c, i) => (c.cmd === 'systemctl' && c.args[0] === 'disable' ? i : -1))
+      .filter((i) => i >= 0)
+      .pop();
+    expect(lastDisableIdx).toBeDefined();
+    expect(reloadIdx).toBeGreaterThan(lastDisableIdx!);
+  });
+});
+
+describe('status — reads each step back from the box', () => {
+  it.fails('status queries iw dev uap0 info, nft list table inet dagsocial_ap, and the uplink profile band', async () => {
+    const r = primePi(new FakeRunner());
+    await main(['setup'], r);
+    const after = new FakeRunner();
+    after.files = new Map(r.files);
+    after.on((c, _a) => c === 'systemctl', { stdout: 'active\n' });
+    // Answer the status queries so the tool can print them.
+    after.on(
+      (c, a) => c === 'iw' && a[0] === 'dev' && a[1] === 'uap0' && a[2] === 'info',
+      { stdout: 'Interface uap0\n\ttype AP\n\tchannel 1 (2412 MHz)\n' },
+    );
+    after.on(
+      (c, a) => c === 'nft' && a[0] === 'list' && a[1] === 'table',
+      { stdout: 'table inet dagsocial_ap {\n}\n' },
+    );
+    after.on(
+      (c, a) => c === 'nmcli' && a.includes('-g') && a.includes('802-11-wireless.band'),
+      { stdout: 'bg\n' },
+    );
+    // Discovery of the uplink profile from nmcli dev.
+    after.on(
+      (c, a) => c === 'nmcli' && a.includes('DEVICE,TYPE,STATE'),
+      { stdout: 'wlan0:wifi:connected\n' },
+    );
+    after.on(
+      (c, a) => c === 'nmcli' && a.includes('GENERAL.CONNECTION') && a.includes('wlan0'),
+      { stdout: 'GENERAL.CONNECTION:netplan-wlan0-HomeNetwork\n' },
+    );
+    const code = await main(['status'], after);
+    expect(code).toBe(0);
+    // The three new reads landed.
+    const iwUap = after.calls.find(
+      (c) => c.cmd === 'iw' && c.args[0] === 'dev' && c.args[1] === 'uap0' && c.args[2] === 'info',
+    );
+    expect(iwUap).toBeTruthy();
+    const nftList = after.calls.find(
+      (c) => c.cmd === 'nft' && c.args[0] === 'list' && c.args[1] === 'table',
+    );
+    expect(nftList).toBeTruthy();
+    const bandRead = after.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args.includes('-g')
+        && c.args.includes('802-11-wireless.band'),
+    );
+    expect(bandRead).toBeTruthy();
+    // And status named each in its output.
+    const text = after.logs.join('\n');
+    expect(text).toMatch(/uap0/);
+    expect(text).toMatch(/dagsocial_ap|table/);
+    expect(text).toMatch(/band/);
   });
 });

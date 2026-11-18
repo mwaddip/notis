@@ -27,7 +27,15 @@ describe('dnsmasqConf', () => {
     expect(t).toContain('dhcp-option=option:router,10.42.0.1');
     expect(t).toContain('dhcp-option=option:dns-server,10.42.0.1');
     expect(t).toContain('dhcp-authoritative');
-    expect(t).toContain('/var/lib/dagsocial/access-point/');
+  });
+
+  it.fails('the lease file lives under /run/dagsocial-ap, which the dnsmasq unit creates', () => {
+    const t = dnsmasqConf({
+      iface: 'uap0',
+      address: '10.42.0.1',
+      range: ['10.42.0.10', '10.42.0.254'],
+    });
+    expect(t).toContain('dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases');
   });
 });
 
@@ -57,12 +65,34 @@ describe('ifaceUnit', () => {
     expect(t).toContain('ExecStart=/usr/sbin/iw dev wlan0 interface add uap0 type __ap');
     expect(t).toContain('ExecStop=/usr/sbin/iw dev uap0 del');
   });
+
+  it.fails('waits for the uplink\'s device at boot', () => {
+    // The device at `/sys/subsystem/net/devices/<iface>` is systemd's name
+    // for the kernel's netdev; a unit that lists it in `Requires=` and
+    // `After=` runs only once the kernel has brought the interface up
+    // (NODE_INTERFACE → The access-point tool, step 4).
+    const t = ifaceUnit({ phy: 'phy0', uplinkIface: 'wlan0' });
+    expect(t).toContain('Requires=sys-subsystem-net-devices-wlan0.device');
+    expect(t).toContain('After=sys-subsystem-net-devices-wlan0.device');
+  });
+
+  it('with no uplink, adds uap0 from the phy and names no device dependency', () => {
+    const t = ifaceUnit({ phy: 'phy0', uplinkIface: '' });
+    expect(t).toContain('ExecStart=/usr/sbin/iw phy phy0 interface add uap0 type __ap');
+    expect(t).not.toMatch(/Requires=sys-subsystem-net-devices-/);
+    expect(t).not.toMatch(/After=sys-subsystem-net-devices-/);
+  });
 });
 
 describe('dnsmasqUnit', () => {
   it('runs dnsmasq in the foreground with the tool\'s conf', () => {
     const t = dnsmasqUnit();
     expect(t).toContain('ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dagsocial/access-point/dnsmasq.conf');
+  });
+
+  it.fails('declares RuntimeDirectory=dagsocial-ap so /run/dagsocial-ap exists before the lease file is written', () => {
+    const t = dnsmasqUnit();
+    expect(t).toContain('RuntimeDirectory=dagsocial-ap');
   });
 });
 

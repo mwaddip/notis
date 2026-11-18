@@ -138,6 +138,13 @@ export function parseConnectedWifi(nmcliDev: string): string | null {
   return null;
 }
 
+// `iw dev` lists its phy as a leading `phy#N` line; the tool reads this
+// for a no-uplink `ifaceUnit` (NODE_INTERFACE → The access-point tool,
+// step 4), rather than assuming `phy0`.
+export function parsePhy(_iwDev: string): string | null {
+  throw new Error('access-point: not implemented');
+}
+
 // `nmcli -t -f GENERAL.CONNECTION dev show <dev>` prints one line,
 // `GENERAL.CONNECTION:<profile>`.
 export function parseGeneralConnection(nmcliShow: string): string | null {
