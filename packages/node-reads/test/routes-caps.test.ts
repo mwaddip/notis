@@ -10,6 +10,7 @@ import {
   VOUCH_PAGE_READ_BYTES,
   BOND_PAGE_READ_BYTES,
   WRITE_ANSWER_READ_BYTES,
+  MESH_IDENTITY_READ_BYTES,
 } from '../src/caps.js';
 import {
   MAX_CONTENT_BYTES,
@@ -342,6 +343,77 @@ describe('WRITE_ANSWER_READ_BYTES', () => {
       ok: false,
       status: 400,
       body: `body over ${WRITE_ANSWER_READ_BYTES} bytes`,
+    });
+  });
+});
+
+// A synthetic base58-looking id of `n` characters from a seed — only the
+// length counts here, never a real key.
+function synthId(prefix: string, n: number, seed: number): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789';
+  let out = prefix;
+  for (let i = 0; out.length < n; i++) {
+    out += alphabet[(seed * 31 + i * 7) % alphabet.length];
+  }
+  return out;
+}
+
+// A synthetic 46-character `uEi…` certificate hash.
+function synthCerthash(seed: number): string {
+  return synthId('uEi', 46, seed);
+}
+
+// The widest honest `GET /mesh/identity` answer: nine relays, each carrying
+// the eight addresses a private node announces through it, and three local
+// addresses (MESH_INTERFACE → Discovery → "A node the access point answers").
+// Every value is synthetic: documentation IPs, generated ids and hashes.
+function longestMeshIdentityAnswer(): string {
+  const self = synthId('12D3KooW', 52, 99);
+  const multiaddrs: string[] = [];
+  for (let r = 0; r < 9; r++) {
+    const relay = synthId('12D3KooW', 52, r + 1);
+    const host = `relay${String(r).padStart(2, '0')}.test`.padEnd(12, 'x');
+    const ip = `192.0.2.${r + 1}`;
+    const hash = synthCerthash(r + 1);
+    const via = `/p2p/${relay}/p2p-circuit`;
+    for (const tail of [`/webrtc/p2p/${self}`, `/p2p/${self}`]) {
+      multiaddrs.push(`/dns4/${host}/tcp/9733${via}${tail}`);
+      multiaddrs.push(`/ip4/0.0.0.0/tcp/9733${via}${tail}`);
+      multiaddrs.push(
+        `/ip4/${ip}/udp/9733/webrtc-direct/certhash/${hash}${via}${tail}`,
+      );
+      multiaddrs.push(`/ip4/${ip}/tcp/443/tls/ws${via}${tail}`);
+    }
+  }
+  const localAddrs = [0, 1, 2].map(
+    (i) =>
+      `/ip4/127.0.0.1/udp/${9733 + i}/webrtc-direct/certhash/${synthCerthash(50 + i)}/p2p/${self}`,
+  );
+  return JSON.stringify({
+    notisId: hex64('a'),
+    peerId: self,
+    multiaddrs,
+    localAddrs,
+  });
+}
+
+describe('MESH_IDENTITY_READ_BYTES', () => {
+  it.fails('reads the longest honest answer under the cap', async () => {
+    const body = longestMeshIdentityAnswer();
+    expect(byteLength(body)).toBeLessThanOrEqual(MESH_IDENTITY_READ_BYTES);
+    const res = new Response(body, { status: 200 });
+    const result = await readCappedJson(res, MESH_IDENTITY_READ_BYTES);
+    expect(result.ok).toBe(true);
+  });
+
+  it.fails('refuses a body one byte over the cap', async () => {
+    const body = 'x'.repeat(MESH_IDENTITY_READ_BYTES + 1);
+    const res = new Response(body, { status: 200 });
+    const result = await readCappedJson(res, MESH_IDENTITY_READ_BYTES);
+    expect(result).toEqual({
+      ok: false,
+      status: 200,
+      body: `body over ${MESH_IDENTITY_READ_BYTES} bytes`,
     });
   });
 });
