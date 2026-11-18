@@ -17,7 +17,7 @@ import type {
 } from '../api/write';
 import type { PendingLedger } from './ledger';
 import type { PendingEntry } from './types';
-import type { WaitingLedger, WaitingStore, WaitingWrite } from './waiting';
+import type { WaitingLedger, WaitingStore, WaitingWrite, WaitRecorder } from './waiting';
 
 /** The three endings of a waiting write in a flush (WEB_INTERFACE → The
  *  wallet → "Waiting writes go out at the first answer", → "A refusal ends
@@ -43,6 +43,11 @@ export interface FlushDeps {
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitSend'>;
   chain(): string | null;
   tip(): number | null;
+  /** The recorder the extension build hands (WEB_INTERFACE → The extension
+   *  → "The debug log"). The pass calls it with each write's outcome —
+   *  `sent`, `refused`, `unsent` (with its cause) — and with `no answer`
+   *  for the write the walk stopped at. The web build hands none. */
+  recorder?: WaitRecorder;
 }
 
 type AnyAnswer =
@@ -80,8 +85,15 @@ export async function flushWaiting(deps: FlushDeps, ledger: WaitingLedger): Prom
       const answer = await sendByKind(deps.write, w);
       // A send with no answer stops the walk — this write and every later one
       // stay waiting, untouched (WEB_INTERFACE → The wallet → "Waiting writes
-      // go out at the first answer").
-      if (isRejection(answer) && answer.noAnswer === true) return outcomes;
+      // go out at the first answer"). The recorder, where handed, takes one
+      // `no answer` event for the write the walk stopped at
+      // (WEB_INTERFACE → The extension → "The debug log").
+      if (isRejection(answer) && answer.noAnswer === true) {
+        if (deps.recorder !== undefined) {
+          deps.recorder({ outcome: 'no answer', kind: w.kind, ledger: w.ledger, txId: w.txId });
+        }
+        return outcomes;
+      }
       if (isRejection(answer)) {
         if (w.change !== null) stranded.add(w.change.boxId);
         endWriteRefused(deps, w, answer, outcomes);
@@ -115,6 +127,9 @@ export async function flushWaiting(deps: FlushDeps, ledger: WaitingLedger): Prom
       const released = deps.ledger.release(w.txId, answered, sentAt);
       deps.store.absorb(w.txId);
       if (released !== null) outcomes.push({ write: w, outcome: 'sent', entry: released });
+      if (deps.recorder !== undefined) {
+        deps.recorder({ outcome: 'sent', kind: w.kind, ledger: w.ledger, txId: w.txId });
+      }
     }
     return outcomes;
   });
@@ -124,12 +139,18 @@ function endWriteUnsent(deps: FlushDeps, w: WaitingWrite, cause: 'behind-refused
   deps.store.remove(w.txId);
   deps.ledger.remove(w.txId);
   outcomes.push({ write: w, outcome: 'unsent', cause });
+  if (deps.recorder !== undefined) {
+    deps.recorder({ outcome: 'unsent', kind: w.kind, ledger: w.ledger, txId: w.txId, cause });
+  }
 }
 
 function endWriteRefused(deps: FlushDeps, w: WaitingWrite, rejection: Rejection, outcomes: FlushOutcome[]): void {
   deps.store.remove(w.txId);
   deps.ledger.remove(w.txId);
   outcomes.push({ write: w, outcome: 'refused', rejection });
+  if (deps.recorder !== undefined) {
+    deps.recorder({ outcome: 'refused', kind: w.kind, ledger: w.ledger, txId: w.txId, message: rejection.message });
+  }
 }
 
 async function sendByKind(write: FlushDeps['write'], w: WaitingWrite): Promise<AnyAnswer> {

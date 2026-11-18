@@ -9,7 +9,7 @@ import { decrementBoxId } from './wallet/box-id';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
-import { el, shortHex, preservingScroll, endForm } from './dom';
+import { el, shortHex, preservingScroll, endForm, download } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODE_BASES, BUILD_NETWORK, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
@@ -35,7 +35,7 @@ import type { PendingEntry, EntryOutcome } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { isNoAnswer } from './api/errors';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
-import { WaitingStore, type WaitingStorage, type WaitingWrite } from './wallet/waiting';
+import { WaitingStore, type WaitingStorage, type WaitingWrite, type WaitRecorder } from './wallet/waiting';
 import type { RepBuildContext } from './wallet/builders';
 import { flushWaiting, type FlushDeps, type FlushOutcome } from './wallet/flush';
 import type { LockManager } from './locks';
@@ -46,6 +46,7 @@ import {
   walletBody, sendUnlockRow, type WalletBody, type ResolvedRecipient, type SendAnswer, type SendRecipient,
 } from './view/wallet';
 import { settingsBody, type HandNodeSeam, type ServeSeam } from './view/settings';
+import type { ReaderFacts, SnapshotPending, SnapshotWaiting } from './extension/debug-snapshot';
 import { authorBody, type AuthorCtx, type YourVouch } from './view/author';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { TipVerdict } from './model/tip-verdict';
@@ -118,15 +119,6 @@ const rowPlace = (held: HeldCardRow): RowPlace => (held.kind === 'link' ? 'link'
  *  drawn in two lists holds its rows in each. No list key and no post id
  *  carries a null byte. */
 const rowKey = (list: string, postId: string, place: RowPlace): string => list + '\0' + postId + '\0' + place;
-
-/** Hand the reader a file — an exported identity. A data: URL needs no object-URL
- *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
-function download(filename: string, text: string): void {
-  const a = document.createElement('a');
-  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
-  a.download = filename;
-  a.click();
-}
 
 // WEB_INTERFACE → The wallet → "A rejection's words follow the node's message,
 // never its status alone": the pool's box conflict reads one sentence on every
@@ -499,6 +491,15 @@ export class App {
   // the same without it.
   private handNodeSeam: HandNodeSeam | null;
   private serveSeam: ServeSeam | null;
+  // WEB_INTERFACE → The settings window → "The debug row" — the extension
+  // build hands the App a function that builds the row, composed in
+  // `main.ts` over the mesh client, the post cache, the debug log, the
+  // settings' storage keys and a reader bound to this App's `readerFacts`.
+  // Null in the web build; the settings body's `debug` row renders only
+  // when the builder is present. `debug-row.ts`, which carries the row's
+  // transport names and the file's format string, is reached only from
+  // `main.ts`'s extension branch, so the web bundle never imports it.
+  private debugRowBuilder: (() => HTMLElement) | null;
   // The waiting store — WEB_INTERFACE → The wallet → "A write no node answers
   // waits". Non-null only when the extension build hands the App a seam and an
   // identity is loaded. Rebuilt in `onIdentityChange` beside the ledger.
@@ -506,7 +507,7 @@ export class App {
   // extension → "The post cache"): the extension wires it to the post cache's
   // module, which keeps the last chain's name in `localStorage` under
   // `notis.posts.chain`, so the web build reads no storage key here.
-  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null;
+  private readonly waitingSeam: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null; recorder?: WaitRecorder } | null;
   private waitingStore: WaitingStore | null;
   // The send pass flags — one pass per ledger at a time
   // (WEB_INTERFACE → The wallet → "Waiting writes go out at the first answer").
@@ -593,8 +594,9 @@ export class App {
     postCache?: PostCache | null,
     postResolver?: PostResolver | null,
     handNodeSeam?: HandNodeSeam | null,
-    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null } | null,
+    waitingSeam?: { storage: WaitingStorage; locks: LockManager; rememberedChain: () => string | null; recorder?: WaitRecorder } | null,
     serveSeam?: ServeSeam | null,
+    debugRowBuilder?: (() => HTMLElement) | null,
   ) {
     this.client = client ?? new NodeClient({ base: () => prefs.node, fetch: (url, init) => fetch(url, init) });
     this.writeClient = writeClient ?? new WriteClient({ bases: () => [prefs.node], fetch: (url, init) => fetch(url, init) });
@@ -610,6 +612,7 @@ export class App {
     this.handNodeSeam = handNodeSeam ?? null;
     this.waitingSeam = waitingSeam ?? null;
     this.serveSeam = serveSeam ?? null;
+    this.debugRowBuilder = debugRowBuilder ?? null;
     // The waiting store is per identity (WEB_INTERFACE → The wallet → "The
     // waiting store keeps every waiting write as a record of its own"); with
     // no seam, or no identity loaded, there is none.
@@ -745,6 +748,13 @@ export class App {
       // whether the question stands. Wired in every build; the web build has
       // no handNode seam, so the row's web branch ignores it.
       verdict: () => this.tipVerdict,
+      // WEB_INTERFACE → The settings window → "The debug row" — the
+      // extension build's `main.ts` hands the App a function that builds
+      // the row; the settings body appends it. The web build hands none
+      // and no row renders.
+      ...(this.debugRowBuilder ? {
+        debug: this.debugRowBuilder,
+      } : {}),
     };
   }
 
@@ -1788,6 +1798,73 @@ export class App {
       username: d?.username ?? null,
       usernameLoaded: d?.usernameLoaded ?? false,
       nameClay: (k, name) => this.nameClay(k, name),
+    };
+  }
+
+  /** The reader part of the snapshot — what the App answers the debug row's
+   *  seam with at the moment a snapshot is taken (WEB_INTERFACE → The
+   *  extension → "The snapshot" — "the reader"): whether an identity is
+   *  loaded and unlocked, the public key, the name it holds, each pending
+   *  ledger entry's kind, transaction id, expiry and stage, each waiting
+   *  write's kind, transaction id, sequence, ledger and chain, the last
+   *  tip verdict, the figures and the names' counts. The bytes a waiting
+   *  write holds never reach this — the log carries no signed-transaction
+   *  bytes and no post text (→ "What the log never holds"). Public so the
+   *  extension build's `main.ts` can hand the row builder a reader bound to
+   *  the App after construction, which keeps `debug-row.ts` and its
+   *  transitive strings out of the web bundle. */
+  readerFacts(): ReaderFacts {
+    const cur = this.idm.current();
+    const identityLoaded = cur !== null;
+    const unlocked = identityLoaded && cur!.locked === false;
+    const pubKeyHex = cur?.pubKeyHex ?? null;
+    const name = this.ownName?.name ?? null;
+    const pending: SnapshotPending[] = [];
+    for (const e of this.ledger.all()) {
+      const stage = e.waiting === true ? 'waiting' : 'pending';
+      pending.push({
+        kind: e.kind,
+        txId: e.txId,
+        postId: e.postId,
+        expiresAtHeight: e.expiresAtHeight,
+        stage,
+      });
+    }
+    const waiting: SnapshotWaiting[] = [];
+    if (this.waitingStore !== null) {
+      for (const w of this.waitingStore.list()) {
+        waiting.push({
+          kind: w.kind,
+          txId: w.txId,
+          postId: w.postId,
+          seq: w.seq,
+          ledger: w.ledger,
+          chain: w.chain,
+        });
+      }
+    }
+    const lastTipRun = this.tipVerdict === null || this.tipVerdict === undefined
+      ? null
+      : { verdict: this.tipVerdict.kind, chain: this.tipChain };
+    const lastFiguresRun = this.figures === null ? null : {
+      anchor: {
+        tip: this.figures.anchor.tip.height,
+        suffixHead: this.figures.anchor.suffixHead.height,
+      },
+      karma: { holdings: this.figures.result.karma.holdings },
+      credits: { holdings: this.figures.result.credits.holdings },
+      failed: this.figures.result.failed,
+    };
+    let clay = 0;
+    let checked = 0;
+    for (const result of this.nameChecks.values()) {
+      checked += 1;
+      if (result.status !== 'proven') clay += 1;
+    }
+    const lastNamesRun = checked === 0 ? null : { checked, clay };
+    return {
+      identityLoaded, unlocked, pubKeyHex, name, pending, waiting,
+      lastTipRun, lastFiguresRun, lastNamesRun,
     };
   }
 
@@ -5574,6 +5651,7 @@ export class App {
       write: this.writeClient,
       chain: () => this.tipChain, // the verified chain alone, never the remembered one
       tip: () => this.viewerTip || null,
+      ...(this.waitingSeam?.recorder !== undefined ? { recorder: this.waitingSeam.recorder } : {}),
     };
     const isActive = (): boolean => this.idm.current()?.pubKeyHex === keyAtPress;
     if (hasRep && !this.flushRepInFlight) {

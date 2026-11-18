@@ -84,7 +84,9 @@ Ten packages, in dependency order:
   post it shows bound to the transaction that created it, the posts it has checked kept in a local cache named for the
   chain — which, where the reader turns serving on, answers the nodes it reads when they ask for a post's text — and
   every list read as ids with the node's word — drawn from that cache at once, the posts it lacks read by id from the
-  nodes in the client's order (`WEB_INTERFACE → The extension`); each release carries its two zips beside the web zip.
+  nodes in the client's order (`WEB_INTERFACE → The extension`), and a debug row in its settings window — a snapshot of
+  the client and an event log kept in IndexedDB, saved as JSON with the reader's identifying values replaced unless the
+  reader asks (`→ "The debug log"`); each release carries its two zips beside the web zip.
 
 Six tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 

@@ -52,12 +52,34 @@ export interface WaitingWrite {
  *  as a record of its own"). */
 export type WaitingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
 
+/** One moment of a waiting write a recorder takes
+ *  (WEB_INTERFACE → The extension → "The debug log" — "each waiting write
+ *  stored, and each outcome of the send pass"). `queued` is the store's
+ *  write of a new record; the four outcomes are the send pass's (→ The
+ *  wallet → "Waiting writes go out at the first answer",
+ *  → "A refusal ends what it strands"), and `no answer` the write the walk
+ *  stopped at (`flush.ts`). */
+export interface WaitEvent {
+  outcome: 'queued' | 'sent' | 'refused' | 'unsent' | 'no answer';
+  kind: WaitingKind;
+  ledger: WaitingLedger;
+  txId: string;
+  message?: string;
+  cause?: 'chain' | 'behind-refused';
+}
+
+/** The recorder the extension build hands the waiting store and the flush
+ *  pass (WEB_INTERFACE → The extension → "The debug log"). The web build
+ *  hands none and nothing is recorded. */
+export type WaitRecorder = (event: WaitEvent) => void;
+
 /** `recordBase` and the views need the key the record names, so the store
  *  reads this seam rather than importing a type that would bring in the view
  *  reads. */
 interface Deps {
   storage: WaitingStorage;
   locks: LockManager;
+  recorder?: WaitRecorder;
 }
 
 // Storage keys — WEB_INTERFACE → The wallet → "The waiting store keeps every
@@ -262,6 +284,7 @@ export class WaitingStore {
   private readonly seqKey: string;
   private readonly storage: WaitingStorage;
   private readonly locks: LockManager;
+  private readonly recorder: WaitRecorder | undefined;
 
   constructor(pubKeyHex: string, deps: Deps) {
     this.ns = K_PREFIX + pubKeyHex;
@@ -271,6 +294,7 @@ export class WaitingStore {
     this.seqKey = this.ns + K_SEQ;
     this.storage = deps.storage;
     this.locks = deps.locks;
+    this.recorder = deps.recorder;
   }
 
   /** Every read-then-write of the store runs inside one exclusive lock
@@ -324,7 +348,9 @@ export class WaitingStore {
   /** Keep a waiting write — called inside `withLock` so the next seq is read
    *  and written atomically with the record. Answers the write with its seq
    *  (WEB_INTERFACE → The wallet → "The waiting store keeps every waiting
-   *  write as a record of its own"). */
+   *  write as a record of its own"). The recorder, where handed, takes one
+   *  `queued` event for the record (WEB_INTERFACE → The extension → "The
+   *  debug log"). */
   keep(w: Omit<WaitingWrite, 'seq'>): WaitingWrite {
     const last = readRaw(this.storage, this.seqKey);
     const prev = last === null ? 0 : (Number.parseInt(last, 10) || 0);
@@ -332,6 +358,9 @@ export class WaitingStore {
     const record: WaitingWrite = { ...w, seq };
     writeRaw(this.storage, this.seqKey, String(seq));
     writeRaw(this.storage, this.wPrefix + w.txId, JSON.stringify(toStoredWrite(record)));
+    if (this.recorder !== undefined) {
+      this.recorder({ outcome: 'queued', kind: record.kind, ledger: record.ledger, txId: record.txId });
+    }
     return record;
   }
 

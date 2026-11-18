@@ -67,10 +67,10 @@ const chrome = {
 
 // Firefox 140 is the first release with the built-in consent screen for
 // `data_collection_permissions`; an add-on installable below it owes a
-// consent screen of its own. 142 is the same release on Android, stated
-// so the desktop floor admits no Android build without it — the extension
-// supports no Android. `optional_host_permissions` (from 128) and
-// content-script hosts granted at install (past 127) both hold at 140.
+// consent screen of its own. 142 is the same release on Android, and the
+// extension runs in Firefox for Android from it.
+// `optional_host_permissions` (from 128) and content-script hosts granted
+// at install (past 127) both hold at 140.
 // The id and the `update_url` are constants of this overlay, the same in
 // every build: an installed copy reads the `update_url` it was installed
 // with and learns no other.

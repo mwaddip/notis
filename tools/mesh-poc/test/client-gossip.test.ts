@@ -39,7 +39,7 @@ import { verifierProfile } from '@dagsocial/nipopow-client';
 import { gossipTopics } from '@dagsocial/net/browser';
 import { startNetPublicMesh, type NetMeshNode } from './helpers/net-public-node.js';
 import { waitReaderHeldAsDirect } from './helpers/direct-peer.js';
-import { lieTarget, startMeshClient, type MeshClient } from '@dagsocial/web/mesh';
+import { lieTarget, startMeshClient, type MeshClient, type MeshEvent } from '@dagsocial/web/mesh';
 import type { BlockVerdict } from '@dagsocial/net/browser';
 import { chainResolve, chainUpstream, type ChainUpstream } from './helpers/chain-harness.js';
 import { makeLinkedChain, makeBlockAt } from './helpers/devnet-block.js';
@@ -684,6 +684,292 @@ describe('mesh-client in block gossip', () => {
     await new Promise((r) => setTimeout(r, 3_000));
     expect(client.state().checks).toBe(checksBefore);
     expect(client.state().tip).toBeNull();
+  }, 180_000);
+});
+
+// MESH_INTERFACE → The client's node list → "The client reports
+// what it does" — "a gossiped block weighed", one event per
+// message, through the client's events sink over a real
+// `pubsub.publish`. The seven outcomes the validator and the
+// delivery handler write: the validator's `ignore` and `reject`
+// (lie and non-lie), the delivery's `extended`, `fork`, `gap` and
+// `unsettled` arms. The `held` arm, which needs a standing
+// disagreement, lands in `hand-added.test.ts` beside the
+// hand-added-node cases.
+describe('mesh-client\'s events sink in block gossip', () => {
+  const openNodes: Started[] = [];
+  const openClients: MeshClient[] = [];
+  const pendingReleases: Array<() => void> = [];
+
+  afterEach(async () => {
+    while (pendingReleases.length > 0) {
+      const r = pendingReleases.pop();
+      if (r) try { r(); } catch { /* already released */ }
+    }
+    for (const c of openClients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+    for (const n of openNodes.splice(0)) {
+      try { await n.mesh.stop(); } catch { /* already stopped */ }
+      try { await n.up.close(); } catch { /* already closed */ }
+      try { rmSync(n.dir, { recursive: true, force: true }); } catch { /* already removed */ }
+    }
+  });
+
+  it('a block that extends the tip writes one gossip-block event with `result: "extended"` and the source as the Notis key', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 2);
+    }, { timeout: 15_000, interval: 100 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    expect(blockEvents.length - beforeLen, 'one gossip-block event for the publish').toBe(1);
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.outcome.result).toBe('extended');
+    expect(ev.height).toBe(K + 2);
+    expect(ev.source, 'the source reads as the publisher\'s key').toBe(started.id);
+    expect(ev.sourceKind).toBe('notis');
+  }, 180_000);
+
+  it('a block whose parent is held below the tip writes one gossip-block event with `result: "fork"`', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const parentOfTip = chain[chain.length - 2]!.header;
+    const competitor = makeChildBlock(parentOfTip, 1_000_000, PROFILE);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(competitor));
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.outcome.result).toBe('fork');
+    expect(ev.height).toBe(parentOfTip.height + 1);
+    expect(ev.source).toBe(started.id);
+    expect(ev.sourceKind).toBe('notis');
+  }, 180_000);
+
+  it('a block with no held parent writes one gossip-block event with `result: "gap"`', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const unknownPrev = 'cc'.repeat(32);
+    const orphan = makeFloorBlock(50, unknownPrev);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(orphan));
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.outcome.result).toBe('gap');
+    expect(ev.height).toBe(50);
+    expect(ev.source).toBe(started.id);
+    expect(ev.sourceKind).toBe('notis');
+  }, 180_000);
+
+  it('a bad block writes one gossip-block event with `result: "reject"`, `lie: true` and the detail', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const good = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bad = withBadSignature(good);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(bad));
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.height, 'the validator rejects before decode').toBeNull();
+    if (ev.outcome.result !== 'reject') {
+      throw new Error(`expected reject, read ${ev.outcome.result}`);
+    }
+    expect(ev.outcome.lie, 'a bad signature from a list-held key is a lie').toBe(true);
+    expect(ev.outcome.detail.length, 'the detail is non-empty').toBeGreaterThan(0);
+    expect(ev.source).toBe(started.id);
+    expect(ev.sourceKind).toBe('notis');
+  }, 180_000);
+
+  it('a block arriving before the chain settles writes one gossip-block event with `result: "unsettled"`', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const underlying = chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K);
+    let callCount = 0;
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: async (urls, m, k, p, now, httpFetch) => {
+        callCount += 1;
+        if (callCount === 1) await gate;
+        return underlying(urls, m, k, p, now, httpFetch);
+      },
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    pendingReleases.push(() => release());
+
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    expect(client.state().tip).toBeNull();
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(next));
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.outcome.result).toBe('unsettled');
+    expect(ev.height).toBe(K + 2);
+    expect(ev.source).toBe(started.id);
+    release();
+  }, 180_000);
+
+  it('a version mismatch writes one gossip-block event with `result: "reject"`, `lie: false` and the detail', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+
+    const wrong = makeWrongVersionBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE, PROTOCOL_VERSION + 100);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, encodeOrderingBlock(wrong));
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    if (ev.outcome.result !== 'reject') {
+      throw new Error(`expected reject, read ${ev.outcome.result}`);
+    }
+    expect(ev.outcome.lie, 'a version mismatch is not a lie').toBe(false);
+    expect(ev.outcome.detail.length, 'the detail is non-empty').toBeGreaterThan(0);
+    expect(ev.height, 'the validator rejects before decode').toBeNull();
+    expect(ev.source).toBe(started.id);
+  }, 180_000);
+
+  it('the tip block published a second time writes one gossip-block event with `result: "ignore"`', async () => {
+    const chain = makeLinkedChain(K + 1, PROFILE);
+    const started = await startNode(chain); openNodes.push(started);
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: started.id, addrs: [started.webrtcAddr] }],
+      network: 'devnet', profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: chainResolve((url) => url.includes(started.id) ? chain : 'unreachable', K),
+      events: (e) => captured.push(e),
+    });
+    openClients.push(client);
+    await client.check();
+    await waitReaderHeldAsDirect(started.mesh.libp2p, client.libp2p, TOPIC);
+
+    const next = makeChildBlock(chain[chain.length - 1]!.header, 1_000_000, PROFILE);
+    const bytes = encodeOrderingBlock(next);
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+    await vi.waitFor(() => {
+      expect(client.state().tip?.height).toBe(K + 2);
+    }, { timeout: 15_000, interval: 100 });
+
+    // Clear gossipsub's seenCache on both ends so the second publish
+    // of the same bytes reaches the client's validator.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsubOf(started.mesh.libp2p) as any).seenCache.clear();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pubsubOf(client.libp2p) as any).seenCache.clear();
+
+    const beforeLen = captured.filter((e) => e.kind === 'gossip-block').length;
+    await pubsubOf(started.mesh.libp2p).publish(TOPIC, bytes);
+
+    await vi.waitFor(() => {
+      const blockEvents = captured.filter((e) => e.kind === 'gossip-block');
+      expect(blockEvents.length - beforeLen).toBe(1);
+    }, { timeout: 15_000, interval: 50 });
+
+    const blockEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'gossip-block' }> => e.kind === 'gossip-block');
+    const ev = blockEvents[blockEvents.length - 1]!;
+    expect(ev.outcome.result).toBe('ignore');
+    expect(ev.height, 'the validator ignores before decode').toBeNull();
+    expect(ev.source).toBe(started.id);
   }, 180_000);
 });
 

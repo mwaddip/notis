@@ -460,6 +460,32 @@ describe('background — sign prompt path (ask or credits)', () => {
     expect(promptRecords(c)).toHaveLength(0);
   });
 
+  it('with `windows` the background registers no tab-close listener, and a tab\'s close reads nothing', async () => {
+    const c = fakeChrome();
+    const registered: unknown[] = [];
+    const add = c.api.tabs.onRemoved.addListener.bind(c.api.tabs.onRemoved);
+    c.api.tabs.onRemoved.addListener = ((listener: (tabId: number) => void) => {
+      registered.push(listener);
+      add(listener);
+    }) as typeof c.api.tabs.onRemoved.addListener;
+    install(c.api, { publicBase: '' }, { locks: fakeLockManager() });
+    await c.send({ kind: 'draft' });
+    await c.send({ kind: 'create', passphrase: 'pw' });
+    expect(registered).toEqual([]);
+    // The tab-close handler reads live from `storage.session` through
+    // `readAllRecords` (background.ts). A spy on `storage.local.get`
+    // would not catch the handler's read.
+    const reads: unknown[] = [];
+    const get = c.api.storage.session.get.bind(c.api.storage.session);
+    c.api.storage.session.get = ((...args: unknown[]) => {
+      reads.push(args);
+      return (get as (...a: unknown[]) => unknown)(...args);
+    }) as typeof c.api.storage.session.get;
+    c.fireTabRemoved(42);
+    await new Promise((r) => setImmediate(r));
+    expect(reads).toEqual([]);
+  });
+
   it('on background start every record without a result is declined', async () => {
     const fixture = freshFixture();
     const first = fakeChrome(fixture);
@@ -570,13 +596,17 @@ describe('background — sign step 7: the prompt is one at a time', () => {
     // the lock the record has no windowId yet, so windowClosed finds no
     // match and never writes `declined`; under the lock the handler waits
     // on the open's own lock and runs after the open has written the id.
-    const originalCreate = c.api.windows.create.bind(c.api.windows);
-    c.api.windows.create = (async (props: chrome.windows.CreateProps) => {
+    // `windows` is present on the Chrome / desktop-Firefox shape the test's
+    // fake carries — WEB_INTERFACE → The extension → "The contexts, and what
+    // each may hold". The narrowing holds for the lifetime of the test.
+    const windows = c.api.windows!;
+    const originalCreate = windows.create.bind(windows);
+    windows.create = (async (props: chrome.windows.CreateProps) => {
       const w = await originalCreate(props);
       c.fireWindowRemoved(w.id!);
       await new Promise((rs) => setImmediate(rs));
       return w;
-    }) as typeof chrome.windows.create;
+    }) as chrome.windows.Api['create'];
     const r = await c.send({ kind: 'sign', txBytesHex: tx.txBytesHex, txIdHex: tx.txIdHex, pubKeyHex: pub }) as { pending: string };
     await new Promise((rs) => setImmediate(rs));
     const [, rec] = promptRecords(c).find(([, rc]) => rc.id === r.pending)!;

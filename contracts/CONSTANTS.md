@@ -414,12 +414,13 @@ never a copy (`WEB_INTERFACE → The extension → "The verified tip"`).
 | `m` (default) | `24` | the security parameter | policy | ruled 2026-09-30, to be tuned on testnet's behaviour, on `packages/nipopow/scripts/bench-proof-m.mjs`: at 24 a chain of three quarters of the honest work wins about 4% of comparisons (6: about 18%), and a 100 000-block chain's proof is 219 KB, 438 KB as the route's hex, which Waterfox 140 decodes, verifies and compares in 0.16 s (measured 2026-10-15) | RULED | `NIPOPOW_INTERFACE → Constants` |
 | `k` (default) | `20` | the suffix — the client's own settlement depth; a block count, read in work under a moving target | policy | provisional; not a full node's reorg horizon, which is per network and larger (`maxReorgDepth`) | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
-`@dagsocial/web` — pinned by the package's own suite, outside the drift test: the post cache and the resolve are the
-extension build's, the envelope's scrypt cost both builds'.
+`@dagsocial/web` — pinned by the package's own suite, outside the drift test: the post cache, the resolve and the debug
+log are the extension build's, the envelope's scrypt cost both builds'.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `POST_CACHE_BYTES` (web) | `50_000_000` | the post cache's size, over its entries' sizes | policy | provisional and unmeasured — a round figure, argued by nothing yet | PROVISIONAL | `WEB_INTERFACE → The extension → "The post cache"` |
+| `DEBUG_LOG_BYTES` (web) | `2_000_000` | the debug log's size, over its events' serialised sizes | policy | provisional: inside the user's bound, *"a few megabytes at best"* (2026-11-17) — the figure argued by nothing measured | PROVISIONAL | `WEB_INTERFACE → The extension → "The debug log"` |
 | `BATCH_RESOLVE_MS` (web) | `10_000` | how long one resolve of the posts a list lacks runs, over all the nodes of the client's order and every request | policy | provisional: `REQUEST_TIMEOUT_MS`' figure for one request, taken as the whole budget — argued by nothing else | PROVISIONAL | `WEB_INTERFACE → The extension → "The resolve"` |
 | `SCRYPT_N` (web) | `65_536` | the scrypt cost every seal uses — 2¹⁶, 64 MiB | policy | decided with the identity envelope (2026-09-04): 64 MiB, paid once per unlock and once per export; 185 ms in Node on the i9 (measured 2026-10-20) | DECIDED | `WEB_INTERFACE → The identity module` |
 | `SCRYPT_R` (web) | `8` | scrypt's block size, every seal's and every envelope's | format | decided with the identity envelope (2026-09-04); an envelope naming another is refused | DECIDED | `WEB_INTERFACE → The identity module → "An envelope's scrypt cost is bounded"` |

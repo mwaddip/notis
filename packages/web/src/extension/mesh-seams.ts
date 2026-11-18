@@ -15,7 +15,7 @@
 // to stop, and hands the seams to the App.
 
 import { NodeClient } from '../api/client.js';
-import { WriteClient } from '../api/write.js';
+import { WriteClient, type WriteObserver } from '../api/write.js';
 import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, SERVE_KEY } from './storage-keys.js';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
@@ -29,9 +29,12 @@ import type { PostCheck } from '@dagsocial/nipopow-client';
 import { createMeshMemoryStore, type MemorySnapshot } from '../mesh/memory-store.js';
 import { continues as proofContinues } from '../mesh/memory.js';
 import { decodeNipopowProof } from '@dagsocial/nipopow';
-import type { MeshClient, MeshContact, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
+import type { Anchor, FiguresResult, Listing, NameClaim, NameResult } from '@dagsocial/nipopow-client';
+import type { MeshClient, MeshContact, MeshEvent, StartMeshClientOptions, StorageLike } from '../mesh/index.js';
 import type { HttpFetch } from '@dagsocial/node-reads';
 import type { PostTextProvider } from '@dagsocial/net/browser';
+import type { TipRun } from '../model/state.js';
+import { routeShape, type DebugEventKind, type DebugLog } from './debug-log.js';
 export type { StorageLike };
 import type {
   FiguresVerifier,
@@ -59,6 +62,10 @@ export interface CreateMeshSeamsOptions {
   check: (rows: unknown[]) => PostCheck[];
   /** The storage the hand-added-node address is held in. */
   storage: StorageLike;
+  /** The log the write client's walk observer writes `write` events into
+   *  (WEB_INTERFACE → The extension → "The debug log"). The extension build
+   *  hands one; tests that bypass the debug record path omit it. */
+  debugLog?: DebugLog;
 }
 
 /** Parses an address as a multiaddr ending in `/p2p/<peer id>` with no DNS
@@ -92,6 +99,7 @@ export function createMeshSeams(opts: CreateMeshSeamsOptions): MeshSeams {
   const writeClient = new WriteClient({
     bases: () => client.order('tip'),
     fetch,
+    ...(opts.debugLog !== undefined ? { observer: makeWriteObserver(opts.debugLog) } : {}),
   });
   const tipVerifier = createMeshTipVerifier({ client });
 
@@ -249,6 +257,14 @@ export interface StartExtensionMeshOptions {
    * `startMeshClient`.
    */
   postTexts: PostTextProvider;
+  /**
+   * WEB_INTERFACE → The extension → "The debug log" — the page's own log.
+   * The start builds the mesh client's events sink over it, tees the mesh
+   * client's log lines through it as `error` events naming the mesh
+   * client, and wraps the three verifiers so a run's ending records a
+   * `verdict` event carrying the run's answer field by field.
+   */
+  debugLog: DebugLog;
 }
 
 export async function startExtensionMesh(
@@ -297,14 +313,27 @@ export async function startExtensionMesh(
   // The `onChecked` callback reads the mesh client back through this
   // closure; the client is known once `startMeshClient` resolves.
   let seatedClient: MeshClient | null = null;
+  const debugLog = opts.debugLog;
   const startOpts: StartMeshClientOptions = {
     firstContact: opts.firstContact,
     network: opts.network,
     profile,
     agentName: opts.agentName,
     httpFetch: opts.httpFetch,
-    // WEB_INTERFACE → The extension → "The mesh client's faults reach the page's console"
-    log: (line) => { console.error(line); },
+    // WEB_INTERFACE → The extension → "The mesh client's faults reach the
+    // page's console". Each line is also written as an `error` event in the
+    // debug log, naming the mesh client as its source
+    // (→ "The debug log" — "each line the mesh client logs").
+    log: (line) => {
+      console.error(line);
+      debugLog.record('error', { source: 'mesh-client', message: line });
+    },
+    // WEB_INTERFACE → The extension → "The debug log" — the mesh client's
+    // sink records each report under its own kind; a `request` is stored
+    // with the node (the mesh URL's id, or the API base's origin) and
+    // `routeShape`'s path and query in the URL's place, never the URL
+    // (→ "What the log never holds").
+    events: makeDebugSink(debugLog),
     onChecked: (snapshot: MemorySnapshot) => {
       const chain = seatedClient !== null ? seatedClient.state().chain : null;
       const genesis = profile.genesisId !== '' ? profile.genesisId : chain;
@@ -357,8 +386,118 @@ export async function startExtensionMesh(
     network: opts.network,
     check: opts.check,
     storage: opts.storage,
+    debugLog,
   });
-  return { client, seams };
+  // WEB_INTERFACE → The extension → "The debug log" — each of the three
+  // verifiers records a `verdict` event at its run's ending, carrying the
+  // run's answer read field by field: never the posts, names or amounts it
+  // proved.
+  const wrappedSeams: MeshSeams = {
+    ...seams,
+    tipVerifier: wrapTipVerifier(seams.tipVerifier, debugLog),
+    figuresVerifier: wrapFiguresVerifier(seams.figuresVerifier, debugLog),
+    namesVerifier: wrapNamesVerifier(seams.namesVerifier, debugLog),
+  };
+  return { client, seams: wrappedSeams };
+}
+
+/** Sink: writes each mesh event to the debug log. `request` is transformed —
+ *  no 64-hex run reaches the store — and every other kind is stored under
+ *  its own kind with its fields. */
+function makeDebugSink(debugLog: DebugLog): (e: MeshEvent) => void {
+  return (e) => {
+    if (e.kind === 'request') {
+      const shape = routeShape(e.url);
+      const node = nodeOfRequestUrl(e.url);
+      const fields: Record<string, unknown> = {
+        number: e.number,
+        route: e.route,
+        node,
+        path: shape.path,
+        query: shape.query,
+        head: e.head,
+      };
+      if (e.connection !== undefined) fields['connection'] = e.connection;
+      debugLog.record('request', fields);
+      return;
+    }
+    // Every other event records every field but `kind`. The sink stamps
+    // `t` and `page` from the log's seams; `kind` is the second argument.
+    const { kind, ...rest } = e as unknown as { kind: DebugEventKind } & Record<string, unknown>;
+    debugLog.record(kind, rest);
+  };
+}
+
+/** For a request URL, the node the request went to:
+ *   • `notis-mesh://<id>/…` → the Notis id (32-byte key hex).
+ *   • `http[s]://host[:port]/…` → the URL's origin.
+ *  A URL the `URL` constructor refuses answers the empty string; nothing
+ *  else can reach the sink. */
+function nodeOfRequestUrl(url: string): string {
+  if (url.startsWith('notis-mesh://')) {
+    const rest = url.substring('notis-mesh://'.length);
+    const slash = rest.indexOf('/');
+    return slash === -1 ? rest : rest.substring(0, slash);
+  }
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+function wrapTipVerifier(inner: TipVerifier, debugLog: DebugLog): TipVerifier {
+  return {
+    async run(): Promise<TipRun> {
+      const t0 = Date.now();
+      const r = await inner.run();
+      debugLog.record('verdict', {
+        run: 'tip',
+        ms: Date.now() - t0,
+        verdict: r.verdict,
+      });
+      return r;
+    },
+  };
+}
+
+function wrapFiguresVerifier(inner: FiguresVerifier, debugLog: DebugLog): FiguresVerifier {
+  return {
+    async run(readingBase: string, user: string, listing: Listing, anchor: Anchor): Promise<FiguresResult> {
+      const t0 = Date.now();
+      const r = await inner.run(readingBase, user, listing, anchor);
+      // The event carries each ledger's holdings status, the record's
+      // status, the heightAfter and the `failed` flag — never a box's
+      // value, lock, id or the identity record's bytes.
+      debugLog.record('verdict', {
+        run: 'figures',
+        ms: Date.now() - t0,
+        karma: r.karma.holdings,
+        credits: r.credits.holdings,
+        record: r.record.status,
+        heightAfter: r.heightAfter,
+        failed: r.failed,
+      });
+      return r;
+    },
+  };
+}
+
+function wrapNamesVerifier(inner: NamesVerifier, debugLog: DebugLog): NamesVerifier {
+  return {
+    async run(readingBase: string, claim: NameClaim, anchor: Anchor): Promise<NameResult> {
+      const t0 = Date.now();
+      const r = await inner.run(readingBase, claim, anchor);
+      // The event carries only the check's status — no owner, no name, no
+      // boxId, no verdict sentence (it may hold a name or an owner).
+      debugLog.record('verdict', {
+        run: 'names',
+        ms: Date.now() - t0,
+        status: r.status,
+      });
+      return r;
+    },
+  };
 }
 
 /**
@@ -372,4 +511,26 @@ function base64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/** The write observer the extension hands the write client — one `write`
+ *  event per walk's ending (WEB_INTERFACE → The extension → "The debug log").
+ *  `route` and `query` are `routeShape`'s, `node` the request URL's node as
+ *  the `request` events name it, and the URL itself never reaches the store. */
+function makeWriteObserver(debugLog: DebugLog): WriteObserver {
+  return (ending): void => {
+    const shape = ending.url !== '' ? routeShape(ending.url) : { path: '', query: {} };
+    const node = ending.url !== '' ? nodeOfRequestUrl(ending.url) : null;
+    const fields: Record<string, unknown> = {
+      route: shape.path,
+      query: shape.query,
+      node,
+      tried: ending.tried,
+      status: ending.status,
+    };
+    if (ending.message !== undefined) fields['message'] = ending.message;
+    if (ending.noAnswer) fields['noAnswer'] = true;
+    if (ending.txId !== undefined) fields['txId'] = ending.txId;
+    debugLog.record('write', fields);
+  };
 }

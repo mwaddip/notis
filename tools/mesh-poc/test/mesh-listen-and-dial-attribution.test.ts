@@ -8,17 +8,42 @@
 // one `CHECK_INTERVAL_MS` for a check to fire on the cut before
 // recording.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { readTopology } from '../stage/lib/topology.mjs';
 import { verdictS4InterNodeTcp } from '../stage/lib/verdicts.mjs';
-import { attributeAggregateDialErrors, notisAddressSorter, wrongKeyInfo } from '@dagsocial/web/mesh';
+import {
+  attributeAggregateDialErrors,
+  notisAddressSorter,
+  wrongKeyInfo,
+  startMeshClient,
+  type MeshClient,
+  type MeshEvent,
+} from '@dagsocial/web/mesh';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Address } from '@libp2p/interface';
 import { NodeList } from '@dagsocial/web/mesh';
+import { bytesToHex, generateKeyPair, profileFor } from '@dagsocial/types';
+import type { NetworkProfile, NetworkType } from '@dagsocial/types';
+import { peerIdFromNotisId } from '@dagsocial/net/browser';
+import type { resolveTip as ResolveTip } from '@dagsocial/nipopow-client';
+
+const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
+
+/** A resolve that answers no verified tip, so the check settles no chain and runs to the end. */
+function emptyResolve(): typeof ResolveTip {
+  return async () => ({
+    winner: null,
+    winnerIndex: -1,
+    nodes: [],
+    tip: null,
+    suffixHead: null,
+    splits: [],
+  });
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -368,4 +393,126 @@ describe('s4 step 4 waits one CHECK_INTERVAL_MS and records before verdict', () 
     expect(stepBody, 'step 4 cites CHECK_INTERVAL_MS').toContain('CHECK_INTERVAL_MS');
     expect(stepBody, 'step 4 reads state through cdpPoll (not cdpEval) after the wait').toMatch(/CHECK_INTERVAL_MS[\s\S]*cdpPoll/);
   });
+});
+
+// MESH_INTERFACE → The client's node list → "The client reports what it
+// does" — "a dial's end", the three outcomes a real `dialByAddresses`
+// writes over libp2p: `no-dialable` where every address the client
+// refuses (the pre-filter alone, since the empty-addresses arm needs
+// no libp2p), `failed` with each attributed address where the queue's
+// reported list accounts for every error, and `failed` with
+// `addresses: null` where it does not — the shape of the aggregate
+// `attributeAggregateDialErrors` reads above is the one the client
+// writes against a real dial here.
+describe('a dial\'s end writes one dial event per node', () => {
+  const clients: MeshClient[] = [];
+  afterEach(async () => {
+    for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
+  });
+
+  it('every address refused by the client writes `result: "no-dialable"` once', async () => {
+    // A first-contact entry whose only address is a plain `/ws` (no
+    // `/tls/`, no `/wss`): the client's own pre-filter in
+    // `dialByAddresses` drops it before libp2p sees anything, so the
+    // `dialable` array is empty and the `no-dialable` arm fires.
+    const kp = generateKeyPair();
+    const notisId = bytesToHex(kp.publicKey);
+    const peerIdStr = peerIdFromNotisId(notisId).toString();
+    const plainWs = `/ip4/8.8.8.8/tcp/8080/ws/p2p/${peerIdStr}`;
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId, addrs: [plainWs] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: emptyResolve(),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    await client.check();
+
+    const dials = captured.filter((e): e is Extract<MeshEvent, { kind: 'dial' }> =>
+      e.kind === 'dial' && e.nodeId === notisId,
+    );
+    expect(dials.length, 'exactly one dial event for the entry').toBe(1);
+    expect(dials[0]!.outcome.result).toBe('no-dialable');
+    expect(dials[0]!.ms, 'the time is a non-negative number').toBeGreaterThanOrEqual(0);
+  }, 30_000);
+
+  it('every address libp2p dialled and failed writes `result: "failed"` with each attributed', async () => {
+    // A first-contact entry whose single address is a loopback
+    // WebRTC-direct multiaddr to a free UDP port — the gater passes
+    // it (first-contact addresses name themselves in
+    // `configuredAddrsOf`), libp2p dials it, nothing answers, and the
+    // dial queue reports the one address it dialled. Attribution
+    // then pairs the error with that address.
+    const kp = generateKeyPair();
+    const notisId = bytesToHex(kp.publicKey);
+    const peerIdStr = peerIdFromNotisId(notisId).toString();
+    const addr = `/ip4/127.0.0.1/udp/1/webrtc-direct/certhash/uEiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/p2p/${peerIdStr}`;
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId, addrs: [addr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: emptyResolve(),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    await client.check();
+
+    const dials = captured.filter((e): e is Extract<MeshEvent, { kind: 'dial' }> =>
+      e.kind === 'dial' && e.nodeId === notisId,
+    );
+    expect(dials.length, 'exactly one dial event for the entry').toBe(1);
+    const outcome = dials[0]!.outcome;
+    if (outcome.result !== 'failed') {
+      throw new Error(`expected result: 'failed', read: ${outcome.result}`);
+    }
+    expect(outcome.addresses, 'attribution landed, not null').not.toBeNull();
+    expect(outcome.addresses!.length, 'one row per reported address').toBeGreaterThanOrEqual(1);
+    expect(outcome.addresses![0]!.addr, 'the row names the address').toBe(addr);
+    expect(outcome.addresses![0]!.kind, 'the row names the kind').toMatch(/^(transport|timeout|refused)$/);
+    expect(outcome.addresses![0]!.message.length, 'the row carries the message').toBeGreaterThan(0);
+    expect(outcome.message.length, 'the aggregate message is non-empty').toBeGreaterThan(0);
+  }, 30_000);
+
+  it('a dial libp2p filtered past every address writes `result: "failed"` with `addresses: null`', async () => {
+    // A first-contact entry whose only address names a transport the
+    // reader does not install (`/tcp/` with no `/ws` / `/wss` /
+    // `/webrtc-direct/`). libp2p's dial queue filters it out before
+    // it dials, reports an empty list, and throws
+    // `NoValidAddressesError`; attribution's
+    // counts-must-match guard answers `null` and the shape of the
+    // caller's row matches that.
+    const kp = generateKeyPair();
+    const notisId = bytesToHex(kp.publicKey);
+    const peerIdStr = peerIdFromNotisId(notisId).toString();
+    // A public TCP address keeps the gater out of the picture; libp2p
+    // alone decides.
+    const addr = `/ip4/8.8.8.8/tcp/4001/p2p/${peerIdStr}`;
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId, addrs: [addr] }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-poc',
+      resolve: emptyResolve(),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    await client.check();
+
+    const dials = captured.filter((e): e is Extract<MeshEvent, { kind: 'dial' }> =>
+      e.kind === 'dial' && e.nodeId === notisId,
+    );
+    expect(dials.length, 'exactly one dial event for the entry').toBe(1);
+    const outcome = dials[0]!.outcome;
+    if (outcome.result !== 'failed') {
+      throw new Error(`expected result: 'failed', read: ${outcome.result}`);
+    }
+    expect(outcome.addresses, 'attribution answered null').toBeNull();
+    expect(outcome.message.length, 'the aggregate message is non-empty').toBeGreaterThan(0);
+  }, 30_000);
 });

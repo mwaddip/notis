@@ -106,7 +106,7 @@
 //     [--miner-control <origin>]
 
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -2204,8 +2204,8 @@ async function titleTipNearReadingNode(readingOrigin, reading, tolerance = 5) {
 // (EXTENSION_CHECK_INTERFACE → Blocks); each block's own steps follow.
 // ---------------------------------------------------------------------------
 
-// writes — steps 3–12, with step 12 recorded as its four sub-parts (12a–d).
-const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d'];
+// writes — steps 3–12, with step 12 recorded as its five sub-parts (12a–e).
+const WRITES_STEPS = [3, 4, 5, 6, 7, 8, 9, 10, 11, '12a', '12b', '12c', '12d', '12e'];
 // links — 13a, 13, 14, 15, 16, and the browser-context arm 13-uncancelled.
 const LINKS_STEPS = ['13a', 13, 14, 15, 16, '13-uncancelled'];
 // tip — 17a, 17, 17b, 18, 19a, 19a-both, 19b, 19c, 20.
@@ -9942,9 +9942,46 @@ async function runMeshStepM1(bcx) {
       return url.startsWith(AP_ORIGIN) || url.startsWith(BP_ORIGIN);
     }).length;
     const reportAfter = await page.cx.eval(`document.querySelector('#feed .report')?.textContent ?? null`).catch(() => null);
+    // Settings → debug row → `show`: the nodes block names each node by its
+    // shortened key and how it is reached — a mesh connection reads
+    // `<transport> · <path>`, so A' and B' each read `webrtc-direct ·
+    // direct` (WEB_INTERFACE → The settings window → "The debug row"). The
+    // press is `btn.click()` inside `cx.eval(..., true)` — the settings-row
+    // press pattern `setLinksPrefViaUi` uses.
+    await page.cx.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+    await page.cx.waitFor(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      return !!row && row.querySelector('label')?.textContent === 'debug';
+    })()`, 'settings debug row m1', 10000);
+    await page.cx.eval(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'show');
+      btn.click();
+    })()`, true);
+    await page.cx.waitFor(`!!document.querySelector('.row.debug-row .debug-lines')`, 'debug lines m1', 10000);
+    // Match each node's line by its key's shortening — `shortHex(hex, 16)`
+    // in `dom.ts`: the first 16 hex characters and the ellipsis.
+    const apShort = meshNodes.ap.identity.notisId.slice(0, 16);
+    const bpShort = meshNodes.bp.identity.notisId.slice(0, 16);
+    const nodeLines = await page.cx.eval(`(() => {
+      const row = document.querySelector('.row.debug-row');
+      if (!row) return [];
+      const heads = [...row.querySelectorAll('.debug-block .debug-head')];
+      const nodesHead = heads.find((h) => h.textContent === 'nodes');
+      if (!nodesHead) return [];
+      const block = nodesHead.parentElement;
+      return [...block.querySelectorAll('.debug-line')].map((l) => ({
+        copy: l.querySelector('.debug-copy')?.textContent ?? null,
+        rest: [...l.querySelectorAll('.inkmute')].map((s) => s.textContent).join(''),
+      }));
+    })()`);
+    const apLine = nodeLines.find((l) => typeof l.copy === 'string' && l.copy.startsWith(apShort));
+    const bpLine = nodeLines.find((l) => typeof l.copy === 'string' && l.copy.startsWith(bpShort));
+    const apReachOk = typeof apLine?.rest === 'string' && apLine.rest.includes('webrtc-direct · direct');
+    const bpReachOk = typeof bpLine?.rest === 'string' && bpLine.rest.includes('webrtc-direct · direct');
     record('M1',
-      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0,
-      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows")`);
+      !verdict.timedOut && titleOk && feedHasContent && landed && httpPostMark === 0 && apReachOk && bpReachOk,
+      `corner.title=${JSON.stringify(verdict.last?.title)}, feedHasContent=${feedHasContent}, refresh landed=${landed} (report ${JSON.stringify(reportBefore)} → ${JSON.stringify(reportAfter)}), HTTP requests to AP_ORIGIN or BP_ORIGIN before the mark=${httpPreMark} (measurement — first-paint reads before the WebRTC connections came up), after the mark=${httpPostMark} (expect 0 — a mesh read is no HTTP request; MESH_INTERFACE → The client's node list → "A routed read goes to a node its need allows"), debug row A' (${apShort}…): ${JSON.stringify(apLine?.rest ?? null)} (expect "webrtc-direct · direct"), debug row B' (${bpShort}…): ${JSON.stringify(bpLine?.rest ?? null)}`);
   } catch (e) {
     record('M1', false, `error: ${e?.stack ?? String(e)}`);
   } finally {
@@ -11487,6 +11524,111 @@ async function writesSteps(cx2, pageId) {
   record('12d',
     lockedSession12d === null && unlockMounted12d && noConfirmLocked12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && noConfirmSecond12d && !!prompt12dSecond,
     `session empty=${lockedSession12d === null}, unlock under form=${unlockMounted12d}, no .pf-confirm under lock=${noConfirmLocked12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send .card-unlock absent=${!unlockMounted12dSecond}, second-send .pf-confirm absent=${noConfirmSecond12d}, second-send prompt seen=${!!prompt12dSecond}`);
+
+  // --- Step 12e — the debug file: unticked drops identifying values,
+  // ticked keeps them. WEB_INTERFACE → The extension → "The debug file",
+  // → The settings window → "The debug row". The box is unticked at every
+  // open; `save as file` hands the file to an `<a download>` over a
+  // `data:` URL — the download lands in the block's own out directory
+  // under `Browser.setDownloadBehavior({ behavior: 'allow', downloadPath })`
+  // set before the presses. The directory's listing names the file
+  // (`notis-debug-*.json`).
+  const postId12e = await pickOwnRootPostId();
+  const postRow12e = postId12e !== null
+    ? await fetch(`${NODE}/posts/${postId12e}`).then((r) => r.json()).catch(() => null)
+    : null;
+  const postTxId12e = postRow12e && typeof postRow12e.txId === 'string' ? postRow12e.txId : null;
+  if (postTxId12e === null) {
+    record('12e', false, `no R root post with txId on /posts (postId=${postId12e === null ? 'null' : postId12e.slice(0, 8) + '…'}, row=${JSON.stringify(postRow12e)})`);
+  } else {
+    const dlDir12e = join(SCRATCH, 'downloads-12e');
+    mkdirSync(dlDir12e, { recursive: true });
+    const keptDir12e = join(SCRATCH, 'downloads-12e-kept');
+    mkdirSync(keptDir12e, { recursive: true });
+    // A saved file's name has a second's resolution: its text is read the
+    // moment its name appears and the file moves out of the download
+    // directory, so the next save's name is new whatever the clock reads.
+    const takeDebugFile12e = async (before, label) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < 20000) {
+        const names = readdirSync(dlDir12e).filter((n) =>
+          /^notis-debug-.*\.json$/.test(n) && !before.has(n));
+        if (names.length > 0) {
+          const name = names[0];
+          const text = readFileSync(join(dlDir12e, name), 'utf8');
+          renameSync(join(dlDir12e, name), join(keptDir12e, `${label}-${name}`));
+          return { name, text };
+        }
+        await sleep(100);
+      }
+      return null;
+    };
+    const bcx12e = await openBrowserSession();
+    try {
+      await bcx12e.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir12e });
+      // Open settings, then press `show` on the debug row — the box is
+      // unticked at every `show` (debug-row.ts sets `ticked = false` on
+      // open). Press the settings control first so the row is in the DOM.
+      await cx10.eval(`document.querySelector('[aria-label="open settings"]').click()`, true);
+      await cx10.waitFor(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        return !!row && row.querySelector('label')?.textContent === 'debug';
+      })()`, 'settings debug row 12e', 10000);
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const btn = [...row.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'show');
+        btn.click();
+      })()`, true);
+      await cx10.waitFor(`!!document.querySelector('.row.debug-row .debug-include input[type=checkbox]') && !!document.querySelector('.row.debug-row .debug-controls')`, 'debug-row open 12e', 10000);
+      // Press `save as file` with the box unticked.
+      const beforeUnticked = new Set(readdirSync(dlDir12e));
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const ctrls = row.querySelector('.debug-controls');
+        const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
+        btn.click();
+      })()`, true);
+      const file1 = await recordWait('12e debug file unticked', 20000, () => takeDebugFile12e(beforeUnticked, 'unticked'));
+      // Tick the box and press `save as file` again.
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const box = row.querySelector('.debug-include input[type=checkbox]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`, true);
+      const beforeTicked = new Set(readdirSync(dlDir12e));
+      await cx10.eval(`(() => {
+        const row = document.querySelector('.row.debug-row');
+        const ctrls = row.querySelector('.debug-controls');
+        const btn = [...ctrls.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'save as file');
+        btn.click();
+      })()`, true);
+      const file2 = await recordWait('12e debug file ticked', 20000, () => takeDebugFile12e(beforeTicked, 'ticked'));
+      let parse1 = null, parse2 = null;
+      const text1 = file1 !== null ? file1.text : '';
+      const text2 = file2 !== null ? file2.text : '';
+      try { if (file1 !== null) parse1 = JSON.parse(text1); } catch (e) { parse1 = { error: e?.message ?? String(e) }; }
+      try { if (file2 !== null) parse2 = JSON.parse(text2); } catch (e) { parse2 = { error: e?.message ?? String(e) }; }
+      const keyLc = R_JSON.pubKeyHex.toLowerCase();
+      const txLc = postTxId12e.toLowerCase();
+      const text1Lc = text1.toLowerCase();
+      const text2Lc = text2.toLowerCase();
+      const fmtOk1 = parse1 !== null && parse1.format === 'notis-debug/1';
+      const fmtOk2 = parse2 !== null && parse2.format === 'notis-debug/1';
+      const untickedDropsKey = !text1Lc.includes(keyLc);
+      const untickedDropsTx = !text1Lc.includes(txLc);
+      const tickedHoldsKey = text2Lc.includes(keyLc);
+      const tickedHoldsTx = text2Lc.includes(txLc);
+      const events1 = Array.isArray(parse1?.events) ? parse1.events : [];
+      const hasSign = events1.some((e) => e && e.kind === 'sign');
+      const hasWrite = events1.some((e) => e && e.kind === 'write');
+      record('12e',
+        fmtOk1 && fmtOk2 && untickedDropsKey && untickedDropsTx && tickedHoldsKey && tickedHoldsTx && hasSign && hasWrite,
+        `postId=${postId12e.slice(0, 8)}…, txId=${postTxId12e.slice(0, 8)}…, unticked=${JSON.stringify(file1?.name ?? null)} (format=${JSON.stringify(parse1?.format ?? null)}, drops key=${untickedDropsKey}, drops tx=${untickedDropsTx}, events sign=${hasSign}, write=${hasWrite}), ticked=${JSON.stringify(file2?.name ?? null)} (format=${JSON.stringify(parse2?.format ?? null)}, holds key=${tickedHoldsKey}, holds tx=${tickedHoldsTx})`);
+    } finally {
+      try { bcx12e.s.close(); } catch {}
+    }
+  }
 
   // The writes block ends here — every block prints the `[diag]` line at
   // its end (EXTENSION_CHECK_INTERFACE → Blocks).

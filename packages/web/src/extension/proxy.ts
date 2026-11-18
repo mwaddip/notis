@@ -5,6 +5,7 @@ import { isSignRecord } from './protocol';
 import type { Message, AppSnapshot, SignAnswer, SignHint, SignRecord } from './protocol';
 import { K_LINKS, LINKS_DEFAULT, readLinksPref, type LinksPref } from './links';
 import { IDENTITY_KEY, BACKEDUP_KEY, POLICY_KEY, SEED_KEY } from './storage-keys';
+import type { DebugLog } from './debug-log';
 
 // The page-side identity — WEB_INTERFACE → The extension. It never holds a
 // seed; every operation is a message to the background, and change
@@ -18,9 +19,12 @@ const K_SIGN_PREFIX = 'notis.sign.';
 /** The build-time configuration the proxy carries — WEB_INTERFACE → The
  *  extension → "Links into the extension". `publicBase` is the shell's
  *  `notis-public`; an empty one leaves `links`/`setLinks` off the proxy, so
- *  the settings row does not render. */
+ *  the settings row does not render. `debugLog`, where present
+ *  (WEB_INTERFACE → The extension → "The debug log"), takes one `sign`
+ *  event at each answer the proxy translates. */
 export interface ProxyConfig {
   publicBase: string;
+  debugLog?: DebugLog;
 }
 
 /** Bootstrap the proxy: read the snapshot the App renders against and the
@@ -43,6 +47,7 @@ export class ExtensionProxy implements AppIdentity {
   private lastPubKeyHex: string | null;
   private listeners: Array<(id: { pubKeyHex: string } | null) => void> = [];
   private linksHeld: LinksPref = LINKS_DEFAULT;
+  private readonly debugLog: DebugLog | undefined;
   // The two links members are assigned only when the build carries a
   // `publicBase` — so with an empty one both read `undefined` and the settings
   // row keys on their presence, as the policy row keys on `policy`
@@ -59,6 +64,7 @@ export class ExtensionProxy implements AppIdentity {
     this.snapshot = snapshot;
     this.lastPubKeyHex = snapshot?.pubKeyHex ?? null;
     this.linksHeld = initialLinks;
+    this.debugLog = config.debugLog;
     if (config.publicBase !== '') {
       this.links = (): LinksPref => this.linksHeld;
       this.setLinks = async (v: LinksPref): Promise<void> => {
@@ -97,12 +103,40 @@ export class ExtensionProxy implements AppIdentity {
         hint: hint ?? undefined,
       });
     } catch {
-      return { refused: 'the extension did not answer' };
+      const r: SignResult = { refused: 'the extension did not answer' };
+      this.recordSign(r, hint);
+      return r;
     }
     if (typeof answer === 'object' && answer !== null && 'error' in answer) {
-      return { refused: (answer as { error: string }).error };
+      const r: SignResult = { refused: (answer as { error: string }).error };
+      this.recordSign(r, hint);
+      return r;
     }
-    return this.translateSignAnswer(answer as SignAnswer);
+    const result = await this.translateSignAnswer(answer as SignAnswer);
+    this.recordSign(result, hint);
+    return result;
+  }
+
+  /** WEB_INTERFACE → The extension → "The debug log" — one `sign` event per
+   *  answer the flow reads. The outcome is the `SignResult` arm — signed,
+   *  declined, refused with its reason, locked — the policy the proxy's
+   *  snapshot carries, and the transaction's kind where the hint names it
+   *  (`content` for a post). The seed, the signature and the id's text are
+   *  never carried. */
+  private recordSign(result: SignResult, hint?: SignHint): void {
+    if (this.debugLog === undefined) return;
+    const fields: Record<string, unknown> = {
+      policy: this.snapshot?.policy ?? 'silent',
+    };
+    if ('signature' in result) fields['outcome'] = 'signed';
+    else if ('declined' in result) fields['outcome'] = 'declined';
+    else if ('locked' in result) fields['outcome'] = 'locked';
+    else {
+      fields['outcome'] = 'refused';
+      fields['reason'] = result.refused;
+    }
+    if (hint?.content !== undefined) fields['txKind'] = 'post';
+    this.debugLog.record('sign', fields);
   }
 
   async draft(): Promise<{ pubKeyHex: string }> {

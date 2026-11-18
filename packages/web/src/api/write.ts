@@ -174,6 +174,28 @@ function readClaimResult(data: unknown): ClaimSubmitResult | null {
   return { txId, status, expiresAtHeight, name };
 }
 
+/** The walk's ending, passed to the observer the extension build hands
+ *  (WEB_INTERFACE → The extension → "The debug log"). `url` is the last
+ *  request's URL, or `''` where the order held nothing to send to; `tried`
+ *  the count of bases reached (0 when empty); `status` is the HTTP status
+ *  the walk ended on, or `0` on a transport failure; `message` the
+ *  rejection's words where one holds; `noAnswer` is `true` once the loop is
+ *  exhausted; `txId` the 64 hex the 2xx or the rejection body carries,
+ *  where it does. */
+export interface WriteEnding {
+  url: string;
+  tried: number;
+  status: number;
+  message?: string;
+  noAnswer: boolean;
+  txId?: string;
+}
+
+/** The observer the extension build hands to the write client — one call per
+ *  walk's ending (WEB_INTERFACE → The extension → "The debug log"). The web
+ *  build hands none. */
+export type WriteObserver = (ending: WriteEnding) => void;
+
 export class WriteClient {
   // The bases are read fresh on every send, never captured — the extension
   // hands the client's node order, the web build its one node's base
@@ -182,9 +204,11 @@ export class WriteClient {
   // is the caller's, taken once.
   private readonly bases: () => string[];
   private readonly httpFetch: HttpFetch;
-  constructor(opts: { bases: () => string[]; fetch: HttpFetch }) {
+  private readonly observer: WriteObserver | undefined;
+  constructor(opts: { bases: () => string[]; fetch: HttpFetch; observer?: WriteObserver }) {
     this.bases = opts.bases;
     this.httpFetch = opts.fetch;
+    this.observer = opts.observer;
   }
 
   submitPost(tx: Record<string, unknown>, content: string): Promise<PostSubmitResult | Rejection> {
@@ -245,10 +269,14 @@ export class WriteClient {
     const bases = this.bases();
     const bodyBytes = JSON.stringify(body);
     let last: Rejection = { status: 0, message: 'no node to send to' };
+    let lastUrl = '';
+    let tried = 0;
     for (const base of bases) {
+      tried += 1;
+      lastUrl = trimBase(base) + path;
       let res: Response;
       try {
-        res = await this.httpFetch(trimBase(base) + path, {
+        res = await this.httpFetch(lastUrl, {
           method,
           headers: { 'content-type': 'application/json' },
           body: bodyBytes,
@@ -270,24 +298,71 @@ export class WriteClient {
         if (res.status >= 200 && res.status < 300) {
           // An over-cap 2xx or a 2xx that does not parse ends the flight as a
           // transport failure does (WEB_INTERFACE → Reading a node's answer).
-          return clientRefusal(read.body);
+          const rej = clientRefusal(read.body);
+          this.reportEnding(lastUrl, tried, rej, undefined);
+          return rej;
         }
-        return normalizeRejection(res.status, res.statusText, read.body);
+        const rej = normalizeRejection(res.status, res.statusText, read.body);
+        this.reportEnding(lastUrl, tried, rej, undefined);
+        return rej;
       }
       const rebuilt = reader(read.data);
       if (rebuilt === null) {
         // A 2xx whose fields the flow reads are not their types (WEB_INTERFACE →
         // The wallet → "A pending entry's expiry is the client's, and a node's
         // answer can only bring it sooner").
-        return clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
+        const rej = clientRefusal(`the node answered with ${res.status} but its body is not the route's shape.`);
+        this.reportEnding(lastUrl, tried, rej, undefined);
+        return rej;
       }
+      this.reportEnding(lastUrl, tried, null, { status: res.status, txId: txIdOf(rebuilt) });
       return rebuilt;
     }
     // The loop is exhausted — the empty-order `no node to send to` or every
     // attempt a transport failure — and the send reads as *no answer*
     // (WEB_INTERFACE → The wallet → "A write no node answers waits").
-    return { ...last, noAnswer: true };
+    const result: Rejection = { ...last, noAnswer: true };
+    this.reportEnding(lastUrl, tried, result, undefined);
+    return result;
   }
+
+  // WEB_INTERFACE → The extension → "The debug log" — one `write` event per
+  // walk's ending. `rejection` is the rejection the walk ended on, or `null`
+  // for a 2xx; `success` carries the HTTP status and the body's `txId`,
+  // where it holds one.
+  private reportEnding(
+    url: string,
+    tried: number,
+    rejection: Rejection | null,
+    success: { status: number; txId: string | undefined } | undefined,
+  ): void {
+    if (this.observer === undefined) return;
+    if (rejection !== null) {
+      const ending: WriteEnding = {
+        url,
+        tried,
+        status: rejection.status,
+        message: rejection.message,
+        noAnswer: rejection.noAnswer === true,
+      };
+      this.observer(ending);
+      return;
+    }
+    const base: WriteEnding = {
+      url,
+      tried,
+      status: success!.status,
+      noAnswer: false,
+    };
+    if (success!.txId !== undefined) base.txId = success!.txId;
+    this.observer(base);
+  }
+}
+
+function txIdOf(body: unknown): string | undefined {
+  if (body === null || typeof body !== 'object') return undefined;
+  const v = (body as { txId?: unknown }).txId;
+  return typeof v === 'string' ? v : undefined;
 }
 
 // The deadline fires with a `TimeoutError`, which `fetchJson` recognises off

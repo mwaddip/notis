@@ -386,8 +386,8 @@ it for anything.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures. A value a reader comes to take away — the
-  profile's key — may itself be the control: a press copies it, and where the clipboard refuses it is selectable
-  text again (`WEB_INTERFACE → The profile window`).
+  profile's key, a value of the settings window's debug row — may itself be the control: a press copies it, and where
+  the clipboard refuses it is selectable text again (`WEB_INTERFACE → The profile window`, `→ The settings window`).
 
 - **A word is a control, and it wears no box.** Every action that is a word renders as the word alone — no
   border, no fill, no padding beyond its hit box, the row's own face; `ink` at rest, `inkMute` when it cannot

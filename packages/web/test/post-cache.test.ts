@@ -1008,3 +1008,43 @@ describe("post-cache — a post checked before any tip run names a chain is kept
     expect(await cache.roots(10)).toEqual([]);
   });
 });
+
+describe('post-cache — stats', () => {
+  const sizeOf = (bytes: Uint8Array, r: PostJson): number => bytes.byteLength + JSON.stringify({ ...r, tx: undefined }).length;
+
+  it('after puts of the reader\'s own and others\' posts, the five read as the puts left them', async () => {
+    const cache = createPostCache({ indexedDB: new IDBFactory(), localStorage: fakeLs(), now: clock().tick });
+    await cache.open('A');
+    const mine = row('m');
+    const theirs = row('t');
+    const other = row('o');
+    const b1 = new Uint8Array([1, 2, 3]);
+    const b2 = new Uint8Array([4, 5]);
+    const b3 = new Uint8Array([6]);
+    await cache.put({ id: mine.id, txBytes: b1, row: mine, author: mine.author, parent: null, own: true });
+    await cache.put({ id: theirs.id, txBytes: b2, row: theirs, author: theirs.author, parent: null, own: false });
+    await cache.put({ id: other.id, txBytes: b3, row: other, author: other.author, parent: null, own: false });
+    expect(await cache.stats()).toEqual({
+      database: 'notis.posts.A',
+      entries: 3,
+      bytes: sizeOf(b1, mine) + sizeOf(b2, theirs) + sizeOf(b3, other),
+      own: 1,
+      kept: 0,
+      unavailable: false,
+    });
+  });
+
+  it('a put before a chain is named counts among the kept ones, and none after the naming', async () => {
+    const cache = createPostCache({ indexedDB: new IDBFactory(), localStorage: fakeLs(), now: clock().tick });
+    const r = row('k');
+    await cache.put({ id: r.id, txBytes: new Uint8Array([1]), row: r, author: r.author, parent: null, own: false });
+    expect(await cache.stats()).toEqual({ database: null, entries: 0, bytes: 0, own: 0, kept: 1, unavailable: false });
+    await cache.open('A');
+    expect(await cache.stats()).toMatchObject({ database: 'notis.posts.A', entries: 1, kept: 0 });
+  });
+
+  it('no IndexedDB answers that it is unavailable', async () => {
+    const cache = createPostCache({ indexedDB: null, localStorage: fakeLs(), now: clock().tick });
+    expect(await cache.stats()).toEqual({ database: null, entries: 0, bytes: 0, own: 0, kept: 0, unavailable: true });
+  });
+});
