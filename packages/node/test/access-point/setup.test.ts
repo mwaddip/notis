@@ -718,3 +718,97 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
     expect(r.logs.join('\n')).toMatch(/10\.78\.79\.0\/25|overlap/i);
   });
 });
+
+// NODE_INTERFACE → The access-point tool — `setup` waits until
+// NetworkManager can activate uap0 (state `disconnected`, `connecting`
+// or `connected`), and reads `connected:dagsocial-ap` as a success
+// where `nmcli con up` loses a race with autoconnect.
+
+describe('setup — the wait reads uap0 STATE, and con up can race autoconnect', () => {
+  it.fails('uap0 unavailable twice then disconnected: con up runs after the third read, two sleep(500) recorded', async () => {
+    const r = primePi(new FakeRunner());
+    let count = 0;
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      () => ({
+        stdout: ++count >= 3
+          ? 'uap0:disconnected:\nwlan0:connected:netplan-wlan0-HomeNetwork\n'
+          : 'uap0:unavailable:\nwlan0:connected:netplan-wlan0-HomeNetwork\n',
+      }),
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    expect(r.sleeps.filter((s) => s === 500).length).toBe(2);
+    const conUp = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args[0] === 'con' && c.args[1] === 'up'
+        && c.args[2] === 'dagsocial-ap',
+    );
+    expect(conUp).toBeTruthy();
+  });
+
+  it.fails('uap0 already connected:dagsocial-ap: setup skips con up and continues', async () => {
+    const r = primePi(new FakeRunner());
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      { stdout: 'uap0:connected:dagsocial-ap\nwlan0:connected:netplan-wlan0-HomeNetwork\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    const conUp = r.calls.find(
+      (c) =>
+        c.cmd === 'nmcli' && c.args[0] === 'con' && c.args[1] === 'up'
+        && c.args[2] === 'dagsocial-ap',
+    );
+    expect(conUp).toBeUndefined();
+  });
+
+  it.fails('con up fails but the re-read answers uap0:connected:dagsocial-ap: setup continues', async () => {
+    const r = primePi(new FakeRunner());
+    let dsCount = 0;
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      () => {
+        dsCount++;
+        return { stdout: dsCount === 1
+          ? 'uap0:disconnected:\nwlan0:connected:netplan-wlan0-HomeNetwork\n'
+          : 'uap0:connected:dagsocial-ap\nwlan0:connected:netplan-wlan0-HomeNetwork\n' };
+      },
+    );
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === 'con' && a[1] === 'up' && a[2] === 'dagsocial-ap',
+      { code: 4, stderr: 'No suitable device found for this connection\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(0);
+    // The setup proceeded past con up: a dnsmasq conf write landed.
+    const dnsWrite = r.writes.find((w) => w.path.endsWith('dnsmasq.conf'));
+    expect(dnsWrite).toBeTruthy();
+  });
+
+  it.fails('con up fails and the re-read answers uap0:disconnected: exit 1', async () => {
+    const r = primePi(new FakeRunner());
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === '-t' && a[1] === '-f'
+        && a[2] === 'DEVICE,STATE,CONNECTION' && a[3] === 'dev',
+      { stdout: 'uap0:disconnected:\nwlan0:connected:netplan-wlan0-HomeNetwork\n' },
+    );
+    r.prependOn(
+      (c, a) => c === 'nmcli' && a[0] === 'con' && a[1] === 'up' && a[2] === 'dagsocial-ap',
+      { code: 4, stderr: 'No suitable device found for this connection\n' },
+    );
+    const code = await main(['setup'], r);
+    expect(code).toBe(1);
+    // Two `DEVICE,STATE,CONNECTION` reads: one in the wait, one re-read
+    // after con up failed.
+    const stateReads = r.calls.filter(
+      (c) =>
+        c.cmd === 'nmcli' && c.args[0] === '-t' && c.args[1] === '-f'
+        && c.args[2] === 'DEVICE,STATE,CONNECTION' && c.args[3] === 'dev',
+    );
+    expect(stateReads.length).toBe(2);
+  });
+});
