@@ -483,15 +483,16 @@ describe('miner', () => {
   }, 30_000);
 
   it('the CLI refuses when this member\'s dist is older than its src', () => {
-    // Set tools/test-state/dist/index.js's mtime back an hour, so the
-    // recursive src/ walk reads newer. The refusal names the package
-    // and exits 2. The dist mtime is restored in `finally`.
+    // Date tools/test-state/dist/index.js at 2000-01-01T00:00:00Z — a time
+    // earlier than any file in the repository can carry — so the recursive
+    // src/ walk reads newer under every working tree. The refusal names the
+    // package and exits 2. The dist mtime is restored in `finally`.
     const packageRoot = resolve(REPO_ROOT, 'tools/test-state');
     const distIndex = join(packageRoot, 'dist/index.js');
     const distStat = statSync(distIndex);
     const originalMtimeSec = distStat.mtimeMs / 1000;
     const originalAtimeSec = distStat.atimeMs / 1000;
-    const olderSec = originalMtimeSec - 3600;
+    const olderSec = Date.UTC(2000, 0, 1, 0, 0, 0) / 1000;
     try {
       utimesSync(distIndex, originalAtimeSec, olderSec);
       const result = spawnSync(
