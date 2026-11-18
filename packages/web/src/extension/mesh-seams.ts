@@ -17,6 +17,7 @@
 import { NodeClient } from '../api/client.js';
 import { WriteClient, type WriteObserver } from '../api/write.js';
 import { HAND_NODE_KEY, HAND_NODE_OFF_KEY, SERVE_KEY } from './storage-keys.js';
+import { LOCAL_IDENTITY_URL } from '../mesh/local-lookup.js';
 import { createMeshTipVerifier } from './mesh-tip-verifier.js';
 import { createFiguresVerifier } from './figures-verifier.js';
 import { createNamesVerifier } from './names-verifier.js';
@@ -360,6 +361,10 @@ export async function startExtensionMesh(
     on: opts.storage.getItem(SERVE_KEY) === '1',
     texts: opts.postTexts,
   };
+  // WEB_INTERFACE → The extension → "The extension looks for an access
+  // point's node". The client reads `LOCAL_IDENTITY_URL` at the end of
+  // a check in which no node answered.
+  startOpts.localLookup = { url: LOCAL_IDENTITY_URL };
   const client = await opts.startMeshClient(startOpts);
   seatedClient = client;
   // The App starts at once — the first check never blocks a read

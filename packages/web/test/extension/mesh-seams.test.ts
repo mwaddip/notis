@@ -270,7 +270,7 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(stopCalls).toBe(1);
   });
 
-  it.fails('starts the client with localLookup set to LOCAL_IDENTITY_URL', async () => {
+  it('starts the client with localLookup set to LOCAL_IDENTITY_URL', async () => {
     let startOpts: StartMeshClientOptions | null = null;
     const client = fakeClient();
     const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });

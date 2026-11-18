@@ -131,7 +131,7 @@ describe('emit-manifests — testnet bases', () => {
   // the access point's plain-`http:` identity URL into an `https:` one
   // (→ "Permissions and policy, the whole list"). Chrome's default is
   // already `script-src 'self'` and the manifest declares no such key.
-  it.fails("firefox manifest declares content_security_policy.extension_pages as script-src 'self'", () => {
+  it("firefox manifest declares content_security_policy.extension_pages as script-src 'self'", () => {
     expect(m.firefox.content_security_policy).toEqual({ extension_pages: "script-src 'self'" });
   });
 

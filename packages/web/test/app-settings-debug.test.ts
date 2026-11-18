@@ -501,7 +501,7 @@ describe('the settings window debug row', () => {
     expect(text).not.toContain('6.19');
   });
 
-  it.fails("a local node's line reads found on this network", async () => {
+  it("a local node's line reads found on this network", async () => {
     // WEB_INTERFACE → The settings window → "The debug row" — "a node found
     // at an access point reading `found on this network`".
     const node = {
@@ -526,7 +526,7 @@ describe('the settings window debug row', () => {
     expect(text).toContain('found on this network');
   });
 
-  it.fails('the lookup line reads one of the four states — not looked up / nothing answered / refused / found', async () => {
+  it('the lookup line reads one of the four states — not looked up / nothing answered / refused / found', async () => {
     // WEB_INTERFACE → The settings window → "The debug row" — "the last read
     // of the access point's identity URL — `not looked up`, `nothing
     // answered`, `refused` or `found`".

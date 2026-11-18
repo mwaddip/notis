@@ -227,19 +227,36 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     const diag = snap.mesh.diagnostics;
     if (state.nodes.length === 0) {
       block.appendChild(muted('(no nodes)'));
-      return block;
+    } else {
+      for (const node of state.nodes) {
+        const line = el('div', 'debug-line');
+        line.appendChild(copyControl(node.notisId, shortHex(node.notisId, 16)));
+        const conn = diag.connections.find((c) => c.peer === node.notisId);
+        const reach = conn !== undefined
+          ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`
+          : node.api !== null ? node.api : 'not reached';
+        line.appendChild(el('span', 'inkmute', ` · ${reach} · ${node.status}`));
+        if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${Math.round(node.readMs)} ms`));
+        // WEB_INTERFACE → The settings window → "The debug row" — "a node
+        // found at an access point reading `found on this network`".
+        if (node.local === true) {
+          line.appendChild(el('span', 'inkmute', ' · found on this network'));
+        }
+        block.appendChild(line);
+      }
     }
-    for (const node of state.nodes) {
-      const line = el('div', 'debug-line');
-      line.appendChild(copyControl(node.notisId, shortHex(node.notisId, 16)));
-      const conn = diag.connections.find((c) => c.peer === node.notisId);
-      const reach = conn !== undefined
-        ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`
-        : node.api !== null ? node.api : 'not reached';
-      line.appendChild(el('span', 'inkmute', ` · ${reach} · ${node.status}`));
-      if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${Math.round(node.readMs)} ms`));
-      block.appendChild(line);
-    }
+    // WEB_INTERFACE → The settings window → "The debug row" — "the last
+    // read of the access point's identity URL — `not looked up`,
+    // `nothing answered`, `refused` or `found`".
+    const last = state.localLookup.last;
+    const word = last === null
+      ? 'not looked up'
+      : last.result === 'failed'
+      ? 'nothing answered'
+      : last.result === 'refused'
+      ? 'refused'
+      : 'found';
+    block.appendChild(muted(`local lookup · ${word}`));
     return block;
   };
 
