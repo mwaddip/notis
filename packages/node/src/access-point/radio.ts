@@ -141,8 +141,24 @@ export function parseConnectedWifi(nmcliDev: string): string | null {
 // `iw dev` lists its phy as a leading `phy#N` line; the tool reads this
 // for a no-uplink `ifaceUnit` (NODE_INTERFACE → The access-point tool,
 // step 4), rather than assuming `phy0`.
-export function parsePhy(_iwDev: string): string | null {
-  throw new Error('access-point: not implemented');
+export function parsePhy(iwDev: string): string | null {
+  for (const raw of iwDev.split('\n')) {
+    const m = /^phy#(\d+)/.exec(raw.trim());
+    if (m !== null) return `phy${m[1]}`;
+  }
+  return null;
+}
+
+// The first `Interface <name>` block `iw dev` lists — the Wi-Fi interface's
+// name the tool reads for step 4 even where no uplink is connected
+// (NODE_INTERFACE → The access-point tool, step 4). An "Unnamed/non-netdev
+// interface" entry carries no `Interface <name>` line and is passed over.
+export function parseFirstInterface(iwDev: string): string | null {
+  for (const raw of iwDev.split('\n')) {
+    const m = /^\s+Interface (\S+)$/.exec(raw);
+    if (m !== null) return m[1] ?? null;
+  }
+  return null;
 }
 
 // `nmcli -t -f GENERAL.CONNECTION dev show <dev>` prints one line,

@@ -29,7 +29,7 @@ describe('dnsmasqConf', () => {
     expect(t).toContain('dhcp-authoritative');
   });
 
-  it.fails('the lease file lives under /run/dagsocial-ap, which the dnsmasq unit creates', () => {
+  it('the lease file lives under /run/dagsocial-ap, which the dnsmasq unit creates', () => {
     const t = dnsmasqConf({
       iface: 'uap0',
       address: '10.42.0.1',
@@ -66,7 +66,7 @@ describe('ifaceUnit', () => {
     expect(t).toContain('ExecStop=/usr/sbin/iw dev uap0 del');
   });
 
-  it.fails('waits for the uplink\'s device at boot', () => {
+  it('waits for the uplink\'s device at boot', () => {
     // The device at `/sys/subsystem/net/devices/<iface>` is systemd's name
     // for the kernel's netdev; a unit that lists it in `Requires=` and
     // `After=` runs only once the kernel has brought the interface up
@@ -90,7 +90,7 @@ describe('dnsmasqUnit', () => {
     expect(t).toContain('ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dagsocial/access-point/dnsmasq.conf');
   });
 
-  it.fails('declares RuntimeDirectory=dagsocial-ap so /run/dagsocial-ap exists before the lease file is written', () => {
+  it('declares RuntimeDirectory=dagsocial-ap so /run/dagsocial-ap exists before the lease file is written', () => {
     const t = dnsmasqUnit();
     expect(t).toContain('RuntimeDirectory=dagsocial-ap');
   });

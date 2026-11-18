@@ -128,12 +128,12 @@ describe('parseUplink on iw-dev.txt', () => {
 });
 
 describe('parsePhy', () => {
-  it.fails('reads phy0 from iw dev\'s leading `phy#0`', async () => {
+  it('reads phy0 from iw dev\'s leading `phy#0`', async () => {
     const { parsePhy } = await import('../../src/access-point/radio.js');
     expect(parsePhy(iwDev)).toBe('phy0');
   });
 
-  it.fails('answers null when no phy# line is present', async () => {
+  it('answers null when no phy# line is present', async () => {
     const { parsePhy } = await import('../../src/access-point/radio.js');
     expect(parsePhy('nothing here\n')).toBeNull();
   });

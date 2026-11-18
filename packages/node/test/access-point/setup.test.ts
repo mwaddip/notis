@@ -331,7 +331,7 @@ describe('status', () => {
 // band.
 
 describe('setup — the prior band is read, not fixed', () => {
-  it.fails('records the band read from nmcli -g, empty string included', async () => {
+  it('records the band read from nmcli -g, empty string included', async () => {
     const r = primePi(new FakeRunner());
     // The measured Pi profile answers "" — override.
     r.responses = r.responses.filter((x) => {
@@ -371,7 +371,7 @@ describe('setup — the prior band is read, not fixed', () => {
 });
 
 describe('setup — every command\'s result is checked', () => {
-  it.fails('nmcli con up dagsocial-ap failing returns 1 and leaves no complete record', async () => {
+  it('nmcli con up dagsocial-ap failing returns 1 and leaves no complete record', async () => {
     const r = primePi(new FakeRunner());
     r.on(
       (c, a) => c === 'nmcli' && a[0] === 'con' && a[1] === 'up' && a[2] === 'dagsocial-ap',
@@ -395,7 +395,7 @@ describe('setup — every command\'s result is checked', () => {
     expect(r.logs.join('\n')).not.toMatch(/setup complete/i);
   });
 
-  it.fails('systemctl start dagsocial-ap-dnsmasq.service failing returns 1 and keeps the record', async () => {
+  it('systemctl start dagsocial-ap-dnsmasq.service failing returns 1 and keeps the record', async () => {
     const r = primePi(new FakeRunner());
     r.on(
       (c, a) =>
@@ -455,7 +455,7 @@ describe('remove — harmless over entries whose commands never ran', () => {
 });
 
 describe('remove — the uplink-drop warning fires whenever nmConnectionAdded is in the record', () => {
-  it.fails('fires after a follow setup with no band move', async () => {
+  it('fires after a follow setup with no band move', async () => {
     const r = primePi(new FakeRunner());
     // Replace the uplink's channel to a non-radar one so the choice is
     // `follow` and no band move happens.
@@ -487,7 +487,7 @@ describe('remove — the uplink-drop warning fires whenever nmConnectionAdded is
 });
 
 describe('remove — runs systemctl daemon-reload after the walk', () => {
-  it.fails('a daemon-reload call appears after the disables', async () => {
+  it('a daemon-reload call appears after the disables', async () => {
     const r = primePi(new FakeRunner());
     await main(['setup'], r);
     const beforeRemoveCalls = r.calls.length;
@@ -508,7 +508,7 @@ describe('remove — runs systemctl daemon-reload after the walk', () => {
 });
 
 describe('status — reads each step back from the box', () => {
-  it.fails('status queries iw dev uap0 info, nft list table inet dagsocial_ap, and the uplink profile band', async () => {
+  it('status queries iw dev uap0 info, nft list table inet dagsocial_ap, and the uplink profile band', async () => {
     const r = primePi(new FakeRunner());
     await main(['setup'], r);
     const after = new FakeRunner();

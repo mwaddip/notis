@@ -2,11 +2,11 @@
 // runner)` takes the Runner seam (`src/access-point/run.ts`); this file
 // alone constructs the real one.
 //
-// The tool runs as root alone (NODE_INTERFACE → The access-point tool →
-// "The tool is opt-in"); every change is written to the record as it is
-// made, so a `setup` that stopped half way is undone as far as it went
-// (→ "The record"). `remove` walks the record in reverse; `status` reads
-// each step back.
+// The tool runs as root alone (NODE_INTERFACE → The access-point tool —
+// "The tool is opt-in"); every change is written to the record BEFORE the
+// command that makes it, so a `setup` that stopped half way is undone as
+// far as it went by `remove`, which reverse-walks the record. `status`
+// reads each step back from the box.
 
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -19,6 +19,8 @@ import {
   parseScan,
   parseConnectedWifi,
   parseGeneralConnection,
+  parsePhy,
+  parseFirstInterface,
   type Uplink,
 } from './access-point/radio.js';
 import { chooseChannel, nodeEnvPlan } from './access-point/plan.js';
@@ -92,8 +94,6 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     );
     return 1;
   }
-  // The existing record decides which of three branches: nothing to do,
-  // refuse (half-done) or proceed (no record).
   const existingRecordText = await runner.read(RECORD_PATH);
   if (existingRecordText !== null) {
     const existing = parseRecord(existingRecordText);
@@ -106,8 +106,6 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     );
     return 1;
   }
-  // Step 1 (planned): read node.env and decide whether a change is needed.
-  // A public node refuses here, before the first change.
   const nodeEnvText = (await runner.read(NODE_ENV_PATH)) ?? '';
   const envPlan = nodeEnvPlan(nodeEnvText, { meshPort: MESH_DEFAULT_UDP_PORT });
   if (envPlan.kind === 'refuse') {
@@ -116,7 +114,6 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   }
   const meshUdpPort = envPlan.meshUdpPort;
   const nodePort = readNodePort(nodeEnvText);
-  // Step 2 (pre-check): the radio.
   const iwListOut = await runner.run('iw', ['list']);
   if (iwListOut.code !== 0) {
     runner.log(`dagsocial-access-point: iw list failed (${iwListOut.stderr.trim()})`);
@@ -130,21 +127,34 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     return 1;
   }
   const radar = parseRadarChannels(iwListOut.stdout);
-  // Step 3 (pre-check): the uplink.
-  const uplink = await readUplink(runner);
-  const scan = uplink !== null
+  const uplinkRead = await readUplink(runner);
+  const scan = uplinkRead.uplink !== null
     ? parseScan((await runner.run('nmcli', ['-t', '-f', 'SSID,CHAN,FREQ', 'dev', 'wifi', 'list'])).stdout)
     : [];
-  const choice = chooseChannel(uplink.uplink, radar, scan);
+  const choice = chooseChannel(uplinkRead.uplink, radar, scan);
   if (choice.kind === 'refuse') {
     runner.log(`dagsocial-access-point: ${choice.reason}`);
     return 1;
   }
-  // Every refusal has fired. Begin changes.
+  // Read the phy name from `iw dev` so the no-uplink iface unit does not
+  // assume `phy0` (NODE_INTERFACE → The access-point tool, step 4).
+  const iwDev = await runner.run('iw', ['dev']);
+  const phy = parsePhy(iwDev.stdout) ?? 'phy0';
+
+  // Begin changes. Each record entry is pushed BEFORE the command it names,
+  // so a failed command leaves the entry for `remove` to undo.
   const record: AccessPointRecord = { entries: [], complete: false };
+  const saveRecord = async (): Promise<void> => {
+    await runner.write(RECORD_PATH, serializeRecord(record));
+  };
   const push = async (entry: RecordEntry): Promise<void> => {
     record.entries.push(entry);
-    await runner.write(RECORD_PATH, serializeRecord(record));
+    await saveRecord();
+  };
+  const check = (result: RunResult, what: string): boolean => {
+    if (result.code === 0) return true;
+    runner.log(`dagsocial-access-point: ${what} failed (code ${result.code}): ${result.stderr.trim()}`);
+    return false;
   };
 
   // Step 1: write node.env (where an edit is needed).
@@ -155,30 +165,35 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   }
 
   // Step 3: move the uplink to 2.4 GHz where the choice calls for it; the
-  // channel is re-read after the move.
+  // channel is re-read after the move. The prior band is read before the
+  // change, so `remove` restores exactly what was there.
   let apChannel: number;
   if (choice.kind === 'own') apChannel = choice.channel;
   else if (choice.kind === 'follow') apChannel = choice.channel;
   else {
     // move-to-2g
-    const profile = uplink.profile;
-    if (profile === null || uplink.uplink === null) {
+    const profile = uplinkRead.profile;
+    if (profile === null || uplinkRead.uplink === null) {
       runner.log('dagsocial-access-point: no uplink profile to move; refusing');
       return 1;
     }
-    runner.log(`moving uplink "${uplink.uplink.ssid}" (profile ${profile}) to the 2.4 GHz band`);
+    const bandRead = await runner.run(
+      'nmcli',
+      ['-g', '802-11-wireless.band', 'con', 'show', profile],
+    );
+    if (!check(bandRead, 'nmcli -g 802-11-wireless.band')) return 1;
+    const priorBand = bandRead.stdout.replace(/\r?\n$/, '');
+    runner.log(`moving uplink "${uplinkRead.uplink.ssid}" (profile ${profile}) to the 2.4 GHz band`);
+    await push({ kind: 'uplinkBandSet', profile, priorBand });
     const modify = await runner.run(
       'nmcli',
       ['con', 'modify', profile, '802-11-wireless.band', 'bg'],
     );
-    if (modify.code !== 0) {
-      runner.log(`dagsocial-access-point: nmcli modify failed (${modify.stderr.trim()})`);
-      return 1;
-    }
-    await push({ kind: 'uplinkBandSet', profile, priorBand: 'a' });
-    await runner.run('nmcli', ['con', 'up', profile]);
-    const iwDev = await runner.run('iw', ['dev', uplink.uplink.iface, 'info']);
-    const re = parseUplink(iwDev.stdout);
+    if (!check(modify, 'nmcli con modify band bg')) return 1;
+    const up = await runner.run('nmcli', ['con', 'up', profile]);
+    if (!check(up, `nmcli con up ${profile}`)) return 1;
+    const iwDevInfo = await runner.run('iw', ['dev', uplinkRead.uplink.iface, 'info']);
+    const re = parseUplink(iwDevInfo.stdout);
     if (re === null) {
       runner.log('dagsocial-access-point: uplink info unreadable after the band change');
       return 1;
@@ -186,16 +201,21 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     apChannel = re.channel;
   }
 
-  // Step 4: the uap0 interface unit.
-  await writeFileChange(runner, record, IFACE_UNIT_PATH, ifaceUnit({
-    phy: 'phy0',
-    uplinkIface: uplink.uplink !== null ? uplink.uplink.iface : '',
-  }));
+  // Step 4: the uap0 interface unit. With an uplink, the device is
+  // that uplink's interface; without one, the Wi-Fi interface `iw dev`
+  // lists, read not assumed; a box with no Wi-Fi interface at all
+  // leaves `uplinkIface` empty and the unit uses `iw phy <phy>`.
+  const uplinkIface = uplinkRead.uplink !== null
+    ? uplinkRead.uplink.iface
+    : (parseFirstInterface(iwDev.stdout) ?? '');
+  await writeFileChange(runner, record, IFACE_UNIT_PATH, ifaceUnit({ phy, uplinkIface }));
   await runner.run('systemctl', ['daemon-reload']);
-  await runner.run('systemctl', ['enable', 'dagsocial-ap-iface.service']);
   await push({ kind: 'unitEnabled', unit: 'dagsocial-ap-iface.service' });
-  await runner.run('systemctl', ['start', 'dagsocial-ap-iface.service']);
+  const enIface = await runner.run('systemctl', ['enable', 'dagsocial-ap-iface.service']);
+  if (!check(enIface, 'systemctl enable dagsocial-ap-iface.service')) return 1;
   await push({ kind: 'unitStarted', unit: 'dagsocial-ap-iface.service' });
+  const stIface = await runner.run('systemctl', ['start', 'dagsocial-ap-iface.service']);
+  if (!check(stIface, 'systemctl start dagsocial-ap-iface.service')) return 1;
 
   // Step 5: the NetworkManager profile dagsocial-ap.
   const band = apChannel <= 14 ? 'bg' : 'a';
@@ -214,13 +234,11 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     nmArgs.push('wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk', f.password);
   }
   runner.log(`adding NetworkManager profile ${NM_PROFILE_NAME}`);
-  const nmAdd = await runner.run('nmcli', nmArgs);
-  if (nmAdd.code !== 0) {
-    runner.log(`dagsocial-access-point: nmcli con add failed (${nmAdd.stderr.trim()})`);
-    return 1;
-  }
   await push({ kind: 'nmConnectionAdded', name: NM_PROFILE_NAME });
-  await runner.run('nmcli', ['con', 'up', NM_PROFILE_NAME]);
+  const nmAdd = await runner.run('nmcli', nmArgs);
+  if (!check(nmAdd, 'nmcli con add dagsocial-ap')) return 1;
+  const nmUp = await runner.run('nmcli', ['con', 'up', NM_PROFILE_NAME]);
+  if (!check(nmUp, 'nmcli con up dagsocial-ap')) return 1;
 
   // Step 6: the dnsmasq instance.
   await writeFileChange(runner, record, DNSMASQ_CONF_PATH, dnsmasqConf({
@@ -230,10 +248,12 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   }));
   await writeFileChange(runner, record, DNSMASQ_UNIT_PATH, dnsmasqUnit());
   await runner.run('systemctl', ['daemon-reload']);
-  await runner.run('systemctl', ['enable', 'dagsocial-ap-dnsmasq.service']);
   await push({ kind: 'unitEnabled', unit: 'dagsocial-ap-dnsmasq.service' });
-  await runner.run('systemctl', ['start', 'dagsocial-ap-dnsmasq.service']);
+  const enDns = await runner.run('systemctl', ['enable', 'dagsocial-ap-dnsmasq.service']);
+  if (!check(enDns, 'systemctl enable dagsocial-ap-dnsmasq.service')) return 1;
   await push({ kind: 'unitStarted', unit: 'dagsocial-ap-dnsmasq.service' });
+  const stDns = await runner.run('systemctl', ['start', 'dagsocial-ap-dnsmasq.service']);
+  if (!check(stDns, 'systemctl start dagsocial-ap-dnsmasq.service')) return 1;
 
   // Step 7: the nftables table.
   await writeFileChange(runner, record, FIREWALL_NFT_PATH, firewall({
@@ -243,17 +263,20 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   }));
   await writeFileChange(runner, record, FIREWALL_UNIT_PATH, firewallUnit());
   await runner.run('systemctl', ['daemon-reload']);
-  await runner.run('systemctl', ['enable', 'dagsocial-ap-firewall.service']);
   await push({ kind: 'unitEnabled', unit: 'dagsocial-ap-firewall.service' });
-  await runner.run('systemctl', ['start', 'dagsocial-ap-firewall.service']);
+  const enFw = await runner.run('systemctl', ['enable', 'dagsocial-ap-firewall.service']);
+  if (!check(enFw, 'systemctl enable dagsocial-ap-firewall.service')) return 1;
   await push({ kind: 'unitStarted', unit: 'dagsocial-ap-firewall.service' });
+  const stFw = await runner.run('systemctl', ['start', 'dagsocial-ap-firewall.service']);
+  if (!check(stFw, 'systemctl start dagsocial-ap-firewall.service')) return 1;
 
   // Step 8: restart the node so it reads the new node.env.
   runner.log('restarting dagsocial-node');
-  await runner.run('systemctl', ['restart', 'dagsocial-node']);
+  const nodeRestart = await runner.run('systemctl', ['restart', 'dagsocial-node']);
+  if (!check(nodeRestart, 'systemctl restart dagsocial-node')) return 1;
 
   record.complete = true;
-  await runner.write(RECORD_PATH, serializeRecord(record));
+  await saveRecord();
   runner.log('dagsocial-access-point: setup complete');
   return 0;
 }
@@ -287,7 +310,6 @@ async function readUplink(runner: Runner): Promise<UplinkRead> {
   return { uplink, profile };
 }
 
-// Read PORT= from node.env, defaulting to 3000 where absent or unparseable.
 function readNodePort(nodeEnvText: string): number {
   for (const raw of nodeEnvText.split('\n')) {
     const line = raw.trim();
@@ -347,11 +369,20 @@ async function remove(runner: Runner): Promise<number> {
     runner.log(`dagsocial-access-point: record is unreadable (${(err as Error).message})`);
     return 1;
   }
-  if (rec.entries.some((e) => e.kind === 'uplinkBandSet')) {
+  // The uplink drops for a few seconds whenever the access-point profile
+  // is torn down on a radio that carries the uplink too; warn whenever
+  // `nmConnectionAdded` is in the record, not only after a band move.
+  if (rec.entries.some((e) => e.kind === 'nmConnectionAdded')) {
     runner.log('warning: the uplink drops for a few seconds while the access point is torn down');
   }
+  let touchedUnits = false;
   for (const entry of [...rec.entries].reverse()) {
+    if (entry.kind === 'unitEnabled' || entry.kind === 'unitStarted') touchedUnits = true;
     await undoEntry(entry, runner);
+  }
+  // `daemon-reload` after the unit files are gone, so systemd forgets them.
+  if (touchedUnits) {
+    await runner.run('systemctl', ['daemon-reload']);
   }
   if (rec.entries.some((e) => e.kind === 'nodeEnvEdited')) {
     await runner.run('systemctl', ['restart', 'dagsocial-node']);
@@ -362,31 +393,45 @@ async function remove(runner: Runner): Promise<number> {
 }
 
 async function undoEntry(entry: RecordEntry, runner: Runner): Promise<void> {
+  // Each undo is harmless when the command that made the entry never ran:
+  // a non-zero code is logged and the walk goes on. `remove` must never
+  // halt half way (NODE_INTERFACE → The access-point tool, the remove
+  // lead).
+  const noteNonZero = (res: RunResult, what: string): void => {
+    if (res.code !== 0) {
+      runner.log(`dagsocial-access-point: ${what} returned ${res.code}: ${res.stderr.trim()}`);
+    }
+  };
   switch (entry.kind) {
     case 'nodeEnvEdited':
       await runner.write(NODE_ENV_PATH, entry.priorText);
       return;
-    case 'uplinkBandSet':
-      if (entry.priorBand !== '') {
-        await runner.run('nmcli', ['con', 'modify', entry.profile, '802-11-wireless.band', entry.priorBand]);
-      } else {
-        await runner.run('nmcli', ['con', 'modify', entry.profile, '802-11-wireless.band', '']);
-      }
-      await runner.run('nmcli', ['con', 'up', entry.profile]);
+    case 'uplinkBandSet': {
+      const r1 = await runner.run('nmcli', ['con', 'modify', entry.profile, '802-11-wireless.band', entry.priorBand]);
+      noteNonZero(r1, `nmcli con modify ${entry.profile} band`);
+      const r2 = await runner.run('nmcli', ['con', 'up', entry.profile]);
+      noteNonZero(r2, `nmcli con up ${entry.profile}`);
       return;
+    }
     case 'fileWritten':
       if (entry.priorText === null) await runner.remove(entry.path);
       else await runner.write(entry.path, entry.priorText);
       return;
-    case 'unitEnabled':
-      await runner.run('systemctl', ['disable', entry.unit]);
+    case 'unitEnabled': {
+      const r = await runner.run('systemctl', ['disable', entry.unit]);
+      noteNonZero(r, `systemctl disable ${entry.unit}`);
       return;
-    case 'unitStarted':
-      await runner.run('systemctl', ['stop', entry.unit]);
+    }
+    case 'unitStarted': {
+      const r = await runner.run('systemctl', ['stop', entry.unit]);
+      noteNonZero(r, `systemctl stop ${entry.unit}`);
       return;
-    case 'nmConnectionAdded':
-      await runner.run('nmcli', ['con', 'delete', entry.name]);
+    }
+    case 'nmConnectionAdded': {
+      const r = await runner.run('nmcli', ['con', 'delete', entry.name]);
+      noteNonZero(r, `nmcli con delete ${entry.name}`);
       return;
+    }
   }
 }
 
@@ -406,7 +451,6 @@ async function status(runner: Runner): Promise<number> {
   }
   const rec = parseRecord(text);
   runner.log(`dagsocial-access-point: ${rec.complete ? 'setup complete' : 'setup incomplete (half-done)'}`);
-  // Walk each step by reading the box.
   for (const unit of [
     'dagsocial-ap-iface.service',
     'dagsocial-ap-dnsmasq.service',
@@ -416,11 +460,27 @@ async function status(runner: Runner): Promise<number> {
     const enabled = await runner.run('systemctl', ['is-enabled', unit]);
     runner.log(`  ${unit}: ${active.stdout.trim() || 'unknown'} / ${enabled.stdout.trim() || 'unknown'}`);
   }
+  // The uap0 interface — present if `iw dev uap0 info` reads.
+  const uap = await runner.run('iw', ['dev', 'uap0', 'info']);
+  runner.log(`  uap0: ${uap.code === 0 ? 'present' : 'absent'}`);
+  // The firewall table — present if `nft list table inet dagsocial_ap` reads.
+  const nft = await runner.run('nft', ['list', 'table', 'inet', 'dagsocial_ap']);
+  runner.log(`  firewall table inet dagsocial_ap: ${nft.code === 0 ? 'loaded' : 'absent'}`);
   // NetworkManager profile.
   const nm = await runner.run('nmcli', ['-t', '-f', 'NAME', 'con', 'show']);
   const names = nm.stdout.split('\n').map((l) => l.replace(/\r$/, '').replace(/^\\(.*)/, '$1').trim());
   const hasProfile = names.some((n) => n === NM_PROFILE_NAME);
   runner.log(`  NetworkManager profile ${NM_PROFILE_NAME}: ${hasProfile ? 'present' : 'missing'}`);
+  // The uplink's current band.
+  const uplinkRead = await readUplink(runner);
+  if (uplinkRead.profile !== null) {
+    const bandRead = await runner.run(
+      'nmcli',
+      ['-g', '802-11-wireless.band', 'con', 'show', uplinkRead.profile],
+    );
+    const band = bandRead.stdout.replace(/\r?\n$/, '');
+    runner.log(`  uplink profile ${uplinkRead.profile} band: ${band === '' ? '(unset)' : band}`);
+  }
   // Node env.
   const env = (await runner.read(NODE_ENV_PATH)) ?? '';
   const envPlan = nodeEnvPlan(env, { meshPort: MESH_DEFAULT_UDP_PORT });

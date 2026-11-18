@@ -13,7 +13,8 @@ export interface DnsmasqOptions {
 // starts before the interface holds its address, answers notis.internal
 // with the box's address and refuses every other name at once — `local=/#/`
 // with `no-resolv` and `no-hosts` — and hands out addresses naming the box
-// as router and DNS server.
+// as router and DNS server. The lease file lives under `/run/dagsocial-ap/`,
+// which the dnsmasq unit creates with `RuntimeDirectory=`.
 export function dnsmasqConf(o: DnsmasqOptions): string {
   const lines = [
     `interface=${o.iface}`,
@@ -26,7 +27,7 @@ export function dnsmasqConf(o: DnsmasqOptions): string {
     `dhcp-option=option:router,${o.address}`,
     `dhcp-option=option:dns-server,${o.address}`,
     'dhcp-authoritative',
-    'dhcp-leasefile=/var/lib/dagsocial/access-point/dnsmasq.leases',
+    'dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases',
     '',
   ];
   return lines.join('\n');
@@ -79,14 +80,21 @@ export interface IfaceUnitOptions {
 
 // Step 4's unit: make uap0 from the uplink interface (or, for a box with no
 // uplink, from the phy) at every boot, before NetworkManager starts. The
+// unit waits for the uplink device at `/sys/subsystem/net/devices/<iface>`
+// so the kernel has brought the interface up before `iw dev <iface>` runs;
+// a no-uplink unit names no device dependency and runs under the phy. The
 // unit remains after exit so a `systemctl stop` of it hits ExecStop.
 export function ifaceUnit(o: IfaceUnitOptions): string {
-  const addCmd = o.uplinkIface !== ''
+  const hasUplink = o.uplinkIface !== '';
+  const addCmd = hasUplink
     ? `/usr/sbin/iw dev ${o.uplinkIface} interface add uap0 type __ap`
     : `/usr/sbin/iw phy ${o.phy} interface add uap0 type __ap`;
+  const deviceLine = hasUplink
+    ? `Requires=sys-subsystem-net-devices-${o.uplinkIface}.device\nAfter=sys-subsystem-net-devices-${o.uplinkIface}.device\n`
+    : '';
   return `[Unit]
 Description=dagsocial access-point interface (uap0)
-Before=NetworkManager.service
+${deviceLine}Before=NetworkManager.service
 
 [Service]
 Type=oneshot
@@ -99,7 +107,9 @@ WantedBy=multi-user.target
 `;
 }
 
-// Step 6's unit: the tool's own dnsmasq, bound to uap0 alone.
+// Step 6's unit: the tool's own dnsmasq, bound to uap0 alone. systemd's
+// `RuntimeDirectory=dagsocial-ap` creates `/run/dagsocial-ap/` before the
+// service starts, so dnsmasq can write its lease file there.
 export function dnsmasqUnit(): string {
   return `[Unit]
 Description=dagsocial access-point dnsmasq
@@ -108,6 +118,7 @@ Wants=dagsocial-ap-iface.service
 
 [Service]
 Type=simple
+RuntimeDirectory=dagsocial-ap
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dagsocial/access-point/dnsmasq.conf
 Restart=on-failure
 
