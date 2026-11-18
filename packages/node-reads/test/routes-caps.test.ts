@@ -398,15 +398,15 @@ function longestMeshIdentityAnswer(): string {
 }
 
 describe('MESH_IDENTITY_READ_BYTES', () => {
-  it.fails('reads the longest honest answer under the cap', async () => {
+  it('reads the longest honest answer under the cap', async () => {
     const body = longestMeshIdentityAnswer();
-    expect(byteLength(body)).toBeLessThanOrEqual(MESH_IDENTITY_READ_BYTES);
+expect(byteLength(body)).toBeLessThanOrEqual(MESH_IDENTITY_READ_BYTES);
     const res = new Response(body, { status: 200 });
     const result = await readCappedJson(res, MESH_IDENTITY_READ_BYTES);
     expect(result.ok).toBe(true);
   });
 
-  it.fails('refuses a body one byte over the cap', async () => {
+  it('refuses a body one byte over the cap', async () => {
     const body = 'x'.repeat(MESH_IDENTITY_READ_BYTES + 1);
     const res = new Response(body, { status: 200 });
     const result = await readCappedJson(res, MESH_IDENTITY_READ_BYTES);

@@ -42,6 +42,9 @@ export const THREAD_READ_BYTES = 524_288;
 /** CONSTANTS → Client reads — the cap on `GET /status`. */
 export const STATUS_READ_BYTES = 1_024;
 
+/** CONSTANTS → Client reads — the cap on `GET /mesh/identity`. */
+export const MESH_IDENTITY_READ_BYTES = 16_384;
+
 /** CONSTANTS → Client reads — the cap on one page of `GET /vouches` — the
  *  target arm, the voucher arm, the cooldowns. */
 export const VOUCH_PAGE_READ_BYTES = 65_536;
