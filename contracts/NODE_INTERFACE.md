@@ -5883,10 +5883,6 @@ naming its version where it is older than 24. The Windows installer carries `nod
 `scripts/windows/build-bundle.ps1` downloads the build host's Node version from `https://nodejs.org/dist/` over HTTPS
 and checks no checksum — the official source is trusted as served.
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** `scripts/build-deb.sh` writes `Architecture: amd64` and names its file
-> `_amd64.deb`, `scripts/build-tarball.sh` names its tarball `linux-x64`, and `.github/workflows/release.yml` builds the
-> Linux packages on one x64 runner.
-
 **The Linux packages are built for x64 and for arm64, each on a machine of its own architecture.** The release workflow,
 `.github/workflows/release.yml`, builds the tarball and the `.deb` once on an x64 Linux runner and once on an arm64 one;
 each package carries its build machine's native binaries and starts its node there (→ "A package build runs the node it

@@ -133,7 +133,7 @@ the browser for that host at the press (→ The faucet step). The rule is the fa
 
 **The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
 the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
-Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's three: a directory
+Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's packages: a directory
 `notis-web-<ver>/` holding `web/`, the built bundle; `nginx.example.conf`, the vhost excerpt; and
 `README.txt`, the serving note — built by `packages/web/scripts/build-release.sh`, which the release
 workflow's linux job runs. Never an installer. `<ver>` is the repository's version, the one the node's
