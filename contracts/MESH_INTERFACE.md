@@ -283,8 +283,9 @@ that reaches a node never reads it, so on a network where a node answers the acc
   added the node, an address or the mark**; an answer that changes nothing waits for the check's own cadence, so a box
   whose identity answers while its node does not is read once a check, never in a loop.
 - **A failed or refused read is nothing**: no entry, no evidence against any key; the next such check reads again.
-  The found node's private addresses are remembered by no client (→ What the client remembers), so a later session
-  finds it the same way. The client's state holds the reads it made in the session and the last one's check and outcome.
+  **A found node is remembered with its addresses** while it names a tip on the client's chain (→ What the client
+  remembers), so a later session dials it at its start, beside the first-contact nodes; one a session does not reach
+  falls out of the list the next check writes. The client's state holds the reads it made in the session and the last one's check and outcome.
 
 **Your node takes precedence** while it agrees with the evidence: once its proof has verified, its chain is the
 client's chain, and a routed read goes to it first among the nodes the read's need allows. **It
@@ -495,12 +496,17 @@ the constants register (`CONSTANTS → Scope`).
 
 ## What the client remembers
 
+> ⚠ **AHEAD OF CODE (2026-11-19).** The client remembers no private address, a `local` node's included. The `local` exception below
+> leads the code (the mesh access point).
+
 **A client remembers, per network, the nodes it found, the proof of the chain it verified, and the branches the reader
 answered** (→ Discovery → "A node added by hand") — keyed by the genesis the network's profile pins, or by the network's
 name where it pins none. After each check it records every node naming a tip on its chain, `ok` or `trailing`, with
-the addresses it would dial — no private address, never its own key — the most recently seen first, at most
-`REMEMBERED_NODES_MAX`; a node blacklisted in the session leaves the list. At its next start they are its known nodes
-(→ Discovery → "Known nodes").
+the addresses it would dial — no private address but a `local` node's own, never its own key — the most recently seen
+first, at most `REMEMBERED_NODES_MAX`; a node blacklisted in the session leaves the list. At its next start they are
+its known nodes (→ Discovery → "Known nodes"), **a remembered `local` node marked `local` again**, its addresses
+passing the gater for that key alone: the access point answered them, in a session of its own (→ Discovery → "A node
+the access point answers").
 
 **The kept proof** is the last proof the client verified of the chain it holds — a check's winner, a switch, its own
 tip's proof. **It moves forward only**: a proof is kept only where it does not lose to the one kept, under

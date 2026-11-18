@@ -464,6 +464,16 @@ network finds the box's node at the end of the first check no node answered, and
 through it as through any node; the verified tip names one witness while it is the one node reached. The hosted web
 client reads no such URL: an HTTPS page cannot read a plain-`http:` one.
 
+> ⚠ **AHEAD OF CODE (2026-11-19).** A feed read that found no node stands until the reader refreshes, and the no-node line reads
+> the same before the page's first check has ended. The rule below leads the code (the mesh access point).
+
+**A page's first node reads the feed again.** A page whose feed found no node before its first check reached one reads
+the feed once more when it does — the access point's node found or dialled from memory, or a seed answering late — and
+the next listing that answers lands as a refresh does (→ "A failed listing draws the cache"). Only the page's first
+node asks it: a node reached again later, on a page whose feed has answered, reads nothing. **Until the page's first
+check has ended, the feed's no-node line reads *searching for a connection…***; after a first check that reached no
+node — the access point's identity URL read and unanswered included — it reads as a failed listing does.
+
 **The mesh client's faults reach the page's console.** The extension hands its mesh client a log that writes each line
 to the page's console as an error: a check that threw, a state listener that threw, an accepted gossiped block with no
 value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
@@ -527,7 +537,7 @@ nodes answering; and two nodes under one operator and one DNS zone answer for on
 
 **What the extension remembers.** The mesh client's memory (`MESH_INTERFACE → What the client remembers`) is one record
 in the extension page's `localStorage` under `notis.mesh.memory.<network>`: the genesis it was kept under, the kept
-proof as base64 of its encoding and the known nodes. **The answered branches are kept apart from it**, each its
+proof as base64 of its encoding and the known nodes, a `local` node with its mark. **The answered branches are kept apart from it**, each its
 competing proof as base64 under a key of its own beside the record, written when the reader answers and when the branch
 it names grows — never at every check — through the same lock, and cleared with the record. It is read at load — a record kept under
 another genesis than the one the build's profile pins, or one that does not parse, is cleared and the page starts as a
