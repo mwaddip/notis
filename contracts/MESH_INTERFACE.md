@@ -276,8 +276,10 @@ that reaches a node never reads it, so on a network where a node answers no Noti
   addresses through public nodes the access point does not reach.
 - **An answer adds the node as an ordinary candidate, marked `local`** — never your node, its standing the evidence's
   alone, as every candidate's is — and its addresses pass the gater for that key alone (→ Transports → "A client dials
-  a private address only when its own configuration names it"); a check runs at once. An entry already held merges
-  the addresses and takes the mark; a blacklisted one, and the client's own key, are left as they are.
+  a private address only when its own configuration names it"). An entry already held merges the addresses and takes
+  the mark; a blacklisted one, and the client's own key, are left as they are. **A check runs at once where the answer
+  added the node, an address or the mark**; an answer that changes nothing waits for the check's own cadence, so a box
+  whose identity answers while its node does not is read once a check, never in a loop.
 - **A failed or refused read is nothing**: no entry, no evidence against any key; the next such check reads again.
   The found node's private addresses are remembered by no client (→ What the client remembers), so a later session
   finds it the same way. The client's state holds the reads it made in the session and the last one's check and outcome.
