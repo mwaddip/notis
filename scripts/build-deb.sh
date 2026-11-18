@@ -2,18 +2,22 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# build-deb.sh — package dagsocial-node as a .deb
+# build-deb.sh — package dagsocial-node as a .deb for the build machine's
+# architecture, as `dpkg --print-architecture` names it
+# (NODE_INTERFACE → "The Linux packages are built for x64 and for arm64,
+# each on a machine of its own architecture.").
 #
 # Requires: node (>=24), pnpm, dpkg-deb
-# Output:   dagsocial-node_<version>_amd64.deb in the repo root
+# Output:   dagsocial-node_<version>_<arch>.deb in the repo root
 # ---------------------------------------------------------------------------
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION=$(node -p "require('./package.json').version")
+ARCH=$(dpkg --print-architecture)
 PKG="dagsocial-node"
-DEB="${PKG}_${VERSION}_amd64.deb"
+DEB="${PKG}_${VERSION}_${ARCH}.deb"
 STAGING=$(mktemp -d)
 APP_DIR="$STAGING/opt/dagsocial"
 
@@ -144,7 +148,7 @@ Package: $PKG
 Version: $VERSION
 Section: net
 Priority: optional
-Architecture: amd64
+Architecture: ${ARCH}
 Depends: nodejs (>= 24)
 Maintainer: DAGsocial
 Description: DAGsocial node — decentralized notice board
