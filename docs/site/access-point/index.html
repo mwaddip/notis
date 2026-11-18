@@ -117,6 +117,7 @@ systemctl start dagsocial-ap-iface.service</pre>
   ipv4.method manual ipv4.addresses 10.42.0.1/24 \
   ipv6.method disabled
 nmcli con up dagsocial-ap</pre>
+      <p>NetworkManager registers the new <code>uap0</code> on its own time, so wait until <code>nmcli dev</code> lists it before <code>nmcli con up</code>; at boot the interface unit runs before NetworkManager starts, and the profile comes up by itself.</p>
       <p>Where you set a password, the <code>add</code> command carries two more fields, <code>wifi-sec.key-mgmt wpa-psk</code> and <code>wifi-sec.psk &lt;password&gt;</code>. NetworkManager's <code>ipv4.method shared</code> is never used: it forwards to the internet.</p>
 
       <h3>6. Addresses and the one name</h3>
@@ -126,7 +127,7 @@ systemctl enable dagsocial-ap-dnsmasq.service
 systemctl start dagsocial-ap-dnsmasq.service</pre>
 
       <h3>7. Nothing past the box</h3>
-      <p>Write an nftables ruleset and a systemd unit for one table, <code>inet dagsocial_ap</code>, that refuses every packet forwarded from <code>uap0</code> with an ICMP <em>admin-prohibited</em>, so a device on the access point learns at once that nothing beyond it answers. From <code>uap0</code> the box accepts DHCP, DNS, the node's HTTP port — port 80 is redirected to it — and the node's WebRTC-direct UDP port, and refuses the rest. The files are <code>/etc/dagsocial/access-point/firewall.nft</code> and <code>/etc/systemd/system/dagsocial-ap-firewall.service</code>. Enable and start it:</p>
+      <p>Write an nftables ruleset and a systemd unit for one table, <code>inet dagsocial_ap</code>, that accepts from <code>uap0</code> DHCP, DNS, port 80 at <code>10.42.0.1</code> — redirected to the node's HTTP port — and the node's WebRTC-direct UDP port, and refuses the rest. The box forwards nothing: with forwarding off, as it is on Debian unless something turns it on, the kernel answers a packet for any other address as unreachable, and a device on the access point learns within seconds that nothing beyond it answers. The table also refuses every forwarded packet, should anything turn forwarding on. The files are <code>/etc/dagsocial/access-point/firewall.nft</code> and <code>/etc/systemd/system/dagsocial-ap-firewall.service</code>. Enable and start it:</p>
       <pre class="cmd">systemctl daemon-reload
 systemctl enable dagsocial-ap-firewall.service
 systemctl start dagsocial-ap-firewall.service</pre>
@@ -138,13 +139,13 @@ systemctl start dagsocial-ap-firewall.service</pre>
 
     <section>
       <h2>What to expect</h2>
-      <p>Stopping the access point drops the box's own Wi-Fi for a few seconds: one radio carries both links, and the kernel reassociates the client link after the access point ends. <span class="w">remove</span> says so before it starts. An upgrade of the <code>.deb</code> keeps the access point: the tool's files live outside the package's tree, and <code>node.env</code> is the package's conffile, which the package keeps across upgrades.</p>
+      <p>Stopping the access point drops the box's own Wi-Fi for a few seconds: one radio carries both links, and the client link reconnects on its own after the access point ends. <span class="w">remove</span> says so before it starts. An upgrade of the <code>.deb</code> keeps the access point: the tool's files live outside the package's tree, and <code>node.env</code> is the package's conffile, which the package keeps across upgrades.</p>
       <p>The box's own Wi-Fi is slower on 2.4 GHz than on 5 GHz. Where the box's router channel was flagged for radar detection, step 3 moved the uplink to 2.4 GHz — <span class="w">remove</span> moves it back.</p>
     </section>
 
     <section>
       <h2>For a reader on a phone</h2>
-      <p>Join the network by its name. On Android the phone warns that the network has no internet and asks whether to switch; choose to stay connected, and set the network to stay connected when it has no internet. On a phone where a <em>Private DNS</em> is set to a named provider, <code>notis.internal</code> is looked up on that provider and hidden — set <em>Private DNS</em> to automatic or off while you are on the access point.</p>
+      <p>Join the network by its name. On Android a notification says the network has no internet access: tap it, tick <em>Don’t ask again for this network</em> and choose <em>Yes</em> to stay connected. Until you do, apps cannot use the network, and a phone that knows another network with internet in range switches back to it within a minute. On a phone where a <em>Private DNS</em> is set to a named provider, <code>notis.internal</code> is looked up on that provider and hidden — set <em>Private DNS</em> to automatic or off while you are on the access point.</p>
       <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity on <code>http://notis.internal/mesh/identity</code> and adds the node it names. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
     </section>
 
