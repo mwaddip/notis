@@ -190,6 +190,11 @@ describe('readLocalIdentity', () => {
     expect(r2.result).toBe('refused');
   });
 
+  it.fails("LOCAL_IDENTITY_URL is the access point's address, never a name", () => {
+    expect(LOCAL_IDENTITY_URL).toBe('http://10.78.79.1/mesh/identity');
+    expect(new URL(LOCAL_IDENTITY_URL).hostname).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+  });
+
   it('a localAddrs entry with a DNS component is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const dnsAddr = `/dns4/notis.internal/udp/9733/webrtc-direct/certhash/uEiA/p2p/${peerId}`;
