@@ -125,6 +125,20 @@ describe('emit-manifests — testnet bases', () => {
     expect(m.firefox.content_scripts).toEqual(expected);
   });
 
+  // WEB_INTERFACE → The extension → "The manifest" — Firefox's manifest
+  // declares `content_security_policy.extension_pages` as `script-src
+  // 'self'`, so the default's `upgrade-insecure-requests` does not turn
+  // the access point's plain-`http:` identity URL into an `https:` one
+  // (→ "Permissions and policy, the whole list"). Chrome's default is
+  // already `script-src 'self'` and the manifest declares no such key.
+  it.fails("firefox manifest declares content_security_policy.extension_pages as script-src 'self'", () => {
+    expect(m.firefox.content_security_policy).toEqual({ extension_pages: "script-src 'self'" });
+  });
+
+  it('chrome manifest declares no content_security_policy', () => {
+    expect('content_security_policy' in m.chrome).toBe(false);
+  });
+
   m.cleanup();
 });
 
