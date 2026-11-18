@@ -5935,18 +5935,20 @@ takes is one an operator can take by hand, and the documentation names each.
    2.4 GHz band where its network offers one there, and `setup` stops, saying why, where it does not. With no uplink,
    the tool picks a 2.4 GHz channel no radar flag holds.
 4. **The interface.** `uap0` is made from the uplink's interface at every boot, before NetworkManager starts.
-5. **The network.** A NetworkManager profile, `dagsocial-ap`, runs the access point on `uap0` at `10.42.0.1/24`,
-   connecting at boot: named `Notis` and open, unless the operator gives `--name` or `--password` (WPA2). NetworkManager
+5. **The network.** A NetworkManager profile, `dagsocial-ap`, runs the access point on `uap0` at `10.78.79.1/24` —
+   the address every box answers at (`MESH_INTERFACE → Discovery → "A node the access point answers"`), outside the
+   ranges tools and hotspots take by default; where the uplink's own network overlaps `10.78.79.0/24`, `setup` stops
+   before its first change, saying why — connecting at boot: named `Notis` and open, unless the operator gives `--name` or `--password` (WPA2). NetworkManager
    registers an interface it did not make on its own time, so `setup` brings the profile up once NetworkManager lists
    `uap0`, waiting `20` s at most.
-6. **Addresses and the one name.** A dnsmasq instance of the tool's own, bound to `uap0` alone — never the box's
-   loopback, which dnsmasq takes by itself unless told not to — hands out addresses —
-   naming the box as the router and the DNS server — and answers `notis.internal` with `10.42.0.1` and **every other
-   name at once with a refusal**. NetworkManager's `ipv4.method shared` is never used: it forwards to the internet.
+6. **Addresses, and no names.** A dnsmasq instance of the tool's own, bound to `uap0` alone — never the box's
+   loopback, which dnsmasq takes by itself unless told not to — hands out addresses — naming the box as the router and
+   the DNS server — and answers **every name at once with a refusal**: a client reaches the box by its address alone,
+   and a device's own lookups fail at once instead of waiting out a resolver. NetworkManager's `ipv4.method shared` is never used: it forwards to the internet.
 7. **Nothing past the box.** `ip_forward` is left as it is, and with it off the box forwards nothing: the kernel
    answers a packet for any other address as unreachable, so a device on the access point learns within seconds that
    nothing beyond it answers — a TCP dial past the box fails in under 2 s. One nftables table, `inet dagsocial_ap`,
-   holds the rest: from `uap0` the box accepts DHCP, DNS, TCP 80 addressed to `10.42.0.1` — redirected to the node's
+   holds the rest: from `uap0` the box accepts DHCP, DNS, TCP 80 addressed to `10.78.79.1` — redirected to the node's
    `PORT`; port 80 at any other address is never redirected — and the node's WebRTC-direct UDP port, and rejects the
    rest; and it rejects every packet forwarded from `uap0` with an ICMP unreachable, should anything turn forwarding
    on.

@@ -260,12 +260,14 @@ from its `/p2p/` id (`WEB_INTERFACE → The settings window`).
 > `local` mark. The rule below leads the code (the mesh access point).
 
 **A node the access point answers.** A box can run a Wi-Fi network that gives a device the mesh and nothing else
-(`NODE_INTERFACE → The access-point tool`): its own DNS server answers `notis.internal` with its own address, and
-`LOCAL_IDENTITY_URL` — `http://notis.internal/mesh/identity` — reaches its node's identity
-(`NODE_INTERFACE → "A mesh node answers its identity"`). A client started with the URL reads it **at the end of a check
+(`NODE_INTERFACE → The access-point tool`), and every such box answers at one fixed address, `10.78.79.1`:
+`LOCAL_IDENTITY_URL` — `http://10.78.79.1/mesh/identity` — reaches its node's identity
+(`NODE_INTERFACE → "A mesh node answers its identity"`). **The URL names an address, never a name**: a browser's
+HTTPS-only mode upgrades a plain-`http:` request to a name and leaves one to a private address alone, and an address
+asks nothing of DNS. A client started with the URL reads it **at the end of a check
 in which no node answered** — every node the check read failed as a transport failure, over the mesh and at its API
 base alike — while it holds no connection, once per such check, never while a check's reads are in flight; a client
-that reaches a node never reads it, so on a network where a node answers no Notis name is looked up. The read is an
+that reaches a node never reads it, so on a network where a node answers the access point's address is never asked. The read is an
 `HttpFetch` under `REQUEST_TIMEOUT_MS` and `MESH_IDENTITY_READ_BYTES` (`CONSTANTS → Client reads`).
 
 - **An answer is held to its fields**: an object whose `notisId` is 64 lowercase hex, whose `peerId` is that key's,
