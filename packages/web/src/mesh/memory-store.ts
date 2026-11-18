@@ -270,6 +270,9 @@ function isMeshContact(v: unknown): v is MeshContact {
   if (typeof v['notisId'] !== 'string' || !HEX64_RE.test(v['notisId'] as string)) return false;
   if (!Array.isArray(v['addrs']) || !v['addrs'].every((s: unknown) => typeof s === 'string')) return false;
   if ('api' in v && v['api'] !== undefined && typeof v['api'] !== 'string') return false;
+  // MESH_INTERFACE → What the client remembers — the `local` mark is
+  // optional: an older record without it reads as not local.
+  if ('local' in v && v['local'] !== undefined && typeof v['local'] !== 'boolean') return false;
   return true;
 }
 

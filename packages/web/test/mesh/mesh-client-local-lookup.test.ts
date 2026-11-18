@@ -573,4 +573,34 @@ describe('mesh client — local lookup', () => {
     const localEvents = captured.filter((e) => e.kind === 'local-lookup');
     expect(localEvents.length).toBe(0);
   }, 15_000);
+
+  // MESH_INTERFACE → What the client remembers — "a remembered `local`
+  // node marked `local` again, its addresses passing the gater for that
+  // key alone". The mesh client's constructor consumes a `local: true`
+  // seed through `NodeList.addLocal`, so its private addresses are
+  // configured for the key — and only that key.
+  it.fails('a remembered local node comes back local and its address passes the gater for that key alone', async () => {
+    const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
+    servers.push(tip.srv);
+    const { notisId, peerId } = makeIdentity();
+    const other = makeIdentity();
+    const addr = privateAddr(peerId);
+    const calls: { url: string }[] = [];
+    const stub = identityStub();
+    const client = await startMeshClient({
+      firstContact: [{ notisId: HEX64_A, addrs: [], api: tip.base }],
+      seeds: [{ notisId, addrs: [addr], local: true }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-local',
+      resolve: resolveUnreachable,
+      httpFetch: makeHttpFetch(stub, calls),
+    });
+    clients.push(client);
+    const entry = client.state().nodes.find((n) => n.notisId === notisId);
+    expect(entry, 'the local seed is in the node list').toBeDefined();
+    expect(entry!.local, 'the seed carries the local mark').toBe(true);
+    expect(client.configuredAddrs(notisId), 'its address passes the gater for its key').toEqual([addr]);
+    expect(client.configuredAddrs(other.notisId), 'not for another key').toEqual([]);
+  }, 15_000);
 });

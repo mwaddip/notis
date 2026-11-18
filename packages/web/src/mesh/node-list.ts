@@ -24,6 +24,16 @@ export interface MeshContact {
   notisId: string;
   addrs: string[];
   api?: string;
+  /**
+   * MESH_INTERFACE → What the client remembers — "a remembered `local`
+   * node marked `local` again, its addresses passing the gater for that
+   * key alone". A contact restored from the per-network record carries
+   * `local: true` when the stored entry was a `local` one; its addresses
+   * (private ones included) pass the mesh client's gater for its key
+   * alone. Omitted on a contact that is not a local node; a first-contact
+   * node never carries it.
+   */
+  local?: boolean;
 }
 
 export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
