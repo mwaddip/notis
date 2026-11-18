@@ -114,7 +114,6 @@ afterEach(() => {
 
 const PUB = 'aa'.repeat(32);
 const TX_HEX = 'cc'.repeat(32);
-const TX_B = 'cd'.repeat(32);
 const POSTID_HEX = 'bb'.repeat(32);
 const CHAIN_A = 'ab'.repeat(32);
 const CHAIN_B = 'ef'.repeat(32);
@@ -439,7 +438,5 @@ describe("the send pass records each outcome and `no answer` for the write it st
     ]);
     // t6 is not recorded — the walk returned before visiting it.
     expect(waits.find((e) => e['txId'] === 't6')).toBeUndefined();
-    // The test's presence of TX_B avoids an "unused import" lint error.
-    expect(typeof TX_B).toBe('string');
   });
 });
