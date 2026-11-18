@@ -37,6 +37,15 @@ describe('dnsmasqConf', () => {
     });
     expect(t).toContain('dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases');
   });
+
+  it.fails('declares except-interface=lo so dnsmasq does not bind the loopback', () => {
+    const t = dnsmasqConf({
+      iface: 'uap0',
+      address: '10.42.0.1',
+      range: ['10.42.0.10', '10.42.0.254'],
+    });
+    expect(t).toContain('except-interface=lo');
+  });
 });
 
 describe('firewall', () => {
@@ -44,7 +53,7 @@ describe('firewall', () => {
     const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
     expect(t).toContain('table inet dagsocial_ap');
     expect(t).toContain('delete table inet dagsocial_ap');
-    expect(t).toMatch(/iifname "uap0" tcp dport 80 redirect to :3000/);
+    expect(t).toMatch(/iifname "uap0".*tcp dport 80 redirect to :3000/);
     expect(t).toMatch(/iifname "uap0" udp dport 67 accept/);
     expect(t).toMatch(/iifname "uap0" udp dport 53 accept/);
     expect(t).toMatch(/iifname "uap0" tcp dport 53 accept/);
@@ -53,6 +62,14 @@ describe('firewall', () => {
     expect(t).toMatch(/iifname "uap0" reject/);
     expect(t).toMatch(/iifname "uap0" reject with icmpx admin-prohibited/);
     expect(t).toMatch(/oifname "uap0" drop/);
+  });
+
+  it.fails('the tcp 80 redirect is bound to 10.42.0.1, so the box answers no other address', () => {
+    const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
+    expect(t).toContain('iifname "uap0" ip daddr 10.42.0.1 tcp dport 80 redirect to :3000');
+    // A line matching `tcp dport 80 redirect` without the `ip daddr 10.42.0.1`
+    // qualifier would take every address: forbid that shape.
+    expect(t).not.toMatch(/iifname "uap0" tcp dport 80 redirect/);
   });
 });
 
