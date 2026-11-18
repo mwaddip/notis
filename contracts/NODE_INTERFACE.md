@@ -5939,8 +5939,9 @@ takes is one an operator can take by hand, and the documentation names each.
    the address every box answers at (`MESH_INTERFACE → Discovery → "A node the access point answers"`), outside the
    ranges tools and hotspots take by default; where the uplink's own network overlaps `10.78.79.0/24`, `setup` stops
    before its first change, saying why — connecting at boot: named `Notis` and open, unless the operator gives `--name` or `--password` (WPA2). NetworkManager
-   registers an interface it did not make on its own time, so `setup` brings the profile up once NetworkManager lists
-   `uap0`, waiting `20` s at most.
+   registers an interface it did not make on its own time — it lists `uap0` before it can activate it — so `setup` brings
+   the profile up once `uap0` is out of `unavailable`, waiting `20` s at most, and takes the profile NetworkManager
+   brought up by itself as up.
 6. **Addresses, and no names.** A dnsmasq instance of the tool's own, bound to `uap0` alone — never the box's
    loopback, which dnsmasq takes by itself unless told not to — hands out addresses — naming the box as the router and
    the DNS server — and answers **every name at once with a refusal**: a client reaches the box by its address alone,
