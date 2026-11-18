@@ -1,6 +1,7 @@
-// NODE_INTERFACE → The access-point tool → "The record" — each change
-// `setup` makes is written after it is made; `remove` walks the record
-// in reverse and restores exactly what it names.
+// NODE_INTERFACE → The access-point tool — each change `setup` makes is
+// written to the record after it is made; `remove` walks the record in
+// reverse and restores exactly what it names, `status` reads each step
+// back.
 
 export interface RecordNodeEnvEdited {
   kind: 'nodeEnvEdited';
