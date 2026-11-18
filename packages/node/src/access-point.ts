@@ -39,6 +39,12 @@ import {
   type AccessPointRecord,
   type RecordEntry,
 } from './access-point/record.js';
+import {
+  AP_ADDRESS_CIDR,
+  AP_NETWORK_CIDR,
+  parseIp4Addresses,
+  overlaps,
+} from './access-point/network.js';
 
 const NODE_ENV_PATH = '/etc/dagsocial/node.env';
 const DNSMASQ_CONF_PATH = '/etc/dagsocial/access-point/dnsmasq.conf';
@@ -131,6 +137,23 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   }
   const radar = parseRadarChannels(iwListOut.stdout);
   const uplinkRead = await readUplink(runner);
+  // Refuse where an uplink IPv4 network overlaps the access point's own
+  // (NODE_INTERFACE → The access-point tool, step 5); with no uplink,
+  // nothing to read.
+  if (uplinkRead.uplink !== null) {
+    const ipOut = await runner.run(
+      'nmcli',
+      ['-g', 'IP4.ADDRESS', 'dev', 'show', uplinkRead.uplink.iface],
+    );
+    for (const addr of parseIp4Addresses(ipOut.stdout)) {
+      if (overlaps(addr, AP_NETWORK_CIDR)) {
+        runner.log(
+          `dagsocial-access-point: uplink network ${addr} overlaps the access point's ${AP_NETWORK_CIDR}; refusing`,
+        );
+        return 1;
+      }
+    }
+  }
   const scan = uplinkRead.uplink !== null
     ? parseScan((await runner.run('nmcli', ['-t', '-f', 'SSID,CHAN,FREQ', 'dev', 'wifi', 'list'])).stdout)
     : [];
@@ -251,7 +274,7 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
     '802-11-wireless.band', band,
     '802-11-wireless.channel', String(apChannel),
     'ipv4.method', 'manual',
-    'ipv4.addresses', '10.42.0.1/24',
+    'ipv4.addresses', AP_ADDRESS_CIDR,
     'ipv6.method', 'disabled',
   ];
   if (f.password !== null) {
@@ -267,8 +290,6 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   // Step 6: the dnsmasq instance.
   await writeFileChange(runner, record, DNSMASQ_CONF_PATH, dnsmasqConf({
     iface: 'uap0',
-    address: '10.42.0.1',
-    range: ['10.42.0.10', '10.42.0.254'],
   }));
   await writeFileChange(runner, record, DNSMASQ_UNIT_PATH, dnsmasqUnit());
   await runner.run('systemctl', ['daemon-reload']);

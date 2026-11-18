@@ -11,48 +11,31 @@ import {
 } from '../../src/access-point/render.js';
 
 describe('dnsmasqConf', () => {
-  it('names the interface, binds dynamic, answers notis.internal, every other name refused at once', () => {
-    const t = dnsmasqConf({
-      iface: 'uap0',
-      address: '10.42.0.1',
-      range: ['10.42.0.10', '10.42.0.254'],
-    });
+  it('names the interface, binds dynamic, hands out addresses and refuses every name at once', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
     expect(t).toContain('interface=uap0');
     expect(t).toContain('bind-dynamic');
     expect(t).toContain('no-resolv');
     expect(t).toContain('no-hosts');
     expect(t).toContain('local=/#/');
-    expect(t).toContain('address=/notis.internal/10.42.0.1');
-    expect(t).toContain('dhcp-range=10.42.0.10,10.42.0.254,255.255.255.0,12h');
-    expect(t).toContain('dhcp-option=option:router,10.42.0.1');
-    expect(t).toContain('dhcp-option=option:dns-server,10.42.0.1');
+    expect(t).toContain('dhcp-range=10.78.79.10,10.78.79.254,255.255.255.0,12h');
+    expect(t).toContain('dhcp-option=option:router,10.78.79.1');
+    expect(t).toContain('dhcp-option=option:dns-server,10.78.79.1');
     expect(t).toContain('dhcp-authoritative');
   });
 
   it('the lease file lives under /run/dagsocial-ap, which the dnsmasq unit creates', () => {
-    const t = dnsmasqConf({
-      iface: 'uap0',
-      address: '10.42.0.1',
-      range: ['10.42.0.10', '10.42.0.254'],
-    });
+    const t = dnsmasqConf({ iface: 'uap0' });
     expect(t).toContain('dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases');
   });
 
   it('declares except-interface=lo so dnsmasq does not bind the loopback', () => {
-    const t = dnsmasqConf({
-      iface: 'uap0',
-      address: '10.42.0.1',
-      range: ['10.42.0.10', '10.42.0.254'],
-    });
+    const t = dnsmasqConf({ iface: 'uap0' });
     expect(t).toContain('except-interface=lo');
   });
 
-  it.fails('names no name — every name is refused at once via local=/#/, no-resolv, no-hosts', () => {
-    const t = dnsmasqConf({
-      iface: 'uap0',
-      address: '10.42.0.1',
-      range: ['10.42.0.10', '10.42.0.254'],
-    });
+  it('names no name — every name is refused at once via local=/#/, no-resolv, no-hosts', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
     // No `address=/<domain>/<ip>` line; dnsmasq hands out no DNS mappings.
     expect(t).not.toMatch(/^address=/m);
   });
@@ -74,10 +57,10 @@ describe('firewall', () => {
     expect(t).toMatch(/oifname "uap0" drop/);
   });
 
-  it('the tcp 80 redirect is bound to 10.42.0.1, so the box answers no other address', () => {
+  it('the tcp 80 redirect is bound to 10.78.79.1, so the box answers no other address', () => {
     const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
-    expect(t).toContain('iifname "uap0" ip daddr 10.42.0.1 tcp dport 80 redirect to :3000');
-    // A line matching `tcp dport 80 redirect` without the `ip daddr 10.42.0.1`
+    expect(t).toContain('iifname "uap0" ip daddr 10.78.79.1 tcp dport 80 redirect to :3000');
+    // A line matching `tcp dport 80 redirect` without the `ip daddr 10.78.79.1`
     // qualifier would take every address: forbid that shape.
     expect(t).not.toMatch(/iifname "uap0" tcp dport 80 redirect/);
   });

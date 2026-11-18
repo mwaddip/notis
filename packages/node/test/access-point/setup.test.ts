@@ -81,6 +81,17 @@ function primePi(r: FakeRunner): FakeRunner {
       && a[2] === 'DEVICE' && a[3] === 'dev',
     { stdout: 'uap0\nwlan0\nlo\n' },
   );
+  // The uplink's IPv4 networks, read before the first change so the
+  // tool refuses an overlap with the access point's 10.78.79.0/24. The
+  // default here does not overlap; specific cases override via
+  // `prependOn`.
+  r.on(
+    (c, a) =>
+      c === 'nmcli' && a.includes('-g')
+      && a.includes('IP4.ADDRESS')
+      && a.includes('wlan0'),
+    { stdout: '192.168.1.23/24\n' },
+  );
   return r;
 }
 
@@ -671,7 +682,7 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
     return r;
   }
 
-  it.fails('an uplink at 192.168.1.23/24 proceeds; the overlap check runs through nmcli -g IP4.ADDRESS', async () => {
+  it('an uplink at 192.168.1.23/24 proceeds; the overlap check runs through nmcli -g IP4.ADDRESS', async () => {
     const r = primePiAt('192.168.1.23/24');
     const code = await main(['setup'], r);
     expect(code).toBe(0);
@@ -683,7 +694,7 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
     expect(checkCall).toBeTruthy();
   });
 
-  it.fails('an uplink at 10.78.79.200/24 is refused — same /24 as the access point', async () => {
+  it('an uplink at 10.78.79.200/24 is refused — same /24 as the access point', async () => {
     const r = primePiAt('10.78.79.200/24');
     const code = await main(['setup'], r);
     expect(code).not.toBe(0);
@@ -691,7 +702,7 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
     expect(r.logs.join('\n')).toMatch(/10\.78\.79\.200\/24|overlap/i);
   });
 
-  it.fails('an uplink at 10.78.0.5/16 is refused — contains 10.78.79.0/24', async () => {
+  it('an uplink at 10.78.0.5/16 is refused — contains 10.78.79.0/24', async () => {
     const r = primePiAt('10.78.0.5/16');
     const code = await main(['setup'], r);
     expect(code).not.toBe(0);
@@ -699,7 +710,7 @@ describe('setup — the uplink IPv4 networks must not overlap 10.78.79.0/24', ()
     expect(r.logs.join('\n')).toMatch(/10\.78\.0\.5\/16|overlap/i);
   });
 
-  it.fails('an uplink at 10.78.79.0/25 is refused — a /25 that falls inside 10.78.79.0/24', async () => {
+  it('an uplink at 10.78.79.0/25 is refused — a /25 that falls inside 10.78.79.0/24', async () => {
     const r = primePiAt('10.78.79.0/25');
     const code = await main(['setup'], r);
     expect(code).not.toBe(0);

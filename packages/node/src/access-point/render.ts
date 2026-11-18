@@ -1,35 +1,36 @@
-// NODE_INTERFACE → The access-point tool → "`setup` turns a box into an
-// access point, in order" — the file contents each step writes: step 4's
-// interface unit, step 6's dnsmasq conf and its systemd unit, step 7's
-// nftables ruleset and its systemd unit.
+// NODE_INTERFACE → The access-point tool — the file contents each step
+// writes: step 4's interface unit, step 6's dnsmasq conf and its systemd
+// unit, step 7's nftables ruleset and its systemd unit. The access
+// point's address and network come from `./network.js`.
+
+import {
+  AP_ADDRESS,
+  AP_DHCP_FROM,
+  AP_DHCP_TO,
+} from './network.js';
 
 export interface DnsmasqOptions {
   iface: 'uap0';
-  address: '10.42.0.1';
-  range: [string, string];
 }
 
-// Step 6's conf: the box's own DNS server, bound dynamically to uap0 so it
-// starts before the interface holds its address, answers notis.internal
-// with the box's address and refuses every other name at once — `local=/#/`
-// with `no-resolv` and `no-hosts` — and hands out addresses naming the box
-// as router and DNS server. `except-interface=lo` keeps dnsmasq off
-// loopback (where `local=/#/` would otherwise answer whatever asked, and
-// where another resolver may sit). The lease file lives under
-// `/run/dagsocial-ap/`, which the dnsmasq unit creates with
-// `RuntimeDirectory=`.
-export function dnsmasqConf(o: DnsmasqOptions): string {
+// Step 6's conf: the box's own DNS server, bound dynamically to uap0 so
+// it starts before the interface holds its address, refuses every name
+// at once via `local=/#/` with `no-resolv` and `no-hosts` (and declares
+// no `address=/<name>/<ip>` of its own — the box is reached by address,
+// not by name). `except-interface=lo` keeps dnsmasq off loopback. The
+// lease file lives under `/run/dagsocial-ap/`, which the dnsmasq unit
+// creates with `RuntimeDirectory=`.
+export function dnsmasqConf(_o: DnsmasqOptions): string {
   const lines = [
-    `interface=${o.iface}`,
+    'interface=uap0',
     'except-interface=lo',
     'bind-dynamic',
     'no-resolv',
     'no-hosts',
     'local=/#/',
-    `address=/notis.internal/${o.address}`,
-    `dhcp-range=${o.range[0]},${o.range[1]},255.255.255.0,12h`,
-    `dhcp-option=option:router,${o.address}`,
-    `dhcp-option=option:dns-server,${o.address}`,
+    `dhcp-range=${AP_DHCP_FROM},${AP_DHCP_TO},255.255.255.0,12h`,
+    `dhcp-option=option:router,${AP_ADDRESS}`,
+    `dhcp-option=option:dns-server,${AP_ADDRESS}`,
     'dhcp-authoritative',
     'dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases',
     '',
@@ -43,14 +44,12 @@ export interface FirewallOptions {
   meshUdpPort: number;
 }
 
-// Step 7's rule set: one table `inet dagsocial_ap`, flushed and redefined
-// so a second load is the same rules. From uap0 the box accepts DHCP, DNS,
-// the node port (after prerouting redirects :80 bound for 10.42.0.1 to
-// it) and the mesh UDP port; every forwarded packet is refused, so a
-// device on the access point learns at once that nothing beyond the box
-// answers. The redirect is bound to the box's own address alone, so a
-// request from `uap0` to any other address on tcp 80 is not answered by
-// the box's node.
+// Step 7's rule set: one table `inet dagsocial_ap`, flushed and
+// redefined so a second load is the same rules. From uap0 the box
+// accepts DHCP, DNS, the node port (after prerouting redirects :80
+// bound for the box's own address to it) and the mesh UDP port; every
+// forwarded packet is refused, so a device on the access point learns
+// at once that nothing beyond the box answers.
 export function firewall(o: FirewallOptions): string {
   const q = '"';
   return `# nftables rules for the dagsocial access-point.
@@ -60,7 +59,7 @@ delete table inet dagsocial_ap
 table inet dagsocial_ap {
 \tchain prerouting {
 \t\ttype nat hook prerouting priority -100; policy accept;
-\t\tiifname ${q}${o.iface}${q} ip daddr 10.42.0.1 tcp dport 80 redirect to :${o.nodePort}
+\t\tiifname ${q}${o.iface}${q} ip daddr ${AP_ADDRESS} tcp dport 80 redirect to :${o.nodePort}
 \t}
 \tchain input {
 \t\ttype filter hook input priority 0; policy accept;
@@ -85,12 +84,13 @@ export interface IfaceUnitOptions {
   uplinkIface: string;
 }
 
-// Step 4's unit: make uap0 from the uplink interface (or, for a box with no
-// uplink, from the phy) at every boot, before NetworkManager starts. The
-// unit waits for the uplink device at `/sys/subsystem/net/devices/<iface>`
-// so the kernel has brought the interface up before `iw dev <iface>` runs;
-// a no-uplink unit names no device dependency and runs under the phy. The
-// unit remains after exit so a `systemctl stop` of it hits ExecStop.
+// Step 4's unit: make uap0 from the uplink interface (or, for a box
+// with no uplink, from the phy) at every boot, before NetworkManager
+// starts. The unit waits for the uplink device at
+// `/sys/subsystem/net/devices/<iface>` so the kernel has brought the
+// interface up before `iw dev <iface>` runs; a no-uplink unit names
+// no device dependency and runs under the phy. The unit remains after
+// exit so a `systemctl stop` of it hits ExecStop.
 export function ifaceUnit(o: IfaceUnitOptions): string {
   const hasUplink = o.uplinkIface !== '';
   const addCmd = hasUplink
@@ -115,8 +115,8 @@ WantedBy=multi-user.target
 }
 
 // Step 6's unit: the tool's own dnsmasq, bound to uap0 alone. systemd's
-// `RuntimeDirectory=dagsocial-ap` creates `/run/dagsocial-ap/` before the
-// service starts, so dnsmasq can write its lease file there.
+// `RuntimeDirectory=dagsocial-ap` creates `/run/dagsocial-ap/` before
+// the service starts, so dnsmasq can write its lease file there.
 export function dnsmasqUnit(): string {
   return `[Unit]
 Description=dagsocial access-point dnsmasq
