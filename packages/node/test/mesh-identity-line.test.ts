@@ -123,7 +123,7 @@ describe('NODE_INTERFACE → Configuration → "A mesh node prints its identity 
   // what the node prints as its identity line. The spawned node is the
   // one shape that exercises `index.ts`' wiring of `createApp`'s
   // `meshIdentity` seam to `net.meshIdentity()`.
-  it.fails('GET /mesh/identity answers the identity line the node printed', async () => {
+  it('GET /mesh/identity answers the identity line the node printed', async () => {
     if (!distExists) {
       throw new Error(`built node missing at ${NODE_ENTRY} — pnpm -r build first`);
     }

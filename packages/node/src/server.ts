@@ -8,6 +8,7 @@ import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import { createRouter as nipopowRoutes } from './routes/nipopow.js';
+import { createRouter as meshIdentityRoutes } from './routes/mesh-identity.js';
 import { createRouter as usernameRoutes } from './routes/usernames.js';
 import { createRouter as backerRoutes } from './routes/backers.js';
 import { createPopowHeaderReader } from './services/nipopow.js';
@@ -299,10 +300,6 @@ function parseStrictQuery(queryString: string | null | undefined): Record<string
 // ---------------------------------------------------------------------------
 
 export function createApp(config: Config, deps: AppDeps): express.Express {
-  // `deps` is read by the routes below (NODE_INTERFACE → Mesh identity);
-  // the reference silences the unused parameter until the route lands,
-  // one commit on.
-  void deps;
   const app = express();
 
   // NODE_INTERFACE → HTTP API → "A query parameter is one string": the
@@ -686,6 +683,9 @@ export function createApp(config: Config, deps: AppDeps): express.Express {
       getCurrentHeight: store.getCurrentHeight,
     }),
   );
+
+  // Mesh identity — NODE_INTERFACE → Mesh identity → "A mesh node answers its identity"
+  app.use('/', meshIdentityRoutes({ meshIdentity: deps.meshIdentity }));
 
   // AVL+ proof endpoints (NODE_INTERFACE → AVL+ State Root):
   // GET /api/v1/proof/:key — one key's lookup proof.

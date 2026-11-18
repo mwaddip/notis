@@ -28,7 +28,7 @@ function appWith(id: MeshIdentity | null) {
 }
 
 describe('GET /mesh/identity', () => {
-  it.fails('answers the identity\'s four fields in order', async () => {
+  it('answers the identity\'s four fields in order', async () => {
     const res = await request(appWith(FIXTURE)).get('/mesh/identity');
     expect(res.status).toBe(200);
     expect(Object.keys(res.body)).toEqual(['notisId', 'peerId', 'multiaddrs', 'localAddrs']);
@@ -38,13 +38,13 @@ describe('GET /mesh/identity', () => {
     expect(res.body.localAddrs).toEqual(FIXTURE.localAddrs);
   });
 
-  it.fails('answers 404 on an app with no mesh', async () => {
+  it('answers 404 on an app with no mesh', async () => {
     const res = await request(appWith(null)).get('/mesh/identity');
     expect(res.status).toBe(404);
     expect(typeof res.body.error).toBe('string');
   });
 
-  it.fails('answers 404 while the identity is null and 200 once it is not', async () => {
+  it('answers 404 while the identity is null and 200 once it is not', async () => {
     let current: MeshIdentity | null = null;
     const deps: AppDeps = { meshIdentity: () => current };
     const app = createApp(makeTestConfig({ port: 0 }), deps);
@@ -58,7 +58,7 @@ describe('GET /mesh/identity', () => {
     expect(after.body.notisId).toBe(FIXTURE.notisId);
   });
 
-  it.fails('the answer carries access-control-allow-origin: *', async () => {
+  it('the answer carries access-control-allow-origin: *', async () => {
     const res = await request(appWith(FIXTURE)).get('/mesh/identity');
     expect(res.status).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBe('*');
