@@ -244,8 +244,8 @@ preconfigured for testnet:
 
 | Artifact | What it is |
 |---|---|
-| `notis-node-<ver>-linux-x64.tar.gz` | the node for a Linux host with Node ≥ 24 on the `PATH` — unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines |
-| `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 24; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
+| `notis-node-<ver>-linux-x64.tar.gz` · `-linux-arm64.tar.gz` | the node for a Linux host with Node ≥ 24 on the `PATH` — the arm64 build runs on a Raspberry Pi 4 or later on a 64-bit OS, and any other arm64 Linux machine; unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines |
+| `dagsocial-node_<ver>_amd64.deb` · `_arm64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 24, one `.deb` per Linux architecture; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
 | `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
 | `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
 | `notis-extension-<ver>-chrome.zip` · `-firefox.zip` | the same client as a browser extension, the key held by the extension (→ Browser extension) |
