@@ -44,6 +44,7 @@ function entry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     known: over.known ?? false,
     byHand: over.byHand ?? false,
     yours: over.yours ?? false,
+    local: over.local ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
     retryAtMs: over.retryAtMs ?? 0,
@@ -77,6 +78,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     chain: over.chain ?? null,
     notContinued: over.notContinued ?? false,
     disagreement: over.disagreement ?? null,
+    localLookup: over.localLookup ?? { reads: 0, last: null },
   };
 }
 

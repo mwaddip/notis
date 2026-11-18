@@ -32,6 +32,7 @@ function makeEntry(over: Partial<NodeEntry> & { notisId: string }): NodeEntry {
     known: over.known ?? false,
     byHand: over.byHand ?? false,
     yours: over.yours ?? false,
+    local: over.local ?? false,
     status: over.status ?? 'new',
     failures: over.failures ?? 0,
     retryAtMs: over.retryAtMs ?? 0,
@@ -66,6 +67,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     chain: over.chain ?? null,
     notContinued: over.notContinued ?? false,
     disagreement: over.disagreement ?? null,
+    localLookup: over.localLookup ?? { reads: 0, last: null },
   };
 }
 
@@ -187,6 +189,7 @@ describe('page/probe.ts', () => {
       nodeId: null, transport: null, path: null, lastLeft: null,
       tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
       seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
+      localLookup: { reads: 0, last: null },
     };
     const fetched: string[] = [];
     const client: FakeClient = {
@@ -251,7 +254,7 @@ describe('page/probe.ts', () => {
     let state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct', lastLeft: null,
       tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null, localLookup: { reads: 0, last: null },
     };
     const client: FakeClient = {
       fetch: async () => new Response(body as unknown as BodyInit, { status: 200 }),
@@ -277,7 +280,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId: opts.nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null, localLookup: { reads: 0, last: null },
     };
     return {
       fetch: async () => new Response(opts.body as unknown as BodyInit, { status: 200 }),
@@ -297,7 +300,7 @@ describe('page/probe.ts survives a render', () => {
     const state: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null, localLookup: { reads: 0, last: null },
     };
     render(state, root);
     const after = root.querySelector('pre#probe');
@@ -314,7 +317,7 @@ describe('page/probe.ts survives a render', () => {
     const state1: ClientState = {
       nodeId, transport: 'webrtc-direct', path: 'direct',
       lastLeft: null, tip: null, agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
-      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null,
+      seated: false, proofs: null, anchor: null, chain: null, notContinued: false, disagreement: null, localLookup: { reads: 0, last: null },
     };
     render(state1, root);
     const state2: ClientState = { ...state1, tip: { height: 7, hash: 'c'.repeat(64) } };
@@ -384,6 +387,7 @@ function buildFakeClient(init: FakeClientInit = {}): FakeClient {
     chain: null,
     notContinued: false,
     disagreement: null,
+    localLookup: { reads: 0, last: null },
   };
   const calls: FakeClient['calls'] = { addByHand: [], read: [], stop: 0 };
   const readQueue: Array<{ nodeId: string } | { error: string }> = (init.readAnswers ?? []).slice();
@@ -1354,6 +1358,7 @@ describe("page/main.ts — the memory wiring", () => {
         tip: null, agreement: null, checks: 0,
         traffic: emptyTraffic(), nodes: [], seated: false, proofs: null,
         anchor: null, chain: null, notContinued: false, disagreement: null,
+        localLookup: { reads: 0, last: null },
       };
       // The returned shape is `MeshClient`; the test does not touch
       // most of its methods, so a minimal one that satisfies the
