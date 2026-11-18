@@ -86,12 +86,10 @@ function addressBelongsToKey(addr: string, peerIdString: string): boolean {
  * field rule of the passage.
  */
 export async function readLocalIdentity(
-  _httpFetch: HttpFetch,
-  _url: string,
+  httpFetch: HttpFetch,
+  url: string,
 ): Promise<LocalLookupResult> {
-  throw new Error('readLocalIdentity: not implemented yet');
-  // eslint-disable-next-line no-unreachable
-  const res = await fetchJson<unknown>(_httpFetch, _url, MESH_IDENTITY_READ_BYTES);
+  const res = await fetchJson<unknown>(httpFetch, url, MESH_IDENTITY_READ_BYTES);
   if (!res.ok) {
     if (res.status === 0) {
       return { result: 'failed', message: res.body };
@@ -163,7 +161,12 @@ export async function readLocalIdentity(
  * for none — a check that read nothing passes the predicate.
  */
 export function noNodeAnswered(
-  _nodes: ReadonlyArray<{ event: TipEvent }>,
+  nodes: ReadonlyArray<{ event: TipEvent }>,
 ): boolean {
-  throw new Error('noNodeAnswered: not implemented yet');
+  for (const n of nodes) {
+    const ev = n.event;
+    if (ev.ev !== 'failure') return false;
+    if (ev.kind !== 'transport') return false;
+  }
+  return true;
 }

@@ -1821,10 +1821,10 @@ class MeshClientImpl implements MeshClient {
    * after `checkInProgress` is cleared (see `check()`).
    */
   private localLookupDueAtCheckEnd(): boolean {
-    // Stubbed red phase: the scheduler never schedules a lookup.
-    // Every mesh-client-local-lookup test fails at the next
-    // assertion that waits on the lookup or inspects its state.
-    return false;
+    if (this.localLookupUrl === null) return false;
+    if (!noNodeAnswered(this.checkTipEvents.map((e) => ({ event: e.event })))) return false;
+    if (this.libp2p.getConnections().length !== 0) return false;
+    return true;
   }
 
   /**

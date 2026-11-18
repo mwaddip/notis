@@ -139,7 +139,7 @@ describe('mesh client — local lookup', () => {
     for (const s of servers.splice(0)) { s.close(); }
   });
 
-  it.fails('a check in which no node answered reads the URL once, after the check ends', async () => {
+  it('a check in which no node answered reads the URL once, after the check ends', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const calls: { url: string }[] = [];
@@ -207,12 +207,21 @@ describe('mesh client — local lookup', () => {
     expect(client.state().localLookup.reads).toBe(0);
   }, 15_000);
 
-  it.fails('an answer adds the node and a check runs at once', async () => {
+  it('an answer adds the node and a check runs at once', async () => {
     // Review Focus: the addition's `triggerImmediateCheck` runs after
     // `checkInProgress` is cleared (in `check()`'s `.finally`), so the
     // immediate check is not swallowed by the ending check. The test
     // asserts the second check happened (checks count rises), not
     // only that `addLocal` was called.
+    //
+    // `libp2p.dial` is overridden to reject before touching the WebRTC
+    // native binding. The second check's phase 1 would otherwise dial
+    // the new local entry's webrtc-direct address, and the test
+    // environment's `node-datachannel` native binding crashes creating
+    // a data channel — no other test in this package dials webrtc. The
+    // guard this fake holds is that the dial is rejected before any
+    // native work; the check still runs its phases, applies a transport
+    // failure to the local entry, and completes.
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const { notisId, peerId } = makeIdentity();
@@ -246,6 +255,13 @@ describe('mesh client — local lookup', () => {
       localLookup: { url: LOCAL_IDENTITY_URL },
     });
     clients.push(client);
+    // Stub out libp2p.dial so the second check's phase 1 does not
+    // reach the WebRTC native binding (see the case's lead above).
+    Object.defineProperty(client.libp2p, 'dial', {
+      value: async () => { throw new Error('test: dial disabled'); },
+      writable: true,
+      configurable: true,
+    });
     await client.check();
     const checksAfterFirst = client.state().checks;
     expect(checksAfterFirst).toBe(1);
@@ -259,7 +275,7 @@ describe('mesh client — local lookup', () => {
     expect(entry!.yours, 'never trusted').toBe(false);
   }, 15_000);
 
-  it.fails('the event and `state().localLookup` record each read', async () => {
+  it('the event and `state().localLookup` record each read', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const calls: { url: string }[] = [];
@@ -290,7 +306,7 @@ describe('mesh client — local lookup', () => {
     expect(s.last!.result).toBe('failed');
   }, 15_000);
 
-  it.fails('local lookup stops once a seed answers', async () => {
+  it('local lookup stops once a seed answers', async () => {
     // Review Focus 1: the reader leaves the access point for an
     // ordinary network mid-session — the seed answers, and no lookup
     // runs once one does. Checks are independent; we flip the
@@ -323,7 +339,7 @@ describe('mesh client — local lookup', () => {
     expect(client.state().localLookup.reads, 'the lookup did not fire this check').toBe(1);
   }, 15_000);
 
-  it.fails('a 404 or a refused connection is failed and read again next check', async () => {
+  it('a 404 or a refused connection is failed and read again next check', async () => {
     // Review Focus 5: the node restarting after `setup` — the
     // identity URL refused or 404 while it starts — reads as
     // `failed`, and the next failing check reads again.
@@ -373,7 +389,7 @@ describe('mesh client — local lookup', () => {
     expect(client.state().localLookup.last).toBeNull();
   }, 15_000);
 
-  it.fails("a local entry's addresses are not in `toRemember()`", async () => {
+  it("a local entry's addresses are not in `toRemember()`", async () => {
     // MESH_INTERFACE → What the client remembers: the remembered list
     // carries no private address. A `local` entry's addresses are
     // private (`10.42.0.1`, `192.168.x`, etc.), so the existing
@@ -406,6 +422,16 @@ describe('mesh client — local lookup', () => {
       localLookup: { url: LOCAL_IDENTITY_URL },
     });
     clients.push(client);
+    // The guard: the second check's phase 1 would dial the local
+    // entry's webrtc-direct address, and the test environment's
+    // `node-datachannel` native binding crashes creating a data
+    // channel. The override keeps the check running through its
+    // phases without a native dial.
+    Object.defineProperty(client.libp2p, 'dial', {
+      value: async () => { throw new Error('test: dial disabled'); },
+      writable: true,
+      configurable: true,
+    });
     await client.check();
     await waitFor(() => client.state().nodes.some((e) => e.notisId === notisId));
     // The local entry is in the list; `toRemember()` must not carry

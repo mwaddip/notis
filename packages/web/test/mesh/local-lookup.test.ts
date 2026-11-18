@@ -44,7 +44,7 @@ function fetchOf(reply: Response | Error): HttpFetch {
 }
 
 describe('readLocalIdentity', () => {
-  it.fails('a well-formed answer is answered with its key and addresses', async () => {
+  it('a well-formed answer is answered with its key and addresses', async () => {
     const { notisId, peerId } = makeIdentity();
     const { priv } = addrsForKey(peerId);
     const res = await readLocalIdentity(
@@ -58,7 +58,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails("the Pi's measured answer is answered with the private address alone, the loopback one dropped", async () => {
+  it("the Pi's measured answer is answered with the private address alone, the loopback one dropped", async () => {
     // Spec §8: a `0.0.0.0` listen on a Pi with one interface expands
     // to its private address and `127.0.0.1`. The client drops the
     // loopback one and keeps the other.
@@ -79,7 +79,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('an answer whose every address is loopback is refused', async () => {
+  it('an answer whose every address is loopback is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const { loop4, loop6 } = addrsForKey(peerId);
     const res = await readLocalIdentity(
@@ -92,7 +92,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('a transport failure reads as failed', async () => {
+  it('a transport failure reads as failed', async () => {
     const res = await readLocalIdentity(
       fetchOf(new Error('ECONNREFUSED')),
       LOCAL_IDENTITY_URL,
@@ -103,7 +103,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('a timed-out read reads as failed', async () => {
+  it('a timed-out read reads as failed', async () => {
     // `AbortSignal.timeout` rejects with a TimeoutError; `fetchJson`
     // reads that as a transport failure of status 0 with `timedOut:
     // true`. `readLocalIdentity` treats it as `failed`.
@@ -112,7 +112,7 @@ describe('readLocalIdentity', () => {
     expect(res.result).toBe('failed');
   });
 
-  it.fails('a 404 reads as failed', async () => {
+  it('a 404 reads as failed', async () => {
     const httpFetch: HttpFetch = async () => new Response('not found', { status: 404 });
     const res = await readLocalIdentity(httpFetch, LOCAL_IDENTITY_URL);
     expect(res.result).toBe('failed');
@@ -121,7 +121,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('an HTML answer at a 2xx is refused and adds nothing', async () => {
+  it('an HTML answer at a 2xx is refused and adds nothing', async () => {
     // Review Focus 3: another network's portal answers 200 HTML. The
     // body does not parse as JSON, so `fetchJson` answers an
     // `unparseable body` at the 2xx status, and `readLocalIdentity`
@@ -137,7 +137,7 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('a body one byte over the cap is refused', async () => {
+  it('a body one byte over the cap is refused', async () => {
     const body = 'x'.repeat(MESH_IDENTITY_READ_BYTES + 1);
     const httpFetch: HttpFetch = async () => new Response(body, { status: 200 });
     const res = await readLocalIdentity(httpFetch, LOCAL_IDENTITY_URL);
@@ -147,13 +147,13 @@ describe('readLocalIdentity', () => {
     }
   });
 
-  it.fails('an answer that is not an object is refused', async () => {
+  it('an answer that is not an object is refused', async () => {
     const res = await readLocalIdentity(fetchOf(okResponse([])), LOCAL_IDENTITY_URL);
     expect(res.result).toBe('refused');
     if (res.result === 'refused') expect(res.reason).toMatch(/not an object/);
   });
 
-  it.fails('a notisId that is not 64 lowercase hex is refused', async () => {
+  it('a notisId that is not 64 lowercase hex is refused', async () => {
     const { peerId } = makeIdentity();
     const res = await readLocalIdentity(
       fetchOf(okResponse({ notisId: 'ABC', peerId, multiaddrs: [], localAddrs: [] })),
@@ -163,7 +163,7 @@ describe('readLocalIdentity', () => {
     if (res.result === 'refused') expect(res.reason).toMatch(/notisId/);
   });
 
-  it.fails('a peerId that does not match the key is refused', async () => {
+  it('a peerId that does not match the key is refused', async () => {
     const a = makeIdentity();
     const b = makeIdentity();
     const { priv } = addrsForKey(a.peerId);
@@ -175,7 +175,7 @@ describe('readLocalIdentity', () => {
     if (res.result === 'refused') expect(res.reason).toMatch(/peerId/);
   });
 
-  it.fails('a localAddrs that is not a non-empty array is refused', async () => {
+  it('a localAddrs that is not a non-empty array is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const r1 = await readLocalIdentity(
       fetchOf(okResponse({ notisId, peerId, multiaddrs: [], localAddrs: [] })),
@@ -190,7 +190,7 @@ describe('readLocalIdentity', () => {
     expect(r2.result).toBe('refused');
   });
 
-  it.fails('a localAddrs entry with a DNS component is refused', async () => {
+  it('a localAddrs entry with a DNS component is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const dnsAddr = `/dns4/notis.internal/udp/9733/webrtc-direct/certhash/uEiA/p2p/${peerId}`;
     const res = await readLocalIdentity(
@@ -201,7 +201,7 @@ describe('readLocalIdentity', () => {
     if (res.result === 'refused') expect(res.reason).toMatch(/this key does not own/);
   });
 
-  it.fails('a localAddrs entry without /webrtc-direct/ is refused', async () => {
+  it('a localAddrs entry without /webrtc-direct/ is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const tcpAddr = `/ip4/192.168.2.6/tcp/9733/p2p/${peerId}`;
     const res = await readLocalIdentity(
@@ -211,7 +211,7 @@ describe('readLocalIdentity', () => {
     expect(res.result).toBe('refused');
   });
 
-  it.fails('a localAddrs entry whose trailing /p2p/ is another key is refused', async () => {
+  it('a localAddrs entry whose trailing /p2p/ is another key is refused', async () => {
     const a = makeIdentity();
     const b = makeIdentity();
     const foreign = `/ip4/192.168.2.6/udp/9733/webrtc-direct/certhash/uEiA/p2p/${b.peerId}`;
@@ -223,7 +223,7 @@ describe('readLocalIdentity', () => {
     if (res.result === 'refused') expect(res.reason).toMatch(/this key does not own/);
   });
 
-  it.fails('a localAddrs entry that does not parse as a multiaddr is refused', async () => {
+  it('a localAddrs entry that does not parse as a multiaddr is refused', async () => {
     const { notisId, peerId } = makeIdentity();
     const garbage = '/not-a-multiaddr';
     const res = await readLocalIdentity(
@@ -233,7 +233,7 @@ describe('readLocalIdentity', () => {
     expect(res.result).toBe('refused');
   });
 
-  it.fails('`multiaddrs` is not read: a garbage value does not refuse the answer', async () => {
+  it('`multiaddrs` is not read: a garbage value does not refuse the answer', async () => {
     // The passage says `multiaddrs is not read` — a private node's are
     // relay addresses through public nodes the access point cannot
     // reach. The reader treats any value there as nothing.
@@ -250,23 +250,23 @@ describe('readLocalIdentity', () => {
 describe('noNodeAnswered', () => {
   const id = bytesToHex(new Uint8Array(32));
 
-  it.fails('true for an empty list', () => {
+  it('true for an empty list', () => {
     expect(noNodeAnswered([])).toBe(true);
   });
 
-  it.fails('true when every event is failure of kind transport', () => {
+  it('true when every event is failure of kind transport', () => {
     const ev1: TipEvent = { id, ev: 'failure', kind: 'transport', message: 'unreachable' };
     const ev2: TipEvent = { id, ev: 'failure', kind: 'transport', message: 'ECONNREFUSED' };
     expect(noNodeAnswered([{ event: ev1 }, { event: ev2 }])).toBe(true);
   });
 
-  it.fails('false when one event is a success', () => {
+  it('false when one event is a success', () => {
     const transport: TipEvent = { id, ev: 'failure', kind: 'transport', message: '' };
     const ok: TipEvent = { id, ev: 'success' };
     expect(noNodeAnswered([{ event: transport }, { event: ok }])).toBe(false);
   });
 
-  it.fails('false when one failure is of a non-transport kind', () => {
+  it('false when one failure is of a non-transport kind', () => {
     // A `refused` failure is a non-2xx answer: the node answered, just
     // not as expected. That counts as a node answering.
     const transport: TipEvent = { id, ev: 'failure', kind: 'transport', message: '' };

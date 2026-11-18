@@ -381,8 +381,39 @@ export class NodeList {
    * hex); the address checks (DNS, `/webrtc-direct/`, the loopback
    * rule) are the lookup's, not the list's.
    */
-  addLocal(_id: string, _addrs: string[]): boolean {
-    throw new Error('addLocal: not implemented yet');
+  addLocal(id: string, addrs: string[]): boolean {
+    assertNotisId(id);
+    if (id === this.ownId) return false;
+    const existing = this.entries_.get(id);
+    if (existing) {
+      if (existing.status === 'blacklisted') return false;
+      this.mergeAddrs(existing, addrs);
+      this.mergeConfigured(existing, addrs);
+      existing.local = true;
+      return true;
+    }
+    this.entries_.set(id, {
+      notisId: id,
+      firstContact: false,
+      known: false,
+      byHand: false,
+      yours: false,
+      local: true,
+      seenMs: null,
+      fromFirstContactList: false,
+      status: 'new',
+      failures: 0,
+      clockAtFailure: 0,
+      storedRetryAtMs: 0,
+      addrs: [...addrs],
+      configured: [...addrs],
+      droppedAddrs: [],
+      evidence: null,
+      lastFailure: null,
+      lastFailures: {},
+      api: null,
+    });
+    return true;
   }
 
   /**

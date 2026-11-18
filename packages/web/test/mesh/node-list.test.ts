@@ -488,7 +488,7 @@ describe('node-list', () => {
   const localAddr = '/ip4/10.42.0.1/udp/9733/webrtc-direct/certhash/uEiA/p2p/A';
   const localAddr2 = '/ip4/10.42.0.1/udp/9734/webrtc-direct/certhash/uEiB/p2p/A';
 
-  it.fails('addLocal adds a local candidate the gater allows for that key alone', () => {
+  it('addLocal adds a local candidate the gater allows for that key alone', () => {
     // A new entry carries `local: true`, `byHand: false`, `yours: false`,
     // `firstContact: false`, `known: false`; its addresses are in
     // `configured` for the key alone, not another key's.
@@ -505,7 +505,7 @@ describe('node-list', () => {
     expect(list.configuredAddrs(idB), "not for another key").toEqual([]);
   });
 
-  it.fails('addLocal merges addresses and sets the mark on an existing entry', () => {
+  it('addLocal merges addresses and sets the mark on an existing entry', () => {
     const list = new NodeList([{ notisId: idA, addrs: [localAddr] }], own, () => 0, () => 0);
     expect(list.entry(idA)!.local, 'a first-contact entry starts with local false').toBe(false);
     const added = list.addLocal(idA, [localAddr, localAddr2]);
@@ -517,7 +517,7 @@ describe('node-list', () => {
     expect(e.firstContact, 'firstContact is kept').toBe(true);
   });
 
-  it.fails('addLocal on a blacklisted entry changes nothing and answers false', () => {
+  it('addLocal on a blacklisted entry changes nothing and answers false', () => {
     const list = new NodeList([{ notisId: idA, addrs: [localAddr] }], own, () => 0, () => 0);
     const evidence: LieEvidence = { kind: 'malformed', atMs: 0, detail: 'x' };
     list.lie(idA, evidence);
@@ -531,19 +531,19 @@ describe('node-list', () => {
     expect(after.evidence, 'the evidence is kept').toEqual(evidence);
   });
 
-  it.fails('addLocal refuses the client\'s own key and answers false', () => {
+  it('addLocal refuses the client\'s own key and answers false', () => {
     const list = new NodeList([], own, () => 0, () => 0);
     const answered = list.addLocal(own, [localAddr]);
     expect(answered, 'addLocal on the own key answers false').toBe(false);
     expect(list.entry(own), 'no entry is created for the own key').toBeUndefined();
   });
 
-  it.fails('addLocal refuses a non-64-hex id', () => {
+  it('addLocal refuses a non-64-hex id', () => {
     const list = new NodeList([], own, () => 0, () => 0);
     expect(() => list.addLocal('abc', [localAddr])).toThrow(MeshKeyError);
   });
 
-  it.fails('removeByHand leaves a local entry', () => {
+  it('removeByHand leaves a local entry', () => {
     // `removeByHand` is the settings row's commit path, bound to the
     // hand-added arm; a local entry's `byHand` is false, so
     // `removeByHand` returns at its `!e.byHand` guard and leaves the
@@ -558,7 +558,7 @@ describe('node-list', () => {
     expect(list.configuredAddrs(idA), 'the gater still allows the address').toEqual([localAddr]);
   });
 
-  it.fails("a failure recorded against one of a local entry's addresses leaves the entry, its mark and its other address", () => {
+  it("a failure recorded against one of a local entry's addresses leaves the entry, its mark and its other address", () => {
     // Review Focus 2 at the list's level: a node with two addresses is
     // dialled as one operation; a failure against one address alone
     // reads through `recordAddrFailure`, which leaves `addrs`,
