@@ -5883,6 +5883,14 @@ naming its version where it is older than 24. The Windows installer carries `nod
 `scripts/windows/build-bundle.ps1` downloads the build host's Node version from `https://nodejs.org/dist/` over HTTPS
 and checks no checksum — the official source is trusted as served.
 
+**The Linux packages are built for x64 and for arm64, each on a machine of its own architecture.** The release workflow,
+`.github/workflows/release.yml`, builds the tarball and the `.deb` once on an x64 Linux runner and once on an arm64 one;
+each package carries its build machine's native binaries and starts its node there (→ "A package build runs the node it
+built"). Each file names its architecture — the tarball by Node's name, `notis-node-<version>-linux-<x64|arm64>.tar.gz`,
+the `.deb` by Debian's, `dagsocial-node_<version>_<amd64|arm64>.deb`, which its control file's `Architecture` field
+carries. The web zip and the extension zips are built once, on the x64 runner; the Windows installer is built for x64
+alone.
+
 ---
 
 ## Net Integration

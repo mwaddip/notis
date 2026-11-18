@@ -2,19 +2,23 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# build-tarball.sh — package the node as a linux-x64 tarball for a host with
-# Node ≥ 24 on PATH: the bundled app under app/, run.sh (server) and
-# run-miner.sh (miner) launchers that default to testnet. No faucet rides.
+# build-tarball.sh — package the node as a Linux tarball for the build
+# machine's architecture, as Node names it (`process.arch`: `x64`,
+# `arm64`), for a host with Node ≥ 24 on PATH: the bundled app under app/,
+# run.sh (server) and run-miner.sh (miner) launchers that default to
+# testnet. No faucet rides. (NODE_INTERFACE → "The Linux packages are
+# built for x64 and for arm64, each on a machine of its own architecture.")
 #
 # Requires (build host): node (>=24), pnpm, tar.
-# Output: notis-node-<version>-linux-x64.tar.gz in the repo root.
+# Output: notis-node-<version>-linux-<arch>.tar.gz in the repo root.
 # ---------------------------------------------------------------------------
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION=$(node -p "require('./package.json').version")
-PKG="notis-node-${VERSION}-linux-x64"
+ARCH=$(node -p "process.arch")
+PKG="notis-node-${VERSION}-linux-${ARCH}"
 STAGE=$(mktemp -d)
 APP="$STAGE/$PKG"
 mkdir -p "$APP"
