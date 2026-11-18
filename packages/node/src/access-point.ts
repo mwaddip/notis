@@ -220,10 +220,10 @@ async function setup(args: readonly string[], runner: Runner): Promise<number> {
   const stIface = await runner.run('systemctl', ['start', 'dagsocial-ap-iface.service']);
   if (!check(stIface, 'systemctl start dagsocial-ap-iface.service')) return 1;
 
-  // Wait for NetworkManager to register uap0 before the profile goes up —
-  // the measured Pi races (2026-11-18): the systemd unit made uap0 but
-  // `nmcli con up dagsocial-ap` runs before NetworkManager has registered
-  // it, and fails with "No suitable device". Poll `nmcli -t -f DEVICE dev`
+  // Wait for NetworkManager to list uap0 before the profile goes up
+  // (NODE_INTERFACE → The access-point tool): NetworkManager registers
+  // the interface the systemd unit made on its own time, and the profile
+  // goes up once NetworkManager lists it. Poll `nmcli -t -f DEVICE dev`
   // every 500 ms for at most 20 s.
   let uap0Seen = false;
   for (let i = 0; i < DEVICE_WAIT_ITERATIONS; i++) {

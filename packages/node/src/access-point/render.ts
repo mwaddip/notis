@@ -13,11 +13,15 @@ export interface DnsmasqOptions {
 // starts before the interface holds its address, answers notis.internal
 // with the box's address and refuses every other name at once — `local=/#/`
 // with `no-resolv` and `no-hosts` — and hands out addresses naming the box
-// as router and DNS server. The lease file lives under `/run/dagsocial-ap/`,
-// which the dnsmasq unit creates with `RuntimeDirectory=`.
+// as router and DNS server. `except-interface=lo` keeps dnsmasq off
+// loopback (where `local=/#/` would otherwise answer whatever asked, and
+// where another resolver may sit). The lease file lives under
+// `/run/dagsocial-ap/`, which the dnsmasq unit creates with
+// `RuntimeDirectory=`.
 export function dnsmasqConf(o: DnsmasqOptions): string {
   const lines = [
     `interface=${o.iface}`,
+    'except-interface=lo',
     'bind-dynamic',
     'no-resolv',
     'no-hosts',
@@ -41,9 +45,12 @@ export interface FirewallOptions {
 
 // Step 7's rule set: one table `inet dagsocial_ap`, flushed and redefined
 // so a second load is the same rules. From uap0 the box accepts DHCP, DNS,
-// the node port (after prerouting redirects :80 to it) and the mesh UDP
-// port; every forwarded packet is refused, so a device on the access point
-// learns at once that nothing beyond the box answers.
+// the node port (after prerouting redirects :80 bound for 10.42.0.1 to
+// it) and the mesh UDP port; every forwarded packet is refused, so a
+// device on the access point learns at once that nothing beyond the box
+// answers. The redirect is bound to the box's own address alone, so a
+// request from `uap0` to any other address on tcp 80 is not answered by
+// the box's node.
 export function firewall(o: FirewallOptions): string {
   const q = '"';
   return `# nftables rules for the dagsocial access-point.
@@ -53,7 +60,7 @@ delete table inet dagsocial_ap
 table inet dagsocial_ap {
 \tchain prerouting {
 \t\ttype nat hook prerouting priority -100; policy accept;
-\t\tiifname ${q}${o.iface}${q} tcp dport 80 redirect to :${o.nodePort}
+\t\tiifname ${q}${o.iface}${q} ip daddr 10.42.0.1 tcp dport 80 redirect to :${o.nodePort}
 \t}
 \tchain input {
 \t\ttype filter hook input priority 0; policy accept;

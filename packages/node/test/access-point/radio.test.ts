@@ -1,6 +1,6 @@
-// NODE_INTERFACE → The access-point tool — the parsers that read `iw` and
-// `nmcli` output on the Pi. Each case runs against the fixture from the
-// measured Pi (replaced identifiers only; §3.1 of the design).
+// NODE_INTERFACE → The access-point tool — the parsers that read `iw`
+// and `nmcli` output. Each case runs against a Pi 4B fixture under
+// `test/fixtures/access-point/` (with its identifying values replaced).
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -22,7 +22,7 @@ const nmcliWifi = readFileSync(join(FIX, 'nmcli-wifi-list.txt'), 'utf8');
 const nmcliCon = readFileSync(join(FIX, 'nmcli-con.txt'), 'utf8');
 
 describe('parseCombinations', () => {
-  it('the Pi offers a managed-with-AP combination', () => {
+  it('finds a managed-with-AP combination in the fixture', () => {
     const c = parseCombinations(iwList);
     expect(c.managedWithAp).toBe(true);
   });
@@ -44,7 +44,7 @@ describe('parseCombinations', () => {
 });
 
 describe('parseRadarChannels', () => {
-  it('the Pi reports 52–64 and 100–144 as radar channels', () => {
+  it('flags channels 52–64 and 100–144 as radar in the fixture', () => {
     const r = parseRadarChannels(iwList);
     for (const c of [52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144]) {
       expect(r.has(c)).toBe(true);
@@ -57,7 +57,7 @@ describe('parseRadarChannels', () => {
 });
 
 describe('parseUplink', () => {
-  it('the Pi is on wlan0, SSID HomeNetwork, channel 100', () => {
+  it('reads the uplink as wlan0, SSID HomeNetwork, channel 100 from the fixture', () => {
     const u = parseUplink(iwDevWlan0);
     expect(u).not.toBeNull();
     expect(u!.iface).toBe('wlan0');
@@ -74,7 +74,7 @@ describe('parseUplink', () => {
 });
 
 describe('parseScan', () => {
-  it('the Pi sees HomeNetwork on channel 1 and 100', () => {
+  it('lists HomeNetwork on channel 1 and 100 from the fixture', () => {
     const scan = parseScan(nmcliWifi);
     expect(scan).toEqual([
       { ssid: 'HomeNetwork', channel: 1 },
@@ -104,7 +104,7 @@ describe('parseConnectedWifi', () => {
 });
 
 describe('parseGeneralConnection', () => {
-  it('reads the profile name from the Pi fixture', () => {
+  it('reads the profile name from `nmcli -t -f GENERAL.CONNECTION dev show`', () => {
     // nmcli-con.txt's last line is `GENERAL.CONNECTION:netplan-wlan0-HomeNetwork`.
     expect(parseGeneralConnection(nmcliCon)).toBe('netplan-wlan0-HomeNetwork');
   });

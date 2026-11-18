@@ -25,9 +25,9 @@ const iwDevWlan0_2g = iwDevWlan0.replace(
   'channel 1 (2412 MHz), width: 20 MHz, center1: 2412 MHz',
 );
 
-// A matching pass over the Pi's state: the uplink is on wlan0, channel 100
-// (a radar channel), the network offers 2.4 GHz too, and node.env has no
-// MESH_ROLE.
+// The standard primePi fake: the uplink is on wlan0, channel 100 (a
+// radar channel), the network offers 2.4 GHz too, and node.env has no
+// MESH_ROLE — so `setup` runs the radar-move branch end to end.
 function primePi(r: FakeRunner): FakeRunner {
   r.files.set('/etc/dagsocial/node.env', 'PORT=3000\n');
   const state = { band: '5' as '5' | '2.4' };
@@ -58,12 +58,12 @@ function primePi(r: FakeRunner): FakeRunner {
     (c, a) => c === 'nmcli' && a.includes('SSID,CHAN,FREQ'),
     { stdout: nmcliWifi },
   );
-  // The uplink profile's current band — the fix reads this from
-  // `nmcli -g 802-11-wireless.band con show <profile>` before setting it
-  // to `bg`, and records what it read. A profile with `802-11-wireless.band`
-  // left unset answers an empty line (the measured Pi); this fixture
-  // simulates a profile that declared `a` so the existing remove case can
-  // assert the band back.
+  // The uplink profile's current band — the tool reads it from
+  // `nmcli -g 802-11-wireless.band con show <profile>` before setting
+  // it to `bg`, and records what it read. A profile with no
+  // `802-11-wireless.band` set answers an empty line; this fixture
+  // simulates a profile that declared `a` so the existing remove case
+  // asserts the band back.
   r.on(
     (c, a) =>
       c === 'nmcli' && a.includes('-g')
@@ -332,18 +332,17 @@ describe('status', () => {
   });
 });
 
-// NODE_INTERFACE → The access-point tool — fix-round cases, main's review
-// 2026-11-18: the prior band is read, not fixed; every command's result is
-// checked; record entries land before the commands they name; `remove` is
-// harmless over entries whose commands never ran, warns about the uplink
-// drop whenever `nmConnectionAdded` is present, and runs `daemon-reload`
-// after the walk; `status` reads uap0, the firewall table and the uplink's
-// band.
+// NODE_INTERFACE → The access-point tool — the prior band is read, not
+// fixed; every command's result is checked; record entries land before
+// the commands they name; `remove` is harmless over entries whose
+// commands never ran, warns about the uplink drop whenever
+// `nmConnectionAdded` is present, and runs `daemon-reload` after the
+// walk; `status` reads uap0, the firewall table and the uplink's band.
 
 describe('setup — the prior band is read, not fixed', () => {
   it('records the band read from nmcli -g, empty string included', async () => {
     const r = primePi(new FakeRunner());
-    // The measured Pi profile answers "" — override.
+    // A profile with no band set answers "" — override the fixture's "a".
     r.responses = r.responses.filter((x) => {
       // keep every response except the primePi band-g answer
       const ex = x;
@@ -577,10 +576,11 @@ describe('status — reads each step back from the box', () => {
   });
 });
 
-// NODE_INTERFACE → The access-point tool — fix-round 2 cases, main's
-// Pi measurement 2026-11-18: the tool races NetworkManager over uap0
-// between `systemctl start dagsocial-ap-iface.service` and `nmcli con
-// up dagsocial-ap`; `remove` leaves the tool's directory behind.
+// NODE_INTERFACE → The access-point tool — `setup` waits for
+// NetworkManager to list uap0 between
+// `systemctl start dagsocial-ap-iface.service` and
+// `nmcli con up dagsocial-ap`; `remove` removes the tool's directory
+// when empty.
 
 describe('setup — waits for NetworkManager to list uap0', () => {
   it('lists uap0 only from its third nmcli dev read: con add runs after, two sleep(500) recorded', async () => {

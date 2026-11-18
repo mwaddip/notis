@@ -38,7 +38,7 @@ describe('dnsmasqConf', () => {
     expect(t).toContain('dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases');
   });
 
-  it.fails('declares except-interface=lo so dnsmasq does not bind the loopback', () => {
+  it('declares except-interface=lo so dnsmasq does not bind the loopback', () => {
     const t = dnsmasqConf({
       iface: 'uap0',
       address: '10.42.0.1',
@@ -64,7 +64,7 @@ describe('firewall', () => {
     expect(t).toMatch(/oifname "uap0" drop/);
   });
 
-  it.fails('the tcp 80 redirect is bound to 10.42.0.1, so the box answers no other address', () => {
+  it('the tcp 80 redirect is bound to 10.42.0.1, so the box answers no other address', () => {
     const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
     expect(t).toContain('iifname "uap0" ip daddr 10.42.0.1 tcp dport 80 redirect to :3000');
     // A line matching `tcp dport 80 redirect` without the `ip daddr 10.42.0.1`
