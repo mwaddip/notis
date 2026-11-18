@@ -574,4 +574,29 @@ describe('node-list', () => {
     expect(e.lastFailures[localAddr]?.kind, 'the per-address failure is recorded').toBe('transport');
     expect(e.lastFailures[localAddr2], 'the other address carries no failure').toBeUndefined();
   });
+
+  it.fails('addLocal answers false for an answer that changes nothing, true for a new address and for the mark on an existing entry', () => {
+    // MESH_INTERFACE → Discovery → "A node the access point answers" —
+    // "A check runs at once where the answer added the node, an address
+    // or the mark"; an answer that changes nothing waits for the
+    // check's own cadence. `addLocal` answers `true` only where it
+    // changed the list.
+    const list = new NodeList([], own, () => 0, () => 0);
+    // Fresh entry → true (the new entry case).
+    expect(list.addLocal(idA, [localAddr])).toBe(true);
+    // Same addrs, mark already set → false (nothing changed).
+    expect(list.addLocal(idA, [localAddr])).toBe(false);
+    // A new address on an existing local entry → true.
+    expect(list.addLocal(idA, [localAddr, localAddr2])).toBe(true);
+    // Again with the same two addresses → false.
+    expect(list.addLocal(idA, [localAddr, localAddr2])).toBe(false);
+    // The mark newly set on a first-contact entry → true.
+    const list2 = new NodeList([{ notisId: idB, addrs: [localAddr] }], own, () => 0, () => 0);
+    expect(list2.entry(idB)!.local, 'first-contact starts with local false').toBe(false);
+    expect(list2.addLocal(idB, [localAddr])).toBe(true);
+    expect(list2.entry(idB)!.local, 'the mark is now set').toBe(true);
+    // Same call again → the mark is already set and the address was
+    // already known: nothing changes, false.
+    expect(list2.addLocal(idB, [localAddr])).toBe(false);
+  });
 });

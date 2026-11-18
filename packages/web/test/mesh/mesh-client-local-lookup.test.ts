@@ -441,4 +441,136 @@ describe('mesh client — local lookup', () => {
     const found = snapshot.nodes.find((n) => n.notisId === notisId);
     expect(found, 'the local entry is not remembered at all').toBeUndefined();
   }, 15_000);
+
+  it.fails('an answer that changes nothing runs no check at once', async () => {
+    // MESH_INTERFACE → Discovery → "A node the access point answers":
+    // "A check runs at once where the answer added the node, an
+    // address or the mark"; an answer that changes nothing waits for
+    // the check's own cadence. The scenario: the local entry is
+    // already held with those addresses and the mark set; the next
+    // failing check reads the URL and gets the same answer. `addLocal`
+    // answers `false`, and the client does NOT fire an immediate
+    // check — otherwise a box whose identity answers while its node
+    // does not would be hammered in a tight loop of lookup → addLocal
+    // → immediate check → … within one retry window.
+    const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
+    servers.push(tip.srv);
+    const { notisId, peerId } = makeIdentity();
+    const addr = privateAddr(peerId);
+    const calls: { url: string }[] = [];
+    const stub = identityStub();
+    // Every read answers the same well-formed identity.
+    stub.next = async () => new Response(
+      JSON.stringify({ notisId, peerId, multiaddrs: [], localAddrs: [addr] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: HEX64_A, addrs: [], api: tip.base }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-local',
+      resolve: resolveUnreachable,
+      httpFetch: makeHttpFetch(stub, calls),
+      localLookup: { url: LOCAL_IDENTITY_URL },
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    // See the first case's lead above: the phase-1 dial of the local
+    // webrtc-direct address would crash `node-datachannel`.
+    Object.defineProperty(client.libp2p, 'dial', {
+      value: async () => { throw new Error('test: dial disabled'); },
+      writable: true,
+      configurable: true,
+    });
+    // First check adds the entry, second check reads the URL again
+    // and gets the same answer. The control: the second check is the
+    // `triggerImmediateCheck` the first lookup fired — it runs because
+    // that first lookup DID add the entry. We wait for `checks` to
+    // reach 2 as proof, then measure what the SECOND lookup does.
+    await client.check();
+    await waitFor(() => client.state().checks >= 2);
+    expect(client.state().nodes.find((e) => e.notisId === notisId)?.local).toBe(true);
+    // At this point lookups made so far (`reads`): the first lookup
+    // after check 1 fired and added the entry; the immediate check
+    // (check 2) ran, read every candidate as unreachable, and fired
+    // the second lookup. Wait for `reads === 2`.
+    await waitFor(() => client.state().localLookup.reads >= 2);
+    expect(client.state().localLookup.reads).toBe(2);
+    const checksAtSecondLookup = client.state().checks;
+    const readsAtSecondLookup = client.state().localLookup.reads;
+    // Hold for a window far below `CHECK_INTERVAL_MS` (60 s) to see
+    // whether the second lookup's answer (which adds nothing) fires
+    // a third check at 0 ms. It must not: no new `check` event, no
+    // rise in `checks`, no rise in `reads`.
+    const checkEventsBefore = captured.filter((e) => e.kind === 'check').length;
+    await new Promise((r) => setTimeout(r, 300));
+    const checkEventsAfter = captured.filter((e) => e.kind === 'check').length;
+    expect(checkEventsAfter, 'no new check event while the answer changed nothing').toBe(checkEventsBefore);
+    expect(client.state().checks, 'the counter did not move').toBe(checksAtSecondLookup);
+    expect(client.state().localLookup.reads, 'no new lookup fired').toBe(readsAtSecondLookup);
+    // Control: trigger another check by hand and observe the counter
+    // moves — proof that the counter would have moved had the no-op
+    // answer fired one.
+    await client.check();
+    expect(client.state().checks, 'the counter moves when a check does run').toBeGreaterThan(checksAtSecondLookup);
+  }, 30_000);
+
+  it('a client holding a connection reads nothing — asserted at the condition clause', async () => {
+    // MESH_INTERFACE → Discovery → "A node the access point answers":
+    // the read runs "while it holds no connection". The harness
+    // cannot open a real libp2p connection in this environment —
+    // every `addByHand`/`addLocal` with a webrtc-direct address runs
+    // afoul of `node-datachannel`'s native crash in `createDataChannel`
+    // (see the first case's lead). The scheduler checks the condition
+    // through `this.libp2p.getConnections().length !== 0`; this test
+    // asserts the condition at that clause by overriding
+    // `getConnections` with a fake and reading the lookup's state
+    // after a check — no event, no rise in `reads`.
+    const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
+    servers.push(tip.srv);
+    const calls: { url: string }[] = [];
+    const stub = identityStub();
+    stub.next = () => Promise.reject(new Error('ECONNREFUSED'));
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [{ notisId: HEX64_A, addrs: [], api: tip.base }],
+      network: 'devnet',
+      profile: PROFILE,
+      agentName: 'notis-mesh-local',
+      resolve: resolveUnreachable,
+      httpFetch: makeHttpFetch(stub, calls),
+      localLookup: { url: LOCAL_IDENTITY_URL },
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+    // Fake a held connection: `getConnections` answers non-empty,
+    // which is what the scheduler's connection clause reads. The
+    // fake's `remotePeer` is a peer id string no entry's key maps
+    // to, so `hasOpenConnection` and the decoration pass's
+    // `pickConnectionForLabel` answer `null` for every entry and
+    // nothing dereferences a missing field.
+    const fakeConn: unknown = {
+      id: 'fake-conn',
+      remotePeer: { toString: () => '12D3KooWFakeConnectionPeerIdNotMatchingAnyEntry0000' },
+      remoteAddr: { toString: () => '/ip4/127.0.0.1/tcp/4444' },
+      direction: 'outbound',
+      limits: null,
+    };
+    Object.defineProperty(client.libp2p, 'getConnections', {
+      value: () => [fakeConn],
+      writable: true,
+      configurable: true,
+    });
+    await client.check();
+    // A short window is enough: the lookup would have fired in the
+    // `.finally` at 0 ms. We wait a fuzz period to rule out a race.
+    await new Promise((r) => setTimeout(r, 50));
+    const identityCalls = calls.filter((c) => c.url === LOCAL_IDENTITY_URL);
+    expect(identityCalls.length, 'no lookup read while a connection is held').toBe(0);
+    expect(client.state().localLookup.reads).toBe(0);
+    expect(client.state().localLookup.last).toBeNull();
+    const localEvents = captured.filter((e) => e.kind === 'local-lookup');
+    expect(localEvents.length).toBe(0);
+  }, 15_000);
 });
