@@ -67,7 +67,7 @@ describe('setup', () => {
     r = primePi(new FakeRunner());
   });
 
-  it.fails('refuses when not root', async () => {
+  it('refuses when not root', async () => {
     r.root = false;
     const code = await main(['setup'], r);
     expect(code).not.toBe(0);
@@ -77,7 +77,7 @@ describe('setup', () => {
     expect(r.calls.filter((c) => c.cmd === 'systemctl')).toEqual([]);
   });
 
-  it.fails('refuses a half-done record, saying to run `remove`', async () => {
+  it('refuses a half-done record, saying to run `remove`', async () => {
     const half: AccessPointRecord = {
       entries: [{ kind: 'nodeEnvEdited', priorText: 'PORT=3000\n' }],
       complete: false,
@@ -89,14 +89,14 @@ describe('setup', () => {
     expect(r.writes.find((w) => w.path === '/etc/dagsocial/node.env')).toBeUndefined();
   });
 
-  it.fails('refuses a public node', async () => {
+  it('refuses a public node', async () => {
     r.files.set('/etc/dagsocial/node.env', 'MESH_ROLE=public\n');
     const code = await main(['setup'], r);
     expect(code).not.toBe(0);
     expect(r.logs.join('\n')).toMatch(/public/i);
   });
 
-  it.fails('refuses a radio without the managed-with-AP combination', async () => {
+  it('refuses a radio without the managed-with-AP combination', async () => {
     r.responses = [];
     r.on(
       (c, a) => c === 'iw' && a[0] === 'list',
@@ -107,7 +107,7 @@ describe('setup', () => {
     expect(r.logs.join('\n')).toMatch(/combination|managed.*AP|AP/i);
   });
 
-  it.fails('refuses a --password shorter than 8 or longer than 63', async () => {
+  it('refuses a --password shorter than 8 or longer than 63', async () => {
     const short = await main(['setup', '--password', 'short'], r);
     expect(short).not.toBe(0);
     expect(r.logs.join('\n')).toMatch(/password/i);
@@ -116,13 +116,13 @@ describe('setup', () => {
     expect(long).not.toBe(0);
   });
 
-  it.fails('refuses a --name longer than 32 bytes', async () => {
+  it('refuses a --name longer than 32 bytes', async () => {
     const code = await main(['setup', '--name', 'x'.repeat(33)], r);
     expect(code).not.toBe(0);
     expect(r.logs.join('\n')).toMatch(/name/i);
   });
 
-  it.fails('refuses a radar uplink whose network offers no 2.4 GHz channel', async () => {
+  it('refuses a radar uplink whose network offers no 2.4 GHz channel', async () => {
     // A fresh runner with only 5 GHz in the scan.
     const r2 = new FakeRunner();
     r2.files.set('/etc/dagsocial/node.env', 'PORT=3000\n');
@@ -148,7 +148,7 @@ describe('setup', () => {
     expect(r2.logs.join('\n')).toMatch(/2\.4|2 ?GHz/i);
   });
 
-  it.fails('a fresh setup runs the steps in order and writes the record', async () => {
+  it('a fresh setup runs the steps in order and writes the record', async () => {
     const code = await main(['setup'], r);
     expect(code).toBe(0);
     // The record is complete.
@@ -190,7 +190,7 @@ describe('setup', () => {
     expect(nmAdd!.args.join(' ')).not.toContain('wpa-psk');
   });
 
-  it.fails('a second setup on a complete record changes nothing', async () => {
+  it('a second setup on a complete record changes nothing', async () => {
     // First run.
     await main(['setup'], r);
     const after = new FakeRunner();
@@ -204,7 +204,7 @@ describe('setup', () => {
     expect(after.logs.join('\n')).toMatch(/already/i);
   });
 
-  it.fails('--name X --password Y names the profile X and sets WPA2 with Y', async () => {
+  it('--name X --password Y names the profile X and sets WPA2 with Y', async () => {
     const code = await main(['setup', '--name', 'MyAP', '--password', 'secret123'], r);
     expect(code).toBe(0);
     const nmAdd = r.calls.find((c) => c.cmd === 'nmcli' && c.args.includes('add') && c.args.includes('wifi'));
@@ -217,7 +217,7 @@ describe('setup', () => {
 });
 
 describe('remove', () => {
-  it.fails('restores exactly what the record names, in reverse, and warns about the uplink drop', async () => {
+  it('restores exactly what the record names, in reverse, and warns about the uplink drop', async () => {
     const r = primePi(new FakeRunner());
     await main(['setup'], r);
     // Verify setup completed.
@@ -263,7 +263,7 @@ describe('remove', () => {
     void beforeRemoveWrites;
   });
 
-  it.fails('after a setup that stopped at step N, undoes steps 1…N−1 (Review Focus 4)', async () => {
+  it('after a setup that stopped at step N, undoes steps 1…N−1 (Review Focus 4)', async () => {
     // A hand-built half-done record: only node.env was edited.
     const r = new FakeRunner();
     r.files.set(RECORD_PATH, serializeRecord({
@@ -284,7 +284,7 @@ describe('remove', () => {
 });
 
 describe('status', () => {
-  it.fails('reads each step back and reports completion', async () => {
+  it('reads each step back and reports completion', async () => {
     const r = primePi(new FakeRunner());
     await main(['setup'], r);
     const after = new FakeRunner();
@@ -300,7 +300,7 @@ describe('status', () => {
     expect(text).toContain('dagsocial-ap-firewall.service');
   });
 
-  it.fails('refuses when not root', async () => {
+  it('refuses when not root', async () => {
     const r = new FakeRunner();
     r.root = false;
     const code = await main(['status'], r);

@@ -12,13 +12,13 @@ import type { Uplink } from '../../src/access-point/radio.js';
 const radarSet = new Set([52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144]);
 
 describe('chooseChannel', () => {
-  it.fails('follows a non-radar uplink', () => {
+  it('follows a non-radar uplink', () => {
     const uplink: Uplink = { iface: 'wlan0', ssid: 'Home', channel: 6 };
     const c = chooseChannel(uplink, radarSet, [{ ssid: 'Home', channel: 6 }]);
     expect(c).toEqual({ kind: 'follow', channel: 6 });
   });
 
-  it.fails('moves a radar uplink to 2.4 GHz where the network offers one', () => {
+  it('moves a radar uplink to 2.4 GHz where the network offers one', () => {
     const uplink: Uplink = { iface: 'wlan0', ssid: 'HomeNetwork', channel: 100 };
     const scan = [
       { ssid: 'HomeNetwork', channel: 1 },
@@ -28,7 +28,7 @@ describe('chooseChannel', () => {
     expect(c).toEqual({ kind: 'move-to-2g' });
   });
 
-  it.fails('refuses a radar uplink whose network offers no 2.4 GHz channel', () => {
+  it('refuses a radar uplink whose network offers no 2.4 GHz channel', () => {
     const uplink: Uplink = { iface: 'wlan0', ssid: 'HomeNetwork', channel: 100 };
     const scan = [
       { ssid: 'HomeNetwork', channel: 100 },
@@ -40,7 +40,7 @@ describe('chooseChannel', () => {
     expect(c.reason).toMatch(/2\.4|2 ?GHz/i);
   });
 
-  it.fails('with no uplink, picks a non-radar 2.4 GHz channel', () => {
+  it('with no uplink, picks a non-radar 2.4 GHz channel', () => {
     const c = chooseChannel(null, radarSet, []);
     expect(c.kind).toBe('own');
     if (c.kind !== 'own') throw new Error('wrong kind');
@@ -49,7 +49,7 @@ describe('chooseChannel', () => {
 });
 
 describe('nodeEnvPlan', () => {
-  it.fails('no MESH_ROLE: appends MESH_ROLE=private and MESH_LISTEN', () => {
+  it('no MESH_ROLE: appends MESH_ROLE=private and MESH_LISTEN', () => {
     const r = nodeEnvPlan('PORT=3000\n', { meshPort: 9733 });
     expect(r.kind).toBe('edit');
     if (r.kind !== 'edit') throw new Error('wrong kind');
@@ -58,14 +58,14 @@ describe('nodeEnvPlan', () => {
     expect(r.text).toContain('MESH_LISTEN=/ip4/0.0.0.0/udp/9733/webrtc-direct');
   });
 
-  it.fails('private with a matching webrtc-direct listen: unchanged', () => {
+  it('private with a matching webrtc-direct listen: unchanged', () => {
     const text =
       'PORT=3000\nMESH_ROLE=private\nMESH_LISTEN=/ip4/0.0.0.0/udp/9733/webrtc-direct\n';
     const r = nodeEnvPlan(text, { meshPort: 9733 });
     expect(r).toEqual({ kind: 'unchanged', meshUdpPort: 9733 });
   });
 
-  it.fails('private without a webrtc-direct listen: gains one on the first free port', () => {
+  it('private without a webrtc-direct listen: gains one on the first free port', () => {
     const text = 'PORT=3000\nMESH_ROLE=private\nMESH_LISTEN=/ip4/0.0.0.0/tcp/9733\n';
     const r = nodeEnvPlan(text, { meshPort: 9733 });
     expect(r.kind).toBe('edit');
@@ -76,7 +76,7 @@ describe('nodeEnvPlan', () => {
     );
   });
 
-  it.fails('a private node with UDP 9733 in use picks 9734', () => {
+  it('a private node with UDP 9733 in use picks 9734', () => {
     const text =
       'MESH_ROLE=private\nMESH_LISTEN=/ip4/0.0.0.0/udp/9733/quic-v1,/ip4/0.0.0.0/tcp/9734\n';
     const r = nodeEnvPlan(text, { meshPort: 9733 });
@@ -85,7 +85,7 @@ describe('nodeEnvPlan', () => {
     expect(r.meshUdpPort).toBe(9735);
   });
 
-  it.fails('a public node is refused', () => {
+  it('a public node is refused', () => {
     const text = 'MESH_ROLE=public\n';
     const r = nodeEnvPlan(text, { meshPort: 9733 });
     expect(r.kind).toBe('refuse');

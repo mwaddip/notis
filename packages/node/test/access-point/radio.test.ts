@@ -22,19 +22,19 @@ const nmcliWifi = readFileSync(join(FIX, 'nmcli-wifi-list.txt'), 'utf8');
 const nmcliCon = readFileSync(join(FIX, 'nmcli-con.txt'), 'utf8');
 
 describe('parseCombinations', () => {
-  it.fails('the Pi offers a managed-with-AP combination', () => {
+  it('the Pi offers a managed-with-AP combination', () => {
     const c = parseCombinations(iwList);
     expect(c.managedWithAp).toBe(true);
   });
 
-  it.fails('a radio without any AP line answers managedWithAp: false', () => {
+  it('a radio without any AP line answers managedWithAp: false', () => {
     const noAp = `valid interface combinations:
 \t * #{ managed } <= 2, total <= 2, #channels <= 1
 `;
     expect(parseCombinations(noAp).managedWithAp).toBe(false);
   });
 
-  it.fails('a combination with managed alone, another with AP alone, is refused', () => {
+  it('a combination with managed alone, another with AP alone, is refused', () => {
     const split = `valid interface combinations:
 \t * #{ managed } <= 2, total <= 2, #channels <= 1
 \t * #{ AP } <= 1, total <= 1, #channels <= 1
@@ -44,7 +44,7 @@ describe('parseCombinations', () => {
 });
 
 describe('parseRadarChannels', () => {
-  it.fails('the Pi reports 52–64 and 100–144 as radar channels', () => {
+  it('the Pi reports 52–64 and 100–144 as radar channels', () => {
     const r = parseRadarChannels(iwList);
     for (const c of [52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144]) {
       expect(r.has(c)).toBe(true);
@@ -57,7 +57,7 @@ describe('parseRadarChannels', () => {
 });
 
 describe('parseUplink', () => {
-  it.fails('the Pi is on wlan0, SSID HomeNetwork, channel 100', () => {
+  it('the Pi is on wlan0, SSID HomeNetwork, channel 100', () => {
     const u = parseUplink(iwDevWlan0);
     expect(u).not.toBeNull();
     expect(u!.iface).toBe('wlan0');
@@ -65,7 +65,7 @@ describe('parseUplink', () => {
     expect(u!.channel).toBe(100);
   });
 
-  it.fails('an `iw dev` without a wlan0 info block answers null', () => {
+  it('an `iw dev` without a wlan0 info block answers null', () => {
     // The `iw dev` output alone doesn't carry channel for an unassociated
     // interface — parseUplink reads `iw dev <dev> info`, so a non-info
     // text with no ssid line answers null.
@@ -74,7 +74,7 @@ describe('parseUplink', () => {
 });
 
 describe('parseScan', () => {
-  it.fails('the Pi sees HomeNetwork on channel 1 and 100', () => {
+  it('the Pi sees HomeNetwork on channel 1 and 100', () => {
     const scan = parseScan(nmcliWifi);
     expect(scan).toEqual([
       { ssid: 'HomeNetwork', channel: 1 },
@@ -82,7 +82,7 @@ describe('parseScan', () => {
     ]);
   });
 
-  it.fails('a colon escape in the SSID is honoured', () => {
+  it('a colon escape in the SSID is honoured', () => {
     const txt = `my\\:net:1:2412 MHz\nother:6:2437 MHz\n`;
     expect(parseScan(txt)).toEqual([
       { ssid: 'my:net', channel: 1 },
@@ -92,30 +92,30 @@ describe('parseScan', () => {
 });
 
 describe('parseConnectedWifi', () => {
-  it.fails('reads the connected wifi device name from nmcli dev', () => {
+  it('reads the connected wifi device name from nmcli dev', () => {
     const txt = `lo:loopback:unmanaged\nwlan0:wifi:connected\neth0:ethernet:unavailable\n`;
     expect(parseConnectedWifi(txt)).toBe('wlan0');
   });
 
-  it.fails('answers null when no wifi device is connected', () => {
+  it('answers null when no wifi device is connected', () => {
     const txt = `lo:loopback:unmanaged\nwlan0:wifi:disconnected\n`;
     expect(parseConnectedWifi(txt)).toBeNull();
   });
 });
 
 describe('parseGeneralConnection', () => {
-  it.fails('reads the profile name from the Pi fixture', () => {
+  it('reads the profile name from the Pi fixture', () => {
     // nmcli-con.txt's last line is `GENERAL.CONNECTION:netplan-wlan0-HomeNetwork`.
     expect(parseGeneralConnection(nmcliCon)).toBe('netplan-wlan0-HomeNetwork');
   });
 
-  it.fails('answers null when the profile line is missing', () => {
+  it('answers null when the profile line is missing', () => {
     expect(parseGeneralConnection('OTHER:thing\n')).toBeNull();
   });
 });
 
 describe('parseUplink on iw-dev.txt', () => {
-  it.fails('reads the same fields from the whole-device `iw dev` output', () => {
+  it('reads the same fields from the whole-device `iw dev` output', () => {
     // The tool calls `iw dev <dev> info`, but the whole-device output
     // carries the same lines for an associated interface — the parser
     // reads the first interface block it finds.
