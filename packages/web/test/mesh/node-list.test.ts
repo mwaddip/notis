@@ -575,7 +575,7 @@ describe('node-list', () => {
     expect(e.lastFailures[localAddr2], 'the other address carries no failure').toBeUndefined();
   });
 
-  it.fails('addLocal answers false for an answer that changes nothing, true for a new address and for the mark on an existing entry', () => {
+  it('addLocal answers false for an answer that changes nothing, true for a new address and for the mark on an existing entry', () => {
     // MESH_INTERFACE → Discovery → "A node the access point answers" —
     // "A check runs at once where the answer added the node, an address
     // or the mark"; an answer that changes nothing waits for the

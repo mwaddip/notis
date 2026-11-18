@@ -442,7 +442,7 @@ describe('mesh client — local lookup', () => {
     expect(found, 'the local entry is not remembered at all').toBeUndefined();
   }, 15_000);
 
-  it.fails('an answer that changes nothing runs no check at once', async () => {
+  it('an answer that changes nothing runs no check at once', async () => {
     // MESH_INTERFACE → Discovery → "A node the access point answers":
     // "A check runs at once where the answer added the node, an
     // address or the mark"; an answer that changes nothing waits for

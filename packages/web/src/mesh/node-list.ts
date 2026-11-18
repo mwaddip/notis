@@ -375,11 +375,15 @@ export class NodeList {
    * key alone (→ Transports → "A client dials a private address only
    * when its own configuration names it"). An existing entry merges
    * the addresses, merges them into `configured`, and takes the
-   * `local` mark. A `blacklisted` entry, and the client's own key,
-   * are left as they are and the call answers `false`; every other
-   * case answers `true`. The key check is `add`'s (64 lowercase
-   * hex); the address checks (DNS, `/webrtc-direct/`, the loopback
-   * rule) are the lookup's, not the list's.
+   * `local` mark. Answers `true` only where the call changed the
+   * list — a new entry, an address `addrs`/`configured` did not
+   * hold, or the `local` mark newly set — so the client calls
+   * `triggerImmediateCheck` only where the answer added the node,
+   * an address or the mark (the rule). An answer that changes
+   * nothing answers `false`, as does a `blacklisted` entry and the
+   * client's own key. The key check is `add`'s (64 lowercase hex);
+   * the address checks (DNS, `/webrtc-direct/`, the loopback rule)
+   * are the lookup's, not the list's.
    */
   addLocal(id: string, addrs: string[]): boolean {
     assertNotisId(id);
@@ -387,10 +391,15 @@ export class NodeList {
     const existing = this.entries_.get(id);
     if (existing) {
       if (existing.status === 'blacklisted') return false;
+      const addrsBefore = existing.addrs.length;
+      const configuredBefore = existing.configured.length;
+      const markBefore = existing.local;
       this.mergeAddrs(existing, addrs);
       this.mergeConfigured(existing, addrs);
       existing.local = true;
-      return true;
+      return existing.addrs.length !== addrsBefore
+        || existing.configured.length !== configuredBefore
+        || existing.local !== markBefore;
     }
     this.entries_.set(id, {
       notisId: id,
