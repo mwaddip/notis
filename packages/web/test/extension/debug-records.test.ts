@@ -125,7 +125,6 @@ const CHAIN_B = 'ef'.repeat(32);
 
 describe("the write client's walk records one `write` at its ending", () => {
   it('a walk the second base answers records one `write` with that base, two nodes tried and the status', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     let count = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, _init?: RequestInit) => {
@@ -156,7 +155,6 @@ describe("the write client's walk records one `write` at its ending", () => {
   });
 
   it('an exhausted walk records `noAnswer`', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
     const client = new WriteClient({
@@ -172,7 +170,6 @@ describe("the write client's walk records one `write` at its ending", () => {
   });
 
   it("a walk's recorded route holds no 64-hex run", async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(
@@ -208,7 +205,6 @@ function wireBackground(c: ReturnType<typeof fakeChrome>, answers: Record<string
 
 describe("the proxy records one `sign` per answer, with the policy in force", () => {
   it('a signed `sign` records its outcome with the policy', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
       state: { pubKeyHex: PUB, locked: false, backedUp: true, policy: 'ask' },
@@ -224,7 +220,6 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
   });
 
   it('a declined `sign` records its outcome with the policy', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     const PROMPT_ID = 'aabb' + '00'.repeat(14);
     wireBackground(c, {
@@ -256,7 +251,6 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
   });
 
   it('a refused `sign` records its outcome with its reason and the policy', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
       state: { pubKeyHex: PUB, locked: false, backedUp: true, policy: 'silent' },
@@ -272,7 +266,6 @@ describe("the proxy records one `sign` per answer, with the policy in force", ()
   });
 
   it('a locked `sign` records its outcome with the policy', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const c = fakeChrome();
     wireBackground(c, {
       state: { pubKeyHex: PUB, locked: true, backedUp: true, policy: 'silent' },
@@ -311,7 +304,6 @@ function waitToLog(log: DebugLog): WaitRecorder {
 
 describe("the waiting store records `queued` at a new write", () => {
   it('a waitable write kept in the store records `queued` with its kind, ledger and txId', async () => {
-    // plain-`it` failure: AssertionError: expected [] to have a length of 1 but got +0
     const log = makeDebugLog();
     const store = new WaitingStore(PUB, {
       storage: fakeStorage(),
@@ -390,7 +382,6 @@ function seedRepWrite(
 
 describe("the send pass records each outcome and `no answer` for the write it stopped at", () => {
   it('a pass with a sent, a refused, two unsents, a `no answer` and one write after the stop records the five, and nothing for the write after', async () => {
-    // plain-`it` failure: AssertionError: expected [] to deeply equal [ { outcome: 'sent', txId: 't1' }, …(4 more) ]
     const storage = fakeStorage();
     const store = new WaitingStore(PUB, { storage, locks: fakeLockManager() });
     const ledger = new PendingLedger(PUB);
