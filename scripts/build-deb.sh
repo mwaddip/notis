@@ -35,6 +35,7 @@ pnpm build
 echo "==> Assembling staging tree in $STAGING"
 mkdir -p "$APP_DIR"
 mkdir -p "$STAGING/etc/dagsocial"
+mkdir -p "$STAGING/usr/bin"
 mkdir -p "$STAGING/usr/lib/systemd/system"
 mkdir -p "$STAGING/DEBIAN"
 
@@ -56,6 +57,18 @@ cp "$REPO_ROOT/tools/faucet/scripts/dagsocial-faucet.service" \
 # `packages/node/scripts/dagsocial-miner.service` is the reference miner
 # unit an operator copies in and fills (NODE_INTERFACE → The packaged node
 # → "File modes are the operator's"); the .deb does not ship it.
+
+# ---------------------------------------------------------------------------
+# 4a. The access-point tool wrapper
+#     NODE_INTERFACE → The access-point tool → "The tool is opt-in":
+#     /usr/bin/dagsocial-access-point runs dist/access-point.js on the
+#     system's Node. The package's install and upgrade never run it.
+# ---------------------------------------------------------------------------
+cat > "$STAGING/usr/bin/dagsocial-access-point" <<'APEOF'
+#!/bin/sh
+exec /usr/bin/node /opt/dagsocial/dist/access-point.js "$@"
+APEOF
+chmod 755 "$STAGING/usr/bin/dagsocial-access-point"
 
 # ---------------------------------------------------------------------------
 # 5. Default environment file
