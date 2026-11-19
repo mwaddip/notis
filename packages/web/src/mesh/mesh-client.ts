@@ -414,6 +414,15 @@ export interface ClientState {
     reads: number;
     last: { check: number; result: 'answered' | 'failed' | 'refused' } | null;
   };
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the feed
+   * again" — "Until the page's first check has ended, the feed's
+   * no-node line reads *searching for a connection…*". `false` at
+   * start; `true` once the first check's `runCheck` has ended and the
+   * access-point lookup it triggered, where one ran, has ended too.
+   * The field stays `true` for every state write after.
+   */
+  firstCheckEnded: boolean;
 }
 
 /**
@@ -692,6 +701,14 @@ export interface MeshClient {
    */
   order(need: ReadNeed): string[];
   check(): Promise<void>;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — resolves once the first `runCheck` has ended and
+   * the access-point lookup it triggered, where one ran, has ended
+   * too. The TipVerifier awaits this before reading state so a first
+   * run never returns `firstCheckEnded: false`.
+   */
+  whenFirstCheckEnded(): Promise<void>;
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
@@ -1019,6 +1036,18 @@ class MeshClientImpl implements MeshClient {
    * lookup entirely.
    */
   private readonly localLookupUrl: string | null;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — resolves once `state_.firstCheckEnded` becomes true:
+   * the first `runCheck` has ended and the access-point lookup it
+   * triggered, where one ran, has ended too. The TipVerifier awaits
+   * this before reading state so a first run never reports a lookup
+   * that has not finished yet.
+   */
+  private firstCheckEndedResolve: (() => void) | null = null;
+  private readonly firstCheckEndedP: Promise<void> = new Promise<void>((resolve) => {
+    this.firstCheckEndedResolve = resolve;
+  });
   private readonly latestEventReason = new Map<string, string>();
   private readonly wallClock: () => number;
   private readonly random: () => number;
@@ -1236,7 +1265,16 @@ class MeshClientImpl implements MeshClient {
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
-        this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
+        if (s.local === true) {
+          // MESH_INTERFACE → What the client remembers — "a remembered
+          // `local` node marked `local` again, its addresses passing
+          // the gater for that key alone". `addLocal` writes the
+          // entry's `local` mark and puts its addresses in
+          // `configured`, so the gater lets them through for this key.
+          this.nodeList.addLocal(s.notisId, s.addrs);
+        } else {
+          this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
+        }
       }
     }
     this.ownId = ownId;
@@ -1290,6 +1328,7 @@ class MeshClientImpl implements MeshClient {
       notContinued: false,
       disagreement: null,
       localLookup: { reads: 0, last: null },
+      firstCheckEnded: false,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -1806,10 +1845,43 @@ class MeshClientImpl implements MeshClient {
           // check rather than blocking this one's caller. A caller
           // awaiting `check()` returns at once; the lookup's event
           // and state write land as the read answers.
-          void this.runLocalLookup();
+          // WEB_INTERFACE → The extension → "A page's first node reads
+          // the feed again" — "its access-point lookup, where one
+          // ran, ended too": the lookup's own resolve path flips
+          // `firstCheckEnded` after it writes its result.
+          void this.runLocalLookup().finally(() => this.markFirstCheckEnded());
+        } else {
+          // No lookup due — the first check's end is the signal.
+          this.markFirstCheckEnded();
         }
       });
     return this.checkInProgress;
+  }
+
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — flip `firstCheckEnded` to true where it is still
+   * false, emit a state change and resolve the waiter. Idempotent:
+   * a second call does nothing.
+   */
+  private markFirstCheckEnded(): void {
+    if (this.state_.firstCheckEnded) return;
+    this.state_.firstCheckEnded = true;
+    this.emitStateChange();
+    const r = this.firstCheckEndedResolve;
+    this.firstCheckEndedResolve = null;
+    if (r !== null) r();
+  }
+
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — the TipVerifier awaits this before reading the
+   * client's state, so the first `tipRunOf(state())` call never
+   * returns a `firstCheckEnded: false` transient a later state write
+   * will flip. Resolves at once once the flag is true.
+   */
+  whenFirstCheckEnded(): Promise<void> {
+    return this.firstCheckEndedP;
   }
 
   /**

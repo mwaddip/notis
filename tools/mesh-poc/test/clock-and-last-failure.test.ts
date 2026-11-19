@@ -78,7 +78,7 @@ function emptyState(over: Partial<ClientState> = {}): ClientState {
     chain: over.chain ?? null,
     notContinued: over.notContinued ?? false,
     disagreement: over.disagreement ?? null,
-    localLookup: over.localLookup ?? { reads: 0, last: null },
+    localLookup: over.localLookup ?? { reads: 0, last: null }, firstCheckEnded: over.firstCheckEnded ?? false,
   };
 }
 

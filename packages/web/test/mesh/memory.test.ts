@@ -276,7 +276,7 @@ describe('memory — nodesToRemember', () => {
   // dial — no private address but a `local` node's own, never its own
   // key". A `local` entry keeps its private address and comes through
   // marked `local`; a non-`local` private address is still refused.
-  it.fails('a local entry is remembered with its private address and the mark', () => {
+  it('a local entry is remembered with its private address and the mark', () => {
     const own = '0'.repeat(63) + '1';
     const idA = 'a'.repeat(64);
     const privateLocal = `/ip4/10.78.79.1/udp/9733/webrtc-direct/certhash/uEiDXXXX/p2p/${'a'.repeat(52)}`;

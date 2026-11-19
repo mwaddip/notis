@@ -40,7 +40,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     chain: null,
     notContinued: false,
     disagreement: null,
-    localLookup: { reads: 0, last: null },
+    localLookup: { reads: 0, last: null }, firstCheckEnded: false,
     ...overrides,
   };
 }
@@ -64,6 +64,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     base: hooks.base ?? ((): string | null => null),
     order: hooks.order ?? ((): string[] => []),
     check: hooks.check ?? ((): Promise<void> => Promise.resolve()),
+    whenFirstCheckEnded: (): Promise<void> => Promise.resolve(),
     state: hooks.state ?? ((): ClientState => emptyState()),
     onState: () => () => {},
     stop: hooks.stop ?? ((): Promise<void> => Promise.resolve()),

@@ -71,7 +71,7 @@ function fakeHeader(height: number, suffix = 'aa'): Anchor['tip'] {
 function anchorFor(h: number): Anchor { return { tip: fakeHeader(h), suffixHead: fakeHeader(h - 19) }; }
 const verifiedVerdict = (nodes: number, height: number): TipVerdict => ({ kind: 'verified', nodes, height });
 
-interface TipRunLike { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }
+interface TipRunLike { verdict: TipVerdict; anchor: Anchor | null; chain: string | null; firstCheckEnded?: boolean }
 interface TipTrap { resolve: (v: TipRunLike) => void; reject: (e: unknown) => void; promise: Promise<TipRunLike> }
 
 interface KarmaBehavior {

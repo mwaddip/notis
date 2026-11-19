@@ -419,7 +419,7 @@ describe('mesh memory store', () => {
   // MESH_INTERFACE → What the client remembers — "a remembered `local`
   // node marked `local` again". A stored contact with `local: true` is
   // read back with the mark; one without the field reads as not local.
-  it.fails('a stored contact carrying the local mark reads back local, one without it reads as not local', async () => {
+  it('a stored contact carrying the local mark reads back local, one without it reads as not local', async () => {
     const storage = fakeStorage();
     const locks = fakeLocks();
     const store = createMeshMemoryStore({

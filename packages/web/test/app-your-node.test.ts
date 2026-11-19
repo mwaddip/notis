@@ -52,7 +52,7 @@ const fakeHeader = (height: number, tag: string): BlockHeader => ({
 const anchorFor = (height: number, tag: string): Anchor => ({ tip: fakeHeader(height, tag), suffixHead: fakeHeader(height - 19, tag) });
 const yourNodeMemory = (): TipVerdict => ({ kind: 'refused', reason: 'your-node', which: 'memory', height: 100 });
 
-interface TipRunLike { verdict: TipVerdict; anchor: Anchor | null; chain: string | null }
+interface TipRunLike { verdict: TipVerdict; anchor: Anchor | null; chain: string | null; firstCheckEnded?: boolean }
 
 interface Harness {
   app: App;
@@ -257,7 +257,7 @@ const unseatedWithQuestion = (): ClientState => ({
     other: null,
     fork: 'cc'.repeat(32),
   },
-  localLookup: { reads: 0, last: null },
+  localLookup: { reads: 0, last: null }, firstCheckEnded: false,
 });
 
 describe('a question standing before any chain is seated', () => {

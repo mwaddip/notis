@@ -579,7 +579,7 @@ describe('mesh client — local lookup', () => {
   // key alone". The mesh client's constructor consumes a `local: true`
   // seed through `NodeList.addLocal`, so its private addresses are
   // configured for the key — and only that key.
-  it.fails('a remembered local node comes back local and its address passes the gater for that key alone', async () => {
+  it('a remembered local node comes back local and its address passes the gater for that key alone', async () => {
     const tip = await startTipServer({ status: 200, body: JSON.stringify({ height: 7, hash: 'b'.repeat(64) }) });
     servers.push(tip.srv);
     const { notisId, peerId } = makeIdentity();

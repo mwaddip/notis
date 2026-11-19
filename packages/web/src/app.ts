@@ -365,6 +365,25 @@ export class App {
   private lastVerifyBeganAt: number | null = null;
   private verifyInFlight = false;
   private verifyGen = 0;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the feed
+   * again" — the latest `TipRun.firstCheckEnded` the App has read. The
+   * mesh client's first check and the lookup it triggered, where one
+   * ran, have both ended once this is true. The feed's no-node line
+   * reads *searching for a connection…* while it is false (and the
+   * feed found no node), and *no node answered — set one in settings*
+   * once it is true.
+   */
+  private firstCheckEnded = false;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the feed
+   * again" — "a page whose feed found no node before its first check
+   * reached one reads the feed once more when it does". Set when
+   * `loadFeed` fails against a build with a verifier; cleared on the
+   * next successful `loadFeed`. The cornerTick's first answer after it
+   * is set re-reads the feed.
+   */
+  private feedFoundNoNode = false;
   // The presses waiting on the run in flight — a send to a handle that needs a
   // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
   // run's end settles each with its verdict and anchor; a run that ends without
@@ -2309,12 +2328,26 @@ export class App {
       this.flushWaitingWrites();
     } catch (e) {
       if (gen !== this.readerGen) return;
-      // No stored preference and a seed list — walk it, adopting the first one
-      // that answers, for the session only (WEB_INTERFACE → "The client is
-      // served from the node's own origin"). When none answers, the friendly
-      // line names the state. An adoption moves the generation, and its page
-      // lands under the generation the adoption opened.
-      if (readStore(KEY_NODE) === null && BUILD_NODE_BASES.length > 0) {
+      // WEB_INTERFACE → The extension → "A page's first node reads the
+      // feed again" — in the extension build (a verifier is held) a
+      // loadFeed that fails is the no-node state: the mesh client has
+      // no reachable node. The no-node line reads *searching for a
+      // connection…* until the first check has ended, and *no node
+      // answered — set one in settings* after. `feedFoundNoNode`
+      // records the state for cornerTick's first answer to re-read.
+      if (this.verifier !== null) {
+        this.dropFeedRows();
+        feed.error = this.firstCheckEnded
+          ? 'no node answered — set one in settings'
+          : 'searching for a connection…';
+        this.feedFoundNoNode = true;
+        await this.applyCachedRoots(feed, gen, since);
+      } else if (readStore(KEY_NODE) === null && BUILD_NODE_BASES.length > 0) {
+        // No stored preference and a seed list — walk it, adopting the first one
+        // that answers, for the session only (WEB_INTERFACE → "The client is
+        // served from the node's own origin"). When none answers, the friendly
+        // line names the state. An adoption moves the generation, and its page
+        // lands under the generation the adoption opened.
         const walked = await this.walkSeedList(gen);
         if (walked !== null) {
           if (walked.gen !== this.readerGen) return;
@@ -2390,6 +2423,12 @@ export class App {
     feed.loaded = true;
     feed.loading = false;
     feed.unboundCount = 0;
+    // WEB_INTERFACE → The extension → "A page's first node reads the feed
+    // again" — "only the page's first node asks it: a node reached again
+    // later, on a page whose feed has answered, reads nothing". A page
+    // the feed answered clears the no-node flag; a later cornerTick does
+    // not trigger a re-read.
+    this.feedFoundNoNode = false;
     this.indexRows([...keptPosts, ...keptPending]);
   }
 
@@ -5178,6 +5217,21 @@ export class App {
         this.tipAnchor = run.anchor;
         const chainBefore = this.tipChain;
         this.tipChain = run.chain;
+        // WEB_INTERFACE → The extension → "A page's first node reads the
+        // feed again" — the TipRun's `firstCheckEnded` moves one way,
+        // false to true. Where it transitions and the feed's no-node
+        // line still reads *searching for a connection…*, update to the
+        // failed-listing text and re-render the feed.
+        if (run.firstCheckEnded === true && !this.firstCheckEnded) {
+          this.firstCheckEnded = true;
+          if (
+            this.feedFoundNoNode
+            && this.state.feed.error === 'searching for a connection…'
+          ) {
+            this.state.feed.error = 'no node answered — set one in settings';
+            this.renderFeed();
+          }
+        }
         // The post cache opens under the chain the run named — the hash of
         // the first header of the reading node's verified proof
         // (WEB_INTERFACE → The extension → "The post cache", → "The chain's
@@ -5595,6 +5649,16 @@ export class App {
     if (answered) {
       this.releaseOrphanWaiting();
       this.flushWaitingWrites();
+      // WEB_INTERFACE → The extension → "A page's first node reads the feed
+      // again" — the first node a page reaches after loadFeed found no node
+      // triggers one re-read. The flag is set at loadFeed's catch and
+      // cleared at a successful take; a cornerTick that answered is the
+      // first-node signal. One-shot: cleared here so a later cornerTick
+      // on a page whose feed answered reads nothing.
+      if (this.feedFoundNoNode) {
+        this.feedFoundNoNode = false;
+        void this.loadFeed();
+      }
     }
   }
 

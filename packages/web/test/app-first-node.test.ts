@@ -173,7 +173,7 @@ afterEach(() => {
 });
 
 describe('the feed re-reads when the page\'s first node is reached', () => {
-  it.fails('the feed found no node, the first check then reaches a node — the feed reads once more and its rows land', async () => {
+  it('the feed found no node, the first check then reaches a node — the feed reads once more and its rows land', async () => {
     const h = harness();
     // The first loadFeed throws (no node). The second one — triggered by
     // the cornerTick's first success — brings a row.
@@ -192,7 +192,10 @@ describe('the feed re-reads when the page\'s first node is reached', () => {
     expect(h.drive.state.feed.error, 'first loadFeed failed with no node').not.toBeNull();
     expect(h.drive.state.feed.loaded).toBe(false);
     // Simulate first check ended by resolving the verifier.
-    h.verifier.settle({ verdict: { kind: 'thin', reason: 'no-proof', height: null }, anchor: null, chain: null });
+    h.verifier.settle({
+      verdict: { kind: 'thin', reason: 'no-proof', height: null },
+      anchor: null, chain: null, firstCheckEnded: true,
+    });
     await flush();
     // The node becomes reachable; cornerTick succeeds.
     h.state.currentBlockThrows = false;
@@ -232,7 +235,7 @@ describe('the feed re-reads when the page\'s first node is reached', () => {
 });
 
 describe('the feed\'s no-node line reads "searching for a connection…" until the first check has ended', () => {
-  it.fails('before the first check ends the feed\'s no-node line reads "searching for a connection…"', async () => {
+  it('before the first check ends the feed\'s no-node line reads "searching for a connection…"', async () => {
     const h = harness();
     h.state.feedResults = [new Error('offline')];
     await h.drive.loadFeed();
@@ -244,13 +247,16 @@ describe('the feed\'s no-node line reads "searching for a connection…" until t
       .toBe("can't reach the node right now — searching for a connection…");
   });
 
-  it.fails('after a first check that reached no node, lookup included, it reads as a failed listing does', async () => {
+  it('after a first check that reached no node, lookup included, it reads as a failed listing does', async () => {
     const h = harness();
     h.state.feedResults = [new Error('offline')];
     await h.drive.loadFeed();
     await flush();
     // The verifier resolves — the first check has ended (with no node).
-    h.verifier.settle({ verdict: { kind: 'thin', reason: 'no-proof', height: null }, anchor: null, chain: null });
+    h.verifier.settle({
+      verdict: { kind: 'thin', reason: 'no-proof', height: null },
+      anchor: null, chain: null, firstCheckEnded: true,
+    });
     await flush();
     const err = h.feedEl.querySelector<HTMLElement>('.error');
     expect(err, 'the error line is rendered').not.toBeNull();

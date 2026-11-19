@@ -224,7 +224,7 @@ describe("the debug file — a local node's key and addresses", () => {
           nodes: [node],
           seated: false, proofs: null, anchor: null, chain: null,
           notContinued: false, disagreement: null,
-          localLookup: { reads: 0, last: null },
+          localLookup: { reads: 0, last: null }, firstCheckEnded: false,
         },
         diagnostics: { connections: [], gossip: { meshPeers: 0, directPeers: 0 }, iceServers: [] },
       },

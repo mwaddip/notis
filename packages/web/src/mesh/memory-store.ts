@@ -258,6 +258,9 @@ function mergeNodes(
 function copyContact(c: MeshContact): MeshContact {
   const out: MeshContact = { notisId: c.notisId, addrs: [...c.addrs] };
   if (c.api !== undefined) out.api = c.api;
+  // MESH_INTERFACE → What the client remembers — the `local` mark is
+  // persisted, so a remembered `local` node comes back `local` again.
+  if (c.local !== undefined) out.local = c.local;
   return out;
 }
 

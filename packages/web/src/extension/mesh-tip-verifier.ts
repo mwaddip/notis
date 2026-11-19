@@ -19,6 +19,11 @@ export function createMeshTipVerifier(opts: MeshTipVerifierOptions): MeshTipVeri
   return {
     async run(): Promise<TipRun> {
       await opts.client.check();
+      // WEB_INTERFACE → The extension → "A page's first node reads the
+      // feed again" — await the signal "first check ended, lookup
+      // included", so the TipRun carries `firstCheckEnded: true`
+      // whenever the lookup the first check triggered has ended.
+      await opts.client.whenFirstCheckEnded();
       return tipRunOf(opts.client.state());
     },
   };
