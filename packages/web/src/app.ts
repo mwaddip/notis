@@ -2328,26 +2328,12 @@ export class App {
       this.flushWaitingWrites();
     } catch (e) {
       if (gen !== this.readerGen) return;
-      // WEB_INTERFACE → The extension → "A page's first node reads the
-      // feed again" — in the extension build (a verifier is held) a
-      // loadFeed that fails is the no-node state: the mesh client has
-      // no reachable node. The no-node line reads *searching for a
-      // connection…* until the first check has ended, and *no node
-      // answered — set one in settings* after. `feedFoundNoNode`
-      // records the state for cornerTick's first answer to re-read.
-      if (this.verifier !== null) {
-        this.dropFeedRows();
-        feed.error = this.firstCheckEnded
-          ? 'no node answered — set one in settings'
-          : 'searching for a connection…';
-        this.feedFoundNoNode = true;
-        await this.applyCachedRoots(feed, gen, since);
-      } else if (readStore(KEY_NODE) === null && BUILD_NODE_BASES.length > 0) {
-        // No stored preference and a seed list — walk it, adopting the first one
-        // that answers, for the session only (WEB_INTERFACE → "The client is
-        // served from the node's own origin"). When none answers, the friendly
-        // line names the state. An adoption moves the generation, and its page
-        // lands under the generation the adoption opened.
+      // No stored preference and a seed list — walk it, adopting the first one
+      // that answers, for the session only (WEB_INTERFACE → "The client is
+      // served from the node's own origin"). When none answers, the friendly
+      // line names the state. An adoption moves the generation, and its page
+      // lands under the generation the adoption opened.
+      if (readStore(KEY_NODE) === null && BUILD_NODE_BASES.length > 0) {
         const walked = await this.walkSeedList(gen);
         if (walked !== null) {
           if (walked.gen !== this.readerGen) return;
@@ -2355,7 +2341,21 @@ export class App {
         } else {
           if (gen !== this.readerGen) return;
           this.dropFeedRows();
-          feed.error = 'no node answered — set one in settings';
+          // WEB_INTERFACE → The extension → "A page's first node reads the
+          // feed again" — in the extension build (a verifier is held) the
+          // walk's no-node ending reads *searching for a connection…* while
+          // `firstCheckEnded` is false and *no node answered — set one in
+          // settings* after; `feedFoundNoNode` records the state for the
+          // cornerTick's first answer to re-read. The web build (no
+          // verifier) keeps the line as it was.
+          if (this.verifier !== null) {
+            feed.error = this.firstCheckEnded
+              ? 'no node answered — set one in settings'
+              : 'searching for a connection…';
+            this.feedFoundNoNode = true;
+          } else {
+            feed.error = 'no node answered — set one in settings';
+          }
           // The seed walk's final ending — none of the nodes answered — reads
           // the post cache (WEB_INTERFACE → The extension → "A failed listing
           // draws the cache"). The cache is the extension build's alone.
