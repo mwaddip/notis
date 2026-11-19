@@ -2,11 +2,7 @@
 // — the `fips` multiaddr protocol, named `FIPS_MULTIADDR_CODE`, whose value
 // is the npub as text and the 32-byte x-only key as bytes.
 
-import { describe, it as itPlain, expect } from 'vitest';
-
-// The cases are `it.fails` while fips-addr.ts's exports throw; the next
-// commit implements them and flips these to `it`.
-const it = itPlain.fails;
+import { describe, it, expect } from 'vitest';
 import { multiaddr } from '@multiformats/multiaddr';
 import { encodeNpub, generateIdentity } from '@fips/core';
 import {
