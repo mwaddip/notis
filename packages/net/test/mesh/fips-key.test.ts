@@ -55,7 +55,9 @@ describe('MESH_INTERFACE → FIPS: loadFipsKey', () => {
     const path = join(dir, 'fips.key');
     writeFileSync(path, new Uint8Array(31), { mode: 0o600 });
     await expect(loadFipsKey(dir)).rejects.toSatisfy(
-      (e: unknown) => e instanceof MeshStateError && (e as Error).message.includes(path),
+      (e: unknown) => e instanceof MeshStateError
+        && (e as Error).message.includes(path)
+        && (e as Error).message.includes('length 31, must be 32'),
     );
   });
 
