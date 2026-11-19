@@ -1449,12 +1449,16 @@ attached after it — the link protocol's handler and the links over the connect
 forwarding on, its transport listening and dialling nothing, its listener reporting no address; `fipsAddress()` answers
 the node's FIPS address, `null` with no mesh, and `start` prints it. The pieces are `net`'s exports:
 
-- `createFipsStack({ identity, forwarding, network, dial, maxConnections? })` answers the `FipsStack` —
-  `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; `createReaderFips({ network })` answers a reader's,
-  under a fresh key, forwarding off, dialling, listening on nothing — the reader links by `link.openLink(connection)`
-  over a connection it chooses;
+- `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
+  `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
+  connection libp2p dials; `createReaderFips({ network })` answers a reader's, under a fresh key, forwarding off,
+  dialling, listening on nothing, opening no link of its own accord — the reader links by `link.openLink(connection)`
+  over a connection it chooses, and dials a node it already holds a connection to with `force: true`, since libp2p
+  otherwise answers the connection it holds;
 - `LibP2pLinkTransport` and `fipsLinkProtocol(network)` — the link and its protocol;
-- `fipsTransport(…)` — the libp2p transport over TCP/FIPS streams;
+- `fipsTransport(…)`, `FipsTransportDialError` and `fipsDatagramEndpoint(node)` — the libp2p transport over TCP/FIPS
+  streams, its dial refusal, and the datagram endpoint a TCP/FIPS endpoint is built over, whose activity names each
+  datagram's sender so a connection wakes for its own peer alone;
 - `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and `isFipsMultiaddr(ma)` — the
   FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
