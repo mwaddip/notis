@@ -1446,7 +1446,8 @@ packets on libp2p streams, a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a lib
 stack is built before `createLibp2p`, its transport among the transports and `/fips` among the listen addresses, and
 attached after it — the link protocol's handler and the links over the connections the node dials; `stop` stops it.
 `start` reads the node's FIPS key from the mesh state directory with `loadFipsKey(stateDir)` and builds the stack with
-forwarding on, its transport listening and dialling nothing. The pieces are `net`'s exports:
+forwarding on, its transport listening and dialling nothing, its listener reporting no address; `fipsAddress()` answers
+the node's FIPS address, `null` with no mesh, and `start` prints it. The pieces are `net`'s exports:
 
 - `createFipsStack({ identity, forwarding, network, dial, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; `createReaderFips({ network })` answers a reader's,

@@ -381,8 +381,12 @@ stored.
 **A node's FIPS address is `/fips/<npub>/p2p/<peer id>`** — its FIPS key's x-only form as an npub (`npub1…`), then its
 libp2p peer id. The `fips` multiaddr protocol is Notis's, numbered `FIPS_MULTIADDR_CODE` from multicodec's private-use
 range: its value is the npub as text and the 32-byte x-only key as bytes. A dial addresses the key as `02‖x`, which
-reaches a key of either parity. A node announces its FIPS address in both roles — a private node beside its relay
-reservations — and an operator's announce list keeps it. **An address is a hint; the key is the identity**
+reaches a key of either parity. **A FIPS address is never among the addresses libp2p announces**: a peer or reader of an
+earlier build knows no `fips` code, and libp2p reads a signed peer record whole — one address it cannot read fails the
+record, and with it every identify with the node that sent it (measured 2026-11-19, `@multiformats/multiaddr` 13.0.3).
+The FIPS listener reports no address. A node's FIPS address travels in Notis's own lists instead: `net`'s
+`fipsAddress()` answers it, and the node prints it at start, one line `[net] fips <address>`. **An address is a hint;
+the key is the identity**
 (→ Discovery): a FIPS address naming another node's npub reaches a node whose libp2p handshake fails against the
 `/p2p/` id, and the dial fails.
 
