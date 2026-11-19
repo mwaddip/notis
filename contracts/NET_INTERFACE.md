@@ -1372,9 +1372,12 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 
 ## libp2p Stack
 
+> ⚠ **AHEAD OF CODE (2026-11-19).** No node listens over TCP/FIPS. The Transport row's last clause leads the code (Notis
+> over FIPS, the node side).
+
 | Layer | Choice |
 |-------|--------|
-| Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well (→ The mesh) |
+| Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well, and libp2p over TCP/FIPS (→ The mesh) |
 | Stream multiplexing | yamux or mplex |
 | Encryption | Noise (with libp2p-noise) |
 | PubSub | Gossipsub 1.1 — unsigned messages named by their bytes, the node's two topics alone (→ Gossip Topics), each message's forward reported by the node (`asyncValidation`, → Forwarding Rule); gossipsub alone — no floodsub fallback (`fallbackToFloodsub: false`), so a peer speaks to the topics under gossipsub's rules or not at all; every peer scored by gossipsub's defaults but the IP colocation factor, which weighs 0 (`MESH_INTERFACE → Block gossip → "A router scores its peers by gossipsub's defaults, and a shared address costs a peer nothing"`); a peer's gossip runs on its newest connection, and a replaced stream's failure keeps the peer (`MESH_INTERFACE → Block gossip → "A peer's gossip follows its newest connection"`); a reader is a direct peer, outside every topic's mesh (`MESH_INTERFACE → Block gossip → "A node's readers are its router's direct peers"`) |
@@ -1435,6 +1438,27 @@ persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spe
 announces and its local WebRTC-direct addresses — once they are announced, `null` with no mesh; `onMeshAddresses`
 reports each change of the announced set.
 
+> ⚠ **AHEAD OF CODE (2026-11-19).** `net` holds no FIPS stack. The rules below lead the code (Notis over FIPS, the node
+> side).
+
+**A mesh node runs a FIPS stack** (`MESH_INTERFACE → FIPS`): a fips-ts `FipsNode` whose one transport carries FIPS link
+packets on libp2p streams, a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a libp2p transport over its streams. The
+stack is built before `createLibp2p`, its transport among the transports and `/fips` among the listen addresses, and
+attached after it — the link protocol's handler and the links over the connections the node dials; `stop` stops it.
+`start` reads the node's FIPS key from the mesh state directory with `loadFipsKey(stateDir)` and builds the stack with
+forwarding on, its transport listening and dialling nothing. The pieces are `net`'s exports:
+
+- `createFipsStack({ identity, forwarding, network, dial, maxConnections? })` answers the `FipsStack` —
+  `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; `createReaderFips({ network })` answers a reader's,
+  under a fresh key, forwarding off, dialling, listening on nothing — the reader links by `link.openLink(connection)`
+  over a connection it chooses;
+- `LibP2pLinkTransport` and `fipsLinkProtocol(network)` — the link and its protocol;
+- `fipsTransport(…)` — the libp2p transport over TCP/FIPS streams;
+- `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and `isFipsMultiaddr(ma)` — the
+  FIPS address;
+- `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
+- `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
+
 ---
 
 ## Stream Protocols
@@ -1444,9 +1468,13 @@ reports each change of the announced set.
 | `/dagsocial/handshake/1` (`HANDSHAKE_PROTOCOL`) | Frame | The peer handshake (→ Handshake) |
 | `/dagsocial/sync/1` (`SYNC_PROTOCOL`) | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
 
-**These two are the whole set** of Notis's own protocols. Beside them a node with a mesh role serves HTTP over libp2p
-(`/http/1.1`, `MESH_INTERFACE → The node endpoint`) and libp2p's own — identify, ping, Kad-DHT on
-`/notis/<network>/kad/1.0.0`, circuit relay, AutoNAT, DCUtR — none of which carries chain data. Every chain-data query
+> ⚠ **AHEAD OF CODE (2026-11-19).** No node serves FIPS links. The paragraph below leads the code (Notis over FIPS, the
+> node side).
+
+**These two are the whole set** of Notis's protocols on the frame codec. Beside them a node with a mesh role serves
+HTTP over libp2p (`/http/1.1`, `MESH_INTERFACE → The node endpoint`), FIPS links on `/notis/<network>/fips-link/1.0.0`
+(`MESH_INTERFACE → FIPS`) and libp2p's own — identify, ping, Kad-DHT on `/notis/<network>/kad/1.0.0`, circuit relay,
+AutoNAT, DCUtR — none of which carries chain data. Every chain-data query
 multiplexes over the sync stream and the
 frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
 avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
@@ -1750,6 +1778,9 @@ first hop.
 
 ### The browser entry
 
+> ⚠ **AHEAD OF CODE (2026-11-19).** The browser entry carries no FIPS export. The paragraph's last clause leads the code
+> (Notis over FIPS, the node side).
+
 **`@dagsocial/net/browser` is the half a browser runs**, importing no Node built-in and reading no Node global, held by
 a build of it with a plugin that refuses any Node built-in (`WEB_INTERFACE → The client's builds substitute nothing`):
 the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `gossipsubOptions`); `BlockCheck`, the
@@ -1758,7 +1789,8 @@ ordering-block topic's checks of → Stage 1 — the one copy, which the node's 
 `readerHandshake`, whose `capabilities` option declares the reader's set (`READER_CAPABILITIES` by default),
 `readerLibp2pOptions`, `meshFetch` and `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
 spellings (`MESH_INTERFACE → Identity`), and a serving reader's answer — `SYNC_PROTOCOL`, `PostTextProvider`,
-`answerPostTextsRequest` and `postTextsHandler` (→ Readers → "A serving reader answers from what it holds").
+`answerPostTextsRequest` and `postTextsHandler` (→ Readers → "A serving reader answers from what it holds"); and the
+FIPS stack's browser half — every export of → The mesh but `loadFipsKey`, with the FIPS constants.
 **The frame codec is one code with its checksum handed in**: the Node entry hands it `node:crypto`'s
 `createHash('blake2b512')`, the browser entry `@dagsocial/types`' `hash32` — the same 32 bytes
 (`TYPES_INTERFACE → The protocol hash`), held equal by a case. The node frames block-sized answers, where `hash32` costs
