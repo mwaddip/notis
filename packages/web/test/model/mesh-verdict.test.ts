@@ -69,6 +69,7 @@ function stateOf(s: StateShape): ClientState {
     chain: s.chain ?? null,
     notContinued: s.notContinued ?? false,
     disagreement: s.disagreement ?? null,
+    localLookup: { reads: 0, last: null }, firstCheckEnded: false,
   };
 }
 

@@ -33,8 +33,7 @@ import {
   makeTestConfig,
   seedBoxes,
   seedProvenance,
-  txToJson,
-} from '../helpers.js';
+  txToJson, NO_MESH} from '../helpers.js';
 
 vi.mock('@dagsocial/validation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dagsocial/validation')>();
@@ -159,7 +158,7 @@ describe('the signature memo rides admission, Stage 1 and every block context', 
         listenAddrs: '/ip4/127.0.0.1/tcp/0',
         maxPeers: 50,
       }),
-    );
+     NO_MESH);
     server = app.listen(0);
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

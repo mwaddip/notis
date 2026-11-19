@@ -32,7 +32,9 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     nodeId: null, transport: null, path: null, lastLeft: null, tip: null,
     agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     seated: false, proofs: null, anchor: null, chain: null,
-    notContinued: false, disagreement: null, ...overrides,
+    notContinued: false, disagreement: null,
+    localLookup: { reads: 0, last: null }, firstCheckEnded: false,
+    ...overrides,
   };
 }
 
@@ -49,6 +51,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     base: () => null,
     order: () => [],
     check: () => Promise.resolve(),
+    whenFirstCheckEnded: () => Promise.resolve(),
     state: hooks.state ?? ((): ClientState => emptyState()),
     onState: () => () => {},
     stop: () => Promise.resolve(),

@@ -362,7 +362,7 @@ if (config.nodeRole === 'miner') {
   console.log(`Node role: server — applying inbound ordering blocks`);
 }
 
-const app = createApp(config);
+const app = createApp(config, { meshIdentity: () => net.meshIdentity() });
 const adminServer = createAdminApp(config, {
   getConnectedPeers: () => net.getConnectedPeers(),
   syncPhase: () => net.syncPhase(),

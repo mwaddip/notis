@@ -63,6 +63,7 @@ const args = parseArgs(process.argv.slice(2));
 const ENTRIES = [
   { name: 'node',              src: 'packages/node/dist/index.js',            dst: 'dist/node.js' },
   { name: 'miner-consolidate', src: 'packages/node/dist/miner-consolidate.js', dst: 'dist/miner-consolidate.js' },
+  { name: 'access-point',      src: 'packages/node/dist/access-point.js',     dst: 'dist/access-point.js' },
 ];
 if (args.faucet) {
   ENTRIES.push({ name: 'faucet', src: 'tools/faucet/dist/index.js', dst: 'dist/faucet.js' });

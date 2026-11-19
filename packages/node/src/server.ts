@@ -8,6 +8,7 @@ import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import { createRouter as nipopowRoutes } from './routes/nipopow.js';
+import { createRouter as meshIdentityRoutes } from './routes/mesh-identity.js';
 import { createRouter as usernameRoutes } from './routes/usernames.js';
 import { createRouter as backerRoutes } from './routes/backers.js';
 import { createPopowHeaderReader } from './services/nipopow.js';
@@ -37,6 +38,7 @@ import { bodyRefusal } from './routes/body-refusal.js';
 import type { Config } from './config.js';
 import { createServer, type Server } from 'http';
 import type { AddressInfo, Socket } from 'net';
+import type { MeshIdentity } from '@dagsocial/net';
 import {
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
@@ -45,6 +47,15 @@ import {
   HTTP_CONNECTIONS_MAX,
   isHex64,
 } from '@dagsocial/types';
+
+// NODE_INTERFACE → Mesh identity → "A mesh node answers its identity":
+// the one seam `createApp` reads to answer `GET /mesh/identity` — the
+// node's own `net.meshIdentity()` in `index.ts`, a test's stub in the
+// suite. Required on `createApp`; a shipped call site never defaults
+// it.
+export interface AppDeps {
+  meshIdentity(): MeshIdentity | null;
+}
 
 // NODE_INTERFACE → "A body the parser refuses is the client's error"; CONSTANTS
 // → HTTP server bounds. The limit the JSON parser holds every write request to.
@@ -288,7 +299,7 @@ function parseStrictQuery(queryString: string | null | undefined): Record<string
 // createApp
 // ---------------------------------------------------------------------------
 
-export function createApp(config: Config): express.Express {
+export function createApp(config: Config, deps: AppDeps): express.Express {
   const app = express();
 
   // NODE_INTERFACE → HTTP API → "A query parameter is one string": the
@@ -672,6 +683,9 @@ export function createApp(config: Config): express.Express {
       getCurrentHeight: store.getCurrentHeight,
     }),
   );
+
+  // Mesh identity — NODE_INTERFACE → Mesh identity → "A mesh node answers its identity"
+  app.use('/', meshIdentityRoutes({ meshIdentity: deps.meshIdentity }));
 
   // AVL+ proof endpoints (NODE_INTERFACE → AVL+ State Root):
   // GET /api/v1/proof/:key — one key's lookup proof.

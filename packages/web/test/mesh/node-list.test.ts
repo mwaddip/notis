@@ -482,4 +482,121 @@ describe('node-list', () => {
     expect(wHi, 'high source: at most RETRY_BASE_MS').toBeLessThanOrEqual(RETRY_BASE_MS);
     expect(wHi, 'the draw is per failure: the two lists differ').not.toBe(wLo);
   });
+
+  // MESH_INTERFACE → Discovery → "A node the access point answers" —
+  // addLocal cases.
+  const localAddr = '/ip4/10.78.79.1/udp/9733/webrtc-direct/certhash/uEiA/p2p/A';
+  const localAddr2 = '/ip4/10.78.79.1/udp/9734/webrtc-direct/certhash/uEiB/p2p/A';
+
+  it('addLocal adds a local candidate the gater allows for that key alone', () => {
+    // A new entry carries `local: true`, `byHand: false`, `yours: false`,
+    // `firstContact: false`, `known: false`; its addresses are in
+    // `configured` for the key alone, not another key's.
+    const list = new NodeList([], own, () => 0, () => 0);
+    const added = list.addLocal(idA, [localAddr]);
+    expect(added, 'addLocal answers true on a fresh key').toBe(true);
+    const e = list.entry(idA)!;
+    expect(e.local, 'the mark is set').toBe(true);
+    expect(e.byHand, 'byHand stays false').toBe(false);
+    expect(e.yours, 'yours stays false').toBe(false);
+    expect(e.firstContact, 'firstContact stays false').toBe(false);
+    expect(e.known, 'known stays false').toBe(false);
+    expect(list.configuredAddrs(idA), 'the address passes the gater for this key').toEqual([localAddr]);
+    expect(list.configuredAddrs(idB), "not for another key").toEqual([]);
+  });
+
+  it('addLocal merges addresses and sets the mark on an existing entry', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [localAddr] }], own, () => 0, () => 0);
+    expect(list.entry(idA)!.local, 'a first-contact entry starts with local false').toBe(false);
+    const added = list.addLocal(idA, [localAddr, localAddr2]);
+    expect(added).toBe(true);
+    const e = list.entry(idA)!;
+    expect(e.local, 'the mark is set').toBe(true);
+    expect(e.addrs, 'the new address is merged').toEqual([localAddr, localAddr2]);
+    expect(list.configuredAddrs(idA), 'the new address joins configured').toEqual([localAddr, localAddr2]);
+    expect(e.firstContact, 'firstContact is kept').toBe(true);
+  });
+
+  it('addLocal on a blacklisted entry changes nothing and answers false', () => {
+    const list = new NodeList([{ notisId: idA, addrs: [localAddr] }], own, () => 0, () => 0);
+    const evidence: LieEvidence = { kind: 'malformed', atMs: 0, detail: 'x' };
+    list.lie(idA, evidence);
+    const before = list.entry(idA)!;
+    const answered = list.addLocal(idA, [localAddr2]);
+    expect(answered, 'addLocal on a blacklisted entry answers false').toBe(false);
+    const after = list.entry(idA)!;
+    expect(after.status, 'a blacklisted entry stays blacklisted').toBe('blacklisted');
+    expect(after.local, 'the mark is not set on a blacklisted entry').toBe(before.local);
+    expect(after.addrs, 'no address is added').toEqual(before.addrs);
+    expect(after.evidence, 'the evidence is kept').toEqual(evidence);
+  });
+
+  it('addLocal refuses the client\'s own key and answers false', () => {
+    const list = new NodeList([], own, () => 0, () => 0);
+    const answered = list.addLocal(own, [localAddr]);
+    expect(answered, 'addLocal on the own key answers false').toBe(false);
+    expect(list.entry(own), 'no entry is created for the own key').toBeUndefined();
+  });
+
+  it('addLocal refuses a non-64-hex id', () => {
+    const list = new NodeList([], own, () => 0, () => 0);
+    expect(() => list.addLocal('abc', [localAddr])).toThrow(MeshKeyError);
+  });
+
+  it('removeByHand leaves a local entry', () => {
+    // `removeByHand` is the settings row's commit path, bound to the
+    // hand-added arm; a local entry's `byHand` is false, so
+    // `removeByHand` returns at its `!e.byHand` guard and leaves the
+    // entry where it stood.
+    const list = new NodeList([], own, () => 0, () => 0);
+    list.addLocal(idA, [localAddr]);
+    expect(list.entry(idA)).toBeDefined();
+    list.removeByHand(idA);
+    const after = list.entry(idA)!;
+    expect(after, 'the local entry stays').toBeDefined();
+    expect(after.local, 'the mark stays').toBe(true);
+    expect(list.configuredAddrs(idA), 'the gater still allows the address').toEqual([localAddr]);
+  });
+
+  it("a failure recorded against one of a local entry's addresses leaves the entry, its mark and its other address", () => {
+    // Review Focus 2 at the list's level: a node with two addresses is
+    // dialled as one operation; a failure against one address alone
+    // reads through `recordAddrFailure`, which leaves `addrs`,
+    // `configured`, `local` and the entry's other address as they
+    // were, and writes only `lastFailures[addr]`.
+    const list = new NodeList([], own, () => 0, () => 0);
+    list.addLocal(idA, [localAddr, localAddr2]);
+    list.recordAddrFailure(idA, localAddr, 'transport', 'unreachable');
+    const e = list.entry(idA)!;
+    expect(e.local, 'the mark stays').toBe(true);
+    expect(e.addrs, 'both addresses stay').toEqual([localAddr, localAddr2]);
+    expect(list.configuredAddrs(idA), 'the gater still allows both').toEqual([localAddr, localAddr2]);
+    expect(e.lastFailures[localAddr]?.kind, 'the per-address failure is recorded').toBe('transport');
+    expect(e.lastFailures[localAddr2], 'the other address carries no failure').toBeUndefined();
+  });
+
+  it('addLocal answers false for an answer that changes nothing, true for a new address and for the mark on an existing entry', () => {
+    // MESH_INTERFACE → Discovery → "A node the access point answers" —
+    // "A check runs at once where the answer added the node, an address
+    // or the mark"; an answer that changes nothing waits for the
+    // check's own cadence. `addLocal` answers `true` only where it
+    // changed the list.
+    const list = new NodeList([], own, () => 0, () => 0);
+    // Fresh entry → true (the new entry case).
+    expect(list.addLocal(idA, [localAddr])).toBe(true);
+    // Same addrs, mark already set → false (nothing changed).
+    expect(list.addLocal(idA, [localAddr])).toBe(false);
+    // A new address on an existing local entry → true.
+    expect(list.addLocal(idA, [localAddr, localAddr2])).toBe(true);
+    // Again with the same two addresses → false.
+    expect(list.addLocal(idA, [localAddr, localAddr2])).toBe(false);
+    // The mark newly set on a first-contact entry → true.
+    const list2 = new NodeList([{ notisId: idB, addrs: [localAddr] }], own, () => 0, () => 0);
+    expect(list2.entry(idB)!.local, 'first-contact starts with local false').toBe(false);
+    expect(list2.addLocal(idB, [localAddr])).toBe(true);
+    expect(list2.entry(idB)!.local, 'the mark is now set').toBe(true);
+    // Same call again → the mark is already set and the address was
+    // already known: nothing changes, false.
+    expect(list2.addLocal(idB, [localAddr])).toBe(false);
+  });
 });

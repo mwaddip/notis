@@ -98,8 +98,9 @@ of another form is.
 **A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
 documentation ranges and the rest of its list). The client runs its own gater, the same in every runtime: it refuses
-every private address but those its own configuration names for a key — a first-contact node's, or your node's
-(→ Discovery → "A node added by hand") — each for that key alone. A remote node cannot know what is on the reader's
+every private address but those its own configuration names for a key — a first-contact node's, your node's
+(→ Discovery → "A node added by hand"), or one the access point's identity URL answered (→ Discovery → "A node the
+access point answers") — each for that key alone. A remote node cannot know what is on the reader's
 network, so a private address it offers — through the DHT, a peer list or a known node's addresses — is never dialled, and a page cannot
 be made to probe its own network.
 
@@ -252,6 +253,34 @@ that is not 64 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/
 hand over, and announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read
 from its `/p2p/` id (`WEB_INTERFACE → The settings window`).
 
+**A node the access point answers.** A box can run a Wi-Fi network that gives a device the mesh and nothing else
+(`NODE_INTERFACE → The access-point tool`), and every such box answers at one fixed address, `10.78.79.1`:
+`LOCAL_IDENTITY_URL` — `http://10.78.79.1/mesh/identity` — reaches its node's identity
+(`NODE_INTERFACE → "A mesh node answers its identity"`). **The URL names an address, never a name**: a browser's
+HTTPS-only mode upgrades a plain-`http:` request to a name and leaves one to a private address alone, and an address
+asks nothing of DNS. A client started with the URL reads it **at the end of a check
+in which no node answered** — every node the check read failed as a transport failure, over the mesh and at its API
+base alike — while it holds no connection, once per such check, never while a check's reads are in flight; a client
+that reaches a node never reads it, so on a network where a node answers the identity URL is never read. The read is an
+`HttpFetch` under `REQUEST_TIMEOUT_MS` and `MESH_IDENTITY_READ_BYTES` (`CONSTANTS → Client reads`).
+
+- **An answer is held to its fields**: an object whose `notisId` is 64 lowercase hex, whose `peerId` is that key's,
+  and whose `localAddrs` is an array of addresses each with a `/webrtc-direct/` component, no `/dns4/`, `/dns6/` or
+  `/dnsaddr/` one, and a trailing `/p2p/` that is the key's. **A loopback address is dropped** — a node lists its own
+  (`127.0.0.1` beside its other interfaces), and a page is never pointed at the reader's loopback. An answer with no
+  address left, or one failing any of these, is refused; `multiaddrs` is not read — a private node's are relay
+  addresses through public nodes the access point does not reach.
+- **An answer adds the node as an ordinary candidate, marked `local`** — never your node, its standing the evidence's
+  alone, as every candidate's is — and its addresses pass the gater for that key alone (→ Transports → "A client dials
+  a private address only when its own configuration names it"). An entry already held merges the addresses and takes
+  the mark; a blacklisted one, and the client's own key, are left as they are. **A check runs at once where the answer
+  added the node, an address or the mark**; an answer that changes nothing waits for the check's own cadence, so a box
+  whose identity answers while its node does not is read once a check, never in a loop.
+- **A failed or refused read is nothing**: no entry, no evidence against any key; the next such check reads again.
+  **A found node is remembered with its addresses** while it names a tip on the client's chain (→ What the client
+  remembers), so a later session dials it at its start, beside the first-contact nodes; one a session does not reach
+  falls out of the list the next check writes. The client's state holds the reads it made in the session and the last one's check and outcome.
+
 **Your node takes precedence** while it agrees with the evidence: once its proof has verified, its chain is the
 client's chain, and a routed read goes to it first among the nodes the read's need allows. **It
 disagrees** when another node's tip lies off its chain and that node's proof beats its own and continues the kept proof,
@@ -363,7 +392,10 @@ request answered or failed — its number, its URL, its route, the status or the
 answer's head, and over the mesh the id, transport and path of the connection its stream opened on, which only the
 client knows (→ "A read opens no connection"); an answer's body read to its end — the request's number, its bytes and
 its time, which a body no caller reads never reports; a serving stream — the node and the connection — and each call of the provider, by the counts of the ids
-asked and answered (→ Block gossip → "A client that serves answers the nodes it reads"). **It answers its diagnostics
+asked and answered (→ Block gossip → "A client that serves answers the nodes it reads"); a read of the access point's
+identity URL — the check it followed, its time, and its outcome: answered, with the key and the addresses it added and
+whether it added them, failed with the failure's message, or refused with the field it failed (→ Discovery → "A node
+the access point answers"). **It answers its diagnostics
 when asked**: each open connection — the peer, the remote address, the direction, the transport, the path, its age,
 its handshake's verdict — the ordering-block topic's mesh and direct peers, and the ICE servers it dials with. A client
 handed no sink reports nothing, and what it reports moves nothing it decides.
@@ -458,9 +490,11 @@ the constants register (`CONSTANTS → Scope`).
 **A client remembers, per network, the nodes it found, the proof of the chain it verified, and the branches the reader
 answered** (→ Discovery → "A node added by hand") — keyed by the genesis the network's profile pins, or by the network's
 name where it pins none. After each check it records every node naming a tip on its chain, `ok` or `trailing`, with
-the addresses it would dial — no private address, never its own key — the most recently seen first, at most
-`REMEMBERED_NODES_MAX`; a node blacklisted in the session leaves the list. At its next start they are its known nodes
-(→ Discovery → "Known nodes").
+the addresses it would dial — no private address but a `local` node's own, never its own key — the most recently seen
+first, at most `REMEMBERED_NODES_MAX`; a node blacklisted in the session leaves the list. At its next start they are
+its known nodes (→ Discovery → "Known nodes"), **a remembered `local` node marked `local` again**, its addresses
+passing the gater for that key alone: the access point answered them, in a session of its own (→ Discovery → "A node
+the access point answers").
 
 **The kept proof** is the last proof the client verified of the chain it holds — a check's winner, a switch, its own
 tip's proof. **It moves forward only**: a proof is kept only where it does not lose to the one kept, under

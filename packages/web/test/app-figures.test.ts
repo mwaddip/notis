@@ -101,6 +101,7 @@ interface TipRunLike {
   verdict: TipVerdict;
   anchor: Anchor | null;
   chain: string | null;
+  firstCheckEnded?: boolean;
 }
 
 interface Harness {

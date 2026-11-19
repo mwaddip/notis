@@ -440,3 +440,32 @@ describe("the send pass records each outcome and `no answer` for the write it st
     expect(waits.find((e) => e['txId'] === 't6')).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// `local-lookup` — one event per read of the access point's identity URL.
+// The mesh sink's generic path (`makeDebugSink`, src/extension/mesh-seams.ts)
+// records every non-`request` kind under its own kind with its fields; this
+// case pins that the log stores the event under the kind `local-lookup`
+// with its `check`, `ms` and `outcome` carried through.
+// ---------------------------------------------------------------------------
+
+describe('the mesh sink records a `local-lookup` event under its kind with its fields', () => {
+  it('a local-lookup event is stored under kind local-lookup with its check, ms and outcome', async () => {
+    const log = makeDebugLog();
+    const NOTIS_ID = 'de'.repeat(32);
+    const ADDR = '/ip4/198.51.100.2/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    const outcome = { result: 'answered', notisId: NOTIS_ID, localAddrs: [ADDR], added: true };
+    // WEB_INTERFACE → The extension → "The debug log" — the sink casts the
+    // kind through `DebugEventKind`; a `local-lookup` kind reaches `record`
+    // the same way `dial` does. The cast here mirrors the sink's own one.
+    log.record('local-lookup' as unknown as import('../../src/extension/debug-log').DebugEventKind, {
+      check: 7,
+      ms: 42,
+      outcome,
+    });
+    await log.flush();
+    const lookups = (await log.list()).filter((e) => e.kind === 'local-lookup');
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0]).toMatchObject({ check: 7, ms: 42, outcome });
+  });
+});

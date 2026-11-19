@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" class="no-anim">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access point — Notis docs</title>
+<meta name="description" content="Turn a box running a Notis node into a Wi-Fi network that carries the notice board and nothing else: the tool, each step by hand, and what a phone joining the network sees.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Notis docs">
+<meta property="og:title" content="Access point — Notis docs">
+<meta property="og:description" content="A Notis node can broadcast a Wi-Fi network that carries the notice board and nothing else. Where the internet is censored or absent, the board still reaches whoever is near a box.">
+<meta property="og:url" content="https://docs.notis.fun/access-point/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://docs.notis.fun/assets/og-mark.png">
+<meta property="og:image" content="https://docs.notis.fun/assets/og-mark.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="1200">
+<meta property="og:image:alt" content="The Notis mark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/style.css">
+<!-- Not deferred: the theme has to be on <html> before the first paint, or every page in a
+     multi-page site flashes the default ground before settling into the stored one. -->
+<script src="/assets/site.js"></script>
+<style>
+  /* A block of commands an operator runs. Mono because these are machine data, the surface's
+     own tint, a thin border, and a scrollbar on the wrapper so a long command never widens the
+     page. The site has no shared code-block component today — this one is page-local, and the
+     only thing besides the inline-word control below that lives here. */
+  .cmd{font-family:var(--mono);font-size:13.5px;line-height:1.55;color:var(--ink);
+       background:var(--surface);border:1px solid var(--border);border-radius:8px;
+       padding:var(--s3) var(--s4);margin:var(--s3) 0 var(--s4);
+       overflow-x:auto;white-space:pre}
+  .w{font-family:var(--mono);font-size:.88em;background:var(--surface);border:1px solid var(--border);
+     border-radius:5px;padding:1px 6px;white-space:nowrap}
+  .steps{margin:var(--s4) 0;padding-left:1.4em}
+  .steps li{margin:0 0 var(--s2)}
+</style>
+</head>
+<body>
+
+<button class="nav-btn" id="navBtn" type="button" aria-label="Toggle navigation"
+        aria-expanded="false" aria-controls="sidebar">☰</button>
+<div class="backdrop" id="backdrop"></div>
+
+<aside class="sidebar" id="sidebar">
+  <!--#include virtual="/assets/_nav.html" -->
+</aside>
+
+<main class="content">
+  <div class="wrap">
+    <header class="page">
+      <div class="crumb"><b>Notis</b> / access point</div>
+      <h1>A box as an access point to the mesh.</h1>
+      <p class="lede">A box running a Notis node can broadcast a Wi-Fi network that carries the notice board and nothing else. A phone on that network and no other reads, posts and likes through the box's node, which carries the writes out over its own connection. Where the internet is censored or absent, the board still reaches whoever is near a box.</p>
+    </header>
+
+    <section>
+      <h2>What it is for</h2>
+      <p>The access point is a second Wi-Fi network on a box that already runs a Notis node. A phone joining it reaches the box's node and nothing else: every name lookup is refused at once, and a packet for any other address is refused within seconds. The box keeps its own connection — a router over Wi-Fi, or none — and uses it to carry the mesh on the phone's behalf. Nothing on the access point reaches the internet.</p>
+      <p>The name a joiner sees is the one you choose for the network, and if you set no password anyone nearby can join. Notis's own traffic is encrypted either way — the password decides who joins the network, not who can read what Notis carries.</p>
+    </section>
+
+    <section>
+      <h2>What you need</h2>
+      <p>A Raspberry Pi 4B with the node installed from the project's <code>.deb</code> and the <code>dagsocial-node</code> service running. The Pi's built-in Wi-Fi is the one radio the tool knows today; it carries a client link and an access point at once, on one channel. The box's own connection to a router is optional — with one, the access point runs on the router's channel; with none, the tool picks a 2.4 GHz channel of its own.</p>
+    </section>
+
+    <section>
+      <h2>The tool</h2>
+      <p>The <code>.deb</code> installs <code>/usr/bin/dagsocial-access-point</code>. The package never runs it, so a box that never runs it is unchanged by the package. It runs as root, with three commands:</p>
+      <pre class="cmd">sudo dagsocial-access-point setup
+sudo dagsocial-access-point status
+sudo dagsocial-access-point remove</pre>
+      <p><span class="w">setup</span> takes two options:</p>
+      <ul>
+        <li><code>--name &lt;network name&gt;</code> — the name a joiner sees. Default: <code>Notis</code>, up to 32 bytes. The name is visible to anyone nearby.</li>
+        <li><code>--password &lt;8–63 characters&gt;</code> — a WPA2 password. Default: an open network, which anyone nearby can join.</li>
+      </ul>
+      <pre class="cmd">sudo dagsocial-access-point setup --name "Reading Room" --password "a long passphrase"</pre>
+      <p><span class="w">status</span> reads each of <span class="w">setup</span>'s changes back from the box. <span class="w">remove</span> undoes them in reverse, and warns first that stopping the access point drops the box's own Wi-Fi for a few seconds — one radio carries both. A <span class="w">setup</span> on a box already set up changes nothing.</p>
+    </section>
+
+    <section>
+      <h2>What setup does, step by step</h2>
+      <p>Each step <span class="w">setup</span> takes is one an operator can take by hand. The commands are what the tool runs, in order; the files are what it writes. Every change is written to <code>/etc/dagsocial/access-point/record.json</code> as it is made, so <span class="w">remove</span> undoes exactly what was done, and a <span class="w">setup</span> that stopped half way is undone as far as it went.</p>
+
+      <h3>1. The node's mesh role</h3>
+      <p>Add the mesh role and a WebRTC-direct listen to <code>/etc/dagsocial/node.env</code>, so the node listens on the access point's interface. A node already set to <code>private</code> with a WebRTC-direct listen keeps what it has; a node set to <code>public</code> is refused — a public node lists no local addresses, and discovery through an access point would dial nothing.</p>
+      <pre class="cmd">MESH_ROLE=private
+MESH_LISTEN=/ip4/0.0.0.0/udp/9733/webrtc-direct</pre>
+
+      <h3>2. The radio</h3>
+      <p>Check that the radio carries a client link and an access point in one interface combination. A radio that does not is refused, saying so.</p>
+      <pre class="cmd">iw list</pre>
+
+      <h3>3. The channel</h3>
+      <p>One radio offers one channel to both links. With an uplink on an ordinary channel, the access point runs on that channel. With an uplink on a channel flagged for radar detection — where no access point starts — the uplink is moved to the 2.4 GHz band where its network offers one there; with no 2.4 GHz band on that network, <span class="w">setup</span> stops and says why. With no uplink at all, the tool picks a 2.4 GHz channel no radar flag holds.</p>
+      <p>When the uplink is moved, the tool reads the profile's prior band first (so <span class="w">remove</span> restores it), then rewrites it:</p>
+      <pre class="cmd">nmcli -g 802-11-wireless.band con show &lt;uplink-profile&gt;
+nmcli con modify &lt;uplink-profile&gt; 802-11-wireless.band bg
+nmcli con up &lt;uplink-profile&gt;</pre>
+
+      <h3>4. The uap0 interface unit</h3>
+      <p>Write a systemd unit that makes the <code>uap0</code> access-point interface at every boot, before NetworkManager starts — NetworkManager does not create a virtual interface itself. The unit is <code>/etc/systemd/system/dagsocial-ap-iface.service</code>; its <code>ExecStart</code> runs <code>iw dev &lt;uplink&gt; interface add uap0 type __ap</code> where there is an uplink, and <code>iw phy &lt;phy&gt; interface add uap0 type __ap</code> where there is none. Enable and start it:</p>
+      <pre class="cmd">systemctl daemon-reload
+systemctl enable dagsocial-ap-iface.service
+systemctl start dagsocial-ap-iface.service</pre>
+
+      <h3>5. The NetworkManager profile</h3>
+      <p>Add a NetworkManager profile named <code>dagsocial-ap</code> that runs the access point on <code>uap0</code> at <code>10.78.79.1/24</code> — the address every box answers at, outside the ranges routers and hotspots take by default; where the box's router uses <code>10.78.79.0/24</code> itself, <span class="w">setup</span> stops before its first change and says why — connects at boot, and carries the name and the password you chose. The band and channel are the ones step 3 picked:</p>
+      <pre class="cmd">nmcli con add type wifi ifname uap0 con-name dagsocial-ap \
+  autoconnect yes ssid "Notis" \
+  802-11-wireless.mode ap \
+  802-11-wireless.band bg \
+  802-11-wireless.channel 1 \
+  ipv4.method manual ipv4.addresses 10.78.79.1/24 \
+  ipv6.method disabled
+nmcli con up dagsocial-ap</pre>
+      <p>NetworkManager registers the new <code>uap0</code> on its own time, so wait until <code>nmcli dev</code> shows it as <code>disconnected</code> — listed is not yet ready — before <code>nmcli con up</code>; at boot the interface unit runs before NetworkManager starts, and the profile comes up by itself.</p>
+      <p>Where you set a password, the <code>add</code> command carries two more fields, <code>wifi-sec.key-mgmt wpa-psk</code> and <code>wifi-sec.psk &lt;password&gt;</code>. NetworkManager's <code>ipv4.method shared</code> is never used: it forwards to the internet.</p>
+
+      <h3>6. Addresses, and no names</h3>
+      <p>Write a dnsmasq configuration and a systemd unit for a dnsmasq instance bound to <code>uap0</code> alone. It hands out addresses between <code>10.78.79.10</code> and <code>10.78.79.254</code>, names the box as the router and the DNS server, and refuses every name at once — never a timeout. The extension reaches the box by its address alone. The files are <code>/etc/dagsocial/access-point/dnsmasq.conf</code> and <code>/etc/systemd/system/dagsocial-ap-dnsmasq.service</code>. Enable and start it:</p>
+      <pre class="cmd">systemctl daemon-reload
+systemctl enable dagsocial-ap-dnsmasq.service
+systemctl start dagsocial-ap-dnsmasq.service</pre>
+
+      <h3>7. Nothing past the box</h3>
+      <p>Write an nftables ruleset and a systemd unit for one table, <code>inet dagsocial_ap</code>, that accepts from <code>uap0</code> DHCP, DNS, port 80 at <code>10.78.79.1</code> — redirected to the node's HTTP port — and the node's WebRTC-direct UDP port, and refuses the rest. The box forwards nothing: with forwarding off, as it is on Debian unless something turns it on, the kernel answers a packet for any other address as unreachable, and a device on the access point learns within seconds that nothing beyond it answers. The table also refuses every forwarded packet, should anything turn forwarding on. The files are <code>/etc/dagsocial/access-point/firewall.nft</code> and <code>/etc/systemd/system/dagsocial-ap-firewall.service</code>. Enable and start it:</p>
+      <pre class="cmd">systemctl daemon-reload
+systemctl enable dagsocial-ap-firewall.service
+systemctl start dagsocial-ap-firewall.service</pre>
+
+      <h3>8. Restart the node</h3>
+      <p>Restart the node so it reads the new <code>node.env</code>:</p>
+      <pre class="cmd">systemctl restart dagsocial-node</pre>
+    </section>
+
+    <section>
+      <h2>What to expect</h2>
+      <p>Stopping the access point drops the box's own Wi-Fi for a few seconds: one radio carries both links, and the client link reconnects on its own after the access point ends. <span class="w">remove</span> says so before it starts. An upgrade of the <code>.deb</code> keeps the access point: the tool's files live outside the package's tree, and <code>node.env</code> is the package's conffile, which the package keeps across upgrades.</p>
+      <p>The box's own Wi-Fi is slower on 2.4 GHz than on 5 GHz. Where the box's router channel was flagged for radar detection, step 3 moved the uplink to 2.4 GHz — <span class="w">remove</span> moves it back. Where netplan writes the box's Wi-Fi profile, NetworkManager adds a timestamp to the profile's netplan file whenever the profile changes: after <span class="w">remove</span> the profile's settings are as they were, and the file carries that timestamp.</p>
+    </section>
+
+    <section>
+      <h2>For a reader on a phone</h2>
+      <p>Join the network by its name. On Android a notification says the network has no internet access: tap it, tick <em>Don’t ask again for this network</em> and choose <em>Yes</em> to stay connected. Until you do, apps cannot use the network, and a phone that knows another network with internet in range switches back to it within a minute.</p>
+      <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity at <code>http://10.78.79.1/mesh/identity</code> and adds the node it names; the feed reads <em>searching for a connection…</em> while it looks, and loads by itself once the box answers. The extension remembers the box, so a reload on the access point dials it at once. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
+    </section>
+
+    <section>
+      <h2>Where to go from here</h2>
+      <div class="glance">
+        <div class="card k">
+          <div class="tag">Read next</div>
+          <h4><a href="/start/">Getting started →</a></h4>
+          <p>Install the extension, create an identity, ask the faucet for rep, claim a name, and post your first notice.</p>
+        </div>
+        <div class="card c">
+          <div class="tag">Read next</div>
+          <h4><a href="/architecture/">Architecture →</a></h4>
+          <p>How Notis is built: the two ledgers, author-owned posts, withdrawal, and the proof of work that secures it.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p class="mono">NOTIS · decentralized notice board · dual-ledger · proof-of-work</p>
+      <p>Design in progress — some mechanics described in these docs are still being implemented. · <a href="https://notis.fun">notis.fun</a></p>
+    </footer>
+  </div>
+</main>
+
+</body>
+</html>

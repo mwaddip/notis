@@ -344,8 +344,10 @@ raises it, else creates one. No `default_popup`, since one suppresses `onClicked
 messages end in one act") and the prompt's each make the tab active, and focus its window where `windows` exists;
 the background listens for a closed window only there.
 
-**Permissions and policy, the whole list.** `storage` and `tabs`; the browser's default extension-page
-CSP, `script-src 'self'` — which is why the shell's theme script is a file the shell references and not
+**Permissions and policy, the whole list.** `storage` and `tabs`; an extension-page CSP of `script-src
+'self'` — Chrome's default, and declared in Firefox's manifest, whose default adds `upgrade-insecure-requests` and
+would turn the access point's plain-`http:` identity URL into an `https:` one nothing answers (→ "The extension looks
+for an access point's node"); Firefox still upgrades an `http:` image under the declared policy — which is why the shell's theme script is a file the shell references and not
 an inline script, in both builds; **no host permission for the node**, because every node answers every
 origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetches under CORS like any page, and none
 for the mesh, which WebRTC and the default policy leave open;
@@ -363,7 +365,8 @@ credits send, both required; the public key rides each of them, each read as `vi
 of the posts a list names and the reader lacks go to the nodes in turn, with no key beside them (→ "The resolve"); the
 reader's handshake carries a height and a key made for the page, never the reader's (`NET_INTERFACE → Readers`), and
 the page forwards the ordering-block gossip and asks the nodes it holds for others (`MESH_INTERFACE → Block gossip`,
-`→ Discovery`); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. The debug log stays at the page's origin, and a debug file
+`→ Discovery`); the access point's identity URL is read with nothing of the reader's beside it, and only after a
+check no node answered (→ "The extension looks for an access point's node"); and beyond that nothing leaves the browser: no telemetry, no error report, and the secret key never. The debug log stays at the page's origin, and a debug file
 leaves the browser only by the reader's own save or copy (→ "The debug log"), so what Firefox is told of is unchanged.
 An `update_url` in Firefox's manifest alone (→ "The Firefox build ships signed as well").
 
@@ -374,7 +377,8 @@ the build's `notis-public` is not empty, absent otherwise — the mark at 16, 32
 service-worker background, a minimum of Chrome 140, the first whose `storage.local` takes `setAccessLevel` (→ "The
 contexts, and what each may hold"), and a pinned `key` — the RSA public key tracked in the
 manifest emitter's Chrome overlay, public by nature — so the extension id is stable and derived from the key.
-Firefox: an event-page background and `browser_specific_settings` — under `gecko` the id `extension@notis.fun`,
+Firefox: an event-page background, `content_security_policy.extension_pages` `script-src 'self'` (→ "Permissions and
+policy, the whole list"), and `browser_specific_settings` — under `gecko` the id `extension@notis.fun`,
 a minimum of Firefox 140, the `update_url` (→ "The Firefox build ships signed as well") and
 `data_collection_permissions` with `personalCommunications` and `financialAndPaymentInfo` required; under
 `gecko_android` a minimum of 142. **140 is the first Firefox with the built-in consent for declared data**, and an
@@ -447,6 +451,19 @@ safe because a node answers a transaction its pool already holds as held (`NODE_
 second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
 and is reached at its base alone (→ The faucet step).
 
+**The extension looks for an access point's node.** The page starts its mesh client with `LOCAL_IDENTITY_URL`
+(`MESH_INTERFACE → Discovery → "A node the access point answers"`), so a reader on a box's access point with no other
+network finds the box's node at the end of the first check no node answered, and reads, writes and follows the gossip
+through it as through any node; the verified tip names one witness while it is the one node reached. The hosted web
+client reads no such URL: an HTTPS page cannot read a plain-`http:` one.
+
+**A page's first node reads the feed again.** A page whose feed found no node before its first check reached one reads
+the feed once more when it does — the access point's node found or dialled from memory, or a seed answering late — and
+the next listing that answers lands as a refresh does (→ "A failed listing draws the cache"). Only the page's first
+node asks it: a node reached again later, on a page whose feed has answered, reads nothing. **Until the page's first
+check has ended, the feed's no-node line reads *searching for a connection…***; after a first check that reached no
+node — the access point's identity URL read and unanswered included — it reads as a failed listing does.
+
 **The mesh client's faults reach the page's console.** The extension hands its mesh client a log that writes each line
 to the page's console as an error: a check that threw, a state listener that threw, an accepted gossiped block with no
 value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
@@ -510,7 +527,7 @@ nodes answering; and two nodes under one operator and one DNS zone answer for on
 
 **What the extension remembers.** The mesh client's memory (`MESH_INTERFACE → What the client remembers`) is one record
 in the extension page's `localStorage` under `notis.mesh.memory.<network>`: the genesis it was kept under, the kept
-proof as base64 of its encoding and the known nodes. **The answered branches are kept apart from it**, each its
+proof as base64 of its encoding and the known nodes, a `local` node with its mark. **The answered branches are kept apart from it**, each its
 competing proof as base64 under a key of its own beside the record, written when the reader answers and when the branch
 it names grows — never at every check — through the same lock, and cleared with the record. It is read at load — a record kept under
 another genesis than the one the build's profile pins, or one that does not parse, is cleared and the page starts as a
@@ -842,7 +859,8 @@ holds the seed is outside the log's path. **A page writes its events in batches*
 **What the log records**: a page's start — the version, the commit, the network, the browser's user agent; each of
 the mesh client's reports (`MESH_INTERFACE → The client's node list → "The client reports what it does"`) — a dial's
 end, a connection opened or closed, a handshake's verdict, a check's end, a gossiped block weighed, a request settled
-with its route and, over the mesh, the transport and path of its connection, a serving stream and its counts; a
+with its route and, over the mesh, the transport and path of its connection, a serving stream and its counts, a read
+of the access point's identity URL and its outcome; a
 write's walk from the press to its ending, each node it tried a request of its own (→ "The mesh is the extension's
 first path"); each `sign` answer the page reads, with the policy in force (→ "`sign`, in the background, in order");
 each waiting write stored, and each outcome of the send pass, a walk no node answered among them (→ The wallet →
@@ -863,7 +881,8 @@ the row.
 
 **The snapshot** is what a page holds at one moment, taken at the debug row's `show` and at each `refresh`: the build —
 version, commit, network, user agent; the settings — serve, links, the sign policy, the hand-added node and whether it
-is off; the mesh client's state, each node entry as the client keeps it, and the client's diagnostics — each open
+is off; the mesh client's state, each node entry as the client keeps it — a node found at an access point marked
+`local` — and its reads of the access point's identity URL, and the client's diagnostics — each open
 connection, the gossip topic's mesh and direct peers, the ICE servers (`MESH_INTERFACE → The client's node list → "The
 client reports what it does"`); the reader — whether an identity is loaded and unlocked, the public key, the name, each
 pending entry's kind, transaction id, expiry and stage, and each waiting write's kind, transaction id, sequence, ledger
@@ -874,8 +893,9 @@ time. **A snapshot is a copy**: nothing in it moves until the next `refresh`.
 **The debug file** is the snapshot and every event, oldest first, as one JSON document — `format` `notis-debug/1`,
 `savedAt`, whether the identifying values are in it, `snapshot`, `events` — saved by the reader as
 `notis-debug-<YYYYMMDD-HHMMSS>.json`. **The identifying values** are the reader's public key, the reader's name, the
-transaction, box and post ids of the reader's own writes, the hand-added node's key and address, and the address a node
-observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
+transaction, box and post ids of the reader's own writes, the hand-added node's key and address, a node found at an
+access point — its key and its addresses, from the snapshot and from each read's report in the log, since an access
+point says where its reader stands — and the address a node observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
 the key's as much as the key is. **Unless the reader ticks the box beside `save as file`, each is replaced by a
 placeholder** naming its class and a number — `key-1`, `tx-3` — one value one placeholder throughout the file, so the
 file still shows which entries are one thing. **The replacement is by value**: the identifying values are collected from the
@@ -2169,7 +2189,9 @@ serve — the extension, which holds a post cache — so the web build has no su
 **The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
 press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person
 glances at — the build and its commit; each node, how it is reached (its transport and path, or its API base, or that it is
-not reached), its standing and its read time in whole milliseconds; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
+not reached), its standing and its read time in whole milliseconds, a node found at an access point reading `found on
+this network`; the last read of the access point's identity URL — `not looked up`, `nothing answered`, `refused` or
+`found`; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
 its bound — then the box *include my key, name and transaction ids* with `save as file`, `clear log`, and `refresh`,
 which takes the snapshot again. **Each value is a copy control**, the key row's pattern (→ The profile window → "The
 key is a control, and a press copies it"): a press copies the value the snapshot shows, whatever the box says — the

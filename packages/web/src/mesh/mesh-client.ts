@@ -79,6 +79,7 @@ import {
   type NodeEntry,
 } from './node-list.js';
 import { tipEvent, type TipEvent } from './tip-events.js';
+import { readLocalIdentity, noNodeAnswered } from './local-lookup.js';
 import { pickServer, orderServers, type OrderCandidate, type ReadNeed } from './server-pick.js';
 import { agreementCounts, type AgreementCounts, type AgreementEntry } from './agreement.js';
 import { stunServersFor } from './stun-list.js';
@@ -400,6 +401,28 @@ export interface ClientState {
    * at least one is `'off'`; false otherwise and at start.
    */
   notContinued: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * "The client's state holds the reads it made in the session and
+   * the last one's check and outcome". `reads` is the count of reads
+   * the client has made this session; `last` is the most recent
+   * read's check number and outcome, `null` before any. A client
+   * started without `localLookup` leaves both at the starting
+   * values.
+   */
+  localLookup: {
+    reads: number;
+    last: { check: number; result: 'answered' | 'failed' | 'refused' } | null;
+  };
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the feed
+   * again" — "Until the page's first check has ended, the feed's
+   * no-node line reads *searching for a connection…*". `false` at
+   * start; `true` once the first check's `runCheck` has ended and the
+   * access-point lookup it triggered, where one ran, has ended too.
+   * The field stays `true` for every state write after.
+   */
+  firstCheckEnded: boolean;
 }
 
 /**
@@ -419,7 +442,8 @@ export type MeshEvent =
   | MeshRequestEvent
   | MeshRequestBodyEvent
   | MeshServingStreamEvent
-  | MeshServingCallEvent;
+  | MeshServingCallEvent
+  | MeshLocalLookupEvent;
 
 /**
  * MESH_INTERFACE → The client's node list → "The client reports what it
@@ -594,6 +618,27 @@ export interface MeshServingCallEvent {
 
 /**
  * MESH_INTERFACE → The client's node list → "The client reports what it
+ * does" — "a read of the access point's identity URL — the check it
+ * followed, its time, and its outcome: answered, with the key and the
+ * addresses it added and whether it added them, failed with the
+ * failure's message, or refused with the field it failed" (→ Discovery
+ * → "A node the access point answers"). One event per read; the URL is
+ * fixed, so the event carries no URL of its own.
+ */
+export interface MeshLocalLookupEvent {
+  kind: 'local-lookup';
+  /** The check this read followed — `ClientState.checks` at the read. */
+  check: number;
+  /** The read's duration, in ms on the client's monotonic clock. */
+  ms: number;
+  outcome:
+    | { result: 'answered'; notisId: string; localAddrs: string[]; added: boolean }
+    | { result: 'failed'; message: string }
+    | { result: 'refused'; reason: string };
+}
+
+/**
+ * MESH_INTERFACE → The client's node list → "The client reports what it
  * does" — `diagnostics()`'s answer. Each open connection — the peer,
  * the remote address, the direction, the transport, the path, whether
  * limited, its age in ms since the client opened it, its handshake's
@@ -656,6 +701,14 @@ export interface MeshClient {
    */
   order(need: ReadNeed): string[];
   check(): Promise<void>;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — resolves once the first `runCheck` has ended and
+   * the access-point lookup it triggered, where one ran, has ended
+   * too. The TipVerifier awaits this before reading state so a first
+   * run never returns `firstCheckEnded: false`.
+   */
+  whenFirstCheckEnded(): Promise<void>;
   state(): ClientState;
   onState(cb: (s: ClientState) => void): () => void;
   stop(): Promise<void>;
@@ -844,6 +897,17 @@ export interface StartMeshClientOptions {
    * `SYNC_PROTOCOL`. The setting is moved later through `setServing`.
    */
   serving?: { on: boolean; texts: PostTextProvider };
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * when set, after each check in which no node answered (every node
+   * the check read failed as a transport failure, over the mesh and
+   * at its API base alike) and while the client holds no connection,
+   * the client reads this URL once through `httpFetch`
+   * (`LOCAL_IDENTITY_URL` on the access point). Absent: the client
+   * never reads a local identity URL, as every caller but the
+   * extension passes none.
+   */
+  localLookup?: { url: string };
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -965,6 +1029,25 @@ class MeshClientImpl implements MeshClient {
   private readonly listeners = new Set<(s: ClientState) => void>();
   private readonly state_: ClientState;
   private readonly httpFetchFn: HttpFetch;
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * the URL the client reads. `null` when the caller passed no
+   * `localLookup`; the scheduler reads this field and skips the
+   * lookup entirely.
+   */
+  private readonly localLookupUrl: string | null;
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — resolves once `state_.firstCheckEnded` becomes true:
+   * the first `runCheck` has ended and the access-point lookup it
+   * triggered, where one ran, has ended too. The TipVerifier awaits
+   * this before reading state so a first run never reports a lookup
+   * that has not finished yet.
+   */
+  private firstCheckEndedResolve: (() => void) | null = null;
+  private readonly firstCheckEndedP: Promise<void> = new Promise<void>((resolve) => {
+    this.firstCheckEndedResolve = resolve;
+  });
   private readonly latestEventReason = new Map<string, string>();
   private readonly wallClock: () => number;
   private readonly random: () => number;
@@ -1168,6 +1251,7 @@ class MeshClientImpl implements MeshClient {
     this.log = o.log;
     this.events = o.events;
     this.httpFetchFn = httpFetch;
+    this.localLookupUrl = o.localLookup?.url ?? null;
     this.nodeList = new NodeList(o.firstContact, ownId, clock, random);
     this.chain = new HeldChain(o.profile, DEFAULT_K);
     // MESH_INTERFACE → Discovery → "Known nodes" — a seed is a candidate
@@ -1181,7 +1265,16 @@ class MeshClientImpl implements MeshClient {
     if (o.seeds !== undefined) {
       for (const s of o.seeds) {
         if (s.notisId === ownId) continue;
-        this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
+        if (s.local === true) {
+          // MESH_INTERFACE → What the client remembers — "a remembered
+          // `local` node marked `local` again, its addresses passing
+          // the gater for that key alone". `addLocal` writes the
+          // entry's `local` mark and puts its addresses in
+          // `configured`, so the gater lets them through for this key.
+          this.nodeList.addLocal(s.notisId, s.addrs);
+        } else {
+          this.nodeList.add(s.notisId, s.addrs, true, s.api ?? null);
+        }
       }
     }
     this.ownId = ownId;
@@ -1234,6 +1327,8 @@ class MeshClientImpl implements MeshClient {
       chain: null,
       notContinued: false,
       disagreement: null,
+      localLookup: { reads: 0, last: null },
+      firstCheckEnded: false,
     };
     // MESH_INTERFACE → The client's node list → "A read opens no
     // connection" — the client's reads open their stream on a
@@ -1716,6 +1811,16 @@ class MeshClientImpl implements MeshClient {
     // check and does not schedule a 0 ms recurrence.
     const startMs = this.clock();
     this.checkTipEvents = [];
+    // MESH_INTERFACE → Discovery → "A node the access point answers" —
+    // the client reads the URL "at the end of a check in which no node
+    // answered … while it holds no connection". The decision is taken
+    // at the successful check's end (beside `emitCheckEnd`); the read
+    // runs after `checkInProgress` is cleared so the immediate check
+    // its result triggers is not swallowed by the ending check (the
+    // ongoing check is the response, so `triggerImmediateCheck` while
+    // a check is in flight is a no-op). A check that throws reads
+    // nothing — the flag stays false down the catch path.
+    let lookupDue = false;
     this.checkInProgress = Promise.resolve()
       .then(() => this.runCheck())
       .then(
@@ -1725,14 +1830,127 @@ class MeshClientImpl implements MeshClient {
           // reported as ending with the throw's message". A check that
           // ends without throwing carries `threw: null`.
           this.emitCheckEnd(startMs, null);
+          lookupDue = this.localLookupDueAtCheckEnd();
         },
         (e: unknown) => {
           this.emitCheckEnd(startMs, messageOf(e));
           throw e;
         },
       )
-      .finally(() => { this.checkInProgress = null; });
+      .finally(() => {
+        this.checkInProgress = null;
+        if (lookupDue) {
+          // `runLocalLookup` is a background task: its own `addLocal`
+          // runs `triggerImmediateCheck`, which schedules the next
+          // check rather than blocking this one's caller. A caller
+          // awaiting `check()` returns at once; the lookup's event
+          // and state write land as the read answers.
+          // WEB_INTERFACE → The extension → "A page's first node reads
+          // the feed again" — "its access-point lookup, where one
+          // ran, ended too": the lookup's own resolve path flips
+          // `firstCheckEnded` after it writes its result.
+          void this.runLocalLookup().finally(() => this.markFirstCheckEnded());
+        } else {
+          // No lookup due — the first check's end is the signal.
+          this.markFirstCheckEnded();
+        }
+      });
     return this.checkInProgress;
+  }
+
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — flip `firstCheckEnded` to true where it is still
+   * false, emit a state change and resolve the waiter. Idempotent:
+   * a second call does nothing.
+   */
+  private markFirstCheckEnded(): void {
+    if (this.state_.firstCheckEnded) return;
+    this.state_.firstCheckEnded = true;
+    this.emitStateChange();
+    const r = this.firstCheckEndedResolve;
+    this.firstCheckEndedResolve = null;
+    if (r !== null) r();
+  }
+
+  /**
+   * WEB_INTERFACE → The extension → "A page's first node reads the
+   * feed again" — the TipVerifier awaits this before reading the
+   * client's state, so the first `tipRunOf(state())` call never
+   * returns a `firstCheckEnded: false` transient a later state write
+   * will flip. Resolves at once once the flag is true.
+   */
+  whenFirstCheckEnded(): Promise<void> {
+    return this.firstCheckEndedP;
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * the three conditions the read runs under: the client was started
+   * with a URL, every node the check read failed as a transport
+   * failure, and the client holds no open connection. The decision
+   * is taken at the check's successful end; the read itself runs
+   * after `checkInProgress` is cleared (see `check()`).
+   */
+  private localLookupDueAtCheckEnd(): boolean {
+    if (this.localLookupUrl === null) return false;
+    if (!noNodeAnswered(this.checkTipEvents.map((e) => ({ event: e.event })))) return false;
+    if (this.libp2p.getConnections().length !== 0) return false;
+    return true;
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * the one read of the identity URL. The client stamps its clock
+   * before and after the read, writes the `local-lookup` event, and
+   * records the read in `ClientState.localLookup`. An `answered`
+   * read calls `NodeList.addLocal` and triggers an immediate check;
+   * a `failed` or `refused` read adds no entry and leaves the list
+   * as it was — "A failed or refused read is nothing: no entry, no
+   * evidence against any key". A read on a stopped client skips the
+   * event and the state write.
+   */
+  private async runLocalLookup(): Promise<void> {
+    const url = this.localLookupUrl;
+    if (url === null) return;
+    const checkNumber = this.state_.checks;
+    const startMs = this.clock();
+    let result: Awaited<ReturnType<typeof readLocalIdentity>>;
+    try {
+      result = await readLocalIdentity(this.httpFetchFn, url);
+    } catch (e) {
+      // The reader is total on `fetchJson`'s result, so a throw here
+      // is a bug (a shape `readLocalIdentity` does not cover). Log
+      // and treat as failed so the client's state advances.
+      this.log?.(`[mesh-client] local lookup threw: ${messageOf(e)}`);
+      result = { result: 'failed', message: messageOf(e) };
+    }
+    if (this.stopped) return;
+    const ms = this.clock() - startMs;
+    let added = false;
+    if (result.result === 'answered') {
+      added = this.nodeList.addLocal(result.notisId, result.localAddrs);
+    }
+    const outcome: MeshLocalLookupEvent['outcome'] =
+      result.result === 'answered'
+        ? { result: 'answered', notisId: result.notisId, localAddrs: result.localAddrs, added }
+        : result.result === 'failed'
+          ? { result: 'failed', message: result.message }
+          : { result: 'refused', reason: result.reason };
+    this.state_.localLookup = {
+      reads: this.state_.localLookup.reads + 1,
+      last: { check: checkNumber, result: result.result },
+    };
+    this.emit({ kind: 'local-lookup', check: checkNumber, ms, outcome });
+    this.emitStateChange();
+    if (result.result === 'answered' && added) {
+      // MESH_INTERFACE → Discovery → "A node the access point answers"
+      // — "a check runs at once". `triggerImmediateCheck` is a no-op
+      // while a check is in flight, but we are past the ending
+      // check's `.finally` (`checkInProgress` is null), so this
+      // schedules the next check at a 0 ms recurrence.
+      this.triggerImmediateCheck();
+    }
   }
 
   /**

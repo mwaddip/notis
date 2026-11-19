@@ -26,6 +26,7 @@ export type DebugEventKind =
   | 'request-body'
   | 'serving-stream'
   | 'serving-call'
+  | 'local-lookup'
   | 'write'
   | 'sign'
   | 'wait';

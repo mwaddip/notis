@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsup src/index.ts src/miner-consolidate.ts --format esm --dts",
+    "build": "tsup src/index.ts src/miner-consolidate.ts src/access-point.ts --format esm --dts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:slow": "vitest run -c vitest.slow.config.ts",

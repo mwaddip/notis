@@ -497,6 +497,7 @@ describe('decorateEntries carries each entry\'s transport and path', () => {
       known: over.known ?? false,
       byHand: over.byHand ?? false,
       yours: over.yours ?? false,
+      local: over.local ?? false,
       status: over.status ?? 'new',
       failures: over.failures ?? 0,
       retryAtMs: over.retryAtMs ?? 0,

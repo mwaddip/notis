@@ -424,6 +424,14 @@ export interface TipRun {
    *  under `thin` alike; null for a state whose chain is not seated. The
    *  post cache's name reads it (→ "The post cache"); nothing else does. */
   chain: string | null;
+  /** WEB_INTERFACE → The extension → "A page's first node reads the feed
+   *  again" — `true` once the page's first check has ended, the access-point
+   *  lookup it triggered, where one ran, included; `false`/absent before. The
+   *  App reads it to pick the feed's no-node line between *searching for a
+   *  connection…* and *no node answered — set one in settings*. Optional on
+   *  the type so a verifier that does not report it reads as `false`; the
+   *  mesh client's one always carries the flag. */
+  firstCheckEnded?: boolean;
 }
 export interface TipVerifier {
   run(): Promise<TipRun>;

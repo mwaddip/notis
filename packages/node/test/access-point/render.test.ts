@@ -1,0 +1,115 @@
+// NODE_INTERFACE → The access-point tool — the file contents each step
+// writes. The renders are pure functions; this suite reads them back.
+
+import { describe, it, expect } from 'vitest';
+import {
+  dnsmasqConf,
+  firewall,
+  ifaceUnit,
+  dnsmasqUnit,
+  firewallUnit,
+} from '../../src/access-point/render.js';
+
+describe('dnsmasqConf', () => {
+  it('names the interface, binds dynamic, hands out addresses and refuses every name at once', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
+    expect(t).toContain('interface=uap0');
+    expect(t).toContain('bind-dynamic');
+    expect(t).toContain('no-resolv');
+    expect(t).toContain('no-hosts');
+    expect(t).toContain('local=/#/');
+    expect(t).toContain('dhcp-range=10.78.79.10,10.78.79.254,255.255.255.0,12h');
+    expect(t).toContain('dhcp-option=option:router,10.78.79.1');
+    expect(t).toContain('dhcp-option=option:dns-server,10.78.79.1');
+    expect(t).toContain('dhcp-authoritative');
+  });
+
+  it('the lease file lives under /run/dagsocial-ap, which the dnsmasq unit creates', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
+    expect(t).toContain('dhcp-leasefile=/run/dagsocial-ap/dnsmasq.leases');
+  });
+
+  it('declares except-interface=lo so dnsmasq does not bind the loopback', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
+    expect(t).toContain('except-interface=lo');
+  });
+
+  it('names no name — every name is refused at once via local=/#/, no-resolv, no-hosts', () => {
+    const t = dnsmasqConf({ iface: 'uap0' });
+    // No `address=/<domain>/<ip>` line; dnsmasq hands out no DNS mappings.
+    expect(t).not.toMatch(/^address=/m);
+  });
+});
+
+describe('firewall', () => {
+  it('redirects :80 to the node port, accepts DHCP, DNS, the node port and the mesh UDP port from uap0, rejects the rest', () => {
+    const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
+    expect(t).toContain('table inet dagsocial_ap');
+    expect(t).toContain('delete table inet dagsocial_ap');
+    expect(t).toMatch(/iifname "uap0".*tcp dport 80 redirect to :3000/);
+    expect(t).toMatch(/iifname "uap0" udp dport 67 accept/);
+    expect(t).toMatch(/iifname "uap0" udp dport 53 accept/);
+    expect(t).toMatch(/iifname "uap0" tcp dport 53 accept/);
+    expect(t).toMatch(/iifname "uap0" tcp dport 3000 accept/);
+    expect(t).toMatch(/iifname "uap0" udp dport 9733 accept/);
+    expect(t).toMatch(/iifname "uap0" reject/);
+    expect(t).toMatch(/iifname "uap0" reject with icmpx admin-prohibited/);
+    expect(t).toMatch(/oifname "uap0" drop/);
+  });
+
+  it('the tcp 80 redirect is bound to 10.78.79.1, so the box answers no other address', () => {
+    const t = firewall({ iface: 'uap0', nodePort: 3000, meshUdpPort: 9733 });
+    expect(t).toContain('iifname "uap0" ip daddr 10.78.79.1 tcp dport 80 redirect to :3000');
+    // A line matching `tcp dport 80 redirect` without the `ip daddr 10.78.79.1`
+    // qualifier would take every address: forbid that shape.
+    expect(t).not.toMatch(/iifname "uap0" tcp dport 80 redirect/);
+  });
+});
+
+describe('ifaceUnit', () => {
+  it('runs before NetworkManager, oneshot, adds uap0 from the uplink interface', () => {
+    const t = ifaceUnit({ phy: 'phy0', uplinkIface: 'wlan0' });
+    expect(t).toContain('Before=NetworkManager.service');
+    expect(t).toContain('Type=oneshot');
+    expect(t).toContain('RemainAfterExit=yes');
+    expect(t).toContain('ExecStart=/usr/sbin/iw dev wlan0 interface add uap0 type __ap');
+    expect(t).toContain('ExecStop=/usr/sbin/iw dev uap0 del');
+  });
+
+  it('waits for the uplink\'s device at boot', () => {
+    // The device at `/sys/subsystem/net/devices/<iface>` is systemd's name
+    // for the kernel's netdev; a unit that lists it in `Requires=` and
+    // `After=` runs only once the kernel has brought the interface up
+    // (NODE_INTERFACE → The access-point tool, step 4).
+    const t = ifaceUnit({ phy: 'phy0', uplinkIface: 'wlan0' });
+    expect(t).toContain('Requires=sys-subsystem-net-devices-wlan0.device');
+    expect(t).toContain('After=sys-subsystem-net-devices-wlan0.device');
+  });
+
+  it('with no uplink, adds uap0 from the phy and names no device dependency', () => {
+    const t = ifaceUnit({ phy: 'phy0', uplinkIface: '' });
+    expect(t).toContain('ExecStart=/usr/sbin/iw phy phy0 interface add uap0 type __ap');
+    expect(t).not.toMatch(/Requires=sys-subsystem-net-devices-/);
+    expect(t).not.toMatch(/After=sys-subsystem-net-devices-/);
+  });
+});
+
+describe('dnsmasqUnit', () => {
+  it('runs dnsmasq in the foreground with the tool\'s conf', () => {
+    const t = dnsmasqUnit();
+    expect(t).toContain('ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dagsocial/access-point/dnsmasq.conf');
+  });
+
+  it('declares RuntimeDirectory=dagsocial-ap so /run/dagsocial-ap exists before the lease file is written', () => {
+    const t = dnsmasqUnit();
+    expect(t).toContain('RuntimeDirectory=dagsocial-ap');
+  });
+});
+
+describe('firewallUnit', () => {
+  it('loads the rule set on start and deletes the table on stop', () => {
+    const t = firewallUnit();
+    expect(t).toContain('ExecStart=/usr/sbin/nft -f /etc/dagsocial/access-point/firewall.nft');
+    expect(t).toContain('ExecStop=/usr/sbin/nft delete table inet dagsocial_ap');
+  });
+});

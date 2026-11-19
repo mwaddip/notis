@@ -113,5 +113,6 @@ export function tipRunOf(s: ClientState): TipRun {
     verdict,
     anchor: verdict.kind === 'verified' ? s.anchor : null,
     chain: s.chain,
+    firstCheckEnded: s.firstCheckEnded,
   };
 }

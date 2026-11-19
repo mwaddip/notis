@@ -416,6 +416,63 @@ describe('mesh memory store', () => {
     expect(storage.map.has('notis.mesh.memory.devnet.answered.0')).toBe(false);
   });
 
+  // MESH_INTERFACE → What the client remembers — "a remembered `local`
+  // node marked `local` again". A stored contact with `local: true` is
+  // read back with the mark; one without the field reads as not local.
+  it('a stored contact carrying the local mark reads back local, one without it reads as not local', async () => {
+    const storage = fakeStorage();
+    const locks = fakeLocks();
+    const store = createMeshMemoryStore({
+      storage,
+      locks,
+      network: 'devnet',
+      continues: () => true,
+    });
+    const privateLocal = '/ip4/10.78.79.1/udp/9733/webrtc-direct/certhash/uEiDXXXX/p2p/ab';
+    const publicAddr = '/ip4/8.8.8.8/udp/1/webrtc-direct/certhash/uEiDXXXX/p2p/cd';
+    await store.write({
+      proof: bytesFromAscii('p'),
+      nodes: [
+        { notisId: idA, addrs: [privateLocal], local: true },
+        { notisId: idB, addrs: [publicAddr] },
+      ],
+      dropped: [],
+      answered: [],
+      replace: false,
+    }, g1);
+    const stored = store.read();
+    expect(stored).not.toBeNull();
+    const a = stored!.nodes.find(n => n.notisId === idA)!;
+    expect(a).toBeDefined();
+    expect(a.local).toBe(true);
+    expect(a.addrs).toEqual([privateLocal]);
+    const b = stored!.nodes.find(n => n.notisId === idB)!;
+    expect(b.local).toBeUndefined();
+  });
+
+  it('an older record without the mark reads as not local', () => {
+    // A record written before `local` was persisted: the JSON holds
+    // nodes without a `local` field. The read returns the nodes
+    // without a `local` flag — not local.
+    const storage = fakeStorage();
+    const key = `notis.mesh.memory.devnet`;
+    const publicAddr = '/ip4/8.8.8.8/udp/1/webrtc-direct/certhash/uEiDXXXX/p2p/cd';
+    storage.setItem(
+      key,
+      record(g1, base64FromAscii('kept'), [{ notisId: idA, addrs: [publicAddr] }]),
+    );
+    const store = createMeshMemoryStore({
+      storage,
+      locks: fakeLocks(),
+      network: 'devnet',
+      continues: () => true,
+    });
+    const stored = store.read();
+    expect(stored).not.toBeNull();
+    expect(stored!.nodes).toHaveLength(1);
+    expect(stored!.nodes[0]!.local).toBeUndefined();
+  });
+
   it('an answered side key that does not decode is dropped alone', () => {
     const storage = fakeStorage();
     const key = `notis.mesh.memory.devnet`;

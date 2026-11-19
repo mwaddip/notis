@@ -181,3 +181,105 @@ describe('the debug file — the hand-added node\'s key', () => {
     expect(ticked.text).toContain(HAND_KEY);
   });
 });
+
+describe("the debug file — a local node's key and addresses", () => {
+  // WEB_INTERFACE → The extension → "The debug file" — a node found at the
+  // access point: its key and each of its addresses are identifying values,
+  // from the snapshot and from each read's report in the log.
+  const LOCAL_KEY = '7'.repeat(64);
+  const LOCAL_ADDR_A = '/ip4/198.51.100.2/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+  const LOCAL_ADDR_B = '/ip4/198.51.100.2/udp/9734/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+
+  function snapshotWithLocalNode(): DebugSnapshot {
+    const base = snapshotWithValues();
+    // Minimal shape: the file collection only reads `notisId`, `addrs` and
+    // the `local` mark; the deep copy preserves what we hand in. The hand
+    // node's address is cleared so the local entry's addresses hold the
+    // first `addr-N` placeholders without a collision from `HAND_ADDR`.
+    const node = {
+      notisId: LOCAL_KEY,
+      local: true,
+      addrs: [LOCAL_ADDR_A, LOCAL_ADDR_B],
+      api: null,
+      status: 'ok',
+      readMs: 12,
+      firstContact: false, known: false, byHand: false, yours: false,
+      failures: 0, retryAtMs: 0, behindBy: null,
+      droppedAddrs: [], evidence: null, lastFailure: null, lastFailures: {},
+      transport: 'webrtc-direct', path: 'direct', seenMs: null,
+    };
+    return {
+      ...base,
+      settings: {
+        serve: false,
+        links: 'here',
+        signPolicy: 'silent',
+        handNode: { address: '', off: false, key: null },
+      },
+      mesh: {
+        state: {
+          nodeId: null, transport: null, path: null, lastLeft: null, tip: null,
+          agreement: null, checks: 0,
+          traffic: { tipBytes: 0, proofBytes: 0, headerBytes: 0, gossipBytes: 0, proofReads: 0, forwarded: 0 },
+          nodes: [node],
+          seated: false, proofs: null, anchor: null, chain: null,
+          notContinued: false, disagreement: null,
+          localLookup: { reads: 0, last: null }, firstCheckEnded: false,
+        },
+        diagnostics: { connections: [], gossip: { meshPeers: 0, directPeers: 0 }, iceServers: [] },
+      },
+    } as unknown as DebugSnapshot;
+  }
+
+  it("unticked: a local entry's key and each of its addresses stand nowhere, each read as local-node / addr placeholders; ticked they stand", () => {
+    const snapshot = snapshotWithLocalNode();
+    const unticked = buildDebugFile({
+      snapshot, events: [], identifying: false, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(unticked.text).not.toContain(LOCAL_KEY);
+    expect(unticked.text).not.toContain(LOCAL_ADDR_A);
+    expect(unticked.text).not.toContain(LOCAL_ADDR_B);
+    const parsed = JSON.parse(unticked.text);
+    expect(parsed.snapshot.mesh.state.nodes[0].notisId).toBe('local-node-1');
+    expect(parsed.snapshot.mesh.state.nodes[0].addrs).toEqual(['addr-1', 'addr-2']);
+
+    const ticked = buildDebugFile({
+      snapshot, events: [], identifying: true, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(ticked.text).toContain(LOCAL_KEY);
+    expect(ticked.text).toContain(LOCAL_ADDR_A);
+    expect(ticked.text).toContain(LOCAL_ADDR_B);
+  });
+
+  it('an answered local-lookup event from an earlier page whose node the snapshot lacks is replaced too', () => {
+    const EARLIER_KEY = '8'.repeat(64);
+    const EARLIER_ADDR = '/ip4/198.51.100.3/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    // The current snapshot holds no local node (and no hand node to collide
+    // with `addr-1`); only the log carries the earlier page's answered
+    // event. The collection reaches the key and addresses through the
+    // event.
+    const snapshot: DebugSnapshot = {
+      ...snapshotWithValues(),
+      settings: {
+        serve: false,
+        links: 'here',
+        signPolicy: 'silent',
+        handNode: { address: '', off: false, key: null },
+      },
+    };
+    const events: DebugEvent[] = [
+      {
+        t: 0, page: 'cd34ef56', kind: 'local-lookup', check: 2, ms: 33,
+        outcome: { result: 'answered', notisId: EARLIER_KEY, localAddrs: [EARLIER_ADDR], added: true },
+      } as unknown as DebugEvent,
+    ];
+    const unticked = buildDebugFile({
+      snapshot, events, identifying: false, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(unticked.text).not.toContain(EARLIER_KEY);
+    expect(unticked.text).not.toContain(EARLIER_ADDR);
+    const parsed = JSON.parse(unticked.text);
+    expect(parsed.events[0].outcome.notisId).toBe('local-node-1');
+    expect(parsed.events[0].outcome.localAddrs).toEqual(['addr-1']);
+  });
+});

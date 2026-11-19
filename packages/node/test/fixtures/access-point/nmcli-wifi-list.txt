@@ -1,0 +1,2 @@
+HomeNetwork:1:2412 MHz
+HomeNetwork:100:5500 MHz

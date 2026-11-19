@@ -39,6 +39,7 @@ import { buildBlockSettlement, computeBlockReward, materializeOutput, treeStateV
 import type { BlockCost, BlockEffects } from '@dagsocial/consensus';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
+import type { AppDeps } from '../src/server.js';
 import { AVL_SCHEMA } from '../src/store/db.js';
 import type { AvlProverHandle } from '../src/state/avl-prover.js';
 import type {
@@ -749,6 +750,14 @@ export function priceBoxOf(tx: UtxoTransaction): AnyBox {
 export function makeTestConfig(overrides: Partial<Config> = {}): Config {
   return { ...config, ...overrides };
 }
+
+/**
+ * The `AppDeps` every `createApp` call site in this tree passes when the
+ * case runs no mesh (NODE_INTERFACE → Mesh identity → "A mesh node
+ * answers its identity"): `meshIdentity()` answers `null`, the shape
+ * `GET /mesh/identity` reads as a node that runs no mesh.
+ */
+export const NO_MESH: AppDeps = { meshIdentity: () => null };
 
 /**
  * A map keyed by **bytes**, for mocks that stand in for a store lookup.

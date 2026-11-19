@@ -13,8 +13,7 @@ import {
   makePostCommit,
   fixturePostId,
   fixtureTxId,
-  uid,
-} from '../helpers.js';
+  uid, NO_MESH} from '../helpers.js';
 
 // NODE_INTERFACE → HTTP API → "A refusal is the parser's by where it comes from"
 
@@ -41,7 +40,7 @@ describe('an encoded request body is refused unread', () => {
     livePostId = fixturePostId(commit);
     insertPost(livePostId, fixtureTxId(commit), commit, content);
     confirmPost(livePostId, 30, 0);
-    const app = createApp(makeTestConfig({ port: 0, webShellPath: shellPath }));
+    const app = createApp(makeTestConfig({ port: 0, webShellPath: shellPath }), NO_MESH);
     publicServer = app.listen(0);
     await new Promise<void>((resolve) => {
       if (publicServer.listening) { resolve(); return; }

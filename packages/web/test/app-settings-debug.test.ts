@@ -88,6 +88,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     agreement: null, checks: 0, traffic: emptyTraffic(), nodes: [],
     seated: false, proofs: null, anchor: null, chain: null,
     notContinued: false, disagreement: null,
+    localLookup: { reads: 0, last: null }, firstCheckEnded: false,
     ...overrides,
   };
 }
@@ -498,6 +499,62 @@ describe('the settings window debug row', () => {
     const text = row.querySelector('.debug-body')!.textContent ?? '';
     expect(text).toContain(' · 6 ms');
     expect(text).not.toContain('6.19');
+  });
+
+  it("a local node's line reads found on this network", async () => {
+    // WEB_INTERFACE → The settings window → "The debug row" — "a node found
+    // at an access point reading `found on this network`".
+    const node = {
+      notisId: KEY, addrs: [], api: 'https://node.example', status: 'ok', readMs: 12,
+      local: true,
+    } as unknown as NodeEntry;
+    const row = debugRow({
+      seam: makeDebugSeam(freshStub(), {
+        state: () => emptyState({ nodes: [node] }),
+        diagnostics: () => emptyDiagnostics(),
+      }),
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+    toggleWord(row).click();
+    await flush();
+    const text = row.querySelector('.debug-body')!.textContent ?? '';
+    expect(text).toContain('found on this network');
+  });
+
+  it('the lookup line reads one of the four states — not looked up / nothing answered / refused / found', async () => {
+    // WEB_INTERFACE → The settings window → "The debug row" — "the last read
+    // of the access point's identity URL — `not looked up`, `nothing
+    // answered`, `refused` or `found`".
+    const states: Array<{ last: ClientState['localLookup']['last']; expected: string }> = [
+      { last: null, expected: 'not looked up' },
+      { last: { check: 1, result: 'failed' }, expected: 'nothing answered' },
+      { last: { check: 1, result: 'refused' }, expected: 'refused' },
+      { last: { check: 1, result: 'answered' }, expected: 'found' },
+    ];
+    for (const s of states) {
+      document.body.innerHTML = '';
+      const row = debugRow({
+        seam: makeDebugSeam(freshStub(), {
+          state: () => emptyState({ localLookup: { reads: s.last === null ? 0 : 1, last: s.last } }),
+          diagnostics: () => emptyDiagnostics(),
+        }),
+        reader: () => ({
+          identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+          pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+        }),
+        now: () => 0,
+      });
+      document.body.appendChild(row);
+      toggleWord(row).click();
+      await flush();
+      const text = row.querySelector('.debug-body')!.textContent ?? '';
+      expect(text, `state ${s.last?.result ?? 'null'}`).toContain(s.expected);
+    }
   });
 
   it('a node\'s copy control writes the whole 64-hex key to the clipboard', async () => {

@@ -9,6 +9,7 @@ import type { PostTextProvider } from '@dagsocial/net/browser';
 import { createMeshSeams, startExtensionMesh, parseHandNodeAddress, type StorageLike } from '../../src/extension/mesh-seams.js';
 import { HAND_NODE_KEY, SERVE_KEY } from '../../src/extension/storage-keys.js';
 import { createDebugLog, type DebugLog, type DebugTimerHandle, type DebugTimers } from '../../src/extension/debug-log.js';
+import { LOCAL_IDENTITY_URL } from '../../src/mesh/local-lookup.js';
 
 const emptyPostTexts: PostTextProvider = async () => new Map<string, string>();
 
@@ -39,6 +40,7 @@ function emptyState(overrides: Partial<ClientState> = {}): ClientState {
     chain: null,
     notContinued: false,
     disagreement: null,
+    localLookup: { reads: 0, last: null }, firstCheckEnded: false,
     ...overrides,
   };
 }
@@ -62,6 +64,7 @@ function fakeClient(hooks: FakeClientHooks = {}): MeshClient {
     base: hooks.base ?? ((): string | null => null),
     order: hooks.order ?? ((): string[] => []),
     check: hooks.check ?? ((): Promise<void> => Promise.resolve()),
+    whenFirstCheckEnded: (): Promise<void> => Promise.resolve(),
     state: hooks.state ?? ((): ClientState => emptyState()),
     onState: () => () => {},
     stop: hooks.stop ?? ((): Promise<void> => Promise.resolve()),
@@ -266,6 +269,18 @@ describe('startExtensionMesh — the lifecycle', () => {
     (handler as () => void)();
     await Promise.resolve();
     expect(stopCalls).toBe(1);
+  });
+
+  it('starts the client with localLookup set to LOCAL_IDENTITY_URL', async () => {
+    let startOpts: StartMeshClientOptions | null = null;
+    const client = fakeClient();
+    const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} },
+      startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
+    });
+    expect(startOpts!.localLookup).toEqual({ url: LOCAL_IDENTITY_URL });
   });
 
   it('a stored hand-added address is re-added via addByHand after start', async () => {

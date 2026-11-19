@@ -46,7 +46,7 @@ const HEX64 = /^[0-9a-f]{64}$/i;
 const BOX_ID = /^[0-9a-f]{64}-\d+$/i;
 
 /** The identifying-value classes the collection sorts into. */
-type ValueClass = 'key' | 'name' | 'tx' | 'post' | 'box' | 'hand-node' | 'addr';
+type ValueClass = 'key' | 'name' | 'tx' | 'post' | 'box' | 'hand-node' | 'local-node' | 'addr';
 
 interface Collected {
   /** `[value, class]` pairs in collection order; duplicates allowed but
@@ -113,11 +113,47 @@ function collectFromEvents(c: Collected, events: readonly DebugEvent[]): void {
   // (each `write` event's and each `wait` event's `txId` field)". The
   // recorders write `txId` on both `write` and `wait` kinds
   // (`src/extension/mesh-seams.ts` `makeWriteObserver` and `src/main.ts`'s
-  // wait recorder).
+  // wait recorder). An answered `local-lookup` event names a node the
+  // access point answered — its key and each of its addresses are
+  // identifying values too, from the event (→ "The debug file" — "a node
+  // found at an access point — its key and its addresses, from the
+  // snapshot and from each read's report in the log"). An event from an
+  // earlier page whose node the current snapshot no longer holds is
+  // caught by this walk.
   for (const e of events) {
-    if (e.kind !== 'write' && e.kind !== 'wait') continue;
-    const tx = e['txId'];
-    if (typeof tx === 'string') pushUnique(c, tx, 'tx');
+    if (e.kind === 'write' || e.kind === 'wait') {
+      const tx = e['txId'];
+      if (typeof tx === 'string') pushUnique(c, tx, 'tx');
+      continue;
+    }
+    if (e.kind === 'local-lookup') {
+      const outcome = e['outcome'];
+      if (outcome !== null && typeof outcome === 'object'
+          && (outcome as { result?: unknown }).result === 'answered') {
+        const notisId = (outcome as { notisId?: unknown }).notisId;
+        if (typeof notisId === 'string') pushUnique(c, notisId, 'local-node');
+        const addrs = (outcome as { localAddrs?: unknown }).localAddrs;
+        if (Array.isArray(addrs)) {
+          for (const a of addrs) {
+            if (typeof a === 'string') pushUnique(c, a, 'addr');
+          }
+        }
+      }
+    }
+  }
+}
+
+function collectFromMesh(
+  c: Collected,
+  nodes: readonly { notisId: string; local: boolean; addrs: readonly string[] }[],
+): void {
+  // WEB_INTERFACE → The extension → "The debug file" — a node found at
+  // the access point: its key (`local-node`) and each of its addresses
+  // (`addr`) are identifying values; the `local` mark names the entry.
+  for (const n of nodes) {
+    if (n.local !== true) continue;
+    pushUnique(c, n.notisId, 'local-node');
+    for (const a of n.addrs) pushUnique(c, a, 'addr');
   }
 }
 
@@ -125,6 +161,9 @@ function collect(snapshot: DebugSnapshot, events: readonly DebugEvent[]): Collec
   const c: Collected = { values: [] };
   if (!('error' in snapshot.reader)) collectFromReader(c, snapshot.reader);
   if (!('error' in snapshot.settings)) collectFromSettings(c, snapshot.settings);
+  if (!('error' in snapshot.mesh)) {
+    collectFromMesh(c, snapshot.mesh.state.nodes);
+  }
   collectFromEvents(c, events);
   return c;
 }

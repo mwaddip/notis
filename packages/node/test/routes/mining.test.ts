@@ -13,7 +13,7 @@ import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import type { OrderingBlock } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
-import { liveProver, wireIntakeForTests } from '../helpers.js';
+import { liveProver, wireIntakeForTests, NO_MESH} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -422,7 +422,7 @@ describe('mining routes — mount policy', () => {
 
   describe('5. miner role', () => {
     it('serves /mining/template — 401 unauthenticated (mounted)', async () => {
-      const app = createApp(makeConfig({ miningSecret: SECRET }));
+      const app = createApp(makeConfig({ miningSecret: SECRET }), NO_MESH);
       const res = await request(app).get('/mining/template');
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('Unauthorized');
@@ -434,7 +434,7 @@ describe('mining routes — mount policy', () => {
       // does not change what this case measures — that auth passed — and the
       // gate's own cases discriminate them.
       markDiscoveryStarted();
-      const app = createApp(makeConfig({ miningSecret: SECRET }));
+      const app = createApp(makeConfig({ miningSecret: SECRET }), NO_MESH);
       const res = await request(app)
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
@@ -448,7 +448,7 @@ describe('mining routes — mount policy', () => {
       // by the mark rather than by a stubbed dep — so the wiring from
       // `server.ts` to the route is what is under test, not the predicate.
       markDiscoveryUnavailable();
-      const app = createApp(makeConfig({ miningSecret: SECRET }));
+      const app = createApp(makeConfig({ miningSecret: SECRET }), NO_MESH);
       const res = await request(app)
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
@@ -490,7 +490,7 @@ describe('mining routes — mount policy', () => {
       markDiscoveryStarted(); // bootstrap addresses configured, no peer yet
       expect(isPeerReady()).toBe(false);
 
-      const res = await request(createApp(cfg))
+      const res = await request(createApp(cfg, NO_MESH))
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
 
@@ -511,7 +511,7 @@ describe('mining routes — mount policy', () => {
       markDiscoveryUnavailable();
       expect(isPeerReady()).toBe(true);
 
-      const res = await request(createApp(cfg))
+      const res = await request(createApp(cfg, NO_MESH))
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
 
@@ -540,7 +540,7 @@ describe('mining routes — mount policy', () => {
       markDiscoveryUnavailable();
       expect(isPeerReady()).toBe(true);
 
-      const res = await request(createApp(cfg))
+      const res = await request(createApp(cfg, NO_MESH))
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
 
@@ -553,13 +553,13 @@ describe('mining routes — mount policy', () => {
 
   describe('5b. server role', () => {
     it('never serves /mining, secret or not (404, not 401)', async () => {
-      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }));
+      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }), NO_MESH);
       const res = await request(app).get('/mining/template');
       expect(res.status).toBe(404);
     });
 
     it('does not serve it with a bearer header either (the path is absent)', async () => {
-      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }));
+      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }), NO_MESH);
       const res = await request(app)
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);

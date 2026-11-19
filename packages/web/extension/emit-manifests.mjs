@@ -71,6 +71,11 @@ const chrome = {
 // extension runs in Firefox for Android from it.
 // `optional_host_permissions` (from 128) and content-script hosts granted
 // at install (past 127) both hold at 140.
+// `content_security_policy.extension_pages` is declared as `script-src
+// 'self'` so Firefox's default `upgrade-insecure-requests` does not turn
+// the access point's plain-`http:` identity URL into an `https:` one —
+// Chrome's default is already `script-src 'self'` and the Chrome
+// manifest declares nothing.
 // The id and the `update_url` are constants of this overlay, the same in
 // every build: an installed copy reads the `update_url` it was installed
 // with and learns no other.
@@ -80,6 +85,7 @@ const firefox = {
   background: { scripts: ['background.js'] },
   ...(contentScripts ? { content_scripts: contentScripts } : {}),
   ...(optionalHosts ? { optional_host_permissions: optionalHosts } : {}),
+  content_security_policy: { extension_pages: "script-src 'self'" },
   browser_specific_settings: {
     gecko: {
       id: 'extension@notis.fun',

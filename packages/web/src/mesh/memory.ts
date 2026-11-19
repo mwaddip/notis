@@ -120,10 +120,12 @@ export function forkKey(
 /**
  * MESH_INTERFACE → What the client remembers — "After each check it
  * records every node naming a tip on its chain, `ok` or `trailing`,
- * with the addresses it would dial — no private address, never its
- * own key — the most recently seen first, at most
- * `REMEMBERED_NODES_MAX`". An entry with no address the client would
- * dial is dropped; `wouldDial` names the test an address is held to.
+ * with the addresses it would dial — no private address but a `local`
+ * node's own, never its own key — the most recently seen first, at
+ * most `REMEMBERED_NODES_MAX`". An entry with no address the client
+ * would dial is dropped; `wouldDial` names the test an address is
+ * held to. A `local` entry keeps its private address and the mark,
+ * so the next start dials it beside the first-contact nodes.
  */
 export function nodesToRemember(
   entries: readonly NodeEntry[],
@@ -137,7 +139,10 @@ export function nodesToRemember(
     if (e.notisId === ownId) continue;
     const addrs: string[] = [];
     for (const addr of e.addrs) {
-      if (!wouldDial(addr)) continue;
+      // A `local` entry's private address is kept — "no private
+      // address but a `local` node's own".
+      if (!wouldDial(addr) && !e.local) continue;
+      if (!parsesAsMultiaddr(addr)) continue;
       addrs.push(addr);
     }
     if (addrs.length === 0) continue;
@@ -145,13 +150,30 @@ export function nodesToRemember(
     // is set; the `-Infinity` fallback is defensive and sorts such an
     // entry to the oldest.
     const seen = e.seenMs ?? -Infinity;
-    kept.push({ seenMs: seen, order: i, contact: { notisId: e.notisId, addrs } });
+    const contact: MeshContact = { notisId: e.notisId, addrs };
+    if (e.local) contact.local = true;
+    kept.push({ seenMs: seen, order: i, contact });
   }
   kept.sort((a, b) => {
     if (a.seenMs !== b.seenMs) return b.seenMs - a.seenMs;
     return a.order - b.order;
   });
   return kept.slice(0, cap).map(k => k.contact);
+}
+
+/**
+ * The address parses as a multiaddr; `multiaddr()` throws for a string
+ * it cannot parse. A `local` entry skips `wouldDial`'s private-address
+ * check but its addresses must still be parseable — one the client
+ * would not dial at all is not one it hands its next start.
+ */
+function parsesAsMultiaddr(addr: string): boolean {
+  try {
+    multiaddr(addr);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /**

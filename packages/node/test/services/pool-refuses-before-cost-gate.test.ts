@@ -41,8 +41,7 @@ import {
   makeTestIdentity,
   seedProvenance,
   signTransaction,
-  txToJson,
-} from '../helpers.js';
+  txToJson, NO_MESH} from '../helpers.js';
 
 // Wrap `applyBlock` in a spy so cost-estimate's candidate cost calls are
 // counted at the module boundary. The rest of consensus is unchanged.
@@ -107,7 +106,7 @@ describe('the pool\'s own refusals answer before the cost gate', () => {
       bootstrapPeers: [],
       listenAddrs: '/ip4/127.0.0.1/tcp/0',
       maxPeers: 50,
-    }));
+    }), NO_MESH);
     server = app.listen(0);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});

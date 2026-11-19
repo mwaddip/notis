@@ -30,6 +30,7 @@ function makeEntry(partial: {
     known: false,
     byHand: false,
     yours: false,
+    local: false,
     status: partial.status,
     failures: 0,
     retryAtMs: 0,

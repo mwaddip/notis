@@ -1,4 +1,4 @@
-import { uid } from '../helpers.js';
+import { uid, NO_MESH} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -523,7 +523,7 @@ describe('`/status` reads its aggregates once per applied tip', () => {
       port: 0,
       dbPath: join(perTipTmpDir, 'store.sqlite'),
       nodeRole: 'server',
-    }));
+    }), NO_MESH);
     const server = app.listen(0);
     const addr = server.address() as { port: number };
     return { server, port: addr.port };

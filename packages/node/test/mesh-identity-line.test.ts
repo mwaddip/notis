@@ -117,4 +117,87 @@ describe('NODE_INTERFACE → Configuration → "A mesh node prints its identity 
     // by hand".
     expect(first['localAddrs']).toEqual([]);
   }, 60_000);
+
+  // NODE_INTERFACE → Mesh identity → "A mesh node answers its
+  // identity": `GET /mesh/identity` on the node's bound port answers
+  // what the node prints as its identity line. The spawned node is the
+  // one shape that exercises `index.ts`' wiring of `createApp`'s
+  // `meshIdentity` seam to `net.meshIdentity()`.
+  it('GET /mesh/identity answers the identity line the node printed', async () => {
+    if (!distExists) {
+      throw new Error(`built node missing at ${NODE_ENTRY} — pnpm -r build first`);
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'node-mesh-identity-route-'));
+    dirs.push(dir);
+    const child = spawn(
+      process.execPath,
+      [NODE_ENTRY],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          NETWORK_TYPE: 'devnet',
+          NODE_ROLE: 'server',
+          PORT: '0',
+          ADMIN_PORT: '0',
+          DB_PATH: join(dir, 'node.db'),
+          LISTEN_ADDRS: '/ip4/127.0.0.1/tcp/0',
+          BOOTSTRAP_PEERS: '',
+          MESH_ROLE: 'public',
+          MESH_LISTEN: '/ip4/127.0.0.1/udp/0/webrtc-direct',
+          MESH_STUN: 'off',
+        },
+      },
+    );
+    children.push(child);
+
+    let apiPort: number | null = null;
+    const identityLines: string[] = [];
+    let partial = '';
+    child.stdout!.on('data', (chunk: Buffer) => {
+      partial += chunk.toString();
+      const lines = partial.split('\n');
+      partial = lines.pop()!;
+      for (const line of lines) {
+        if (line.length === 0) continue;
+        let obj: Record<string, unknown> | null = null;
+        try { obj = JSON.parse(line) as Record<string, unknown>; }
+        catch { continue; }
+        if (obj === null) continue;
+        if (obj['event'] === 'api_listening' && typeof obj['port'] === 'number') {
+          apiPort = obj['port'] as number;
+        }
+        if ('notisId' in obj && 'multiaddrs' in obj) {
+          identityLines.push(line);
+        }
+      }
+    });
+
+    // Wait up to 30 s for both the api_listening event and an identity line.
+    const deadline = Date.now() + 30_000;
+    while ((apiPort === null || identityLines.length === 0) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (child.exitCode !== null) {
+        throw new Error(`node exited early with code ${child.exitCode}`);
+      }
+    }
+    expect(apiPort).not.toBeNull();
+    expect(identityLines.length).toBeGreaterThanOrEqual(1);
+
+    // The last identity line is what the node has most recently announced;
+    // the route reads `net.meshIdentity()` at the request, so after the
+    // fetch the body deep-equals the last-printed line's object.
+    const printed = JSON.parse(identityLines[identityLines.length - 1]!) as Record<string, unknown>;
+
+    const res = await fetch(`http://127.0.0.1:${apiPort}/mesh/identity`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(['notisId', 'peerId', 'multiaddrs', 'localAddrs']);
+    expect(body).toEqual({
+      notisId: printed['notisId'],
+      peerId: printed['peerId'],
+      multiaddrs: printed['multiaddrs'],
+      localAddrs: printed['localAddrs'],
+    });
+  }, 60_000);
 });

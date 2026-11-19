@@ -24,6 +24,16 @@ export interface MeshContact {
   notisId: string;
   addrs: string[];
   api?: string;
+  /**
+   * MESH_INTERFACE → What the client remembers — "a remembered `local`
+   * node marked `local` again, its addresses passing the gater for that
+   * key alone". A contact restored from the per-network record carries
+   * `local: true` when the stored entry was a `local` one; its addresses
+   * (private ones included) pass the mesh client's gater for its key
+   * alone. Omitted on a contact that is not a local node; a first-contact
+   * node never carries it.
+   */
+  local?: boolean;
 }
 
 export type FailureKind = 'timeout' | 'refused' | 'dropped' | 'transport' | 'clock';
@@ -83,6 +93,15 @@ export interface NodeEntry {
    * agreement weight of its own.
    */
   yours: boolean;
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * "The entry says how it was found": true for an entry whose
+   * addresses the access point's identity URL answered. Set by
+   * `addLocal`; carries forward across later events. An existing
+   * entry an answer merges into takes the mark; `blacklisted`
+   * entries, and the client's own key, are left as they are.
+   */
+  local: boolean;
   status: NodeStatus;
   failures: number;
   retryAtMs: number;
@@ -166,6 +185,7 @@ interface InternalEntry {
   known: boolean;
   byHand: boolean;
   yours: boolean;
+  local: boolean;
   seenMs: number | null;
   /**
    * MESH_INTERFACE → Discovery → "A node added by hand" — true for an
@@ -207,6 +227,13 @@ export class NodeList {
   private readonly entries_: Map<string, InternalEntry> = new Map();
   private readonly clock: () => number;
   private readonly random: () => number;
+  /**
+   * MESH_INTERFACE → Discovery — "the client's own key is none". Kept so
+   * `addLocal` can refuse it (the access point's answer may name the
+   * reader's own key on a box the reader also runs); the constructor's
+   * own-key check holds the first-contact list.
+   */
+  private readonly ownId: string;
 
   constructor(
     firstContact: MeshContact[],
@@ -219,6 +246,7 @@ export class NodeList {
     random: () => number,
   ) {
     assertNotisId(ownId);
+    this.ownId = ownId;
     this.clock = clock;
     this.random = random;
     for (const a of firstContact) {
@@ -243,6 +271,7 @@ export class NodeList {
           known: false,
           byHand: false,
           yours: false,
+          local: false,
           seenMs: null,
           fromFirstContactList: true,
           status: 'new',
@@ -279,6 +308,7 @@ export class NodeList {
       known,
       byHand: false,
       yours: false,
+      local: false,
       seenMs: null,
       fromFirstContactList: false,
       status: 'new',
@@ -329,6 +359,7 @@ export class NodeList {
       known: false,
       byHand: true,
       yours: trusted,
+      local: false,
       seenMs: null,
       fromFirstContactList: false,
       status: 'new',
@@ -343,6 +374,65 @@ export class NodeList {
       lastFailures: {},
       api: null,
     });
+  }
+
+  /**
+   * MESH_INTERFACE → Discovery → "A node the access point answers" —
+   * the access point's identity URL answered for this key. A new
+   * entry is added as an ordinary candidate (`local: true`, `byHand:
+   * false`, `yours: false`, `firstContact: false`, `known: false`),
+   * its addresses in `configured` so the gater allows them for this
+   * key alone (→ Transports → "A client dials a private address only
+   * when its own configuration names it"). An existing entry merges
+   * the addresses, merges them into `configured`, and takes the
+   * `local` mark. Answers `true` only where the call changed the
+   * list — a new entry, an address `addrs`/`configured` did not
+   * hold, or the `local` mark newly set — so the client calls
+   * `triggerImmediateCheck` only where the answer added the node,
+   * an address or the mark (the rule). An answer that changes
+   * nothing answers `false`, as does a `blacklisted` entry and the
+   * client's own key. The key check is `add`'s (64 lowercase hex);
+   * the address checks (DNS, `/webrtc-direct/`, the loopback rule)
+   * are the lookup's, not the list's.
+   */
+  addLocal(id: string, addrs: string[]): boolean {
+    assertNotisId(id);
+    if (id === this.ownId) return false;
+    const existing = this.entries_.get(id);
+    if (existing) {
+      if (existing.status === 'blacklisted') return false;
+      const addrsBefore = existing.addrs.length;
+      const configuredBefore = existing.configured.length;
+      const markBefore = existing.local;
+      this.mergeAddrs(existing, addrs);
+      this.mergeConfigured(existing, addrs);
+      existing.local = true;
+      return existing.addrs.length !== addrsBefore
+        || existing.configured.length !== configuredBefore
+        || existing.local !== markBefore;
+    }
+    this.entries_.set(id, {
+      notisId: id,
+      firstContact: false,
+      known: false,
+      byHand: false,
+      yours: false,
+      local: true,
+      seenMs: null,
+      fromFirstContactList: false,
+      status: 'new',
+      failures: 0,
+      clockAtFailure: 0,
+      storedRetryAtMs: 0,
+      addrs: [...addrs],
+      configured: [...addrs],
+      droppedAddrs: [],
+      evidence: null,
+      lastFailure: null,
+      lastFailures: {},
+      api: null,
+    });
+    return true;
   }
 
   /**
@@ -608,6 +698,7 @@ export class NodeList {
       known: e.known,
       byHand: e.byHand,
       yours: e.yours,
+      local: e.local,
       status: e.status,
       failures: e.failures,
       retryAtMs,

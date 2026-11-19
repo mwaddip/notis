@@ -68,7 +68,9 @@ Ten packages, in dependency order:
   answered over libp2p. `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block
   check, the reader's libp2p options and mesh fetch.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator, and the header
-  pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store.
+  pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store. Its `.deb`
+  carries the opt-in access-point tool, which turns a box into a Wi-Fi network that carries the mesh alone
+  (`NODE_INTERFACE → The access-point tool`).
 - `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
   tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
   browser, the composer for a root and a reply, and like, on transactions the client builds and signs

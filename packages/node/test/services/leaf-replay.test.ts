@@ -52,8 +52,7 @@ import {
   makeTestIdentityFromSeed,
   mineNextBlock,
   revertChainTo,
-  signTransaction,
-} from '../helpers.js';
+  signTransaction, NO_MESH} from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
 
 /**
@@ -584,7 +583,7 @@ describe('a leaf replays the node\'s chain from each block\'s proof', () => {
     // The cycle above is the node's, byte for byte.
     expect(proven.proof).toEqual(speculation.proof);
 
-    const app = node.server.createApp(makeTestConfig({ nodeRole: 'server' }));
+    const app = node.server.createApp(makeTestConfig({ nodeRole: 'server' }), NO_MESH);
     server = await new Promise<Server>((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
     });

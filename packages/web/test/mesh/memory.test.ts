@@ -59,6 +59,7 @@ function entry(over: Partial<NodeEntry>): NodeEntry {
     known: false,
     byHand: false,
     yours: false,
+    local: false,
     status: 'ok',
     failures: 0,
     retryAtMs: 0,
@@ -269,5 +270,33 @@ describe('memory — nodesToRemember', () => {
     t = 300; list.success(idB);
     const out = nodesToRemember(list.entries(), own, 16);
     expect(out.map(n => n.notisId)).toEqual([idB, idA]);
+  });
+
+  // MESH_INTERFACE → What the client remembers — "the addresses it would
+  // dial — no private address but a `local` node's own, never its own
+  // key". A `local` entry keeps its private address and comes through
+  // marked `local`; a non-`local` private address is still refused.
+  it('a local entry is remembered with its private address and the mark', () => {
+    const own = '0'.repeat(63) + '1';
+    const idA = 'a'.repeat(64);
+    const privateLocal = `/ip4/10.78.79.1/udp/9733/webrtc-direct/certhash/uEiDXXXX/p2p/${'a'.repeat(52)}`;
+    const entries: NodeEntry[] = [
+      entry({ notisId: idA, status: 'ok', addrs: [privateLocal], seenMs: 1000, local: true }),
+    ];
+    const out = nodesToRemember(entries, own, 16);
+    expect(out.map((n) => n.notisId)).toEqual([idA]);
+    expect(out[0]!.addrs).toEqual([privateLocal]);
+    expect(out[0]!.local).toBe(true);
+  });
+
+  it('a non-local private address is still not remembered', () => {
+    const own = '0'.repeat(63) + '1';
+    const idA = 'a'.repeat(64);
+    const privateAddr = `/ip4/192.168.1.5/udp/3456/webrtc-direct/certhash/uEiDXXXX/p2p/${'a'.repeat(52)}`;
+    const entries: NodeEntry[] = [
+      entry({ notisId: idA, status: 'ok', addrs: [privateAddr], seenMs: 1000, local: false }),
+    ];
+    const out = nodesToRemember(entries, own, 16);
+    expect(out).toEqual([]);
   });
 });

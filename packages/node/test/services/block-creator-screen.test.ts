@@ -35,8 +35,7 @@ import {
   wireIntakeForTests,
   solveHeaderPow,
   txToJson,
-  makePostCommit,
-} from '../helpers.js';
+  makePostCommit, NO_MESH} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // The producer screens a rejected body and evicts only what its screen
@@ -114,7 +113,7 @@ async function importServer() {
 
 async function startApp(): Promise<{ server: http.Server; base: string }> {
   const { createApp } = await importServer();
-  const app = createApp(serverConfig);
+  const app = createApp(serverConfig, NO_MESH);
   const server = app.listen(0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return { server, base };
