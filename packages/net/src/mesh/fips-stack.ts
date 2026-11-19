@@ -173,3 +173,13 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
     stop,
   };
 }
+
+/**
+ * NET_INTERFACE → "A mesh node runs a FIPS stack" — a reader's FIPS
+ * stack: a fresh fips-ts identity, forwarding off, dialling on, no
+ * link opened of its own accord; the reader links by
+ * `stack.link.openLink(connection)` over a connection it chooses.
+ */
+export async function createReaderFips(_o: { network: MeshNetworkName }): Promise<FipsStack> {
+  throw new Error('createReaderFips not implemented');
+}
