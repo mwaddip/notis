@@ -519,7 +519,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(haveFips && dt < 1_000).toBe(true);
   }, 30_000);
 
-  it.fails('bytes written just before a close all arrive', async () => {
+  it('bytes written just before a close all arrive', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);

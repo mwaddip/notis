@@ -5,6 +5,7 @@
 
 import { transportSymbol, TypedEventEmitter } from '@libp2p/interface';
 import type {
+  AbortOptions,
   ComponentLogger,
   Connection,
   CreateListenerOptions,
@@ -379,6 +380,11 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
   private resolveWake: () => void = () => { /* re-armed by armWake */ };
   private resumeP: Promise<void> = Promise.resolve();
   private resumeResolve: () => void = () => { /* re-armed by armResume */ };
+  // Idle promise for `writeQueue`: resolved once the queue drains to zero.
+  // `sendClose` waits on it so the bytes written before the close reach
+  // the endpoint before the FIN.
+  private writeQueueIdle: Promise<void> = Promise.resolve();
+  private resolveWriteQueueIdle: () => void = () => { /* nothing waiting */ };
 
   constructor(init: FipsMultiaddrConnectionInit) {
     super({
@@ -405,8 +411,10 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
     const chunk = data.subarray();
     const copy = new Uint8Array(chunk.byteLength);
     copy.set(chunk);
+    const wasEmpty = this.writeQueue.length === 0;
     this.writeQueue.push(copy);
     this.pendingBytes += copy.byteLength;
+    if (wasEmpty) this.armWriteQueueIdle();
     void this.pumpWriter();
     return {
       sentBytes: copy.byteLength,
@@ -432,15 +440,40 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
     this.fireResume();
   }
 
-  async sendClose(): Promise<void> {
+  async sendClose(options?: AbortOptions): Promise<void> {
+    // `destroySoon`'s shape: flush what the writer queued before the close
+    // reaches the endpoint ahead of the FIN. `options.signal` bounds the
+    // wait; if the writer is stopped the queue will not drain either.
+    if (this.writeQueue.length > 0 && !this.readStopped) {
+      const idle = this.writeQueueIdle;
+      const signal = options?.signal;
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const settle = (): void => {
+          if (done) return;
+          done = true;
+          if (signal !== undefined) {
+            signal.removeEventListener('abort', settle);
+          }
+          resolve();
+        };
+        if (signal !== undefined) {
+          if (signal.aborted) { settle(); return; }
+          signal.addEventListener('abort', settle, { once: true });
+        }
+        void idle.then(settle, settle);
+      });
+    }
     this.readStopped = true;
     this.fireWake();
     this.fireResume();
-    try {
-      await this.endpoint.close(this.id);
-    } catch {
-      /* already */
-    }
+    // Hand the FIN to the endpoint without awaiting its delivery over the
+    // mesh: `endpoint.close` enqueues `@fips/tcp`'s flush, whose
+    // `FipsNode.sendDatagram` may wait on
+    // `FspSessionManager.waitForSessionSetup` where the FIPS link is gone.
+    void this.endpoint.close(this.id).catch((err) => {
+      this.log.trace('fips close threw - %e', err as Error);
+    });
     this.unsubActivity();
   }
 
@@ -524,6 +557,11 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
         } else {
           this.writeQueue[0] = head.subarray(accepted);
         }
+        if (this.writeQueue.length === 0) {
+          const resolve = this.resolveWriteQueueIdle;
+          this.resolveWriteQueueIdle = () => { /* re-armed on next push */ };
+          resolve();
+        }
         if (
           this.pendingBytes < FIPS_TCP_SEND_BUFFER_BYTES
           && this.writeBufferLength === 0
@@ -534,6 +572,12 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
     } finally {
       this.writerRunning = false;
     }
+  }
+
+  private armWriteQueueIdle(): void {
+    this.writeQueueIdle = new Promise<void>((resolve) => {
+      this.resolveWriteQueueIdle = resolve;
+    });
   }
 
   private armWake(): void {
