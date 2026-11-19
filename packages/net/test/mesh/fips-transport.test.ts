@@ -157,10 +157,10 @@ async function waitLink(peer: Peer, remoteKeyHex: string, deadlineMs: number): P
 
 async function stopPeer(p: Peer): Promise<void> {
   clearInterval(p.pollTimer);
+  try { await p.libp2p.stop(); } catch { /* already */ }
   p.endpointRef.current = null;
   try { await p.endpoint.dispose(); } catch { /* already */ }
   try { await p.node.stop(); } catch { /* already */ }
-  try { await p.libp2p.stop(); } catch { /* already */ }
 }
 
 describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
@@ -173,7 +173,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     a = null; b = null;
   });
 
-  it.fails('a dial to the listener FIPS address answers a libp2p connection to its peer id', async () => {
+  it('a dial to the listener FIPS address answers a libp2p connection to its peer id', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);
@@ -187,7 +187,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(peerId === b.libp2p.peerId.toString() && addr.includes('/fips/')).toBe(true);
   }, 30_000);
 
-  it.fails('a ping crosses the FIPS libp2p connection', async () => {
+  it('a ping crosses the FIPS libp2p connection', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);
@@ -216,7 +216,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(addrFips && typeof latency === 'number').toBe(true);
   }, 30_000);
 
-  it.fails('a 200 000-byte stream over the FIPS connection arrives whole', async () => {
+  it('a 200 000-byte stream over the FIPS connection arrives whole', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);
@@ -254,7 +254,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(addrFips && equal).toBe(true);
   }, 60_000);
 
-  it.fails('closing the FIPS connection ends the TCP/FIPS stream on both sides', async () => {
+  it('closing the FIPS connection ends the TCP/FIPS stream on both sides', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);
@@ -274,7 +274,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(aFipsBefore && !aFipsAfter && !bFipsAfter).toBe(true);
   }, 30_000);
 
-  it.fails('a dial with no endpoint fails with a named error', async () => {
+  it('a dial with no endpoint fails with a named error', async () => {
     a = await makePeer({ dial: true });
     // No listener side built; the dial still fails because A's local endpoint
     // is cleared before the dial.
@@ -294,7 +294,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(looks).toBe(true);
   }, 15_000);
 
-  it.fails('a non-FIPS address is filtered out of a node transport', async () => {
+  it('a non-FIPS address is filtered out of a node transport', async () => {
     const identity = await generateIdentity();
     const transportFactory = fipsTransport({
       endpoint: () => null,
@@ -314,7 +314,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(kept.length).toBe(0);
   }, 10_000);
 
-  it.fails('a transport built with dial false dials nothing', async () => {
+  it('a transport built with dial false dials nothing', async () => {
     const identity = await generateIdentity();
     const transportFactory = fipsTransport({
       endpoint: () => null,
@@ -335,24 +335,26 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(kept.length).toBe(0);
   }, 10_000);
 
-  it.fails('a peer third FIPS connection is refused', async () => {
+  it('a peer third FIPS connection is refused', async () => {
     a = await makePeer({ dial: true });
     b = await makePeer({ dial: false, listen: true });
     const linkConn = await dialTcp(a.libp2p, b.libp2p);
     await a.link.openLink(linkConn).catch(() => { /* stub */ });
     await waitLink(a, b.pubkeyHex, 3_000);
     const fipsMa = fipsMultiaddr(b.identity.xOnlyPubkey, b.libp2p.peerId.toString());
-    const c1 = await a.libp2p.dial(fipsMa, { signal: AbortSignal.timeout(10_000) })
+    const c1 = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
       .catch(() => null);
     const c2 = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
       .catch(() => null);
+    const c1IsFips = c1 !== null && c1.remoteAddr.toString().includes('/fips/');
+    const c2IsFips = c2 !== null && c2.remoteAddr.toString().includes('/fips/');
     const third = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
       .then(() => null)
       .catch((e: Error) => e);
-    expect(c1 !== null && c2 !== null && third instanceof Error).toBe(true);
+    expect(c1IsFips && c2IsFips && third instanceof Error).toBe(true);
   }, 30_000);
 
-  it.fails('a FIPS stream read wakes on its datagram and not at the next poll', async () => {
+  it('a FIPS stream read wakes on its datagram and not at the next poll', async () => {
     // A long poll interval: a wake that works runs well under it.
     a = await makePeer({ dial: true, pollMs: 10_000 });
     b = await makePeer({ dial: false, listen: true, pollMs: 10_000 });
@@ -389,7 +391,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(addrFips && typeof roundTrip === 'number' && roundTrip < 2_000).toBe(true);
   }, 30_000);
 
-  it.fails('the FIPS listener reports no address and libp2p announces none', async () => {
+  it('the FIPS listener reports no address and libp2p announces none', async () => {
     b = await makePeer({ dial: false, listen: true });
     // Give identify/listener startup a beat.
     await sleep(200);
