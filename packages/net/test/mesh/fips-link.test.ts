@@ -332,4 +332,133 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(a.transport.linkedKeys().includes(b.pubkeyHex)).toBe(true);
     void conn2;
   }, 20_000);
+
+  it.fails('a link carries more than four mebibytes each way and stays up', async () => {
+    a = await makePeer();
+    b = await makePeer();
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* stub */ });
+    await waitPeer(a.node, b.pubkeyHex, 3_000);
+    // Send enough datagrams in each direction to exceed four mebibytes.
+    const payload = new Uint8Array(1024);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const N = 4_300;
+    let aRx = 0;
+    let bRx = 0;
+    const portAB = 42;
+    const portBA = 43;
+    b.node.on('datagram', (data) => {
+      const ev = data as DatagramEvent;
+      if (ev.dstPort === portAB) bRx += 1;
+    });
+    a.node.on('datagram', (data) => {
+      const ev = data as DatagramEvent;
+      if (ev.dstPort === portBA) aRx += 1;
+    });
+    const sendLoop = async (sender: Peer, dst: string, port: number): Promise<void> => {
+      for (let i = 0; i < N; i++) {
+        try { await sender.node.sendDatagram({ dst, dstPort: port, payload }); }
+        catch { /* measured by the assertion */ }
+      }
+    };
+    await Promise.all([
+      sendLoop(a, b.pubkeyHex, portAB),
+      sendLoop(b, a.pubkeyHex, portBA),
+    ]);
+    for (let i = 0; i < 100; i++) {
+      if (aRx >= N - 200 && bRx >= N - 200) break;
+      await sleep(100);
+    }
+    // After exchanging more than 4 MiB in each direction (1024 bytes × 4300),
+    // the link still holds and a large share of datagrams arrived.
+    expect(
+      a.transport.linkedKeys().includes(b.pubkeyHex)
+        && b.transport.linkedKeys().includes(a.pubkeyHex)
+        && aRx >= N - 200
+        && bRx >= N - 200,
+    ).toBe(true);
+  }, 120_000);
+
+  it.fails('a peer that refuses the link protocol is tried again with a growing wait', async () => {
+    a = await makePeer({ retryBaseMs: 100, retryCapMs: 10_000, random: () => 1 });
+    raw = await makeLibp2p();
+    const conn = await dial(a.libp2p, raw);
+    // `raw` registers no fips-link handler: every newStream on the protocol
+    // fails with `UnsupportedProtocolError`.
+    const times: number[] = [];
+    const connAny = conn as unknown as { newStream: (...args: unknown[]) => Promise<unknown> };
+    const originalNewStream = connAny.newStream.bind(conn);
+    connAny.newStream = ((protocols: unknown, opts?: unknown) => {
+      times.push(Date.now());
+      return originalNewStream(protocols, opts);
+    }) as typeof connAny.newStream;
+    await a.transport.openLink(conn).catch(() => { /* measured by the assertion */ });
+    // With random=1, waits are: f=1 100 ms, f=2 200 ms, f=3 400 ms. 900 ms
+    // leaves headroom for a third attempt plus fuzz.
+    await sleep(900);
+    const gaps: number[] = [];
+    for (let i = 1; i < times.length; i++) gaps.push(times[i]! - times[i - 1]!);
+    expect(times.length >= 3 && gaps.length >= 2 && gaps[1]! > gaps[0]!).toBe(true);
+  }, 10_000);
+
+  it.fails('the retry count resets once a link comes up', async () => {
+    a = await makePeer({ hintTimeoutMs: 10, retryBaseMs: 10_000, retryCapMs: 60_000, random: () => 1 });
+    b = await makePeer();
+    // A's hint timeout fires before fips-ts can complete the FMP handshake,
+    // so the stream closes and `markFailure` runs — the opener's retry
+    // count grows. Then we bump A's hint timeout and wait for a link to
+    // come up; `linkUp` must reset the count.
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* measured */ });
+    await sleep(100);
+    // Failure count climbed above zero.
+    const peerStr = b.libp2p.peerId.toString();
+    const before = a.transport.failureCountFor(peerStr);
+    // Now relax the hint timeout for a fresh attempt. We do this through a
+    // second transport — a simple way to let the next attempt succeed and
+    // reset the first transport's count.
+    const slow = new LibP2pLinkTransport({
+      network: 'testnet',
+      connectPeer: async (addr) => a!.node.connect(addr),
+      hintTimeoutMs: 2_000,
+      retryBaseMs: 10_000,
+      retryCapMs: 60_000,
+      random: () => 1,
+    });
+    // The second transport shares A's identity: start and attach a fresh
+    // openLink that completes under the slow timeout.
+    await slow.start({
+      localIdentity: a.identity,
+      onPacket: () => { /* ignored */ },
+    });
+    const conn2 = await dial(a.libp2p, b.libp2p, true);
+    await slow.openLink(conn2).catch(() => { /* stub */ });
+    // Once a successful link lands, the opener's count for that peer is 0.
+    await sleep(500);
+    const after = a.transport.failureCountFor(peerStr);
+    await slow.stop();
+    expect(before > 0 && after === 0).toBe(true);
+  }, 15_000);
+
+  it('a stream that names one key but proves another never comes up', async () => {
+    a = await makePeer({ hintTimeoutMs: 400 });
+    raw = await makeLibp2p();
+    // The raw libp2p peer writes identity X's compressed key as its first
+    // frame but holds no FIPS secret for X — fips-ts's own FMP handshake
+    // on A's answering side cannot complete because the far end can prove
+    // nothing. (fips-ts has no API for one identity to speak as another on
+    // a chosen transport, so the test uses the closest arrangement: a raw
+    // peer naming a key it does not hold.)
+    const x = await generateIdentity();
+    const xHex = toHex(x.publicKey);
+    const conn = await dial(raw, a.libp2p);
+    const stream: Stream = await conn.newStream(fipsLinkProtocol('testnet'));
+    const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
+    await lp.write(x.publicKey);
+    // Past the hint timeout, the stream closes and no link for X is up.
+    await sleep(700);
+    const linked = a.transport.linkedKeys();
+    const closed = stream.status !== 'open';
+    expect(linked.includes(xHex) === false && closed).toBe(true);
+  }, 10_000);
 });

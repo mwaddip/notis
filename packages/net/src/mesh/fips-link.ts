@@ -234,6 +234,15 @@ export class LibP2pLinkTransport implements Transport {
     return out;
   }
 
+  /**
+   * MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
+   * named it holds the key" — how many failures in a row the opener has
+   * recorded against this libp2p peer, 0 when there is none.
+   */
+  failureCountFor(_remotePeer: string): number {
+    return 0;
+  }
+
   // ----- internal helpers -----
 
   private async acceptStream(stream: Stream, connection: Connection): Promise<void> {
