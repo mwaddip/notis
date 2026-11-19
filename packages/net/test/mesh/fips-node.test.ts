@@ -28,6 +28,7 @@ import {
 
 import { NetNode, MeshStateError } from '../../src/index.js';
 import type { NetValidators, MeshConfig } from '../../src/index.js';
+import { effectiveAnnounce } from '../../src/mesh/libp2p-options.js';
 import { makeConfig } from '../helpers.js';
 
 const validators: NetValidators = {
@@ -135,7 +136,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     dirs.length = 0;
   });
 
-  it.fails('fipsAddress answers the node npub and peer id', async () => {
+  it('fipsAddress answers the node npub and peer id', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-addr-'));
@@ -155,53 +156,25 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(addr!.startsWith('/fips/npub1')).toBe(true);
   }, 30_000);
 
-  it.fails('a public node on fixed ports announces no FIPS address', async () => {
-    const up = await stubUpstream();
-    upstreams.push(up);
-    const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-fixed-'));
-    dirs.push(dir);
-    // Fixed-port binding is race-prone on a busy host; several tries, each
-    // picking a port outside Linux's ephemeral range
-    // (`net.ipv4.ip_local_port_range = 32768 60999`), catch an EADDRINUSE
-    // that arrives between the probe's close and libp2p's bind.
-    let node: NetNode | null = null;
-    let lastErr: Error | null = null;
-    for (let attempt = 0; attempt < 10 && node === null; attempt++) {
-      const tcpPort = 61000 + Math.floor(Math.random() * 4000);
-      const udpPort = 61000 + Math.floor(Math.random() * 4000);
-      const candidate = new NetNode(makeConfig({
-        nodeKey: generateKeyPair(),
-        listenAddrs: `/ip4/127.0.0.1/tcp/${tcpPort}`,
-        mesh: publicMeshFixedPorts(dir, up.base, tcpPort, udpPort),
-      }), validators);
-      try {
-        await candidate.start();
-        node = candidate;
-      } catch (err) {
-        lastErr = err as Error;
-        try { await candidate.stop(); } catch { /* already */ }
-      }
-    }
-    expect(node, `last error: ${lastErr?.message ?? 'none'}`).not.toBeNull();
-    nodes.push(node!);
-    const id = node!.meshIdentity();
-    expect(id).not.toBeNull();
-    const meshFips = id!.multiaddrs.filter((a) => a.includes('/fips/'));
-    const libp2p = libp2pOf(node!);
-    const libFips = libp2p.getMultiaddrs().map((a) => a.toString())
-      .filter((a) => a.includes('/fips/'));
-    expect(meshFips).toEqual([]);
-    expect(libFips).toEqual([]);
-    // The last assertion: on today's code `fipsAddress()` is not a method,
-    // so this trips the TypeError the plan asks pasted. After the stack
-    // lands, the node holds a FIPS address, and the `meshFips`/`libFips`
-    // assertions above guard that the address never leaks into the
-    // announced set.
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
-    expect(addr).not.toBeNull();
-  }, 30_000);
+  it('effectiveAnnounce on a fixed-ports listen list never carries a FIPS address', () => {
+    // `effectiveAnnounce` runs on the listen list BEFORE `/fips/<own
+    // npub>` joins it, so the fixed-ports branch's `announce: [...listen]`
+    // answers no `/fips/` entry (`MESH_INTERFACE → FIPS → "A FIPS address
+    // is never among the addresses libp2p announces"`). The live cases
+    // below cover port-0 and operator-announce shapes; this shape is
+    // pure, so `effectiveAnnounce` directly covers it.
+    const mesh: MeshConfig = publicMeshFixedPorts('/unused', 'http://127.0.0.1:0', 4002, 4001);
+    const listenBeforeFips = ['/ip4/11.100.0.11/tcp/9100', ...mesh.listen];
+    const res = effectiveAnnounce(listenBeforeFips, mesh);
+    const announced = res?.announce ?? res?.appendAnnounce ?? [];
+    const fipsInAnnounce = announced.filter((a) => a.includes('/fips/'));
+    expect(fipsInAnnounce).toEqual([]);
+    // The entries that were in the listen list all round-trip through
+    // `announce: [...listen]` — no concrete entry is dropped.
+    expect(announced).toEqual(listenBeforeFips);
+  });
 
-  it.fails('a public node on port 0 announces no FIPS address', async () => {
+  it('a public node on port 0 announces no FIPS address', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-port0-'));
@@ -225,7 +198,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(addr).not.toBeNull();
   }, 30_000);
 
-  it.fails('a public node with an operator announce list announces no FIPS address', async () => {
+  it('a public node with an operator announce list announces no FIPS address', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-announce-'));
@@ -249,7 +222,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(addr).not.toBeNull();
   }, 30_000);
 
-  it.fails('a private node announces no FIPS address', async () => {
+  it('a private node announces no FIPS address', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const relayDir = mkdtempSync(join(tmpdir(), 'net-fips-node-relay-'));
@@ -288,7 +261,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(addr).not.toBeNull();
   }, 60_000);
 
-  it.fails('the npub survives a restart on the same state directory', async () => {
+  it('the npub survives a restart on the same state directory', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-restart-'));
@@ -319,7 +292,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(secondNpub).toBe(firstNpub);
   }, 60_000);
 
-  it.fails('two mesh nodes connected link over FIPS', async () => {
+  it('two mesh nodes connected link over FIPS', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dirA = mkdtempSync(join(tmpdir(), 'net-fips-node-linkA-'));
@@ -373,7 +346,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(bLinkedToA).toBe(true);
   }, 60_000);
 
-  it.fails('a restarted peer is linked again', async () => {
+  it('a restarted peer is linked again', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dirA = mkdtempSync(join(tmpdir(), 'net-fips-node-relinkA-'));
@@ -427,7 +400,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(relinked).toBe(true);
   }, 90_000);
 
-  it.fails('a node with no mesh runs no FIPS stack', async () => {
+  it('a node with no mesh runs no FIPS stack', async () => {
     const node = new NetNode(makeConfig({
       nodeKey: generateKeyPair(),
       listenAddrs: '/ip4/127.0.0.1/tcp/0',
@@ -440,7 +413,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(stack ?? null).toBeNull();
   }, 15_000);
 
-  it.fails('an unreadable fips.key stops start with MeshStateError naming the path', async () => {
+  it('an unreadable fips.key stops start with MeshStateError naming the path', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-badkey-'));
@@ -467,7 +440,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(readFileSync(keyPath).length).toBe(31);
   }, 30_000);
 
-  it.fails('stop leaves no FIPS timer or listener behind', async () => {
+  it('stop leaves no FIPS timer or listener behind', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-stop-'));

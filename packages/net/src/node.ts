@@ -123,6 +123,10 @@ import {
   notisIdFromPeerId,
   localAddrsFor,
 } from './mesh/identity.js';
+import { loadFipsKey } from './mesh/fips-key.js';
+import { createFipsStack, type FipsStack } from './mesh/fips-stack.js';
+import { npubOf } from './mesh/fips-identity.js';
+import { fipsMultiaddr } from './mesh/fips-addr.js';
 import { acmeSource, type CertificateSource, type IpCertificate } from './mesh/acme.js';
 import {
   initialCertificate,
@@ -746,6 +750,12 @@ export class NetNode {
    */
   private meshStun: { close(): Promise<void> } | null = null;
   /**
+   * MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+   * FIPS stack a mesh node builds at start. Stopped before libp2p at
+   * `stop`; `null` with no mesh.
+   */
+  private fipsStack: FipsStack | null = null;
+  /**
    * NET_INTERFACE → The mesh — the callers subscribed through
    * `onMeshAddresses`. Fires for each change of the announced set
    * (`self:peer:update` from libp2p).
@@ -873,6 +883,11 @@ export class NetNode {
     // The WSS fallback never takes the node down.
     let wssOptions: WssOptions | null = null;
     let wssInitialCert: IpCertificate | null = null;
+    // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+    // stack is built before `createLibp2p`; the FIPS key is read from
+    // the mesh state directory after `assertStateDirIntegrity` runs so
+    // a bad state directory still refuses first.
+    let fipsStack: FipsStack | null = null;
     if (mesh !== undefined) {
       assertMeshConfig(mesh);
       await assertStateDirIntegrity(mesh.stateDir);
@@ -890,6 +905,16 @@ export class NetNode {
         wssOptions = { ip: mesh.wss.ip, port: mesh.wss.port, source };
         wssInitialCert = await initialCertificate(wssOptions);
       }
+      const fipsIdentity = await loadFipsKey(mesh.stateDir);
+      fipsStack = createFipsStack({
+        identity: fipsIdentity,
+        forwarding: true,
+        network: mesh.network,
+        dial: false,
+        linkOutbound: true,
+        maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
+      });
+      this.fipsStack = fipsStack;
     }
 
     // NET_INTERFACE → "A peer's sync streams are served one at a time":
@@ -977,11 +1002,22 @@ export class NetNode {
             }),
           );
         }
+        // MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" —
+        // the FIPS transport sits beside TCP and WebRTC-direct.
+        if (fipsStack !== null) publicTransports.push(fipsStack.transport);
         // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
         // — the public role's address options; see
         // `effectiveAnnounce` for the branch between `announce` (no
         // port-0 entry) and `appendAnnounce` (any port-0 entry).
+        // MESH_INTERFACE → FIPS → "A FIPS address is never among the
+        // addresses libp2p announces" — `effectiveAnnounce` runs on
+        // `publicListen` BEFORE `/fips/<own npub>` joins it, so a
+        // concrete-port node whose `announce` branch answers
+        // `announce: [...listen]` never carries a `/fips/` entry.
         const publicAnnounce = effectiveAnnounce(publicListen, mesh);
+        if (fipsStack !== null) {
+          publicListen.push(`/fips/${npubOf(fipsStack.identity)}`);
+        }
         // NET_INTERFACE → Node Lifecycle →
         // "Every connection libp2p opens reaches net's hooks": libp2p is
         // created stopped, so `createLibp2p` resolves a libp2p that has
@@ -1020,6 +1056,14 @@ export class NetNode {
         // after start — the private role must never take libp2p down.
         const relayCount = Math.max(1, this.config.bootstrapPeers.length);
         const stunServers = mesh.stunServers ?? [];
+        // MESH_INTERFACE → FIPS → "A FIPS address is never among the
+        // addresses libp2p announces" — `privateAnnounceFilter` keeps
+        // only `/p2p-circuit`-bearing addresses, so a `/fips/<own
+        // npub>` in the listen list never reaches the announced set.
+        const privateListen = meshListenAddrs(this.config.listenAddrs, mesh);
+        if (fipsStack !== null) {
+          privateListen.push(`/fips/${npubOf(fipsStack.identity)}`);
+        }
         // NET_INTERFACE → Node Lifecycle →
         // "Every connection libp2p opens reaches net's hooks": see the
         // public-role `createLibp2p` call above for why libp2p is created
@@ -1029,7 +1073,7 @@ export class NetNode {
           privateKey: libp2pPrivateKey,
           datastore: meshDatastore,
           addresses: {
-            listen: meshListenAddrs(this.config.listenAddrs, mesh),
+            listen: privateListen,
             announceFilter: privateAnnounceFilter,
           },
           transports: [
@@ -1037,6 +1081,7 @@ export class NetNode {
             meshWebRTCDirectTransport(),
             meshPrivateWebRTCTransport(stunServers),
             meshPrivateCircuitTransport(relayCount),
+            ...(fipsStack !== null ? [fipsStack.transport] : []),
           ],
           connectionEncrypters: [noise()],
           streamMuxers,
@@ -1068,6 +1113,14 @@ export class NetNode {
     this.libp2p = libp2p;
 
     try {
+      // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+      // stack attaches after `createLibp2p` and before `libp2p.start()`,
+      // so the link protocol's handler and the outbound-connection
+      // listener are in place before libp2p's own `keep-alive` redial
+      // reaches the hook (NET_INTERFACE → Node Lifecycle → "Every
+      // connection libp2p opens reaches net's hooks"). A throw here is
+      // caught below and tears everything down.
+      if (fipsStack !== null) await fipsStack.attach(libp2p);
       // NET_INTERFACE → The mesh — `onMeshAddresses` fires on each change
       // of the announced set; libp2p's `self:peer:update` is the one
       // event that carries that signal. Attached on a stopped libp2p so
@@ -1272,6 +1325,12 @@ export class NetNode {
       // Lifecycle → "A start that throws stops what it started").
       await libp2p.start();
 
+      // MESH_INTERFACE → FIPS → "A FIPS address is never among the
+      // addresses libp2p announces" — Notis's own lists carry a node's
+      // FIPS address instead; `start` prints it once, as `[net]` lines.
+      const fipsLine = this.fipsAddress();
+      if (fipsLine !== null) console.log(`[net] fips ${fipsLine}`);
+
       // NET_INTERFACE → The mesh — STUN is bound after `libp2p.start()`
       // so a bind failure tears libp2p down through the catch below
       // (`MESH_INTERFACE → NAT`). The STUN server is a plain UDP bind,
@@ -1412,6 +1471,13 @@ export class NetNode {
         try { libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener); } catch { /* already gone */ }
         this.meshSelfPeerUpdateListener = null;
       }
+      // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+      // stack stops before libp2p so its `connection:open` listener is
+      // off before libp2p's teardown fires one last event.
+      if (this.fipsStack !== null) {
+        try { await this.fipsStack.stop(); } catch { /* already */ }
+        this.fipsStack = null;
+      }
       try { await libp2p.stop(); } catch { /* already down */ }
       this.libp2p = null;
       throw err;
@@ -1494,6 +1560,14 @@ export class NetNode {
     if (this.meshStun !== null) {
       await this.meshStun.close();
       this.meshStun = null;
+    }
+    // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+    // stack stops before libp2p so its `connection:open` listener is
+    // off before libp2p's teardown fires one last event, and the FIPS
+    // listener closes before the TCP one does.
+    if (this.fipsStack !== null) {
+      try { await this.fipsStack.stop(); } catch { /* already */ }
+      this.fipsStack = null;
     }
     await this.libp2p.stop();
     this.libp2p = null;
@@ -2585,6 +2659,20 @@ export class NetNode {
     // already).
     const localAddrs = localAddrsFor(mesh.role, listenerAddrsOf(node), peerId);
     return { notisId, peerId, multiaddrs, localAddrs };
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A node's FIPS address is
+   * `/fips/<npub>/p2p/<peer id>`" — the node's FIPS address, `null` with
+   * no mesh or before libp2p has started.
+   */
+  fipsAddress(): string | null {
+    if (this.fipsStack === null) return null;
+    if (this.libp2p === null) return null;
+    return fipsMultiaddr(
+      this.fipsStack.identity.xOnlyPubkey,
+      this.libp2p.peerId.toString(),
+    ).toString();
   }
 
   /**
