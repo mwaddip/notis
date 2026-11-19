@@ -352,11 +352,19 @@ any transport (→ Transports → "Every link is authenticated by the key it was
 protocol `/notis/<network>/fips-link/1.0.0` on a connection between them, relayed or direct; a relayed connection
 carries data with no limit (→ NAT → "A relay carries data"). FIPS opens no socket and no port of its own. **A node
 opens a link over each connection it dialled to a Notis peer**, and answers a link stream on any connection, a reader's
-included; a connection carries one link stream at once, and **a key holds one link** — a stream that names a key
-already linked is closed. When a link's connection closes, the link ends with it, and a link over another connection
-to the same key takes its place.
+included; a connection carries one link stream at once.
 
-**Each side names its key first.** The stream carries length-prefixed frames of at most `FIPS_LINK_MTU` bytes. The
+**A key holds one link, and the libp2p peer that named it holds the key.** A later stream naming the key from that same
+peer takes the link's place where the peer opened the link too — the newer connection carries it; where this end opened
+the link and the peer opens one at once, the stream opened by the end whose FIPS key sorts lower, byte by byte, is kept
+and the other closed, so both ends keep the same one. A stream naming the key from another peer is closed. **A link is
+up once FIPS's own handshake over it completes**; a link not up within `FIPS_LINK_HINT_TIMEOUT_MS` of its key frames is
+closed, and until then it holds its key as an up link does. **When a link ends, the end that opened it opens it again**
+over a connection it still holds to that peer, after a wait drawn as a node's retry is (→ The client's node list →
+"Retry"), the count of failures in a row ending when a link comes up.
+
+**Each side names its key first.** The stream carries frames of at most `FIPS_LINK_MTU` bytes, each prefixed by its
+length as an unsigned varint. The
 opener's first frame is its 33-byte compressed FIPS public key; the answerer reads it, then writes its own; every
 later frame is one FIPS packet. A stream that names no key within `FIPS_LINK_HINT_TIMEOUT_MS`, a first frame that is
 not a valid compressed secp256k1 key, or a frame over the cap is closed, and the connection stays. The stream rides a
@@ -400,7 +408,7 @@ makes to either is a patch under `patches/`, as the libp2p patches are (→ Plac
 | `FIPS_SERVICE_PORT` | `9733` | the TCP/FIPS endpoint's FIPS service port — the node's WebRTC-direct port, in FIPS's application range |
 | `FIPS_MULTIADDR_CODE` | `0x300f15` | the `fips` multiaddr protocol's code, in multicodec's private-use range |
 | `FIPS_LINK_MTU` | `1357` | bytes in one FIPS packet on a link, and the link frame's cap — FIPS's own UDP MTU, so a packet fits wherever FIPS carries one; measured 2026-11-19, the rate is the same from 1 357 to 65 535 |
-| `FIPS_LINK_HINT_TIMEOUT_MS` | `5_000` | 5 s for a link stream's first frame — `INBOUND_UPGRADE_TIMEOUT_MS`'s bound on a whole upgrade, here for one 33-byte frame on a connection already upgraded |
+| `FIPS_LINK_HINT_TIMEOUT_MS` | `5_000` | 5 s for a link stream's first frame, and 5 s more for its link to come up — `INBOUND_UPGRADE_TIMEOUT_MS`'s bound on a whole upgrade, here for one 33-byte frame, or for FIPS's two-message handshake, on a connection already upgraded |
 | `FIPS_TCP_POLL_MS` | `50` | 50 ms between polls of a TCP/FIPS endpoint — a quarter of fips-tcp's 200 ms least retransmission timeout; data moves as it arrives |
 | `FIPS_TCP_SEND_BUFFER_BYTES` | `65_536` | 64 KiB of a TCP/FIPS stream's unsent data — fips-tcp's receive window; measured 2026-11-19, the rate is the same at 64 KiB, 256 KiB and 1 MiB |
 | `FIPS_TCP_CONNECTIONS_PER_PEER` | `2` | TCP/FIPS connections one peer holds to a node — a reader's one, and one overlapping its replacement |
