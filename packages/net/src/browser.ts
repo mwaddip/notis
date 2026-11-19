@@ -157,3 +157,8 @@ export type {
   PostTextsStream,
   PostTextsConnection,
 } from './mesh/serve-post-texts.js';
+
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+// — the npub spelling of an x-only FIPS key and the `02‖x` a dial addresses
+// it by.
+export { npubOf, dialKeyHex } from './mesh/fips-identity.js';

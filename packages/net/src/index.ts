@@ -12,6 +12,10 @@ export type { MeshConfig } from './mesh/config.js';
 export { PeerManager, MAX_TRACKED_BANS, MAX_TRACKED_SCORES } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
 export { loadNodeKey, NodeKeyError } from './node-key.js';
+// MESH_INTERFACE → FIPS → "A node's FIPS key persists".
+export { loadFipsKey } from './mesh/fips-key.js';
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`".
+export { npubOf, dialKeyHex } from './mesh/fips-identity.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,
