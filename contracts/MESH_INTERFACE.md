@@ -95,9 +95,6 @@ changed — at a restart or at a renewal — would leave every list naming the n
 whose certificate cannot be read stops the node at start**, naming the directory, and is left as it is, as a key file
 of another form is.
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** The gater allows a first-contact node's and your node's private addresses alone; the access point's
-> answer is no source of it yet. The rule below leads the code (the mesh access point).
-
 **A client dials a private address only when its own configuration names it.** libp2p's default connection gater in a
 browser refuses every address in a private or reserved range (`10.0.0.0/8`, `100.64.0.0/10`, `192.168.0.0/16`, the
 documentation ranges and the rest of its list). The client runs its own gater, the same in every runtime: it refuses
@@ -256,9 +253,6 @@ that is not 64 lowercase hex, an address with a `/dns4/`, `/dns6/` or `/dnsaddr/
 hand over, and announces it to no one (→ NAT). The extension's settings window takes the address alone, the key read
 from its `/p2p/` id (`WEB_INTERFACE → The settings window`).
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** No client reads an access point's identity URL, no node answers one, and no entry carries the
-> `local` mark. The rule below leads the code (the mesh access point).
-
 **A node the access point answers.** A box can run a Wi-Fi network that gives a device the mesh and nothing else
 (`NODE_INTERFACE → The access-point tool`), and every such box answers at one fixed address, `10.78.79.1`:
 `LOCAL_IDENTITY_URL` — `http://10.78.79.1/mesh/identity` — reaches its node's identity
@@ -267,7 +261,7 @@ HTTPS-only mode upgrades a plain-`http:` request to a name and leaves one to a p
 asks nothing of DNS. A client started with the URL reads it **at the end of a check
 in which no node answered** — every node the check read failed as a transport failure, over the mesh and at its API
 base alike — while it holds no connection, once per such check, never while a check's reads are in flight; a client
-that reaches a node never reads it, so on a network where a node answers the access point's address is never asked. The read is an
+that reaches a node never reads it, so on a network where a node answers the identity URL is never read. The read is an
 `HttpFetch` under `REQUEST_TIMEOUT_MS` and `MESH_IDENTITY_READ_BYTES` (`CONSTANTS → Client reads`).
 
 - **An answer is held to its fields**: an object whose `notisId` is 64 lowercase hex, whose `peerId` is that key's,
@@ -388,9 +382,6 @@ monotonic clock, so a clock that steps never holds a node out or retries it at o
 **An entry keeps its last failure's kind and message**, for the page to show why a node is in `retry`; the message is
 shown, never acted on.
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** The client reports no read of an access point's identity URL. The read's report in the rule
-> below leads the code (the mesh access point).
-
 **The client reports what it does.** A client handed an event sink tells it each of these as it happens: a dial's end
 — the node, each address's outcome and the time it took; a connection opened or closed — the peer, its transport
 (WebRTC-direct, WebRTC over a relay, the secure WebSocket) and path, its direction; a handshake's verdict and reason;
@@ -495,9 +486,6 @@ These are local cadences, chosen 2026-10-29 and argued by nothing yet; local cad
 the constants register (`CONSTANTS → Scope`).
 
 ## What the client remembers
-
-> ⚠ **AHEAD OF CODE (2026-11-19).** The client remembers no private address, a `local` node's included. The `local` exception below
-> leads the code (the mesh access point).
 
 **A client remembers, per network, the nodes it found, the proof of the chain it verified, and the branches the reader
 answered** (→ Discovery → "A node added by hand") — keyed by the genesis the network's profile pins, or by the network's

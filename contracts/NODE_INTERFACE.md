@@ -1022,10 +1022,6 @@ defect. **It belongs to the supply set.**
 
 ### Mesh identity
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** No route answers `/mesh/identity`; the node's identity reaches its operator through its start
-> line alone (→ Configuration → "A mesh node prints its identity line"). The rule below leads the code (the mesh access
-> point).
-
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
 | `GET` | `/mesh/identity` | `{ notisId, peerId, multiaddrs, localAddrs }` — the node's mesh identity, the identity line's four fields in its order | 404 `{ error }` on a node that runs no mesh, or before its mesh has started |
@@ -5914,9 +5910,6 @@ alone.
 
 ## The access-point tool — a box's Wi-Fi network that carries the mesh and nothing else
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** No tool exists: the `.deb` installs no `dagsocial-access-point`, and the tree carries no
-> `dist/access-point.js`. The rules below lead the code (the mesh access point).
-
 **The tool is opt-in.** The `.deb` installs `/usr/bin/dagsocial-access-point`, which runs `dist/access-point.js` on the
 system's Node; the package's install and upgrade never run it, so a box that never runs it is unchanged by the package.
 It runs as root alone — any other user is refused — with three commands: `setup`, `status` and `remove`. Each step it
@@ -5958,7 +5951,7 @@ takes is one an operator can take by hand, and the documentation names each.
 **The tool's record.** Every change `setup` makes — the uplink profile's band as it was, `node.env` as it was, each file
 written, each unit enabled, the profile added — is written to `/etc/dagsocial/access-point/record.json` as it is
 made, so a `setup` that stopped half way is undone as far as it went. A `setup` on a box already set up changes
-nothing. **`remove` undoes what the record holds, in reverse, and nothing else**, warning first that stopping the
+nothing, and one on a box whose record holds a `setup` that stopped half way refuses, saying to run `remove` first. **`remove` undoes what the record holds, in reverse, and nothing else**, warning first that stopping the
 access point drops the uplink for a few seconds on a radio that carries both. **The uplink's profile is set back through
 NetworkManager**, its settings as they were: where netplan writes the profile, NetworkManager rewrites the profile's
 netplan file on any change and adds its own bookkeeping to it — a timestamp — so the file's settings return and its

@@ -117,7 +117,7 @@ systemctl start dagsocial-ap-iface.service</pre>
   ipv4.method manual ipv4.addresses 10.78.79.1/24 \
   ipv6.method disabled
 nmcli con up dagsocial-ap</pre>
-      <p>NetworkManager registers the new <code>uap0</code> on its own time, so wait until <code>nmcli dev</code> lists it before <code>nmcli con up</code>; at boot the interface unit runs before NetworkManager starts, and the profile comes up by itself.</p>
+      <p>NetworkManager registers the new <code>uap0</code> on its own time, so wait until <code>nmcli dev</code> shows it as <code>disconnected</code> — listed is not yet ready — before <code>nmcli con up</code>; at boot the interface unit runs before NetworkManager starts, and the profile comes up by itself.</p>
       <p>Where you set a password, the <code>add</code> command carries two more fields, <code>wifi-sec.key-mgmt wpa-psk</code> and <code>wifi-sec.psk &lt;password&gt;</code>. NetworkManager's <code>ipv4.method shared</code> is never used: it forwards to the internet.</p>
 
       <h3>6. Addresses, and no names</h3>
@@ -146,7 +146,7 @@ systemctl start dagsocial-ap-firewall.service</pre>
     <section>
       <h2>For a reader on a phone</h2>
       <p>Join the network by its name. On Android a notification says the network has no internet access: tap it, tick <em>Don’t ask again for this network</em> and choose <em>Yes</em> to stay connected. Until you do, apps cannot use the network, and a phone that knows another network with internet in range switches back to it within a minute.</p>
-      <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity at <code>http://10.78.79.1/mesh/identity</code> and adds the node it names. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
+      <p>Open the extension. It reads the box's node on its own: a check that reaches no node on the regular seed list reads the box's identity at <code>http://10.78.79.1/mesh/identity</code> and adds the node it names; the feed reads <em>searching for a connection…</em> while it looks, and loads by itself once the box answers. The extension remembers the box, so a reload on the access point dials it at once. The settings window's debug row shows the found node, marked <em>found on this network</em>, beside how it is reached.</p>
     </section>
 
     <section>

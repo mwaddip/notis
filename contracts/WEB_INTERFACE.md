@@ -344,10 +344,6 @@ raises it, else creates one. No `default_popup`, since one suppresses `onClicked
 messages end in one act") and the prompt's each make the tab active, and focus its window where `windows` exists;
 the background listens for a closed window only there.
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** Firefox's manifest declares no extension-page policy, so Firefox's default — with
-> `upgrade-insecure-requests` — applies, and the page reads no identity URL. The CSP clause and the identity URL's read
-> below lead the code (the mesh access point).
-
 **Permissions and policy, the whole list.** `storage` and `tabs`; an extension-page CSP of `script-src
 'self'` — Chrome's default, and declared in Firefox's manifest, whose default adds `upgrade-insecure-requests` and
 would turn the access point's plain-`http:` identity URL into an `https:` one nothing answers (→ "The extension looks
@@ -455,17 +451,11 @@ safe because a node answers a transaction its pool already holds as held (`NODE_
 second node, its input spent, and the flight reads that refusal until the post or the box lands. The faucet is no node
 and is reached at its base alone (→ The faucet step).
 
-> ⚠ **AHEAD OF CODE (2026-11-18).** The page starts its mesh client with no identity URL, so it never looks for an access point's
-> node. The rule below leads the code (the mesh access point).
-
 **The extension looks for an access point's node.** The page starts its mesh client with `LOCAL_IDENTITY_URL`
 (`MESH_INTERFACE → Discovery → "A node the access point answers"`), so a reader on a box's access point with no other
 network finds the box's node at the end of the first check no node answered, and reads, writes and follows the gossip
 through it as through any node; the verified tip names one witness while it is the one node reached. The hosted web
 client reads no such URL: an HTTPS page cannot read a plain-`http:` one.
-
-> ⚠ **AHEAD OF CODE (2026-11-19).** A feed read that found no node stands until the reader refreshes, and the no-node line reads
-> the same before the page's first check has ended. The rule below leads the code (the mesh access point).
 
 **A page's first node reads the feed again.** A page whose feed found no node before its first check reached one reads
 the feed once more when it does — the access point's node found or dialled from memory, or a seed answering late — and
@@ -856,9 +846,6 @@ its own written with every put, withdrawal and eviction — a put past it evicts
 recently seen first and the reader's own never, and a put that still does not fit, or that the browser refuses, is
 dropped. Where the browser gives the page no IndexedDB the client runs without a cache and says nothing. It takes no
 permission, and it is the extension build's alone.
-
-> ⚠ **AHEAD OF CODE (2026-11-18).** The log records no read of an access point's identity URL, the snapshot holds no `local`
-> entry and no reads, and the file replaces no found node. Those passages below lead the code (the mesh access point).
 
 **The debug log.** The extension keeps a record of what its pages did, for whoever reads a report of a fault, in
 IndexedDB at the page's own origin: the database `notis.debug`, apart from `localStorage`, which holds the waiting
@@ -2198,9 +2185,6 @@ other value or none off — with or without an identity. While on, a hint stands
 may ask it for posts, and learn which ones you hold and your address.* A press that changes it redials every node at
 once, and the row reads the choice as the press left it. It renders only where the build hands the client a way to
 serve — the extension, which holds a post cache — so the web build has no such row.
-
-> ⚠ **AHEAD OF CODE (2026-11-18).** The row shows no `found on this network` and no line for the access point's identity URL.
-> Those lines below lead the code (the mesh access point).
 
 **The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
 press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person
