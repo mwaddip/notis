@@ -16,6 +16,13 @@ export { loadNodeKey, NodeKeyError } from './node-key.js';
 export { loadFipsKey } from './mesh/fips-key.js';
 // MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`".
 export { npubOf, dialKeyHex } from './mesh/fips-identity.js';
+export {
+  FIPS_PROTOCOL_NAME,
+  registerFipsProtocol,
+  fipsMultiaddr,
+  parseFipsMultiaddr,
+  isFipsMultiaddr,
+} from './mesh/fips-addr.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,

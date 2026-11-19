@@ -160,5 +160,13 @@ export type {
 
 // MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
 // — the npub spelling of an x-only FIPS key and the `02‖x` a dial addresses
-// it by.
+// it by, and the `fips` multiaddr protocol and its address helpers.
 export { npubOf, dialKeyHex } from './mesh/fips-identity.js';
+export {
+  FIPS_PROTOCOL_NAME,
+  registerFipsProtocol,
+  fipsMultiaddr,
+  parseFipsMultiaddr,
+  isFipsMultiaddr,
+} from './mesh/fips-addr.js';
+export { FIPS_MULTIADDR_CODE } from './mesh/constants.js';

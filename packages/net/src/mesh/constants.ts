@@ -47,6 +47,12 @@ export const RELAY_LISTEN_TIMEOUT_MS: 10000 = 10000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 
 /**
+ * MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+ * — the `fips` multiaddr protocol's code, in multicodec's private-use range.
+ */
+export const FIPS_MULTIADDR_CODE: 0x300f15 = 0x300f15;
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */
