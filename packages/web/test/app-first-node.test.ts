@@ -276,7 +276,7 @@ describe('the feed\'s no-node line reads "searching for a connection…" until t
   });
 });
 
-// Fix round — the walk and the msg(e) branch stand alongside the no-node rule
+// The seed walk and the msg(e) branch stand beside the no-node rule
 // (WEB_INTERFACE → The extension → "A page's first node reads the feed again" —
 // the rule changes the no-node line's words before the first check ends, and
 // adds the one re-read; a failure that is not no-node keeps its own message,

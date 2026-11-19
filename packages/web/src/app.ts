@@ -2347,7 +2347,7 @@ export class App {
           // `firstCheckEnded` is false and *no node answered — set one in
           // settings* after; `feedFoundNoNode` records the state for the
           // cornerTick's first answer to re-read. The web build (no
-          // verifier) keeps the line as it was.
+          // verifier) reads *no node answered — set one in settings*.
           if (this.verifier !== null) {
             feed.error = this.firstCheckEnded
               ? 'no node answered — set one in settings'
