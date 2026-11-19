@@ -12,7 +12,7 @@
 // `retryIntervalMs(failures, retryBaseMs, retryCapMs, random)`; `linkUp`
 // resets the count.
 
-import { lpStream } from '@libp2p/utils';
+import { lpStream, type LengthPrefixedStream } from '@libp2p/utils';
 import type {
   Transport,
   TransportAddress,
@@ -49,20 +49,30 @@ export interface LibP2pLinkTransportOptions {
   readonly random: () => number;
 }
 
-// A held link stream. MESH_INTERFACE → FIPS → "A key holds one link, and the
-// libp2p peer that named it holds the key" says the libp2p peer that named
-// the key holds the key; `remotePeer` is that peer id. `opener` names which
-// end opened the stream — only the opener reopens an ended link.
+// A held link stream. One `lpStream` per stream, used for the key frames,
+// every `send` and the receive loop (MESH_INTERFACE → FIPS → "Each side
+// names its key first"). Each `@libp2p/utils` byteStream listens to
+// `message` events and buffers up to 4 MiB — a second wrapper would copy
+// every inbound byte in parallel and abort the stream.
 interface LinkEntry {
   remoteKeyHex: string;
   remotePeer: string;
   stream: Stream;
+  lp: LengthPrefixedStream<Stream>;
   connection: Connection;
   opener: 'us' | 'them';
   state: 'pending' | 'up';
   hintTimer: ReturnType<typeof setTimeout> | null;
-  retryTimer: ReturnType<typeof setTimeout> | null;
+}
+
+// MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
+// named it holds the key" — the opener's failure count against one libp2p
+// peer. Kept apart from `links` so `send`, `connect` and `resolveNewStream`
+// see only live streams.
+interface RetryEntry {
+  remotePeer: string;
   failures: number;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -79,10 +89,15 @@ export class LibP2pLinkTransport implements Transport {
   private readonly protocol: string;
   private context: TransportContext | null = null;
   private libp2p: Libp2p | null = null;
-  // Keyed by remote compressed key hex; one entry per remote key —
-  // MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
-  // named it holds the key".
+  // Live links keyed by remote compressed key hex; one entry per remote key
+  // (MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer
+  // that named it holds the key").
   private readonly links = new Map<string, LinkEntry>();
+  // Opener-side retry state keyed by libp2p peer id. Every failed open
+  // attempt against the peer counts here; `linkUp` resets it; `stop()`
+  // clears every timer (MESH_INTERFACE → FIPS → "A key holds one link,
+  // and the libp2p peer that named it holds the key").
+  private readonly retries = new Map<string, RetryEntry>();
   private ownKeyBytes: Uint8Array | null = null;
   private ownKeyHex: string | null = null;
   private stopped = false;
@@ -104,12 +119,14 @@ export class LibP2pLinkTransport implements Transport {
     // Close every held link; clear every timer — no handle outlives `stop`.
     for (const entry of [...this.links.values()]) {
       if (entry.hintTimer !== null) clearTimeout(entry.hintTimer);
-      if (entry.retryTimer !== null) clearTimeout(entry.retryTimer);
       entry.hintTimer = null;
-      entry.retryTimer = null;
       try { entry.stream.abort(new Error('transport stopped')); } catch { /* already */ }
     }
     this.links.clear();
+    for (const r of this.retries.values()) {
+      if (r.timer !== null) clearTimeout(r.timer);
+    }
+    this.retries.clear();
     if (this.libp2p !== null) {
       try { await this.libp2p.unhandle(this.protocol); } catch { /* already */ }
     }
@@ -135,8 +152,7 @@ export class LibP2pLinkTransport implements Transport {
   async send(addr: TransportAddress, packet: Uint8Array): Promise<void> {
     const entry = this.links.get(addr.addr);
     if (!entry) throw new Error(`no link held for ${addr.addr}`);
-    const lp = lpStream(entry.stream, { maxDataLength: FIPS_LINK_MTU });
-    await lp.write(packet);
+    await entry.lp.write(packet);
   }
 
   async close(addr: TransportAddress): Promise<void> {
@@ -166,42 +182,55 @@ export class LibP2pLinkTransport implements Transport {
   /**
    * MESH_INTERFACE → FIPS → "A node opens a link over each connection it
    * dialled to a Notis peer" — opens a link stream on an existing libp2p
-   * connection, exchanges keys, answers the remote compressed key hex. On
-   * the keep-or-close rules (`resolveNewStream`) the opener may be closed
-   * and answer the empty string.
+   * connection, exchanges keys, answers the remote compressed key hex.
+   * Any failure — stream refused, key write failed, key frame malformed,
+   * holding rule closed the new stream — records a failure against the
+   * libp2p peer and schedules a retry on a connection the opener still
+   * holds.
    */
   async openLink(connection: Connection): Promise<string> {
     if (this.stopped || this.context === null || this.ownKeyBytes === null) {
       return '';
     }
+    const remotePeerStr = connection.remotePeer.toString();
     let stream: Stream;
     try {
       stream = await connection.newStream(this.protocol);
     } catch {
+      this.markFailure(remotePeerStr);
       return '';
     }
     const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
-    // Opener writes its key first; then reads the answerer's.
     try {
       await lp.write(this.ownKeyBytes);
     } catch {
       try { stream.abort(new Error('key write failed')); } catch { /* already */ }
+      this.markFailure(remotePeerStr);
       return '';
     }
     const remoteKeyHex = await this.readKeyFrame(lp, stream);
-    if (!remoteKeyHex) return '';
-    const remotePeerStr = connection.remotePeer.toString();
-    // Apply the holding rules before holding the stream.
-    if (!this.resolveNewStream(remoteKeyHex, remotePeerStr, 'us', stream, connection)) {
+    if (!remoteKeyHex) {
+      this.markFailure(remotePeerStr);
       return '';
     }
-    this.holdStream(remoteKeyHex, remotePeerStr, 'us', stream, connection);
+    if (!this.resolveNewStream(remoteKeyHex, remotePeerStr, 'us', stream)) {
+      // The holding rules closed this opener's stream — the kept stream
+      // stands in for it, so no failure to mark.
+      return '';
+    }
+    this.holdStream(remoteKeyHex, remotePeerStr, 'us', stream, lp, connection);
+    // Pause any pending retry timer while this attempt is in flight;
+    // `linkUp` clears the entry, `onStreamEnd` schedules the next.
+    const r = this.retries.get(remotePeerStr);
+    if (r !== undefined && r.timer !== null) {
+      clearTimeout(r.timer);
+      r.timer = null;
+    }
     try {
       await this.options.connectPeer({ transport: this.type, addr: remoteKeyHex });
     } catch {
-      // The FMP handshake may fail; the link stays pending, the hint
-      // timer trims it (MESH_INTERFACE → FIPS → "A link is up once FIPS's
-      // own handshake over it completes").
+      // fips-ts's FMP handshake may fail later; the hint timer trims a
+      // pending link and `onStreamEnd` records the failure.
     }
     return remoteKeyHex;
   }
@@ -215,10 +244,14 @@ export class LibP2pLinkTransport implements Transport {
     const entry = this.links.get(remoteKeyHex);
     if (!entry) return;
     entry.state = 'up';
-    entry.failures = 0;
     if (entry.hintTimer !== null) {
       clearTimeout(entry.hintTimer);
       entry.hintTimer = null;
+    }
+    const r = this.retries.get(entry.remotePeer);
+    if (r !== undefined) {
+      if (r.timer !== null) clearTimeout(r.timer);
+      this.retries.delete(entry.remotePeer);
     }
   }
 
@@ -239,8 +272,8 @@ export class LibP2pLinkTransport implements Transport {
    * named it holds the key" — how many failures in a row the opener has
    * recorded against this libp2p peer, 0 when there is none.
    */
-  failureCountFor(_remotePeer: string): number {
-    return 0;
+  failureCountFor(remotePeer: string): number {
+    return this.retries.get(remotePeer)?.failures ?? 0;
   }
 
   // ----- internal helpers -----
@@ -254,7 +287,7 @@ export class LibP2pLinkTransport implements Transport {
     const remoteKeyHex = await this.readKeyFrame(lp, stream);
     if (!remoteKeyHex) return;
     const remotePeerStr = connection.remotePeer.toString();
-    if (!this.resolveNewStream(remoteKeyHex, remotePeerStr, 'them', stream, connection)) {
+    if (!this.resolveNewStream(remoteKeyHex, remotePeerStr, 'them', stream)) {
       return;
     }
     try {
@@ -263,17 +296,20 @@ export class LibP2pLinkTransport implements Transport {
       try { stream.abort(new Error('key write failed')); } catch { /* already */ }
       return;
     }
-    this.holdStream(remoteKeyHex, remotePeerStr, 'them', stream, connection);
-    try {
-      await this.options.connectPeer({ transport: this.type, addr: remoteKeyHex });
-    } catch { /* hint timer trims a pending link */ }
+    this.holdStream(remoteKeyHex, remotePeerStr, 'them', stream, lp, connection);
+    // The answerer does NOT call connectPeer. fips-ts's packet processor
+    // handles a responder's first handshake message through onPacket —
+    // only the opener initiates (`FipsNode.ts` `onTransportConn` at line
+    // 575 ignores `connected` events; the responder's packets go through
+    // `packetProcessor.process`). Measured: with the answerer not calling
+    // connectPeer, every link case still comes up.
   }
 
   // MESH_INTERFACE → FIPS → "Each side names its key first" — read the
   // first length-prefixed frame under the hint timeout and validate it as
   // a 33-byte compressed secp256k1 key.
   private async readKeyFrame(
-    lp: ReturnType<typeof lpStream>,
+    lp: LengthPrefixedStream<Stream>,
     stream: Stream,
   ): Promise<string | null> {
     const signal = AbortSignal.timeout(this.options.hintTimeoutMs);
@@ -301,46 +337,32 @@ export class LibP2pLinkTransport implements Transport {
     remotePeer: string,
     opener: 'us' | 'them',
     newStream: Stream,
-    newConnection: Connection,
   ): boolean {
     const held = this.links.get(remoteKeyHex);
     if (!held) return true;
     if (held.remotePeer !== remotePeer) {
-      // A stream naming the key from another peer is closed.
       try { newStream.abort(new Error('another peer holds the key')); } catch { /* already */ }
       return false;
     }
     if (held.opener === 'them' && opener === 'them') {
-      // Same peer replaces where it opened the link too.
       this.dropEntry(held, 'replaced by newer stream');
       return true;
     }
     if (held.opener === 'us' && opener === 'us') {
-      // Same end opened twice; keep the earlier, close the later.
       try { newStream.abort(new Error('one link per key')); } catch { /* already */ }
       return false;
     }
-    // Simultaneous open: our outbound stream and their inbound stream for
-    // the same key. The opener whose FIPS key sorts lower wins.
+    // Simultaneous open: compare opener keys bytewise. ownKeyHex and the
+    // remote key hex are both lowercase 66-char hex, so lexicographic
+    // comparison orders the same as raw bytes.
     const ourKey = this.ownKeyHex ?? '';
     const theirKey = remoteKeyHex;
-    const ourStreamIsOpener = (opener === 'us' ? ourKey : theirKey) === ourKey
-      ? (held.opener === 'us' ? ourKey : theirKey)
-      : (held.opener === 'us' ? ourKey : theirKey);
-    void ourStreamIsOpener;
-    // Which stream's opener key is lower?
     const heldOpenerKey = held.opener === 'us' ? ourKey : theirKey;
     const newOpenerKey = opener === 'us' ? ourKey : theirKey;
-    // If one is lower, keep that one. ownKeyHex compared bytewise with
-    // remote key hex orders the same as the raw bytes since both are
-    // lowercase hex of equal length (33 bytes, 66 chars each).
     if (newOpenerKey < heldOpenerKey) {
-      // The new stream's opener is lower — keep the new, drop the held.
       this.dropEntry(held, 'lower-keyed opener wins');
-      void newConnection;
       return true;
     }
-    // The held stream's opener is lower (or equal); close the new.
     try { newStream.abort(new Error('higher-keyed opener loses')); } catch { /* already */ }
     return false;
   }
@@ -350,38 +372,33 @@ export class LibP2pLinkTransport implements Transport {
     remotePeer: string,
     opener: 'us' | 'them',
     stream: Stream,
+    lp: LengthPrefixedStream<Stream>,
     connection: Connection,
   ): void {
-    const prevFailures = this.links.get(remoteKeyHex)?.failures ?? 0;
     const entry: LinkEntry = {
       remoteKeyHex,
       remotePeer,
       stream,
+      lp,
       connection,
       opener,
       state: 'pending',
       hintTimer: null,
-      retryTimer: null,
-      failures: prevFailures,
     };
     this.links.set(remoteKeyHex, entry);
-    // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over
-    // it completes" — the stream is closed if a link is not up within
-    // hintTimeoutMs of its key frames.
     entry.hintTimer = setTimeout(() => {
       entry.hintTimer = null;
       if (entry.state !== 'up' && this.links.get(remoteKeyHex) === entry) {
         try { entry.stream.abort(new Error('link not up in time')); } catch { /* already */ }
       }
     }, this.options.hintTimeoutMs);
-    this.runRxLoop(entry);
+    void this.runRxLoop(entry);
   }
 
   private async runRxLoop(entry: LinkEntry): Promise<void> {
-    const lp = lpStream(entry.stream, { maxDataLength: FIPS_LINK_MTU });
     try {
       while (!this.stopped && this.links.get(entry.remoteKeyHex) === entry) {
-        const list = await lp.read();
+        const list = await entry.lp.read();
         const bytes = list.subarray();
         const ctx = this.context;
         if (!ctx) break;
@@ -401,8 +418,6 @@ export class LibP2pLinkTransport implements Transport {
   }
 
   private onStreamEnd(entry: LinkEntry): void {
-    // If this entry is no longer the held one, the replacement already
-    // took its place.
     const current = this.links.get(entry.remoteKeyHex);
     if (current !== entry) return;
     this.dropEntry(entry, 'stream ended');
@@ -413,62 +428,59 @@ export class LibP2pLinkTransport implements Transport {
         state: 'disconnected',
       });
     }
-    // MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer
-    // that named it holds the key" → "When a link ends, the end that
-    // opened it opens it again". Only the opener reopens, and only over a
-    // connection it still holds to that peer.
     if (entry.opener !== 'us') return;
-    this.scheduleReopen(entry);
+    this.markFailure(entry.remotePeer);
   }
 
-  private scheduleReopen(entry: LinkEntry): void {
-    if (this.stopped) return;
-    entry.failures += 1;
+  private markFailure(remotePeer: string): void {
+    if (this.stopped || this.libp2p === null) return;
+    const stillConnected = this.libp2p.getConnections().some(
+      (c) => c.remotePeer.toString() === remotePeer && c.status === 'open',
+    );
+    if (!stillConnected) {
+      const existing = this.retries.get(remotePeer);
+      if (existing !== undefined && existing.timer !== null) {
+        clearTimeout(existing.timer);
+      }
+      this.retries.delete(remotePeer);
+      return;
+    }
+    let r = this.retries.get(remotePeer);
+    if (r === undefined) {
+      r = { remotePeer, failures: 0, timer: null };
+      this.retries.set(remotePeer, r);
+    }
+    r.failures += 1;
+    if (r.timer !== null) clearTimeout(r.timer);
     const wait = retryIntervalMs(
-      entry.failures,
+      r.failures,
       this.options.retryBaseMs,
       this.options.retryCapMs,
       this.options.random,
     );
-    if (entry.retryTimer !== null) clearTimeout(entry.retryTimer);
-    entry.retryTimer = setTimeout(() => {
-      entry.retryTimer = null;
-      void this.reopen(entry);
+    const entry = r;
+    r.timer = setTimeout(() => {
+      entry.timer = null;
+      void this.retryReopen(remotePeer);
     }, wait);
-    // Stage the entry so repeated close/reopen keeps the failure count
-    // under one key (MESH_INTERFACE → FIPS → "A key holds one link, and
-    // the libp2p peer that named it holds the key").
-    this.links.set(entry.remoteKeyHex, entry);
   }
 
-  private async reopen(entry: LinkEntry): Promise<void> {
+  private async retryReopen(remotePeer: string): Promise<void> {
     if (this.stopped || this.libp2p === null) return;
-    // Pick an open connection to the same libp2p peer (not the one that
-    // just closed).
-    const libp2p = this.libp2p;
-    const openConns = libp2p.getConnections().filter(
-      (c) => c.remotePeer.toString() === entry.remotePeer && c.status === 'open',
+    const open = this.libp2p.getConnections().filter(
+      (c) => c.remotePeer.toString() === remotePeer && c.status === 'open',
     );
-    if (openConns.length === 0) {
-      // No connection left — give up. The far end may reopen if it also
-      // holds a path.
-      this.links.delete(entry.remoteKeyHex);
+    if (open.length === 0) {
+      this.retries.delete(remotePeer);
       return;
     }
-    // Pick the first open connection. `openLink` goes through the holding
-    // rules the same way.
-    this.links.delete(entry.remoteKeyHex);
-    await this.openLink(openConns[0]!);
+    await this.openLink(open[0]!);
   }
 
   private dropEntry(entry: LinkEntry, _reason: string): void {
     if (entry.hintTimer !== null) {
       clearTimeout(entry.hintTimer);
       entry.hintTimer = null;
-    }
-    if (entry.retryTimer !== null) {
-      clearTimeout(entry.retryTimer);
-      entry.retryTimer = null;
     }
     try { entry.stream.abort(new Error(_reason)); } catch { /* already */ }
     if (this.links.get(entry.remoteKeyHex) === entry) {
