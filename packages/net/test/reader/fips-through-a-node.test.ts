@@ -387,4 +387,49 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
       .filter((s) => s.protocol === protocol);
     expect(linkStreams.length).toBe(0);
   }, 90_000);
+
+  // MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — a
+  // peer holds at most `FIPS_TCP_CONNECTIONS_PER_PEER` TCP/FIPS
+  // connections to a node at once. The endpoint refuses any past it.
+  it('a reader\'s third FIPS connection to a node is refused', async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.b, mesh.c);
+    stubs.push(mesh.stubB.srv, mesh.stubC.srv);
+    dirs.push(mesh.dirB, mesh.dirC);
+
+    const stack = await createReaderFips({ network: 'testnet' });
+    stacks.push(stack);
+    const reader = await buildReader(stack);
+    hosts.push(reader);
+
+    const bTcp = await nodeTcpAddress(mesh.b);
+    const connB = await reader.dial(multiaddr(bTcp));
+    const hsB = await readerHandshake(connB, {
+      magic: MAGIC_TESTNET,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'fips-through-a-node-test',
+      chainHeight: 0,
+      timeoutMs: 10_000,
+    });
+    if (!hsB.ok) throw new Error(`handshake with B failed: ${hsB.reason}`);
+    await openReaderLink(stack, connB, mesh.bFipsXOnlyHex, 15_000);
+
+    const cFipsMa = multiaddr(mesh.cFipsAddr);
+    const c1 = await reader.dial(cFipsMa, { signal: AbortSignal.timeout(15_000) });
+    const c2 = await reader.dial(cFipsMa, { force: true, signal: AbortSignal.timeout(15_000) } as unknown as never);
+    let thirdErr: unknown = null;
+    let c3: Connection | null = null;
+    try {
+      c3 = await reader.dial(cFipsMa, { force: true, signal: AbortSignal.timeout(15_000) } as unknown as never);
+    } catch (e) {
+      thirdErr = e;
+    }
+    try { await c3?.close(); } catch { /* already */ }
+    const cLibp2p = (mesh.c as unknown as { libp2p: Libp2p }).libp2p;
+    const readerIdStr = reader.peerId.toString();
+    const cConnsToReader = cLibp2p.getConnections().filter((x) => x.remotePeer.toString() === readerIdStr);
+    try { await c1.close(); } catch { /* already */ }
+    try { await c2.close(); } catch { /* already */ }
+    expect(c1.id !== c2.id && thirdErr !== null && cConnsToReader.length <= 2).toBe(true);
+  }, 120_000);
 });
