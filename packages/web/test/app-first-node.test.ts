@@ -281,7 +281,7 @@ describe('the feed\'s no-node line reads "searching for a connection…" until t
 // the rule changes the no-node line's words before the first check ends, and
 // adds the one re-read; a failure that is not no-node keeps its own message,
 // and the seed walk still probes the build's bases).
-describe('fix round — the walk and the msg(e) branch stand alongside the no-node rule', () => {
+describe('the seed walk and the msg(e) branch stand beside the no-node rule', () => {
   it('a failed first page whose seed walk adopts a base lands that base\'s rows (the extension build)', async () => {
     // The walk probes SEED_A (fails) then SEED_B (answers one row). The
     // adoption moves `prefs.node` to SEED_B and its page lands.
