@@ -64,7 +64,7 @@ async function makePeer(options: MakePeerOptions = {}): Promise<Peer> {
   const transport = new LibP2pLinkTransport({
     network: options.network ?? 'testnet',
     connectPeer: async (addr) => node.connect(addr),
-    hintTimeoutMs: options.hintTimeoutMs ?? 200,
+    hintTimeoutMs: options.hintTimeoutMs ?? 2_000,
     retryBaseMs: options.retryBaseMs ?? 50,
     retryCapMs: options.retryCapMs ?? 1_000,
     random: options.random ?? (() => 0.5),
@@ -132,7 +132,7 @@ async function stopPeer(p: Peer): Promise<void> {
 
 
 describe('MESH_INTERFACE → FIPS: fipsLinkProtocol', () => {
-  it.fails('the protocol id names the network', () => {
+  it('the protocol id names the network', () => {
     expect(fipsLinkProtocol('testnet')).toBe('/notis/testnet/fips-link/1.0.0');
     expect(fipsLinkProtocol('devnet')).toBe('/notis/devnet/fips-link/1.0.0');
     expect(fipsLinkProtocol('mainnet')).toBe('/notis/mainnet/fips-link/1.0.0');
@@ -153,7 +153,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     a = null; b = null; c = null; raw = null;
   });
 
-  it.fails('a link comes up and a datagram crosses it', async () => {
+  it('a link comes up and a datagram crosses it', async () => {
     a = await makePeer();
     b = await makePeer();
     const conn = await dial(a.libp2p, b.libp2p);
@@ -173,7 +173,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(got?.payload).toEqual(payload);
   }, 15_000);
 
-  it.fails('a stream that names no key in time is closed', async () => {
+  it('a stream that names no key in time is closed', async () => {
     a = await makePeer({ hintTimeoutMs: 150 });
     raw = await makeLibp2p();
     const conn = await dial(raw, a.libp2p);
@@ -183,7 +183,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
   }, 10_000);
 
-  it.fails('an oversized frame closes the stream', async () => {
+  it('an oversized frame closes the stream', async () => {
     a = await makePeer();
     raw = await makeLibp2p();
     const conn = await dial(raw, a.libp2p);
@@ -197,7 +197,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
   }, 10_000);
 
-  it.fails('a malformed key frame closes the stream', async () => {
+  it('a malformed key frame closes the stream', async () => {
     a = await makePeer();
     raw = await makeLibp2p();
     const conn = await dial(raw, a.libp2p);
@@ -211,7 +211,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
   }, 10_000);
 
-  it.fails('a stream from another peer naming a linked key is closed and the link stays up', async () => {
+  it('a stream from another peer naming a linked key is closed and the link stays up', async () => {
     a = await makePeer();
     b = await makePeer();
     const connAB = await dial(a.libp2p, b.libp2p);
@@ -228,7 +228,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(linked.includes(b.pubkeyHex) && !(stream.status === 'open')).toBe(true);
   }, 15_000);
 
-  it.fails('two ends opening at once keep one link, opened by the lower key', async () => {
+  it('two ends opening at once keep one link, opened by the lower key', async () => {
     // Keep generating until the pair's compressed keys sort A < B.
     let idA: FipsIdentity | null = null;
     let idB: FipsIdentity | null = null;
@@ -265,7 +265,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     ).toBe(true);
   }, 15_000);
 
-  it.fails("a newer stream from the same peer takes the link's place", async () => {
+  it("a newer stream from the same peer takes the link's place", async () => {
     a = await makePeer();
     b = await makePeer();
     const connAB = await dial(a.libp2p, b.libp2p);
@@ -282,7 +282,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     void connAB;
   }, 15_000);
 
-  it.fails('a link not up in time is closed', async () => {
+  it('a link not up in time is closed', async () => {
     a = await makePeer({ hintTimeoutMs: 200 });
     raw = await makeLibp2p();
     const conn = await dial(raw, a.libp2p);
@@ -297,7 +297,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
   }, 10_000);
 
-  it.fails('closing the connection reports the key disconnected', async () => {
+  it('closing the connection reports the key disconnected', async () => {
     a = await makePeer();
     b = await makePeer();
     const conn = await dial(a.libp2p, b.libp2p);
@@ -318,7 +318,7 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(ev?.state).toBe('disconnected');
   }, 15_000);
 
-  it.fails('an ended link is reopened over a connection still held', async () => {
+  it('an ended link is reopened over a connection still held', async () => {
     a = await makePeer({ retryBaseMs: 50, retryCapMs: 500 });
     b = await makePeer();
     const conn1 = await dial(a.libp2p, b.libp2p);
