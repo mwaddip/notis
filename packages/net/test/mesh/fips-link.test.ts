@@ -197,6 +197,33 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
   }, 10_000);
 
+  it('an oversized frame after a valid key exchange closes the stream', async () => {
+    // MESH_INTERFACE → FIPS → "Each side names its key first" — the
+    // first frame is the 33-byte compressed key. A valid key frame
+    // passes the 33-byte check and `a` holds the stream; the frame
+    // cap guards every later frame on the held `lpStream`.
+    a = await makePeer();
+    raw = await makeLibp2p();
+    const conn = await dial(raw, a.libp2p);
+    const stream: Stream = await conn.newStream(fipsLinkProtocol('testnet'));
+    const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
+    // A valid-length 33-byte compressed key. The 32 bytes after the
+    // 0x02 marker are arbitrary — `readKeyFrame` only checks length
+    // and the first-byte parity marker.
+    const key = new Uint8Array(33);
+    key[0] = 0x02;
+    for (let i = 1; i < key.length; i++) key[i] = i & 0xff;
+    await lp.write(key);
+    // Read `a`'s answering key so the exchange completes before the
+    // oversized frame reaches the receive loop.
+    const list = await lp.read();
+    expect(list.subarray().length).toBe(33);
+    const over = new Uint8Array(FIPS_LINK_MTU + 1);
+    try { await lp.write(over); } catch { /* far end may abort mid-write */ }
+    await sleep(300);
+    expect(stream.status === 'closed' || stream.status === 'aborted' || stream.status === 'reset').toBe(true);
+  }, 10_000);
+
   it('a malformed key frame closes the stream', async () => {
     a = await makePeer();
     raw = await makeLibp2p();
@@ -212,20 +239,45 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
   }, 10_000);
 
   it('a stream from another peer naming a linked key is closed and the link stays up', async () => {
-    a = await makePeer();
-    b = await makePeer();
+    // MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p
+    // peer that named it holds the key" — the held entry is never
+    // displaced by another peer's stream naming the key. Keys are
+    // generated so A's compressed key sorts higher than B's; the
+    // simultaneous-open rule that would otherwise resolve the pair
+    // (newOpenerKey vs heldOpenerKey) would then drop the held entry
+    // in favour of the impostor's, so the held stream's status
+    // distinguishes the displace-guard's behaviour from that rule.
+    let idA: FipsIdentity | null = null;
+    let idB: FipsIdentity | null = null;
+    for (let i = 0; i < 128 && !(idA && idB); i++) {
+      const left = await generateIdentity();
+      const right = await generateIdentity();
+      const leftHex = toHex(left.publicKey);
+      const rightHex = toHex(right.publicKey);
+      if (leftHex > rightHex) { idA = left; idB = right; }
+      else if (rightHex > leftHex) { idA = right; idB = left; }
+    }
+    if (!idA || !idB) throw new Error('no ordered pair');
+    a = await makePeer({ identity: idA });
+    b = await makePeer({ identity: idB });
     const connAB = await dial(a.libp2p, b.libp2p);
     await a.transport.openLink(connAB).catch(() => { /* stub */ });
     await waitPeer(a.node, b.pubkeyHex, 2_000);
+    const linkProtocol = fipsLinkProtocol('testnet');
+    const heldAB = connAB.streams.find((s) => s.protocol === linkProtocol) ?? null;
+    if (heldAB === null) throw new Error('A-B link stream not found on connAB');
     // A third libp2p peer C opens a link stream to A, writing B's FIPS key.
     raw = await makeLibp2p();
     const connCA = await dial(raw, a.libp2p);
-    const stream: Stream = await connCA.newStream(fipsLinkProtocol('testnet'));
+    const stream: Stream = await connCA.newStream(linkProtocol);
     const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
     try { await lp.write(b.identity.publicKey); } catch { /* far end may abort */ }
     await sleep(300);
-    const linked = a.transport.linkedKeys();
-    expect(linked.includes(b.pubkeyHex) && !(stream.status === 'open')).toBe(true);
+    expect(
+      a.transport.linkedKeys().includes(b.pubkeyHex)
+        && heldAB.status === 'open'
+        && stream.status !== 'open',
+    ).toBe(true);
   }, 15_000);
 
   it('two ends opening at once keep one link, opened by the lower key', async () => {
@@ -256,12 +308,22 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
       waitPeer(a.node, b.pubkeyHex, 2_000),
       waitPeer(b.node, a.pubkeyHex, 2_000),
     ]);
-    // Both ends keep one link — the lower-keyed opener's (A).
+    // Both ends keep one link — the lower-keyed opener's (A). Its
+    // direction tells the end whose compressed key sorts lower from
+    // the one whose sorts higher: the survivor on A is the stream A
+    // opened (`outbound`), and on B the stream A opened (`inbound`).
+    const linkProtocol = fipsLinkProtocol('testnet');
+    const aLinkStreams = connAB.streams.filter((s) => s.protocol === linkProtocol);
+    const bLinkStreams = connBA.streams.filter((s) => s.protocol === linkProtocol);
     expect(
       a.transport.linkedKeys().includes(b.pubkeyHex)
         && b.transport.linkedKeys().includes(a.pubkeyHex)
         && a.transport.linkedKeys().length === 1
-        && b.transport.linkedKeys().length === 1,
+        && b.transport.linkedKeys().length === 1
+        && aLinkStreams.length === 1
+        && bLinkStreams.length === 1
+        && aLinkStreams[0]!.direction === 'outbound'
+        && bLinkStreams[0]!.direction === 'inbound',
     ).toBe(true);
   }, 15_000);
 
