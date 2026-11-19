@@ -166,11 +166,13 @@ async function stopPeer(p: Peer): Promise<void> {
 describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
   let a: Peer | null = null;
   let b: Peer | null = null;
+  let c: Peer | null = null;
 
   afterEach(async () => {
     if (a) await stopPeer(a);
     if (b) await stopPeer(b);
-    a = null; b = null;
+    if (c) await stopPeer(c);
+    a = null; b = null; c = null;
   });
 
   it('a dial to the listener FIPS address answers a libp2p connection to its peer id', async () => {
@@ -399,4 +401,98 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     const anyFips = announced.some((s) => s.includes('/fips/'));
     expect(anyFips).toBe(false);
   }, 15_000);
+
+  it.fails('a datagram from one peer wakes that peer connection alone', async () => {
+    c = await makePeer({ dial: false, listen: true });
+    const counts = new Map<number, number>();
+    const idPeers = new Map<number, string>();
+    const real = c.endpoint;
+    const wrapped = new Proxy(real, {
+      get(target, prop, _recv) {
+        if (prop === 'read') {
+          return async (id: number, max: number, now?: number) => {
+            counts.set(id, (counts.get(id) ?? 0) + 1);
+            return target.read(id, max, now);
+          };
+        }
+        if (prop === 'accept') {
+          return async () => {
+            const id = await target.accept();
+            if (id !== undefined) {
+              const p = await target.peer(id).catch(() => undefined);
+              if (p !== undefined) idPeers.set(id, p);
+            }
+            return id;
+          };
+        }
+        const v = (target as unknown as Record<string | symbol, unknown>)[prop];
+        if (typeof v === 'function') return (v as (...args: unknown[]) => unknown).bind(target);
+        return v;
+      },
+    }) as FipsTcpEndpoint;
+    c.endpointRef.current = wrapped;
+
+    a = await makePeer({ dial: true });
+    b = await makePeer({ dial: true });
+
+    const linkA = await dialTcp(a.libp2p, c.libp2p);
+    await a.link.openLink(linkA).catch(() => { /* stub */ });
+    const linkB = await dialTcp(b.libp2p, c.libp2p);
+    await b.link.openLink(linkB).catch(() => { /* stub */ });
+    await waitLink(a, c.pubkeyHex, 3_000);
+    await waitLink(b, c.pubkeyHex, 3_000);
+
+    const PROTO = '/notis-test/fips-echo/1.0.0';
+    await c.libp2p.handle(PROTO, async (stream) => {
+      for await (const chunk of stream) {
+        stream.send(chunk.subarray());
+      }
+    });
+
+    const fipsMa = fipsMultiaddr(c.identity.xOnlyPubkey, c.libp2p.peerId.toString());
+    const connA = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
+      .catch(() => null);
+    const connB = await b.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
+      .catch(() => null);
+    const bothUp = connA !== null
+      && connB !== null
+      && connA.remoteAddr.toString().includes('/fips/')
+      && connB.remoteAddr.toString().includes('/fips/');
+
+    // Let any identify / handshake traffic settle before baselining.
+    await sleep(400);
+    const aXHex = toHex(a.identity.xOnlyPubkey);
+    const bXHex = toHex(b.identity.xOnlyPubkey);
+    let idA = -1;
+    let idB = -1;
+    for (const [id, p] of idPeers) {
+      if (p.length === 66 && p.slice(2) === aXHex) idA = id;
+      if (p.length === 66 && p.slice(2) === bXHex) idB = id;
+    }
+    const baseA = counts.get(idA) ?? 0;
+    const baseB = counts.get(idB) ?? 0;
+
+    // 50 KiB from A only; the echo doubles the traffic on A's path and
+    // leaves B's idle.
+    let echoed = 0;
+    if (connA !== null) {
+      const stream = await connA.newStream(PROTO).catch(() => null);
+      if (stream !== null) {
+        const payload = new Uint8Array(50_000);
+        for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+        stream.send(payload);
+        try {
+          for await (const chunk of stream) {
+            echoed += chunk.subarray().byteLength;
+            if (echoed >= payload.byteLength) break;
+          }
+        } catch { /* stub */ }
+        await stream.close().catch(() => { /* already */ });
+      }
+    }
+    await sleep(300);
+    const deltaA = (counts.get(idA) ?? 0) - baseA;
+    const deltaB = (counts.get(idB) ?? 0) - baseB;
+    expect(bothUp && idA >= 0 && idB >= 0 && deltaA > 20 && deltaB <= 5).toBe(true);
+  }, 45_000);
 });
