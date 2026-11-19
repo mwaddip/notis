@@ -5,7 +5,7 @@
 // carries libp2p connections on TCP/FIPS streams. Browser-safe: imports
 // no Node built-in and reads no Node global.
 
-import { FipsNode } from '@fips/core';
+import { FipsNode, generateIdentity } from '@fips/core';
 import type {
   FipsIdentity,
   PeerEvent,
@@ -176,10 +176,23 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
 
 /**
  * NET_INTERFACE → "A mesh node runs a FIPS stack" — a reader's FIPS
- * stack: a fresh fips-ts identity, forwarding off, dialling on, no
- * link opened of its own accord; the reader links by
- * `stack.link.openLink(connection)` over a connection it chooses.
+ * stack. MESH_INTERFACE → FIPS → "Every mesh node is a FIPS node":
+ * a reader runs a FIPS node with forwarding off and the default
+ * routing mode — carrying nothing for anyone. MESH_INTERFACE → FIPS →
+ * "A reader dials over it; a node does not": `dial: true` lets the
+ * libp2p transport dial `/fips` addresses; the reader opens no listen
+ * address. MESH_INTERFACE → FIPS → "A node opens a link over each
+ * connection it dialled to a Notis peer": `linkOutbound: false` holds
+ * for a reader, which links by `stack.link.openLink(connection)` over
+ * a connection it chooses.
  */
-export async function createReaderFips(_o: { network: MeshNetworkName }): Promise<FipsStack> {
-  throw new Error('createReaderFips not implemented');
+export async function createReaderFips(o: { network: MeshNetworkName }): Promise<FipsStack> {
+  const identity = await generateIdentity();
+  return createFipsStack({
+    identity,
+    forwarding: false,
+    network: o.network,
+    dial: true,
+    linkOutbound: false,
+  });
 }

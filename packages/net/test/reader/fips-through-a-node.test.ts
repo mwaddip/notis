@@ -274,7 +274,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     return { mesh, stack, reader, connB, connC };
   }
 
-  it.fails('the reader links to B and reads /blocks/current on C over FIPS', async () => {
+  it('the reader links to B and reads /blocks/current on C over FIPS', async () => {
     const { mesh, connC } = await setup();
     const cNotisId = notisIdFromPeerId(connC.remotePeer);
     const fetch = meshFetchOverConnection((wantNotisId) => {
@@ -288,7 +288,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     expect(text).toBe(mesh.stubC.currentJson);
   }, 90_000);
 
-  it.fails('the reader connection to C is a FIPS connection and C holds no other to the reader', async () => {
+  it('the reader connection to C is a FIPS connection and C holds no other to the reader', async () => {
     const { mesh, reader, connC } = await setup();
     expect(connC.remoteAddr.toString()).toContain('/fips/');
     const cLibp2p = (mesh.c as unknown as { libp2p: Libp2p }).libp2p;
@@ -298,7 +298,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     expect(cToReader[0]!.remoteAddr.toString()).toContain('/fips/');
   }, 90_000);
 
-  it.fails('a 150 KiB proof body arrives whole', async () => {
+  it('a 150 KiB proof body arrives whole', async () => {
     const { mesh, connC } = await setup();
     const cNotisId = notisIdFromPeerId(connC.remotePeer);
     const fetch = meshFetchOverConnection((wantNotisId) => {
@@ -312,7 +312,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     expect(Buffer.from(buf).toString('utf8')).toBe(mesh.stubC.bigJson);
   }, 90_000);
 
-  it.fails('a FIPS address with a wrong npub fails', async () => {
+  it('a FIPS address with a wrong npub fails', async () => {
     const mesh = await buildMesh();
     nodes.push(mesh.b, mesh.c);
     stubs.push(mesh.stubB.srv, mesh.stubC.srv);
@@ -353,7 +353,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     expect(cConnsToReader.length).toBe(0);
   }, 90_000);
 
-  it.fails('a reader that never calls openLink opens no link stream', async () => {
+  it('a reader that never calls openLink opens no link stream', async () => {
     const mesh = await buildMesh();
     nodes.push(mesh.b, mesh.c);
     stubs.push(mesh.stubB.srv, mesh.stubC.srv);
