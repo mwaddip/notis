@@ -4,11 +4,7 @@
 // spelling of the x-only key, and `02‖x`, the even-parity compressed form
 // a dial addresses it by.
 
-import { describe, it as itPlain, expect, beforeEach, afterEach } from 'vitest';
-
-// The cases are `it.fails` while fips-key.ts and fips-identity.ts are stubs
-// that throw; the next commit implements them and flips these to `it`.
-const it = itPlain.fails;
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

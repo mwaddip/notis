@@ -5,14 +5,15 @@
 //
 // Browser-safe: imports no Node built-in.
 
+import { encodeNpub, compressedPubkeyFromXOnly, toHex } from '@fips/core';
 import type { FipsIdentity } from '@fips/core';
 
 /**
  * MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
  * — the FIPS key's x-only form, bech32-spelled as a NIP-19 npub.
  */
-export function npubOf(_id: FipsIdentity): string {
-  throw new Error('unimplemented');
+export function npubOf(id: FipsIdentity): string {
+  return encodeNpub(id.xOnlyPubkey);
 }
 
 /**
@@ -20,6 +21,6 @@ export function npubOf(_id: FipsIdentity): string {
  * — `02‖x`, the even-parity compressed form of an x-only key; a dial
  * addresses the key by it and reaches a key of either parity.
  */
-export function dialKeyHex(_xOnly: Uint8Array): string {
-  throw new Error('unimplemented');
+export function dialKeyHex(xOnly: Uint8Array): string {
+  return toHex(compressedPubkeyFromXOnly(xOnly));
 }
