@@ -23,6 +23,9 @@ export {
   parseFipsMultiaddr,
   isFipsMultiaddr,
 } from './mesh/fips-addr.js';
+// MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold".
+export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
+export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,

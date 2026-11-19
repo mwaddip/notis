@@ -53,6 +53,19 @@ export const CERT_RETRY_MS: 3600000 = 3600000;
 export const FIPS_MULTIADDR_CODE: 0x300f15 = 0x300f15;
 
 /**
+ * MESH_INTERFACE → FIPS → "Each side names its key first" — bytes in one
+ * FIPS packet on a link, and the length-prefixed frame's cap.
+ */
+export const FIPS_LINK_MTU: 1357 = 1357;
+
+/**
+ * MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
+ * named it holds the key" — 5 s for a link stream's first frame, and 5 s
+ * more for its link to come up.
+ */
+export const FIPS_LINK_HINT_TIMEOUT_MS: 5000 = 5000;
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */

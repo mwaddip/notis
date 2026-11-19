@@ -169,4 +169,12 @@ export {
   parseFipsMultiaddr,
   isFipsMultiaddr,
 } from './mesh/fips-addr.js';
-export { FIPS_MULTIADDR_CODE } from './mesh/constants.js';
+export {
+  FIPS_MULTIADDR_CODE,
+  FIPS_LINK_MTU,
+  FIPS_LINK_HINT_TIMEOUT_MS,
+} from './mesh/constants.js';
+// MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold"
+// — the link protocol and the libp2p-stream transport fips-ts uses.
+export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
+export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
