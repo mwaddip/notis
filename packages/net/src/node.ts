@@ -866,6 +866,8 @@ export class NetNode {
     rawPrivate.set(nodeKey.publicKey, 32);
     const libp2pPrivateKey = privateKeyFromRaw(rawPrivate);
 
+    const connectionCeiling = this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK;
+
     // NET_INTERFACE → The mesh — with `mesh`, hold every refusal
     // `MESH_INTERFACE` names and the state-directory refusal before
     // any socket opens, and derive the STUN setting now (no socket
@@ -912,7 +914,7 @@ export class NetNode {
         network: mesh.network,
         dial: false,
         linkOutbound: true,
-        maxConnections: this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK,
+        maxConnections: connectionCeiling,
       });
       this.fipsStack = fipsStack;
     }
@@ -944,7 +946,6 @@ export class NetNode {
       denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
         this.peerMgr.isBanned(peerId.toString()),
     };
-    const connectionCeiling = this.config.maxPeers + this.config.maxReaders + HANDSHAKE_SLACK;
     const connectionManager = {
       // NET_INTERFACE → Readers → "Readers have a budget of their own":
       // libp2p's connection ceiling is `maxPeers + maxReaders +

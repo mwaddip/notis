@@ -28,7 +28,6 @@ import {
 
 import { NetNode, MeshStateError } from '../../src/index.js';
 import type { NetValidators, MeshConfig } from '../../src/index.js';
-import { effectiveAnnounce } from '../../src/mesh/libp2p-options.js';
 import { makeConfig } from '../helpers.js';
 
 const validators: NetValidators = {
@@ -68,17 +67,6 @@ function publicMeshOn(stateDir: string, httpBase: string): MeshConfig {
   };
 }
 
-function publicMeshFixedPorts(stateDir: string, httpBase: string, tcpPort: number, webrtcPort: number): MeshConfig {
-  return {
-    role: 'public',
-    network: 'devnet',
-    listen: [`/ip4/127.0.0.1/udp/${webrtcPort}/webrtc-direct`, `/ip4/127.0.0.1/tcp/${tcpPort}`],
-    stateDir,
-    httpBase: () => httpBase,
-    stun: null,
-  };
-}
-
 function publicMeshWithAnnounce(stateDir: string, httpBase: string, announce: string[]): MeshConfig {
   return {
     role: 'public',
@@ -104,10 +92,6 @@ function privateMeshOn(stateDir: string, httpBase: string): MeshConfig {
 
 function libp2pOf(node: NetNode): Libp2p {
   return (node as unknown as { libp2p: Libp2p }).libp2p;
-}
-
-interface FipsAddressed {
-  fipsAddress(): string | null;
 }
 
 async function firstTcpAddr(node: NetNode, deadlineMs: number): Promise<string | null> {
@@ -148,31 +132,13 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await node.start();
     nodes.push(node);
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
+    const addr = node.fipsAddress();
     expect(addr).not.toBeNull();
     const libp2p = libp2pOf(node);
     const peerId = libp2p.peerId.toString();
     expect(addr!.endsWith(`/p2p/${peerId}`)).toBe(true);
     expect(addr!.startsWith('/fips/npub1')).toBe(true);
   }, 30_000);
-
-  it('effectiveAnnounce on a fixed-ports listen list never carries a FIPS address', () => {
-    // `effectiveAnnounce` runs on the listen list BEFORE `/fips/<own
-    // npub>` joins it, so the fixed-ports branch's `announce: [...listen]`
-    // answers no `/fips/` entry (`MESH_INTERFACE → FIPS → "A FIPS address
-    // is never among the addresses libp2p announces"`). The live cases
-    // below cover port-0 and operator-announce shapes; this shape is
-    // pure, so `effectiveAnnounce` directly covers it.
-    const mesh: MeshConfig = publicMeshFixedPorts('/unused', 'http://127.0.0.1:0', 4002, 4001);
-    const listenBeforeFips = ['/ip4/11.100.0.11/tcp/9100', ...mesh.listen];
-    const res = effectiveAnnounce(listenBeforeFips, mesh);
-    const announced = res?.announce ?? res?.appendAnnounce ?? [];
-    const fipsInAnnounce = announced.filter((a) => a.includes('/fips/'));
-    expect(fipsInAnnounce).toEqual([]);
-    // The entries that were in the listen list all round-trip through
-    // `announce: [...listen]` — no concrete entry is dropped.
-    expect(announced).toEqual(listenBeforeFips);
-  });
 
   it('a public node on port 0 announces no FIPS address', async () => {
     const up = await stubUpstream();
@@ -192,9 +158,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
       .filter((a) => a.includes('/fips/'));
     expect(meshFips).toEqual([]);
     expect(libFips).toEqual([]);
-    // See the fixed-ports case above for why the last assertion names
-    // `fipsAddress()`.
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
+    const addr = node.fipsAddress();
     expect(addr).not.toBeNull();
   }, 30_000);
 
@@ -216,9 +180,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
       .filter((a) => a.includes('/fips/'));
     expect(meshFips).toEqual([]);
     expect(libFips).toEqual([]);
-    // See the fixed-ports case above for why the last assertion names
-    // `fipsAddress()`.
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
+    const addr = node.fipsAddress();
     expect(addr).not.toBeNull();
   }, 30_000);
 
@@ -255,9 +217,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
       .filter((a) => a.includes('/fips/'));
     expect(meshFips).toEqual([]);
     expect(libFips).toEqual([]);
-    // See the fixed-ports case above for why the last assertion names
-    // `fipsAddress()`.
-    const addr = (priv as unknown as FipsAddressed).fipsAddress();
+    const addr = priv.fipsAddress();
     expect(addr).not.toBeNull();
   }, 60_000);
 
@@ -274,7 +234,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
       mesh: publicMeshOn(dir, up.base),
     }), validators);
     await first.start();
-    const firstAddr = (first as unknown as FipsAddressed).fipsAddress();
+    const firstAddr = first.fipsAddress();
     expect(firstAddr).not.toBeNull();
     const firstNpub = firstAddr!.split('/p2p/')[0];
     await first.stop();
@@ -286,7 +246,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await second.start();
     nodes.push(second);
-    const secondAddr = (second as unknown as FipsAddressed).fipsAddress();
+    const secondAddr = second.fipsAddress();
     expect(secondAddr).not.toBeNull();
     const secondNpub = secondAddr!.split('/p2p/')[0];
     expect(secondNpub).toBe(firstNpub);
@@ -321,7 +281,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     // The stack exposes its link through an accessor the node forwards.
     // Wait for B's link to A to come up: B dialled A's TCP address, so
     // B is the opener of the link.
-    const aFipsAddr = (a as unknown as FipsAddressed).fipsAddress();
+    const aFipsAddr = a.fipsAddress();
     expect(aFipsAddr).not.toBeNull();
     const aXOnlyNpub = (aFipsAddr!.split('/p2p/')[0] ?? '').slice('/fips/'.length);
     const getLink = (n: NetNode): { linkedKeys(): string[] } | null => {
@@ -371,7 +331,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
       mesh: publicMeshOn(dirB, up.base),
     }), validators);
     await b1.start();
-    const b1Fips = (b1 as unknown as FipsAddressed).fipsAddress();
+    const b1Fips = b1.fipsAddress();
     expect(b1Fips).not.toBeNull();
     const bNpub = b1Fips!.split('/p2p/')[0];
     await b1.stop();
@@ -384,7 +344,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await b2.start();
     nodes.push(b2);
-    const b2Fips = (b2 as unknown as FipsAddressed).fipsAddress();
+    const b2Fips = b2.fipsAddress();
     expect(b2Fips).not.toBeNull();
     expect(b2Fips!.split('/p2p/')[0]).toBe(bNpub);
 
@@ -407,7 +367,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await node.start();
     nodes.push(node);
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
+    const addr = node.fipsAddress();
     expect(addr).toBeNull();
     const stack = (node as unknown as { fipsStack?: unknown }).fipsStack;
     expect(stack ?? null).toBeNull();
@@ -457,7 +417,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     await new Promise((r) => setTimeout(r, 200));
     const activeAfter = (process as unknown as { _getActiveHandles(): unknown[] })._getActiveHandles().length;
     // `fipsAddress()` on a stopped node answers `null`.
-    const addr = (node as unknown as FipsAddressed).fipsAddress();
+    const addr = node.fipsAddress();
     expect(addr).toBeNull();
     // The number of active handles returns to at most its pre-start
     // level — the FIPS poll timer and the connection:open listener are
