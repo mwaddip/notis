@@ -750,7 +750,7 @@ export class NetNode {
    */
   private meshStun: { close(): Promise<void> } | null = null;
   /**
-   * MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+   * NET_INTERFACE → "A mesh node runs a FIPS stack" — the
    * FIPS stack a mesh node builds at start. Stopped before libp2p at
    * `stop`; `null` with no mesh.
    */
@@ -883,7 +883,7 @@ export class NetNode {
     // The WSS fallback never takes the node down.
     let wssOptions: WssOptions | null = null;
     let wssInitialCert: IpCertificate | null = null;
-    // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+    // NET_INTERFACE → "A mesh node runs a FIPS stack" — the
     // stack is built before `createLibp2p`; the FIPS key is read from
     // the mesh state directory after `assertStateDirIntegrity` runs so
     // a bad state directory still refuses first.
@@ -1113,7 +1113,7 @@ export class NetNode {
     this.libp2p = libp2p;
 
     try {
-      // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+      // NET_INTERFACE → "A mesh node runs a FIPS stack" — the
       // stack attaches after `createLibp2p` and before `libp2p.start()`,
       // so the link protocol's handler and the outbound-connection
       // listener are in place before libp2p's own `keep-alive` redial
@@ -1471,7 +1471,7 @@ export class NetNode {
         try { libp2p.removeEventListener('self:peer:update', this.meshSelfPeerUpdateListener); } catch { /* already gone */ }
         this.meshSelfPeerUpdateListener = null;
       }
-      // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+      // NET_INTERFACE → "A mesh node runs a FIPS stack" — the
       // stack stops before libp2p so its `connection:open` listener is
       // off before libp2p's teardown fires one last event.
       if (this.fipsStack !== null) {
@@ -1561,7 +1561,7 @@ export class NetNode {
       await this.meshStun.close();
       this.meshStun = null;
     }
-    // MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the
+    // NET_INTERFACE → "A mesh node runs a FIPS stack" — the
     // stack stops before libp2p so its `connection:open` listener is
     // off before libp2p's teardown fires one last event, and the FIPS
     // listener closes before the TCP one does.

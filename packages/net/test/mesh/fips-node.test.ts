@@ -1,4 +1,4 @@
-// MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — a mesh
+// NET_INTERFACE → "A mesh node runs a FIPS stack" — a mesh
 // `NetNode` builds a FIPS stack before `createLibp2p`, lists `/fips/<own
 // npub>` among its listen addresses, attaches after it, and reports its
 // FIPS address; `MESH_INTERFACE → FIPS → "A FIPS address is never among

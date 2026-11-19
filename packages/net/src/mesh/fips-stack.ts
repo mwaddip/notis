@@ -1,4 +1,4 @@
-// MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the pieces a
+// NET_INTERFACE → "A mesh node runs a FIPS stack" — the pieces a
 // mesh `NetNode` and a reader share: a fips-ts `FipsNode` whose one
 // transport carries link packets on libp2p streams, a `FipsTcpEndpoint` on
 // `FIPS_SERVICE_PORT` over its datagrams, and the libp2p transport that
@@ -27,7 +27,7 @@ import {
 } from './constants.js';
 
 /**
- * MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the pieces
+ * NET_INTERFACE → "A mesh node runs a FIPS stack" — the pieces
  * `createFipsStack` builds; `attach(libp2p)` wires them to libp2p and
  * `stop()` reverses every step.
  */
@@ -41,7 +41,7 @@ export interface FipsStack {
 }
 
 /**
- * MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — the options
+ * NET_INTERFACE → "A mesh node runs a FIPS stack" — the options
  * `createFipsStack` takes. Every field required but `maxConnections`;
  * `linkOutbound` opens a link over each connection libp2p dials outbound
  * (MESH_INTERFACE → FIPS → "A node opens a link over each connection it
@@ -57,7 +57,7 @@ export interface CreateFipsStackOptions {
 }
 
 /**
- * MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack" — build the
+ * NET_INTERFACE → "A mesh node runs a FIPS stack" — build the
  * link transport, the `FipsNode` over it alone, the datagram endpoint
  * over the node, the TCP/FIPS endpoint on `FIPS_SERVICE_PORT`, and the
  * libp2p transport that carries libp2p connections over its streams.

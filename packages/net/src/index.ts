@@ -33,7 +33,7 @@ export {
   FipsTransportDialError,
 } from './mesh/fips-transport.js';
 export type { FipsTransportInit } from './mesh/fips-transport.js';
-// MESH_INTERFACE → FIPS → "A mesh node runs a FIPS stack".
+// NET_INTERFACE → "A mesh node runs a FIPS stack".
 export { createFipsStack } from './mesh/fips-stack.js';
 export type { FipsStack, CreateFipsStackOptions } from './mesh/fips-stack.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
