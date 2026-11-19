@@ -264,3 +264,98 @@ describe('the feed\'s no-node line reads "searching for a connection…" until t
       .toBe("can't reach the node right now — no node answered — set one in settings");
   });
 });
+
+// Fix round — the walk and the msg(e) branch stand alongside the no-node rule
+// (WEB_INTERFACE → The extension → "A page's first node reads the feed again" —
+// the rule changes the no-node line's words before the first check ends, and
+// adds the one re-read; a failure that is not no-node keeps its own message
+// and the seed walk still probes the build's bases).
+describe('fix round — the walk and the msg(e) branch stand alongside the no-node rule', () => {
+  it.fails('a failed first page whose seed walk adopts a base lands that base\'s rows (the extension build)', async () => {
+    // The walk probes the build's bases — SEED_A fails, SEED_B answers one
+    // row. BUILD_NODE_BASES is a build const read at import time, so the
+    // modules reload under `notis-nodes`. A stored preference would skip the
+    // walk, so `KEY_NODE` is cleared before the imports.
+    vi.resetModules();
+    const SEED_A = 'http://seed-a.test';
+    const SEED_B = 'http://seed-b.test';
+    const bRow: FeedResult = {
+      posts: [{
+        id: 'p1'.padEnd(64, '0'), content: 'hi', contentHash: '11'.repeat(32),
+        author: 'bb'.repeat(32), parentRefs: [], protocolVersion: 1,
+        type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
+        likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, txId: 'ff'.repeat(32),
+      }] as unknown as FeedResult['posts'],
+      next: null, pending: [], pendingCount: 0,
+    };
+    const meta = document.createElement('meta');
+    meta.setAttribute('name', 'notis-nodes');
+    meta.setAttribute('content', JSON.stringify([SEED_A, SEED_B]));
+    document.head.appendChild(meta);
+    const prefs = await import('../src/prefs');
+    localStorage.removeItem(prefs.KEY_NODE);
+    prefs.setNode('');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith(SEED_A)) return new Response(null, { status: 503 });
+      if (url.startsWith(SEED_B)) return new Response(JSON.stringify(bRow), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+      return new Response(null, { status: 404 });
+    }));
+    const { App: FreshApp } = await import('../src/app');
+    const api: Api = {
+      feed: async (): Promise<FeedResult> => { throw new Error('offline'); },
+      thread: async () => null,
+      post: async () => null,
+      status: async () => statusResult(),
+      currentBlock: async (): Promise<BlockCurrent> => { throw new Error('offline'); },
+      karma: async (): Promise<KarmaResult> => karmaResult({
+        userId: PUB, total: '0', effective: '0', boxes: [], boxCount: 0, height: 6000,
+      }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
+      credits: async () => ({ userId: '', total: '0', boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
+    };
+    const verifier: TipVerifier = { run: () => new Promise<TipRun>(() => {}) };
+    const app = new FreshApp(
+      api, {} as unknown as WriteClient, makeIdentity(), new PendingLedger(PUB),
+      undefined, undefined, verifier,
+    );
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    const workspace = document.createElement('div'); workspace.className = 'workspace';
+    workspace.append(feed, panes);
+    document.body.append(appbar, workspace);
+    (app as unknown as { mount(a: HTMLElement, f: HTMLElement, p: HTMLElement): void })
+      .mount(appbar, feed, panes);
+    const drive = app as unknown as {
+      loadFeed(): Promise<void>;
+      state: { feed: { error: string | null; loaded: boolean; posts: unknown[] } };
+    };
+    await drive.loadFeed();
+    await flush();
+    expect(drive.state.feed.error, 'the adoption cleared the error line').toBeNull();
+    expect(drive.state.feed.loaded, 'the feed is loaded').toBe(true);
+    expect(drive.state.feed.posts.length, 'the adopted base\'s row stands').toBe(1);
+  });
+
+  it.fails('a failed first page that is not no-node — the walk not taken — shows its own message, not searching', async () => {
+    // A stored node preference prevents the walk — the catch goes to the
+    // msg(e) branch, which keeps the error message verbatim and does not
+    // flip the feed into the no-node state (no searching line).
+    const h = harness();
+    h.state.feedResults = [new Error('node answered 500')];
+    await h.drive.loadFeed();
+    await flush();
+    const err = h.feedEl.querySelector<HTMLElement>('.error');
+    expect(err, 'the error line is rendered').not.toBeNull();
+    expect(err!.textContent)
+      .toBe("can't reach the node right now — node answered 500");
+  });
+});
