@@ -169,11 +169,10 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
   let c: Peer | null = null;
 
   afterEach(async () => {
-    if (a) await stopPeer(a);
-    if (b) await stopPeer(b);
-    if (c) await stopPeer(c);
+    const peers = [a, b, c].filter((p): p is Peer => p !== null);
+    await Promise.all(peers.map((p) => stopPeer(p)));
     a = null; b = null; c = null;
-  });
+  }, 30_000);
 
   it('a dial to the listener FIPS address answers a libp2p connection to its peer id', async () => {
     a = await makePeer({ dial: true });
@@ -402,7 +401,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(anyFips).toBe(false);
   }, 15_000);
 
-  it.fails('a datagram from one peer wakes that peer connection alone', async () => {
+  it('a datagram from one peer wakes that peer connection alone', async () => {
     c = await makePeer({ dial: false, listen: true });
     const counts = new Map<number, number>();
     const idPeers = new Map<number, string>();

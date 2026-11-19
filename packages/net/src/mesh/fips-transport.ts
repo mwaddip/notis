@@ -54,13 +54,16 @@ export class FipsTransportDialError extends Error {
  * sets once its FIPS stack is up; `dial` is true for a reader and false
  * for a node (`MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream"
  * → "A reader dials over it; a node does not"`). `onActivity` wakes pending
- * reads and accepts.
+ * reads and accepts; its subscriber receives the datagram's source as the
+ * sender's 66-hex compressed FIPS key, so each connection wakes only for
+ * its own peer and the work per inbound datagram does not scale with the
+ * endpoint's connection count.
  */
 export interface FipsTransportInit {
   readonly endpoint: () => FipsTcpEndpoint | null;
   readonly localXOnly: () => Uint8Array | null;
   readonly dial: boolean;
-  readonly onActivity: (wake: () => void) => () => void;
+  readonly onActivity: (wake: (srcKeyHex: string) => void) => () => void;
 }
 
 /**
@@ -73,13 +76,13 @@ export interface FipsTransportInit {
  */
 export function fipsDatagramEndpoint(node: FipsNode): {
   datagrams: FipsDatagramEndpoint;
-  onActivity: (wake: () => void) => () => void;
+  onActivity: (wake: (srcKeyHex: string) => void) => () => void;
 } {
-  const wakers = new Set<() => void>();
-  const fireWakers = (): void => {
+  const wakers = new Set<(srcKeyHex: string) => void>();
+  const fireWakers = (srcKeyHex: string): void => {
     for (const wake of [...wakers]) {
       try {
-        wake();
+        wake(srcKeyHex);
       } catch {
         /* one listener does not degrade the others */
       }
@@ -94,14 +97,14 @@ export function fipsDatagramEndpoint(node: FipsNode): {
           dstPort: ctx.dstPort,
           payload: ctx.payload,
         });
-        fireWakers();
+        fireWakers(ctx.src);
       });
     },
     async sendDatagram(args) {
       await node.sendDatagram(args);
     },
   };
-  const onActivity = (wake: () => void): (() => void) => {
+  const onActivity = (wake: (srcKeyHex: string) => void): (() => void) => {
     wakers.add(wake);
     return () => {
       wakers.delete(wake);
@@ -164,6 +167,12 @@ class FipsTransport implements Transport {
       );
     }
     const log = this.components.logger.forComponent('libp2p:fips:connection');
+    // `dialKey` is `02||x` hex (66 chars); the remote key's parity may be
+    // odd — a dial addresses either parity — so the match is on the x-only
+    // suffix (`MESH_INTERFACE → FIPS → "A node's FIPS address is
+    // `/fips/<npub>/p2p/<peer id>`"` → "a dial addresses the key as
+    // `02‖x`, which reaches a key of either parity").
+    const peerXOnlyHex = dialKey.slice(2);
     const maConn = new FipsMultiaddrConnection({
       endpoint,
       id,
@@ -171,6 +180,7 @@ class FipsTransport implements Transport {
       direction: 'outbound',
       log,
       onActivity: this.init.onActivity,
+      peerXOnlyHex,
     });
     try {
       return await options.upgrader.upgradeOutbound(maConn, options);
@@ -224,6 +234,8 @@ class FipsListener
       throw new Error('fips listener is closed');
     }
     this.status = 'active';
+    // The accept loop wakes on every inbound datagram: a new peer's first
+    // SYN is from a key no live connection holds.
     this.unsubActivity = this.ctx.init.onActivity(() => this.fireWake());
     this.safeDispatchEvent('listening');
     this.pokeAccept();
@@ -328,6 +340,7 @@ class FipsListener
       direction: 'inbound',
       log: this.ctx.logConn,
       onActivity: this.ctx.init.onActivity,
+      peerXOnlyHex: peerHex.slice(2),
     });
     this.openConns.add(maConn);
     maConn.addEventListener('close', () => {
@@ -348,13 +361,15 @@ interface FipsMultiaddrConnectionInit {
   readonly remoteAddr: Multiaddr;
   readonly direction: MessageStreamDirection;
   readonly log: Logger;
-  readonly onActivity: (wake: () => void) => () => void;
+  readonly onActivity: (wake: (srcKeyHex: string) => void) => () => void;
+  readonly peerXOnlyHex: string;
 }
 
 class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
   private readonly endpoint: FipsTcpEndpoint;
   private readonly id: ConnectionId;
   private readonly unsubActivity: () => void;
+  private readonly peerXOnlyHex: string;
   private readonly writeQueue: Uint8Array[] = [];
   private pendingBytes = 0;
   private writerRunning = false;
@@ -373,9 +388,16 @@ class FipsMultiaddrConnection extends AbstractMultiaddrConnection {
     });
     this.endpoint = init.endpoint;
     this.id = init.id;
+    this.peerXOnlyHex = init.peerXOnlyHex;
     this.armWake();
     this.armResume();
-    this.unsubActivity = init.onActivity(() => this.fireWake());
+    // The sender's 66-hex compressed key `02||x` or `03||x`: the x-only
+    // suffix is the match.
+    this.unsubActivity = init.onActivity((srcKeyHex) => {
+      if (srcKeyHex.length === 66 && srcKeyHex.slice(2) === this.peerXOnlyHex) {
+        this.fireWake();
+      }
+    });
     void this.readLoop();
   }
 
