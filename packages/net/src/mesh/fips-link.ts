@@ -267,15 +267,6 @@ export class LibP2pLinkTransport implements Transport {
     return out;
   }
 
-  /**
-   * MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
-   * named it holds the key" — how many failures in a row the opener has
-   * recorded against this libp2p peer, 0 when there is none.
-   */
-  failureCountFor(remotePeer: string): number {
-    return this.retries.get(remotePeer)?.failures ?? 0;
-  }
-
   // ----- internal helpers -----
 
   private async acceptStream(stream: Stream, connection: Connection): Promise<void> {
@@ -297,12 +288,9 @@ export class LibP2pLinkTransport implements Transport {
       return;
     }
     this.holdStream(remoteKeyHex, remotePeerStr, 'them', stream, lp, connection);
-    // The answerer does NOT call connectPeer. fips-ts's packet processor
-    // handles a responder's first handshake message through onPacket —
-    // only the opener initiates (`FipsNode.ts` `onTransportConn` at line
-    // 575 ignores `connected` events; the responder's packets go through
-    // `packetProcessor.process`). Measured: with the answerer not calling
-    // connectPeer, every link case still comes up.
+    // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake
+    // over it completes" — the answerer starts no handshake of its own;
+    // fips-ts answers the opener's first handshake message as responder.
   }
 
   // MESH_INTERFACE → FIPS → "Each side names its key first" — read the

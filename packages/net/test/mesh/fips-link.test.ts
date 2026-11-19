@@ -382,19 +382,18 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
   it('a peer that refuses the link protocol is tried again with a growing wait', async () => {
     a = await makePeer({ retryBaseMs: 100, retryCapMs: 10_000, random: () => 1 });
     raw = await makeLibp2p();
-    const conn = await dial(a.libp2p, raw);
-    // `raw` registers no fips-link handler: every newStream on the protocol
-    // fails with `UnsupportedProtocolError`.
+    // `raw` runs a handler that counts each inbound link stream and
+    // aborts it at once. Every openLink attempt from A lands here before
+    // falling through markFailure and the next retry.
     const times: number[] = [];
-    const connAny = conn as unknown as { newStream: (...args: unknown[]) => Promise<unknown> };
-    const originalNewStream = connAny.newStream.bind(conn);
-    connAny.newStream = ((protocols: unknown, opts?: unknown) => {
+    await raw.handle(fipsLinkProtocol('testnet'), (stream: Stream) => {
       times.push(Date.now());
-      return originalNewStream(protocols, opts);
-    }) as typeof connAny.newStream;
-    await a.transport.openLink(conn).catch(() => { /* measured by the assertion */ });
-    // With random=1, waits are: f=1 100 ms, f=2 200 ms, f=3 400 ms. 900 ms
-    // leaves headroom for a third attempt plus fuzz.
+      try { stream.abort(new Error('refused')); } catch { /* already */ }
+    }, { maxInboundStreams: 32 });
+    const conn = await dial(a.libp2p, raw);
+    await a.transport.openLink(conn).catch(() => { /* fires the retry chain */ });
+    // With random=1, the waits are f=1 100 ms, f=2 200 ms, f=3 400 ms.
+    // 900 ms leaves headroom for a fourth attempt plus fuzz.
     await sleep(900);
     const gaps: number[] = [];
     for (let i = 1; i < times.length; i++) gaps.push(times[i]! - times[i - 1]!);
@@ -402,29 +401,51 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
   }, 10_000);
 
   it('the retry count resets once a link comes up', async () => {
-    a = await makePeer({ retryBaseMs: 500, retryCapMs: 5_000, random: () => 1 });
+    a = await makePeer({ retryBaseMs: 200, retryCapMs: 10_000, random: () => 1 });
     b = await makePeer();
-    const peerStr = b.libp2p.peerId.toString();
-    // Two libp2p connections so a retry on another connection can land.
-    const conn1 = await dial(a.libp2p, b.libp2p);
-    const conn2 = await dial(a.libp2p, b.libp2p, true);
-    await a.transport.openLink(conn1).catch(() => { /* stub */ });
-    await waitPeer(a.node, b.pubkeyHex, 2_000);
-    // First link up — failures 0. Now close conn1: the held stream ends,
-    // `markFailure` runs, failure count rises above zero.
-    await conn1.close().catch(() => { /* already */ });
-    await sleep(100);
-    const before = a.transport.failureCountFor(peerStr);
-    // The scheduled retry fires on conn2, opens a fresh stream, FMP
-    // handshake completes, `linkUp` clears the failure count.
-    for (let i = 0; i < 40; i++) {
-      if (a.transport.linkedKeys().includes(b.pubkeyHex)
-        && a.transport.failureCountFor(peerStr) === 0) break;
+    // Strip B's inbound handler so A's early attempts fail at the
+    // protocol layer and the opener's failure count grows.
+    await b.libp2p.unhandle(fipsLinkProtocol('testnet'));
+    // Two libp2p connections so the retries have somewhere to land.
+    const conns: Connection[] = [];
+    conns.push(await dial(a.libp2p, b.libp2p));
+    conns.push(await dial(a.libp2p, b.libp2p, true));
+    // Shadow each conn's newStream to record every opener attempt.
+    const attempts: { at: number; conn: Connection }[] = [];
+    for (const c of conns) {
+      const cAny = c as unknown as { newStream: (...args: unknown[]) => Promise<unknown> };
+      const orig = cAny.newStream.bind(c);
+      cAny.newStream = ((p: unknown, o?: unknown) => {
+        attempts.push({ at: Date.now(), conn: c });
+        return orig(p, o);
+      }) as typeof cAny.newStream;
+    }
+    await a.transport.openLink(conns[0]!).catch(() => { /* fails */ });
+    // Let two or three failures pile up before B starts answering.
+    await sleep(700);
+    // Now re-register B's handler so the next retry succeeds and `linkUp`
+    // resets the opener's failure count.
+    await b.transport.attach(b.libp2p);
+    // Wait for FMP to complete.
+    for (let i = 0; i < 60; i++) {
+      if (a.transport.linkedKeys().includes(b.pubkeyHex)) break;
       await sleep(100);
     }
-    const after = a.transport.failureCountFor(peerStr);
-    expect(before > 0 && after === 0).toBe(true);
-    void conn2;
+    const linkedAttemptIndex = attempts.length - 1;
+    const connAtSuccess = attempts[linkedAttemptIndex]!.conn;
+    const closeAt = Date.now();
+    await connAtSuccess.close().catch(() => { /* already */ });
+    // Wait for the next retry's opener attempt.
+    for (let i = 0; i < 60 && attempts.length <= linkedAttemptIndex + 1; i++) {
+      await sleep(50);
+    }
+    const nextAttempt = attempts[linkedAttemptIndex + 1];
+    // random=1: first failure waits `retryBaseMs` (whole = half*2). A reset
+    // after linkUp makes this the first failure; without a reset, the
+    // count would have climbed to three and the wait would be `retryBaseMs
+    // * 2^3` = 1 600 ms.
+    const gap = nextAttempt ? nextAttempt.at - closeAt : -1;
+    expect(linkedAttemptIndex >= 2 && gap >= 100 && gap <= 500).toBe(true);
   }, 20_000);
 
   it('a stream that names one key but proves another never comes up', async () => {
