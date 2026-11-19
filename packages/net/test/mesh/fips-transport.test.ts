@@ -172,7 +172,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     const peers = [a, b, c].filter((p): p is Peer => p !== null);
     await Promise.all(peers.map((p) => stopPeer(p)));
     a = null; b = null; c = null;
-  }, 30_000);
+  });
 
   it('a dial to the listener FIPS address answers a libp2p connection to its peer id', async () => {
     a = await makePeer({ dial: true });
@@ -494,4 +494,69 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     const deltaB = (counts.get(idB) ?? 0) - baseB;
     expect(bothUp && idA >= 0 && idB >= 0 && deltaA > 20 && deltaB <= 5).toBe(true);
   }, 45_000);
+
+  // `FspSessionManager.waitForSessionSetup` holds a session setup up to 15 s;
+  // a node's stop that waits on FIN delivery for every open FIPS connection
+  // once its link is gone would hit that deadline. The bound is one second.
+  it('a node stop with an open FIPS connection ends within one second after its link is torn down', async () => {
+    a = await makePeer({ dial: true });
+    b = await makePeer({ dial: false, listen: true });
+    const linkConn = await dialTcp(a.libp2p, b.libp2p);
+    await a.link.openLink(linkConn).catch(() => { /* stub */ });
+    await waitLink(a, b.pubkeyHex, 3_000);
+    const fipsMa = fipsMultiaddr(b.identity.xOnlyPubkey, b.libp2p.peerId.toString());
+    const conn = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
+      .catch(() => null);
+    const haveFips = conn !== null && conn.remoteAddr.toString().includes('/fips/');
+    // Tear down the TCP connection that carries the link, then let the FIPS
+    // link go away on both sides.
+    await linkConn.close().catch(() => { /* already */ });
+    await sleep(300);
+    const live = b;
+    const t0 = Date.now();
+    try { await live.libp2p.stop(); } catch { /* already */ }
+    const dt = Date.now() - t0;
+    expect(haveFips && dt < 1_000).toBe(true);
+  }, 30_000);
+
+  it.fails('bytes written just before a close all arrive', async () => {
+    a = await makePeer({ dial: true });
+    b = await makePeer({ dial: false, listen: true });
+    const linkConn = await dialTcp(a.libp2p, b.libp2p);
+    await a.link.openLink(linkConn).catch(() => { /* stub */ });
+    await waitLink(a, b.pubkeyHex, 3_000);
+    const PROTO = '/notis-test/fips-recv/1.0.0';
+    let received = 0;
+    const listener = b;
+    const done = new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = (): void => { if (!settled) { settled = true; resolve(); } };
+      void listener.libp2p.handle(PROTO, async (stream) => {
+        try {
+          for await (const chunk of stream) {
+            received += chunk.subarray().byteLength;
+          }
+        } catch { /* reader stopped */ }
+        settle();
+      });
+    });
+    const fipsMa = fipsMultiaddr(b.identity.xOnlyPubkey, b.libp2p.peerId.toString());
+    const conn = await a.libp2p.dial(fipsMa, { force: true, signal: AbortSignal.timeout(10_000) } as unknown as never)
+      .catch(() => null);
+    const haveFips = conn !== null && conn.remoteAddr.toString().includes('/fips/');
+    // The payload is larger than `FIPS_TCP_SEND_BUFFER_BYTES` so `sendData`
+    // sees the high-water mark before the close path is entered.
+    const PAYLOAD_SIZE = 200_000;
+    if (conn !== null) {
+      const stream = await conn.newStream(PROTO).catch(() => null);
+      if (stream !== null) {
+        const payload = new Uint8Array(PAYLOAD_SIZE);
+        for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+        stream.send(payload);
+        await conn.close().catch(() => { /* already */ });
+      }
+    }
+    await Promise.race([done, sleep(5_000)]);
+    expect(haveFips && received === PAYLOAD_SIZE).toBe(true);
+  }, 30_000);
 });
