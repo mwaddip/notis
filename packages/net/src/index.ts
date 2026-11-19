@@ -26,6 +26,13 @@ export {
 // MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold".
 export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
 export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
+// MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream".
+export {
+  fipsDatagramEndpoint,
+  fipsTransport,
+  FipsTransportDialError,
+} from './mesh/fips-transport.js';
+export type { FipsTransportInit } from './mesh/fips-transport.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,
