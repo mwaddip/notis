@@ -26,9 +26,6 @@ stage and the client's cases that start a WebRTC transport — node-datachannel'
 `RTCPeerConnection` per process, so each such file runs in a process of its own. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** `@dagsocial/net` depends on no FIPS package yet. The rule below leads the code
-> (Notis over FIPS, the node side).
-
 **FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
 tarball (→ FIPS → "The FIPS packages are pinned by release tarball").
 
@@ -69,9 +66,6 @@ Each converts to the other. A peer id of any other key type, and any spelling bu
 rule (`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
 left as it is. A node that restarts keeps its peer id. A client's key is its own, made for the session.
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** A mesh node holds no FIPS key yet. The rule below leads the code (Notis over FIPS,
-> the node side).
-
 **A mesh node holds a FIPS key beside it** (→ FIPS): the key the FIPS mesh routes to it by, never an identity a client
 dials it by.
 
@@ -87,9 +81,6 @@ It is the `url` an `HttpFetch` over the mesh takes, so every reader that takes a
 readers, `@dagsocial/nipopow-client`'s `resolveTip` — runs over the mesh unchanged.
 
 ## Transports
-
-> ⚠ **AHEAD OF CODE (2026-11-19).** No reader reaches a node over FIPS. The table's last row leads the code (Notis over
-> FIPS, the node side).
 
 | Between | Transport | |
 |---|---|---|
@@ -338,9 +329,6 @@ of the nodes a check reads proofs from (→ The client's node list → "A check"
 
 ## FIPS
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** No node runs FIPS: `net` holds no FIPS link, transport or key, and no node announces
-> a FIPS address. The rules below lead the code (Notis over FIPS, the node side).
-
 **Every mesh node is a FIPS node.** FIPS is a mesh of nodes addressed by a secp256k1 key — an npub — routed by a
 spanning tree and Bloom filters, with an end-to-end session to a key across any number of hops. A node run with a mesh
 role runs a FIPS node, fips-ts's `FipsNode`, with **forwarding on**: it carries FIPS packets between the nodes it links
@@ -399,8 +387,9 @@ streams hold. **A peer holds at most `FIPS_TCP_CONNECTIONS_PER_PEER` TCP/FIPS co
 node's endpoint at most the node's libp2p connection ceiling: a FIPS connection names no IP, so the per-address upgrade
 bound (`NET_INTERFACE → Readers → "An address upgrades at most four inbound connections at once, each within five
 seconds"`) does not reach it, and this bound holds it instead. A stream's send buffer is `FIPS_TCP_SEND_BUFFER_BYTES`;
-fips-tcp answers what is ready with no event, so each inbound datagram wakes the stream's reads and accepts, and a poll
-every `FIPS_TCP_POLL_MS` runs its timers.
+fips-tcp answers what is ready with no event, so each inbound datagram wakes the reads of its sender's streams and the
+endpoint's accepts, and a poll every `FIPS_TCP_POLL_MS` runs its timers. A connection that closes hands its queued bytes
+to fips-tcp ahead of its FIN, and waits on the mesh for neither.
 
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis

@@ -5816,9 +5816,6 @@ beside `node-2.db` — hold a key each with no setting of their own, and a wipe 
 **The node names its key at start.** Its start line prints the node key's peer id and its 64-hex spelling, for an
 operator to hand to whoever lists the node.
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** The mesh state directory holds no FIPS key yet. The rule below leads the code (Notis
-> over FIPS, the node side).
-
 **The mesh state directory is named for the store**, as the key file is: `DB_PATH` with its extension replaced by
 `.mesh` — `dagsocial.db` → `dagsocial.mesh` — holding the WebRTC-direct certificate's datastore, the ACME account and
 certificate (`NET_INTERFACE → The mesh`), and the node's FIPS key, `fips.key` (`MESH_INTERFACE → FIPS → "A node's FIPS

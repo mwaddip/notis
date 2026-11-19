@@ -1372,9 +1372,6 @@ asked once an expiry, and the expiry is argued against the most peers that can d
 
 ## libp2p Stack
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** No node listens over TCP/FIPS. The Transport row's last clause leads the code (Notis
-> over FIPS, the node side).
-
 | Layer | Choice |
 |-------|--------|
 | Transport | TCP; with a mesh role, WebRTC-direct, WebRTC over a circuit relay and the opt-in secure WebSocket as well, and libp2p over TCP/FIPS (→ The mesh) |
@@ -1438,9 +1435,6 @@ persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spe
 announces and its local WebRTC-direct addresses — once they are announced, `null` with no mesh; `onMeshAddresses`
 reports each change of the announced set.
 
-> ⚠ **AHEAD OF CODE (2026-11-19).** `net` holds no FIPS stack. The rules below lead the code (Notis over FIPS, the node
-> side).
-
 **A mesh node runs a FIPS stack** (`MESH_INTERFACE → FIPS`): a fips-ts `FipsNode` whose one transport carries FIPS link
 packets on libp2p streams, a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a libp2p transport over its streams. The
 stack is built before `createLibp2p`, its transport among the transports and `/fips` among the listen addresses, and
@@ -1459,8 +1453,8 @@ the node's FIPS address, `null` with no mesh, and `start` prints it. The pieces 
 - `fipsTransport(…)`, `FipsTransportDialError` and `fipsDatagramEndpoint(node)` — the libp2p transport over TCP/FIPS
   streams, its dial refusal, and the datagram endpoint a TCP/FIPS endpoint is built over, whose activity names each
   datagram's sender so a connection wakes for its own peer alone;
-- `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and `isFipsMultiaddr(ma)` — the
-  FIPS address;
+- `FIPS_PROTOCOL_NAME`, `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and
+  `isFipsMultiaddr(ma)` — the FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
 - `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
 
@@ -1472,9 +1466,6 @@ the node's FIPS address, `null` with no mesh, and `start` prints it. The pieces 
 |----------|---------|---------|
 | `/dagsocial/handshake/1` (`HANDSHAKE_PROTOCOL`) | Frame | The peer handshake (→ Handshake) |
 | `/dagsocial/sync/1` (`SYNC_PROTOCOL`) | Frame | Headers-first sync, post bodies, peer discovery (codes 2, 4, 5, 8, 9, 14–17) |
-
-> ⚠ **AHEAD OF CODE (2026-11-19).** No node serves FIPS links. The paragraph below leads the code (Notis over FIPS, the
-> node side).
 
 **These two are the whole set** of Notis's protocols on the frame codec. Beside them a node with a mesh role serves
 HTTP over libp2p (`/http/1.1`, `MESH_INTERFACE → The node endpoint`), FIPS links on `/notis/<network>/fips-link/1.0.0`
@@ -1782,9 +1773,6 @@ first hop.
 | `broadcastTx(tx, content?)` | `(UtxoTransaction, string?) => Promise<void>` | Gossip a transaction **packet** — `encodeTxPacket(tx, content)`; a post's body travels in the same message (→ Gossip Topics). The caller passes `content` ⟺ `tx.post` is set. |
 
 ### The browser entry
-
-> ⚠ **AHEAD OF CODE (2026-11-19).** The browser entry carries no FIPS export. The paragraph's last clause leads the code
-> (Notis over FIPS, the node side).
 
 **`@dagsocial/net/browser` is the half a browser runs**, importing no Node built-in and reading no Node global, held by
 a build of it with a plugin that refuses any Node built-in (`WEB_INTERFACE → The client's builds substitute nothing`):
