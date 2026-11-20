@@ -1,11 +1,10 @@
-// MESH_INTERFACE → libp2p is pinned → "its address manager passes
-// over an address that names no IP" — the libp2p patch keeps identify
-// from throwing on an observed FIPS address: `addObservedAddr` returns
-// before `getNetConfig` when the address names no IP, so identify
-// completes on both ends of a FIPS connection. `DNSMappings.has` and
-// `IPMappings.has` return `false` on the same, so a reservation
-// teardown that unmaps a relayed FIPS address raises no uncaught
-// exception.
+// MESH_INTERFACE → "libp2p is pinned" — the libp2p patch keeps the
+// address manager from throwing on an observed FIPS address:
+// `addObservedAddr` returns before `getNetConfig` when the address
+// names no IP, so identify completes on both ends of a FIPS
+// connection. `DNSMappings.has` and `IPMappings.has` return `false`
+// on the same, so a reservation teardown that unmaps a relayed FIPS
+// address raises no uncaught exception.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -99,7 +98,7 @@ async function firstTcpAddr(libp2p: Libp2p, deadlineMs: number): Promise<string 
   return null;
 }
 
-describe('MESH_INTERFACE → libp2p is pinned → "its address manager passes over an address that names no IP"', () => {
+describe('MESH_INTERFACE → "libp2p is pinned" — address manager passes over an address that names no IP', () => {
   const nodes: NetNode[] = [];
   const stacks: FipsStack[] = [];
   const hosts: Libp2p[] = [];
