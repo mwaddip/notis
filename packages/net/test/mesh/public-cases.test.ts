@@ -179,8 +179,9 @@ describe('mesh — public-role cases', () => {
 
   // `MESH_INTERFACE → NAT → "A public node announces its listen
   // addresses from the start"` — a configuration with no port of 0
-  // announces exactly its listen addresses. Loopback and `0.0.0.0`
-  // listen forms both.
+  // announces exactly its listen addresses. MESH_INTERFACE → FIPS →
+  // "A node announces its FIPS address" — the FIPS address rides
+  // beside them. Loopback and `0.0.0.0` listen forms both.
   it('a public node with no port-0 listen announces exactly its listen entries — loopback', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-mesh-pin-loop-'));
     dirs.push(dir);
@@ -200,14 +201,16 @@ describe('mesh — public-role cases', () => {
     nodes.push(node);
     const libp2p = (node as unknown as { libp2p: { peerId: { toString(): string } } }).libp2p;
     const peerId = libp2p.peerId.toString();
+    const fipsAddr = node.fipsAddress();
     const mas = node.meshIdentity()!.multiaddrs
       .slice()
       .map((a) => a.replace(/\/certhash\/[^/]+/, '/certhash/<HASH>'))
       .sort();
     expect(mas).toEqual([
+      ...(fipsAddr !== null ? [fipsAddr] : []),
       `/ip4/127.0.0.1/tcp/19101/p2p/${peerId}`,
       `/ip4/127.0.0.1/udp/19102/webrtc-direct/certhash/<HASH>/p2p/${peerId}`,
-    ]);
+    ].sort());
   }, 30_000);
 
   it('a public node with no port-0 listen announces exactly its listen entries — 0.0.0.0', async () => {
@@ -229,13 +232,15 @@ describe('mesh — public-role cases', () => {
     nodes.push(node);
     const libp2p = (node as unknown as { libp2p: { peerId: { toString(): string } } }).libp2p;
     const peerId = libp2p.peerId.toString();
+    const fipsAddr = node.fipsAddress();
     const mas = node.meshIdentity()!.multiaddrs
       .slice()
       .map((a) => a.replace(/\/certhash\/[^/]+/, '/certhash/<HASH>'))
       .sort();
     expect(mas).toEqual([
+      ...(fipsAddr !== null ? [fipsAddr] : []),
       `/ip4/0.0.0.0/tcp/19103/p2p/${peerId}`,
       `/ip4/0.0.0.0/udp/19104/webrtc-direct/certhash/<HASH>/p2p/${peerId}`,
-    ]);
+    ].sort());
   }, 30_000);
 });

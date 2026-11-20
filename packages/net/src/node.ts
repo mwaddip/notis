@@ -1006,18 +1006,29 @@ export class NetNode {
         // MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" —
         // the FIPS transport sits beside TCP and WebRTC-direct.
         if (fipsStack !== null) publicTransports.push(fipsStack.transport);
+        // MESH_INTERFACE → FIPS → "A node announces its FIPS address" —
+        // `/fips/<own npub>` joins `publicListen` BEFORE `effectiveAnnounce`
+        // so a fixed-ports `announce: [...listen]` and a port-0
+        // `appendAnnounce` both carry it; an operator `announce` list
+        // gets the FIPS address appended after, since `effectiveAnnounce`
+        // answers `mesh.announce` verbatim.
+        if (fipsStack !== null) {
+          publicListen.push(`/fips/${npubOf(fipsStack.identity)}`);
+        }
         // `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
         // — the public role's address options; see
         // `effectiveAnnounce` for the branch between `announce` (no
         // port-0 entry) and `appendAnnounce` (any port-0 entry).
-        // MESH_INTERFACE → FIPS → "A FIPS address is never among the
-        // addresses libp2p announces" — `effectiveAnnounce` runs on
-        // `publicListen` BEFORE `/fips/<own npub>` joins it, so a
-        // concrete-port node whose `announce` branch answers
-        // `announce: [...listen]` never carries a `/fips/` entry.
         const publicAnnounce = effectiveAnnounce(publicListen, mesh);
-        if (fipsStack !== null) {
-          publicListen.push(`/fips/${npubOf(fipsStack.identity)}`);
+        if (
+          fipsStack !== null
+          && mesh.announce !== undefined
+          && publicAnnounce?.announce !== undefined
+        ) {
+          publicAnnounce.announce = [
+            ...publicAnnounce.announce,
+            `/fips/${npubOf(fipsStack.identity)}`,
+          ];
         }
         // NET_INTERFACE → Node Lifecycle →
         // "Every connection libp2p opens reaches net's hooks": libp2p is
@@ -1057,10 +1068,10 @@ export class NetNode {
         // after start — the private role must never take libp2p down.
         const relayCount = Math.max(1, this.config.bootstrapPeers.length);
         const stunServers = mesh.stunServers ?? [];
-        // MESH_INTERFACE → FIPS → "A FIPS address is never among the
-        // addresses libp2p announces" — `privateAnnounceFilter` keeps
-        // only `/p2p-circuit`-bearing addresses, so a `/fips/<own
-        // npub>` in the listen list never reaches the announced set.
+        // MESH_INTERFACE → FIPS → "A node announces its FIPS address" —
+        // `privateAnnounceFilter` keeps `/p2p-circuit`-bearing addresses
+        // and FIPS addresses, so a private node's FIPS address rides
+        // beside its relay reservations.
         const privateListen = meshListenAddrs(this.config.listenAddrs, mesh);
         if (fipsStack !== null) {
           privateListen.push(`/fips/${npubOf(fipsStack.identity)}`);
@@ -1325,12 +1336,6 @@ export class NetNode {
       // catch tears libp2p down with the rest (NET_INTERFACE → Node
       // Lifecycle → "A start that throws stops what it started").
       await libp2p.start();
-
-      // MESH_INTERFACE → FIPS → "A FIPS address is never among the
-      // addresses libp2p announces" — Notis's own lists carry a node's
-      // FIPS address instead; `start` prints it once, as `[net]` lines.
-      const fipsLine = this.fipsAddress();
-      if (fipsLine !== null) console.log(`[net] fips ${fipsLine}`);
 
       // NET_INTERFACE → The mesh — STUN is bound after `libp2p.start()`
       // so a bind failure tears libp2p down through the catch below

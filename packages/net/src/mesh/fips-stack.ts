@@ -115,6 +115,27 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
   const attach = async (libp2p: Libp2p): Promise<void> => {
     if (stopped) throw new Error('fips stack stopped');
     libp2pRef = libp2p;
+    // MESH_INTERFACE → FIPS → "A node announces its FIPS address" —
+    // libp2p's `AddressManager.removeObservedAddr` calls into
+    // `DNSMappings.has`, which runs `@libp2p/utils`' `getNetConfig`
+    // on each address; `getNetConfig` throws for every address that
+    // does not begin with an IP, DNS or DNSADDR component — a
+    // relayed FIPS address `/fips/.../p2p-circuit/p2p/<self>` among
+    // them. `_onRemoveRelayPeer` fires that call synchronously from
+    // an event listener, so the throw escapes as an uncaught
+    // exception when a relay reservation is torn down. The guard
+    // swallows that one failure per call and leaves every IP-based
+    // address's removal untouched.
+    const addressManager = (libp2p as unknown as {
+      components?: { addressManager?: { removeObservedAddr(addr: unknown, options?: unknown): void } };
+    }).components?.addressManager;
+    if (addressManager !== undefined) {
+      const original = addressManager.removeObservedAddr.bind(addressManager);
+      addressManager.removeObservedAddr = (addr: unknown, options?: unknown): void => {
+        try { original(addr, options); }
+        catch { /* non-IP address; nothing to unmap */ }
+      };
+    }
     await link.attach(libp2p);
     // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake
     // over it completes" — the stack resets the opener's retry count on

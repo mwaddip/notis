@@ -49,14 +49,18 @@ export function meshListenAddrs(
 /**
  * `MESH_INTERFACE → NAT → "A public node announces its listen addresses from the start"`
  * — the same paragraph's close names the private role: a private
- * node announces its relay reservations alone. libp2p 3.5's
- * `AddressManager` runs this filter over every address it would
- * otherwise announce (`libp2p/src/address-manager/index.js`
- * `getAddresses()`), and this filter keeps `/p2p-circuit`-bearing
- * addresses and drops the rest.
+ * node announces its relay reservations. libp2p 3.5's `AddressManager`
+ * runs this filter over every address it would otherwise announce
+ * (`libp2p/src/address-manager/index.js` `getAddresses()`), and this
+ * filter keeps `/p2p-circuit`-bearing addresses and — per
+ * `MESH_INTERFACE → FIPS → "A node announces its FIPS address"` —
+ * FIPS addresses beside them.
  */
 export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
-  return mas.filter((ma) => ma.toString().includes('/p2p-circuit'));
+  return mas.filter((ma) => {
+    const s = ma.toString();
+    return s.includes('/p2p-circuit') || s.includes('/fips/');
+  });
 }
 
 /**

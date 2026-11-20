@@ -1,8 +1,8 @@
 // NET_INTERFACE → The browser entry — a reader built from
 // `readerLibp2pOptions` registers the `fips` multiaddr code at start
 // so libp2p's identify reads a mesh node's signed peer record whole,
-// including its FIPS address (`MESH_INTERFACE → FIPS → "Every Notis
-// libp2p client knows the \`fips\` code"`). The reader's peer store
+// including its FIPS address (MESH_INTERFACE → FIPS → "Every Notis
+// libp2p client knows the `fips` code"). The reader's peer store
 // holds that address after identify completes.
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -79,7 +79,7 @@ describe('NET_INTERFACE → The browser entry — reader learns a node FIPS addr
     hosts.length = 0; nodes.length = 0; dirs.length = 0;
   });
 
-  it.fails('a reader built from readerLibp2pOptions learns a node FIPS address through identify', async () => {
+  it('a reader built from readerLibp2pOptions learns a node FIPS address through identify', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-reader-id-'));
     dirs.push(dir);
     const node = new NetNode(makeConfig({

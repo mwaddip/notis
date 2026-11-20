@@ -120,10 +120,9 @@ interface Components {
 
 /**
  * MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — the
- * libp2p transport. A FIPS address never enters libp2p's announced set
- * (`MESH_INTERFACE → FIPS → "A node's FIPS address is
- * `/fips/<npub>/p2p/<peer id>`"` → "A FIPS address is never among the
- * addresses libp2p announces"): the listener's `getAddrs()` answers `[]`.
+ * libp2p transport. The listener reports the node's FIPS address once
+ * listening, so libp2p's address manager carries it among the announced
+ * set (`MESH_INTERFACE → FIPS → "A node announces its FIPS address"`).
  */
 export function fipsTransport(
   init: FipsTransportInit,
@@ -243,10 +242,14 @@ class FipsListener
   }
 
   getAddrs(): Multiaddr[] {
-    // `MESH_INTERFACE → FIPS → "A node's FIPS address is
-    // `/fips/<npub>/p2p/<peer id>`"` → "A FIPS address is never among the
-    // addresses libp2p announces".
-    return [];
+    // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — the
+    // listener reports `/fips/<npub>` once listening; libp2p appends
+    // `/p2p/<peer id>` to each listener address itself. Before `listen`
+    // has run the listener has no address yet.
+    if (this.status !== 'active') return [];
+    const xOnly = this.ctx.init.localXOnly();
+    if (xOnly === null) return [];
+    return [multiaddr(`/${FIPS_PROTOCOL_NAME}/${encodeNpub(xOnly)}`)];
   }
 
   async close(): Promise<void> {
@@ -266,7 +269,9 @@ class FipsListener
   }
 
   updateAnnounceAddrs(_addrs: Multiaddr[]): void {
-    /* FIPS addresses never enter the announced set. */
+    // MESH_INTERFACE → FIPS → "A node announces its FIPS address" —
+    // libp2p's address manager pulls the FIPS address from `getAddrs()`;
+    // the listener holds no announce state of its own.
   }
 
   private armWake(): void {

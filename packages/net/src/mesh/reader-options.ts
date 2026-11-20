@@ -22,6 +22,7 @@ import type { AddressSorter, PrivateKey } from '@libp2p/interface';
 import type { Multiaddr } from '@multiformats/multiaddr';
 import { gossipsubOptions, gossipTopics } from '../gossip-rules.js';
 import { dhtProtocol, type MeshNetworkName } from './constants.js';
+import { registerFipsProtocol } from './fips-addr.js';
 
 /**
  * NET_INTERFACE → The browser entry — `readerLibp2pOptions`'
@@ -70,6 +71,11 @@ export function readerLibp2pOptions(
     pubsub: ReturnType<typeof gossipsub>;
   };
 } {
+  // MESH_INTERFACE → FIPS → "Every Notis libp2p client knows the `fips`
+  // code" — a reader registers the `fips` multiaddr code at start so
+  // libp2p's identify reads a mesh node's signed peer record whole,
+  // including its FIPS address. Idempotent.
+  registerFipsProtocol();
   const topics = gossipTopics(o.magic);
   // MESH_INTERFACE → NAT — "Only the relayed WebRTC path uses STUN;
   // WebRTC-direct to a public address needs none". `webRTCDirect` is

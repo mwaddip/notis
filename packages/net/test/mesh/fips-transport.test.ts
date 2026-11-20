@@ -392,7 +392,7 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(addrFips && typeof roundTrip === 'number' && roundTrip < 2_000).toBe(true);
   }, 30_000);
 
-  it.fails('the FIPS listener reports the node FIPS address', async () => {
+  it('the FIPS listener reports the node FIPS address', async () => {
     b = await makePeer({ dial: false, listen: true });
     // Give identify/listener startup a beat.
     await sleep(200);
