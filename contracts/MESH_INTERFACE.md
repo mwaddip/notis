@@ -29,9 +29,6 @@ stage and the client's cases that start a WebRTC transport — node-datachannel'
 **FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
 tarball (→ FIPS → "The FIPS packages are pinned by release tarball").
 
-> ⚠ **AHEAD OF CODE (2026-11-20).** The `libp2p` patch's address manager reads every address's IP. The clause on an
-> address that names no IP below leads the code (Notis over FIPS, the node side).
-
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net`, of `@dagsocial/web` and of `tools/mesh-poc`
 are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
@@ -375,9 +372,6 @@ stored.
 libp2p peer id. The `fips` multiaddr protocol is Notis's, numbered `FIPS_MULTIADDR_CODE` from multicodec's private-use
 range: its value is the npub as text and the 32-byte x-only key as bytes. A dial addresses the key as `02‖x`, which
 reaches a key of either parity.
-
-> ⚠ **AHEAD OF CODE (2026-11-20).** A node announces no FIPS address and a reader registers no `fips` code. The two
-> rules below lead the code (Notis over FIPS, the node side).
 
 **A node announces its FIPS address** among its libp2p addresses, in both roles — a private node beside its relay
 reservations — and an operator's announce list keeps it: the FIPS listener reports it, the identity line's
