@@ -29,6 +29,9 @@ stage and the client's cases that start a WebRTC transport — node-datachannel'
 **FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
 tarball (→ FIPS → "The FIPS packages are pinned by release tarball").
 
+> ⚠ **AHEAD OF CODE (2026-11-20).** The `libp2p` patch's address manager reads every address's IP. The clause on an
+> address that names no IP below leads the code (Notis over FIPS, the node side).
+
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net`, of `@dagsocial/web` and of `tools/mesh-poc`
 are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
@@ -44,7 +47,9 @@ string body is counted in UTF-8 bytes for its `content-length` — so a mesh rea
 JSON body, as over HTTP (→ The node endpoint); `libp2p`, whose connection manager holds each address to a bound on its
 inbound connections still upgrading — an IPv6 address by its /64, an IPv4-mapped one as its IPv4 address — and releases
 an address's count when an upgrade ends (`NET_INTERFACE → Readers → "An address upgrades at most four inbound
-connections at once, each within five seconds"`); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
+connections at once, each within five seconds"`), and whose address manager passes over an address that names no IP —
+a FIPS address — where it would read one's IP: an observed address of that kind is not stored, and no IP or DNS mapping
+holds one (→ FIPS); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
 the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
 "A peer's gossip follows its newest connection"), and which takes and lets go of a direct peer while it runs (→ Block
 gossip → "A node's readers are its router's direct peers"). A pin that moves carries its patch to the new version, the cases
