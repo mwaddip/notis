@@ -392,13 +392,14 @@ describe('MESH_INTERFACE → FIPS: fipsTransport', () => {
     expect(addrFips && typeof roundTrip === 'number' && roundTrip < 2_000).toBe(true);
   }, 30_000);
 
-  it('the FIPS listener reports no address and libp2p announces none', async () => {
+  it.fails('the FIPS listener reports the node FIPS address', async () => {
     b = await makePeer({ dial: false, listen: true });
     // Give identify/listener startup a beat.
     await sleep(200);
     const announced = b.libp2p.getMultiaddrs().map((m) => m.toString());
-    const anyFips = announced.some((s) => s.includes('/fips/'));
-    expect(anyFips).toBe(false);
+    const expected = `/fips/${npubOf(b.identity)}/p2p/${b.libp2p.peerId.toString()}`;
+    const fipsEntries = announced.filter((s) => s.includes('/fips/'));
+    expect(fipsEntries).toEqual([expected]);
   }, 15_000);
 
   it('a datagram from one peer wakes that peer connection alone', async () => {

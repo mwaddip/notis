@@ -1,9 +1,9 @@
 // NET_INTERFACE → "A mesh node runs a FIPS stack" — a mesh
 // `NetNode` builds a FIPS stack before `createLibp2p`, lists `/fips/<own
 // npub>` among its listen addresses, attaches after it, and reports its
-// FIPS address; `MESH_INTERFACE → FIPS → "A FIPS address is never among
-// the addresses libp2p announces"` — neither `meshIdentity().multiaddrs`
-// nor `libp2p.getMultiaddrs()` carries a `/fips/` entry.
+// FIPS address. `MESH_INTERFACE → FIPS → "A node announces its FIPS
+// address"` — both `meshIdentity().multiaddrs` and `libp2p.getMultiaddrs()`
+// carry exactly one FIPS address, equal to `fipsAddress()`.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
@@ -140,7 +140,7 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     expect(addr!.startsWith('/fips/npub1')).toBe(true);
   }, 30_000);
 
-  it('a public node on port 0 announces no FIPS address', async () => {
+  it.fails('a public node on port 0 announces its FIPS address', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-port0-'));
@@ -152,17 +152,16 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await node.start();
     nodes.push(node);
-    const id = node.meshIdentity();
-    const meshFips = (id?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
-    const libFips = libp2pOf(node).getMultiaddrs().map((a) => a.toString())
-      .filter((a) => a.includes('/fips/'));
-    expect(meshFips).toEqual([]);
-    expect(libFips).toEqual([]);
     const addr = node.fipsAddress();
     expect(addr).not.toBeNull();
+    const meshFips = (node.meshIdentity()?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
+    const libFips = libp2pOf(node).getMultiaddrs().map((a) => a.toString())
+      .filter((a) => a.includes('/fips/'));
+    expect(meshFips).toEqual([addr]);
+    expect(libFips).toEqual([addr]);
   }, 30_000);
 
-  it('a public node with an operator announce list announces no FIPS address', async () => {
+  it.fails('a public node with an operator announce list announces its FIPS address', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-announce-'));
@@ -174,17 +173,16 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     }), validators);
     await node.start();
     nodes.push(node);
-    const id = node.meshIdentity();
-    const meshFips = (id?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
-    const libFips = libp2pOf(node).getMultiaddrs().map((a) => a.toString())
-      .filter((a) => a.includes('/fips/'));
-    expect(meshFips).toEqual([]);
-    expect(libFips).toEqual([]);
     const addr = node.fipsAddress();
     expect(addr).not.toBeNull();
+    const meshFips = (node.meshIdentity()?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
+    const libFips = libp2pOf(node).getMultiaddrs().map((a) => a.toString())
+      .filter((a) => a.includes('/fips/'));
+    expect(meshFips).toEqual([addr]);
+    expect(libFips).toEqual([addr]);
   }, 30_000);
 
-  it('a private node announces no FIPS address', async () => {
+  it.fails('a private node announces its FIPS address beside its relay reservations', async () => {
     const up = await stubUpstream();
     upstreams.push(up);
     const relayDir = mkdtempSync(join(tmpdir(), 'net-fips-node-relay-'));
@@ -211,15 +209,55 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     nodes.push(priv);
     // Give identify/listener startup a beat.
     await new Promise((r) => setTimeout(r, 300));
-    const id = priv.meshIdentity();
-    const meshFips = (id?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
-    const libFips = libp2pOf(priv).getMultiaddrs().map((a) => a.toString())
-      .filter((a) => a.includes('/fips/'));
-    expect(meshFips).toEqual([]);
-    expect(libFips).toEqual([]);
     const addr = priv.fipsAddress();
     expect(addr).not.toBeNull();
+    const meshFips = (priv.meshIdentity()?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
+    const libFips = libp2pOf(priv).getMultiaddrs().map((a) => a.toString())
+      .filter((a) => a.includes('/fips/'));
+    expect(meshFips).toEqual([addr]);
+    expect(libFips).toEqual([addr]);
   }, 60_000);
+
+  it.fails('a public node on fixed ports announces its FIPS address', async () => {
+    const up = await stubUpstream();
+    upstreams.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'net-fips-node-fixed-'));
+    dirs.push(dir);
+    // The OS hands out a free TCP port on `listen(0)`; the probe
+    // closes before the real listener binds, and one retry handles an
+    // EADDRINUSE race against a concurrent port-0 allocation
+    // elsewhere in the suite (`MESH_INTERFACE → NAT → "A public node
+    // announces its listen addresses from the start"`).
+    let node: NetNode | null = null;
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt < 2 && node === null; attempt++) {
+      const srv = createServer();
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      const tcpPort = (srv.address() as AddressInfo).port;
+      await new Promise<void>((r) => srv.close(() => r()));
+      const candidate = new NetNode(makeConfig({
+        nodeKey: generateKeyPair(),
+        listenAddrs: `/ip4/127.0.0.1/tcp/${tcpPort}`,
+        mesh: publicMeshOn(dir, up.base),
+      }), validators);
+      try {
+        await candidate.start();
+        node = candidate;
+      } catch (err) {
+        lastErr = err as Error;
+        try { await candidate.stop(); } catch { /* already */ }
+      }
+    }
+    expect(node, `last error: ${lastErr?.message ?? 'none'}`).not.toBeNull();
+    nodes.push(node!);
+    const addr = node!.fipsAddress();
+    expect(addr).not.toBeNull();
+    const meshFips = (node!.meshIdentity()?.multiaddrs ?? []).filter((a) => a.includes('/fips/'));
+    const libFips = libp2pOf(node!).getMultiaddrs().map((a) => a.toString())
+      .filter((a) => a.includes('/fips/'));
+    expect(meshFips).toEqual([addr]);
+    expect(libFips).toEqual([addr]);
+  }, 30_000);
 
   it('the npub survives a restart on the same state directory', async () => {
     const up = await stubUpstream();
