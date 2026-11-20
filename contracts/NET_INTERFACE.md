@@ -1440,8 +1440,8 @@ packets on libp2p streams, a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a lib
 stack is built before `createLibp2p`, its transport among the transports and `/fips` among the listen addresses, and
 attached after it — the link protocol's handler and the links over the connections the node dials; `stop` stops it.
 `start` reads the node's FIPS key from the mesh state directory with `loadFipsKey(stateDir)` and builds the stack with
-forwarding on, its transport listening and dialling nothing, its listener reporting no address; `fipsAddress()` answers
-the node's FIPS address, `null` with no mesh, and `start` prints it. The pieces are `net`'s exports:
+forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
+node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
 
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
@@ -1780,7 +1780,8 @@ the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `g
 ordering-block topic's checks of → Stage 1 — the one copy, which the node's own validator calls; the handshake codec,
 `NODE_CAPABILITIES`, `READER_CAPABILITIES`, `SERVING_READER_CAPABILITIES` and `servesChain`; and the reader's side —
 `readerHandshake`, whose `capabilities` option declares the reader's set (`READER_CAPABILITIES` by default),
-`readerLibp2pOptions`, `meshFetch` and `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
+`readerLibp2pOptions` — which registers the `fips` multiaddr code (`MESH_INTERFACE → FIPS`) —, `meshFetch` and
+`meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
 spellings (`MESH_INTERFACE → Identity`), and a serving reader's answer — `SYNC_PROTOCOL`, `PostTextProvider`,
 `answerPostTextsRequest` and `postTextsHandler` (→ Readers → "A serving reader answers from what it holds"); and the
 FIPS stack's browser half — every export of → The mesh but `loadFipsKey`, with the FIPS constants.
