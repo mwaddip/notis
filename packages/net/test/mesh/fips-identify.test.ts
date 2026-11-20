@@ -206,7 +206,7 @@ describe('MESH_INTERFACE → libp2p is pinned → "its address manager passes ov
     expect(nodeFipsIdentifies.size).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
-  it.fails('a relay announcing a FIPS address leaves with no uncaught exception', async () => {
+  it('a relay announcing a FIPS address leaves with no uncaught exception', async () => {
     const uncaught: Error[] = [];
     const onUncaught = (err: Error): void => { uncaught.push(err); };
     const onUnhandled = (reason: unknown): void => {
