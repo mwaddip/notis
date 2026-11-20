@@ -1,3 +1,85 @@
+diff --git a/dist/src/address-manager/dns-mappings.js b/dist/src/address-manager/dns-mappings.js
+index 80181f6db9a13edd1310a2ca7dfed62332ff7228..7a96cbb0bc42191bf8a442d40bd3d4765f1a626b 100644
+--- a/dist/src/address-manager/dns-mappings.js
++++ b/dist/src/address-manager/dns-mappings.js
+@@ -15,6 +15,9 @@ export class DNSMappings {
+         });
+     }
+     has(ma) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         let host = config.host;
+         if ((config.type === 'ip4' || config.type === 'ip6') && config.sni != null) {
+@@ -42,6 +45,9 @@ export class DNSMappings {
+         });
+     }
+     remove(ma) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         if (config.type !== 'ip4' && config.type !== 'ip6') {
+             return false;
+@@ -101,6 +107,9 @@ export class DNSMappings {
+         }
+     }
+     confirm(ma, ttl) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         let host = config.host;
+         if ((config.type === 'ip4' || config.type === 'ip6') && config.sni != null) {
+@@ -119,6 +128,9 @@ export class DNSMappings {
+         return startingConfidence;
+     }
+     unconfirm(ma, ttl) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         if (config.type !== 'ip4' && config.type !== 'ip6') {
+             return false;
+diff --git a/dist/src/address-manager/index.js b/dist/src/address-manager/index.js
+index bfce59d885d1a28eb201c8dc23655f7b6ae2b18f..425fb0f4fce9161cc6c30f877729b15cc45fbe3c 100644
+--- a/dist/src/address-manager/index.js
++++ b/dist/src/address-manager/index.js
+@@ -125,6 +125,9 @@ export class AddressManager {
+      * Add peer observed addresses
+      */
+     addObservedAddr(addr) {
++        if (!isNetworkAddress(addr)) {
++            return;
++        }
+         const config = getNetConfig(addr);
+         let socketAddress;
+         switch (config.type) {
+diff --git a/dist/src/address-manager/ip-mappings.js b/dist/src/address-manager/ip-mappings.js
+index 3f5c7941c00a4c057dc49b55b4ad179c77948471..da977f13b984b16a1bdff0dbb3d80aa44578162a 100644
+--- a/dist/src/address-manager/ip-mappings.js
++++ b/dist/src/address-manager/ip-mappings.js
+@@ -15,6 +15,9 @@ export class IPMappings {
+         });
+     }
+     has(ma) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         if (config.type !== 'ip4' && config.type !== 'ip6') {
+             return false;
+@@ -45,6 +48,9 @@ export class IPMappings {
+         this.mappings.set(key, mappings);
+     }
+     remove(ma) {
++        if (!isNetworkAddress(ma)) {
++            return false;
++        }
+         const config = getNetConfig(ma);
+         if (config.type !== 'ip4' && config.type !== 'ip6') {
+             return false;
 diff --git a/dist/src/connection-manager/index.d.ts b/dist/src/connection-manager/index.d.ts
 index b15001298f61d14337a44f8344240a803990fb85..1a7747b29b8ae2edcf5b2bc61640f65b5f32ed73 100644
 --- a/dist/src/connection-manager/index.d.ts
@@ -211,6 +293,88 @@ index 11aad1f8919c35e3bb5327107a21dfa280f2aded..0d54ebd424825494e4c3cb182094d006
              }
          }
      }
+diff --git a/src/address-manager/dns-mappings.ts b/src/address-manager/dns-mappings.ts
+index 63c05e8e65e1b81771ee5e11f9c642f0b31adfc6..ed897c911fef897e075fb51ac96f147b785dacc7 100644
+--- a/src/address-manager/dns-mappings.ts
++++ b/src/address-manager/dns-mappings.ts
+@@ -31,6 +31,9 @@ export class DNSMappings {
+   }
+ 
+   has (ma: Multiaddr): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+     let host = config.host
+ 
+@@ -64,6 +67,9 @@ export class DNSMappings {
+   }
+ 
+   remove (ma: Multiaddr): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+ 
+     if (config.type !== 'ip4' && config.type !== 'ip6') {
+@@ -140,6 +146,9 @@ export class DNSMappings {
+   }
+ 
+   confirm (ma: Multiaddr, ttl: number): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+     let host = config.host
+ 
+@@ -163,6 +172,9 @@ export class DNSMappings {
+   }
+ 
+   unconfirm (ma: Multiaddr, ttl: number): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+ 
+     if (config.type !== 'ip4' && config.type !== 'ip6') {
+diff --git a/src/address-manager/index.ts b/src/address-manager/index.ts
+index 18def6759caea9cac55a5f238d36578489c32a1d..a1ea8d383967051bb6668f7c924b1c592bf4dd2f 100644
+--- a/src/address-manager/index.ts
++++ b/src/address-manager/index.ts
+@@ -222,6 +222,9 @@ export class AddressManager implements AddressManagerInterface {
+    * Add peer observed addresses
+    */
+   addObservedAddr (addr: Multiaddr): void {
++    if (!isNetworkAddress(addr)) {
++      return
++    }
+     const config = getNetConfig(addr)
+     let socketAddress: string
+ 
+diff --git a/src/address-manager/ip-mappings.ts b/src/address-manager/ip-mappings.ts
+index 27b0b9ba01b89b9d3ab3ed361e594ae2f92442ce..493ad6e0016561891fad388500097391f8d678ff 100644
+--- a/src/address-manager/ip-mappings.ts
++++ b/src/address-manager/ip-mappings.ts
+@@ -35,6 +35,9 @@ export class IPMappings {
+   }
+ 
+   has (ma: Multiaddr): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+ 
+     if (config.type !== 'ip4' && config.type !== 'ip6') {
+@@ -71,6 +74,9 @@ export class IPMappings {
+   }
+ 
+   remove (ma: Multiaddr): boolean {
++    if (!isNetworkAddress(ma)) {
++      return false
++    }
+     const config = getNetConfig(ma)
+ 
+     if (config.type !== 'ip4' && config.type !== 'ip6') {
 diff --git a/src/connection-manager/index.ts b/src/connection-manager/index.ts
 index 1a767a8f5a9d279565d45cc3c83e30bb55adfbcc..d1f53c1af12dee679fbbad4af92b2042186f8308 100644
 --- a/src/connection-manager/index.ts

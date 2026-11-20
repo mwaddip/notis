@@ -157,3 +157,39 @@ export type {
   PostTextsStream,
   PostTextsConnection,
 } from './mesh/serve-post-texts.js';
+
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+// — the npub spelling of an x-only FIPS key and the `02‖x` a dial addresses
+// it by, and the `fips` multiaddr protocol and its address helpers.
+export { npubOf, dialKeyHex } from './mesh/fips-identity.js';
+export {
+  FIPS_PROTOCOL_NAME,
+  registerFipsProtocol,
+  fipsMultiaddr,
+  parseFipsMultiaddr,
+  isFipsMultiaddr,
+} from './mesh/fips-addr.js';
+export {
+  FIPS_MULTIADDR_CODE,
+  FIPS_LINK_MTU,
+  FIPS_LINK_HINT_TIMEOUT_MS,
+  FIPS_SERVICE_PORT,
+  FIPS_TCP_POLL_MS,
+  FIPS_TCP_SEND_BUFFER_BYTES,
+  FIPS_TCP_CONNECTIONS_PER_PEER,
+} from './mesh/constants.js';
+// MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold"
+// — the link protocol and the libp2p-stream transport fips-ts uses.
+export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
+export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
+// MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — the libp2p
+// transport that carries libp2p connections over `@fips/tcp` streams.
+export {
+  fipsDatagramEndpoint,
+  fipsTransport,
+  FipsTransportDialError,
+} from './mesh/fips-transport.js';
+export type { FipsTransportInit } from './mesh/fips-transport.js';
+// NET_INTERFACE → "A mesh node runs a FIPS stack".
+export { createFipsStack, createReaderFips } from './mesh/fips-stack.js';
+export type { FipsStack, CreateFipsStackOptions } from './mesh/fips-stack.js';

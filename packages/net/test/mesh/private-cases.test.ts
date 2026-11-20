@@ -193,9 +193,10 @@ describe('mesh — a private NetNode', () => {
   // — the same paragraph's close holds a private node to its
   // reservation addresses alone. Even with a `/webrtc-direct` listen
   // of its own (for the local-address path, `→ Discovery → "A node added by hand"`),
-  // `getMultiaddrs()` carries circuit entries alone — every address
-  // names `/p2p-circuit`.
-  it('a private node announces its relay reservations alone (announceFilter)', async () => {
+  // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — a
+  // private node's `getMultiaddrs()` carries its relay reservations and
+  // FIPS addresses; every entry names either `/p2p-circuit` or `/fips/`.
+  it('a private node announces its relay reservations and FIPS addresses (announceFilter)', async () => {
     const relayDir = mkdtempSync(join(tmpdir(), 'net-mesh-priv-announce-relay-'));
     dirs.push(relayDir);
     const relay = new NetNode(makeConfig({
@@ -237,7 +238,10 @@ describe('mesh — a private NetNode', () => {
     const addrs = libp2p.getMultiaddrs().map((a) => a.toString());
     expect(addrs.length, `addrs = ${addrs.join(', ')}`).toBeGreaterThan(0);
     for (const a of addrs) {
-      expect(a, `addrs = ${addrs.join(', ')}`).toContain('/p2p-circuit');
+      expect(
+        a.includes('/p2p-circuit') || a.includes('/fips/'),
+        `addrs = ${addrs.join(', ')}`,
+      ).toBe(true);
     }
   }, 30_000);
 

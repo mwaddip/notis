@@ -26,6 +26,9 @@ stage and the client's cases that start a WebRTC transport — node-datachannel'
 `RTCPeerConnection` per process, so each such file runs in a process of its own. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
+**FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
+tarball (→ FIPS → "The FIPS packages are pinned by release tarball").
+
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net`, of `@dagsocial/web` and of `tools/mesh-poc`
 are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
@@ -41,7 +44,9 @@ string body is counted in UTF-8 bytes for its `content-length` — so a mesh rea
 JSON body, as over HTTP (→ The node endpoint); `libp2p`, whose connection manager holds each address to a bound on its
 inbound connections still upgrading — an IPv6 address by its /64, an IPv4-mapped one as its IPv4 address — and releases
 an address's count when an upgrade ends (`NET_INTERFACE → Readers → "An address upgrades at most four inbound
-connections at once, each within five seconds"`); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
+connections at once, each within five seconds"`), and whose address manager passes over an address that names no IP —
+a FIPS address — where it would read one's IP: an observed address of that kind is not stored, and no IP or DNS mapping
+holds one (→ FIPS); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
 the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
 "A peer's gossip follows its newest connection"), and which takes and lets go of a direct peer while it runs (→ Block
 gossip → "A node's readers are its router's direct peers"). A pin that moves carries its patch to the new version, the cases
@@ -63,6 +68,9 @@ Each converts to the other. A peer id of any other key type, and any spelling bu
 rule (`NET_INTERFACE → The node key`): created on first start, never overwritten, a file of any other form refused and
 left as it is. A node that restarts keeps its peer id. A client's key is its own, made for the session.
 
+**A mesh node holds a FIPS key beside it** (→ FIPS): the key the FIPS mesh routes to it by, never an identity a client
+dials it by.
+
 Nothing about a mesh key touches the chain.
 
 ## The mesh URL
@@ -82,6 +90,7 @@ readers, `@dagsocial/nipopow-client`'s `resolveTip` — runs over the mesh uncha
 | browser to a public node | **WebRTC-direct** | the one path with no domain and no certificate authority: the address carries the certificate's hash |
 | browser to a node behind NAT | WebRTC, signalled over a circuit relay | → NAT |
 | browser to an opted-in public node, UDP blocked | secure WebSocket, with a certificate for the node's bare IP | → The IP certificate |
+| reader to a node it holds no path to | libp2p over a TCP/FIPS stream, routed through a node it holds a connection to | → FIPS |
 
 **Every link is authenticated by the key it was dialled for.** libp2p's Noise handshake runs inside every transport
 here — over WebRTC it binds the DTLS certificates to the two keys — and a node whose key is not the one dialled is
@@ -319,6 +328,91 @@ does (`CONSTANTS → Client reads`). Every cap a reader holds an answer to over 
 **The client checks what it can with the extension's verifier**: `resolveTip` over the mesh URLs — or the API bases —
 of the nodes a check reads proofs from (→ The client's node list → "A check"), each proof held to the client's network profile
 (`NIPOPOW_INTERFACE → The trust model`). There is no second verifier.
+
+## FIPS
+
+**Every mesh node is a FIPS node.** FIPS is a mesh of nodes addressed by a secp256k1 key — an npub — routed by a
+spanning tree and Bloom filters, with an end-to-end session to a key across any number of hops. A node run with a mesh
+role runs a FIPS node, fips-ts's `FipsNode`, with **forwarding on**: it carries FIPS packets between the nodes it links
+to. A reader runs one with forwarding off and fips-ts's default routing mode — never `strictClient` — and carries
+nothing for anyone. **FIPS adds reach, never identity**: a node reached over FIPS is reached by its libp2p key, as over
+any transport (→ Transports → "Every link is authenticated by the key it was dialled for").
+
+**A link rides a libp2p connection the two ends already hold.** Two Notis nodes link over FIPS on a stream of the
+protocol `/notis/<network>/fips-link/1.0.0` on a connection between them, relayed or direct; a relayed connection
+carries data with no limit (→ NAT → "A relay carries data"). FIPS opens no socket and no port of its own. **A node
+opens a link over each connection it dialled to a Notis peer**, and answers a link stream on any connection, a reader's
+included; a connection carries one link stream at once.
+
+**A key holds one link, and the libp2p peer that named it holds the key.** A later stream naming the key from that same
+peer takes the link's place where the peer opened the link too — the newer connection carries it; where this end opened
+the link and the peer opens one at once, the stream opened by the end whose FIPS key sorts lower, byte by byte, is kept
+and the other closed, so both ends keep the same one. A stream naming the key from another peer is closed. **A link is
+up once FIPS's own handshake over it completes**; a link not up within `FIPS_LINK_HINT_TIMEOUT_MS` of its key frames is
+closed, and until then it holds its key as an up link does. **When a link ends, the end that opened it opens it again**
+over a connection it still holds to that peer, after a wait drawn as a node's retry is (→ The client's node list →
+"Retry"), the count of failures in a row ending when a link comes up.
+
+**Each side names its key first.** The stream carries frames of at most `FIPS_LINK_MTU` bytes, each prefixed by its
+length as an unsigned varint. The
+opener's first frame is its 33-byte compressed FIPS public key; the answerer reads it, then writes its own; every
+later frame is one FIPS packet. A stream that names no key within `FIPS_LINK_HINT_TIMEOUT_MS`, a first frame that is
+not a valid compressed secp256k1 key, or a frame over the cap is closed, and the connection stays. The stream rides a
+connection libp2p authenticated to both libp2p keys, so the key a side names is bound to that side by the connection
+itself; a key the far end's FIPS handshake does not prove fails that handshake, and no link forms.
+
+**A node's FIPS key persists.** It is `fips.key` in the mesh state directory (`NODE_INTERFACE → Configuration → "The
+mesh state directory is named for the store"`): 32 raw bytes, mode `0600`, written exclusively at first start and never
+replaced. A file of any other length, a secret fips-ts refuses, or a path that cannot be read or written stops the node
+at start with `MeshStateError` naming the path, and the file is left as it is. A node that restarts keeps its npub, so
+every list naming its FIPS address stays good. **A reader's FIPS key is its own**, made for the reader and never
+stored.
+
+**A node's FIPS address is `/fips/<npub>/p2p/<peer id>`** — its FIPS key's x-only form as an npub (`npub1…`), then its
+libp2p peer id. The `fips` multiaddr protocol is Notis's, numbered `FIPS_MULTIADDR_CODE` from multicodec's private-use
+range: its value is the npub as text and the 32-byte x-only key as bytes. A dial addresses the key as `02‖x`, which
+reaches a key of either parity.
+
+**A node announces its FIPS address** among its libp2p addresses, in both roles — a private node beside its relay
+reservations — and an operator's announce list keeps it: the FIPS listener reports it, the identity line's
+`multiaddrs` carry it (`NODE_INTERFACE → Configuration → "A mesh node prints its identity line"`), and libp2p's
+identify and DHT records carry it signed by the node's libp2p key, so a reader learns the FIPS address of every node it
+meets. **Every Notis libp2p client knows the `fips` code** — a node registers it at start, a reader through
+`readerLibp2pOptions`: libp2p reads a signed peer record whole, and one address whose code it does not know fails the
+record and every identify with the node that sent it (measured 2026-11-19, `@multiformats/multiaddr` 13.0.3).
+`fipsAddress()` answers a node's FIPS address. **An address is a hint; the key is the identity**
+(→ Discovery): a FIPS address naming another node's npub reaches a node whose libp2p handshake fails against the
+`/p2p/` id, and the dial fails.
+
+**libp2p runs over a TCP/FIPS stream.** fips-tcp carries reliable, ordered streams over FIPS service datagrams; every
+FIPS node holds one endpoint on `FIPS_SERVICE_PORT`. **Every mesh node listens on it**: each accepted stream is an
+inbound libp2p connection, upgraded as any is — Noise to the node's key, then the muxer — its remote address
+`/fips/<the peer's npub>`. **A reader dials over it; a node does not.** A connection over FIPS is a connection like any
+other: the reader handshake, reads, writes and gossip run on it unchanged, and the node's caps on connections and
+streams hold. **A peer holds at most `FIPS_TCP_CONNECTIONS_PER_PEER` TCP/FIPS connections to a node at once**, and a
+node's endpoint at most the node's libp2p connection ceiling: a FIPS connection names no IP, so the per-address upgrade
+bound (`NET_INTERFACE → Readers → "An address upgrades at most four inbound connections at once, each within five
+seconds"`) does not reach it, and this bound holds it instead. A stream's send buffer is `FIPS_TCP_SEND_BUFFER_BYTES`;
+fips-tcp answers what is ready with no event, so each inbound datagram wakes the reads of its sender's streams and the
+endpoint's accepts, and a poll every `FIPS_TCP_POLL_MS` runs its timers. A connection that closes hands its queued bytes
+to fips-tcp ahead of its FIN, and waits on the mesh for neither.
+
+**The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
+`@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
+makes to either is a patch under `patches/`, as the libp2p patches are (→ Place in the workspace), written by hand:
+`pnpm patch` does not open a tarball dependency. fips-ts keeps its own `@noble` 1.x beside Notis's 2.x.
+
+| Name | Value | Reads as |
+|---|---|---|
+| `FIPS_SERVICE_PORT` | `9733` | the TCP/FIPS endpoint's FIPS service port — the node's WebRTC-direct port, in FIPS's application range |
+| `FIPS_MULTIADDR_CODE` | `0x300f15` | the `fips` multiaddr protocol's code, in multicodec's private-use range |
+| `FIPS_LINK_MTU` | `1357` | bytes in one FIPS packet on a link, and the link frame's cap — FIPS's own UDP MTU, so a packet fits wherever FIPS carries one; measured 2026-11-19, the rate is the same from 1 357 to 65 535 |
+| `FIPS_LINK_HINT_TIMEOUT_MS` | `5_000` | 5 s for a link stream's first frame, and 5 s more for its link to come up — `INBOUND_UPGRADE_TIMEOUT_MS`'s bound on a whole upgrade, here for one 33-byte frame, or for FIPS's two-message handshake, on a connection already upgraded |
+| `FIPS_TCP_POLL_MS` | `50` | 50 ms between polls of a TCP/FIPS endpoint — a quarter of fips-tcp's 200 ms least retransmission timeout; data moves as it arrives |
+| `FIPS_TCP_SEND_BUFFER_BYTES` | `65_536` | 64 KiB of a TCP/FIPS stream's unsent data — fips-tcp's receive window; measured 2026-11-19, the rate is the same at 64 KiB, 256 KiB and 1 MiB |
+| `FIPS_TCP_CONNECTIONS_PER_PEER` | `2` | TCP/FIPS connections one peer holds to a node — a reader's one, and one overlapping its replacement |
+
+These are local bounds and cadences, outside the constants register as the mesh's others are (`CONSTANTS → Scope`).
 
 ## The client's node list
 

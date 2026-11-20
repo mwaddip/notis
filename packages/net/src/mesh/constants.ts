@@ -47,6 +47,51 @@ export const RELAY_LISTEN_TIMEOUT_MS: 10000 = 10000;
 export const CERT_RETRY_MS: 3600000 = 3600000;
 
 /**
+ * MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+ * — the `fips` multiaddr protocol's code, in multicodec's private-use range.
+ */
+export const FIPS_MULTIADDR_CODE: 0x300f15 = 0x300f15;
+
+/**
+ * MESH_INTERFACE → FIPS → "Each side names its key first" — bytes in one
+ * FIPS packet on a link, and the length-prefixed frame's cap.
+ */
+export const FIPS_LINK_MTU: 1357 = 1357;
+
+/**
+ * MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
+ * named it holds the key" — 5 s for a link stream's first frame, and 5 s
+ * more for its link to come up.
+ */
+export const FIPS_LINK_HINT_TIMEOUT_MS: 5000 = 5000;
+
+/**
+ * MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — the FIPS
+ * service port the TCP/FIPS endpoint carries its datagrams on.
+ */
+export const FIPS_SERVICE_PORT: 9733 = 9733;
+
+/**
+ * MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — a TCP/FIPS
+ * endpoint is polled this often for its timers; its reads and accepts wake
+ * on each inbound datagram, not on the poll.
+ */
+export const FIPS_TCP_POLL_MS: 50 = 50;
+
+/**
+ * MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — a TCP/FIPS
+ * stream's unsent-data high-water mark; past it the libp2p connection
+ * reports it cannot send more until its send buffer drains below the mark.
+ */
+export const FIPS_TCP_SEND_BUFFER_BYTES: 65536 = 65536;
+
+/**
+ * MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — a peer
+ * holds at most this many TCP/FIPS connections to a node at once.
+ */
+export const FIPS_TCP_CONNECTIONS_PER_PEER: 2 = 2;
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */

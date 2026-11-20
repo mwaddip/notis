@@ -12,6 +12,30 @@ export type { MeshConfig } from './mesh/config.js';
 export { PeerManager, MAX_TRACKED_BANS, MAX_TRACKED_SCORES } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
 export { loadNodeKey, NodeKeyError } from './node-key.js';
+// MESH_INTERFACE → FIPS → "A node's FIPS key persists".
+export { loadFipsKey } from './mesh/fips-key.js';
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`".
+export { npubOf, dialKeyHex } from './mesh/fips-identity.js';
+export {
+  FIPS_PROTOCOL_NAME,
+  registerFipsProtocol,
+  fipsMultiaddr,
+  parseFipsMultiaddr,
+  isFipsMultiaddr,
+} from './mesh/fips-addr.js';
+// MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold".
+export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
+export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
+// MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream".
+export {
+  fipsDatagramEndpoint,
+  fipsTransport,
+  FipsTransportDialError,
+} from './mesh/fips-transport.js';
+export type { FipsTransportInit } from './mesh/fips-transport.js';
+// NET_INTERFACE → "A mesh node runs a FIPS stack".
+export { createFipsStack, createReaderFips } from './mesh/fips-stack.js';
+export type { FipsStack, CreateFipsStackOptions } from './mesh/fips-stack.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,

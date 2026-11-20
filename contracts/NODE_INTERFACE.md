@@ -5817,8 +5817,9 @@ beside `node-2.db` — hold a key each with no setting of their own, and a wipe 
 operator to hand to whoever lists the node.
 
 **The mesh state directory is named for the store**, as the key file is: `DB_PATH` with its extension replaced by
-`.mesh` — `dagsocial.db` → `dagsocial.mesh` — holding the WebRTC-direct certificate's datastore and the ACME account and
-certificate (`NET_INTERFACE → The mesh`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses a
+`.mesh` — `dagsocial.db` → `dagsocial.mesh` — holding the WebRTC-direct certificate's datastore, the ACME account and
+certificate (`NET_INTERFACE → The mesh`), and the node's FIPS key, `fips.key` (`MESH_INTERFACE → FIPS → "A node's FIPS
+key persists"`). A wipe that removes `dagsocial.db*` leaves it, and with it the addresses a
 node list names.
 
 **The node's mesh endpoint forwards to its own public listener**: `httpBase` answers `http://127.0.0.1:<port>`, the

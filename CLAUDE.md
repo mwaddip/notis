@@ -65,8 +65,9 @@ Ten packages, in dependency order:
 - `@dagsocial/net` — libp2p + Gossipsub relay, the headers-first sync scheduler (whom to ask for what: headers by
   locator, blocks by id), peer management, readers apart from peers by the codes a handshake declares, and the mesh: with
   `NetConfig.mesh` a node is reachable by key over WebRTC-direct, a relay or the opt-in secure WebSocket, its HTTP API
-  answered over libp2p. `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block
-  check, the reader's libp2p options and mesh fetch.
+  answered over libp2p, and is a FIPS node — linked to its Notis peers over libp2p streams, reached by readers over
+  TCP/FIPS through them. `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block
+  check, the reader's libp2p options and mesh fetch, the reader's FIPS stack.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator, and the header
   pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store. Its `.deb`
   carries the opt-in access-point tool, which turns a box into a Wi-Fi network that carries the mesh alone
