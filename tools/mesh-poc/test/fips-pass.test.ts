@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Libp2p } from '@libp2p/interface';
 import { profileFor, generateKeyPair } from '@dagsocial/types';
@@ -214,6 +215,52 @@ async function stopNode(n: StartedNode): Promise<void> {
   try { await n.node.stop(); } catch { /* already */ }
   try { n.stub.srv.close(); } catch { /* already */ }
   try { rmSync(n.dir, { recursive: true, force: true }); } catch { /* already */ }
+}
+
+/**
+ * Bind a TCP socket to port 0, read the OS-assigned port, close it. The
+ * returned port is free when this resolves, so a later dial to it on
+ * Linux gets an ICMP/TCP RST (`ECONNREFUSED`) at once rather than
+ * waiting out the dial deadline.
+ */
+async function reserveClosedTcpPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createNetServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const info = srv.address() as AddressInfo;
+      srv.close(() => resolve(info.port));
+    });
+    srv.on('error', reject);
+  });
+}
+
+/**
+ * Four nodes — A, C public mesh, B and D both peered with A and C over
+ * TCP so each of B and D runs a FIPS stack linked to A and C. `buildFourMesh`
+ * waits for both B and D to list their two links up before returning.
+ */
+async function buildFourMesh(): Promise<{
+  a: StartedNode;
+  b: StartedNode;
+  c: StartedNode;
+  d: StartedNode;
+}> {
+  const a = await startNode('a', []);
+  const c = await startNode('c', []);
+  const b = await startNode('b', [a.tcpAddr, c.tcpAddr]);
+  const d = await startNode('d', [a.tcpAddr, c.tcpAddr]);
+  const bStack = (b.node as unknown as { fipsStack: FipsStack }).fipsStack;
+  const dStack = (d.node as unknown as { fipsStack: FipsStack }).fipsStack;
+  const bothUp = await waitFor(
+    () => bStack.link.linkPeers().length >= 2 && dStack.link.linkPeers().length >= 2,
+    90_000,
+  );
+  if (!bothUp) {
+    throw new Error(
+      `B and D did not each link to both A and C: ${bStack.link.linkPeers().length} / ${dStack.link.linkPeers().length}`,
+    );
+  }
+  return { a, b, c, d };
 }
 
 describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
@@ -552,4 +599,96 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
     expect(linkEvents.some((e) => e.event === 'closed' && e.via === mesh.b.id)).toBe(true);
     expect(stack.link.linkPeers().length, 'no link up after the close').toBe(0);
   }, 180_000);
+
+  it('a node whose dialled addresses fail is read over FIPS', async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.a, mesh.b, mesh.c);
+
+    // A TCP port that nothing listens on: a dial to it on this host
+    // gets `ECONNREFUSED` at once, so the phase-1 dial fails without
+    // waiting out `PEER_DIAL_MIN_MS`. A's address list carries the
+    // secure-WebSocket shape for that port plus its FIPS address; the
+    // gater lets the private TCP address through because it is one of
+    // A's first-contact addresses (→ Transports → "A client dials a
+    // private address only when its own configuration names it").
+    const closedPort = await reserveClosedTcpPort();
+    const aPeerIdStr = mesh.a.libp2p.peerId.toString();
+    const aFailAddr = `/ip4/127.0.0.1/tcp/${closedPort}/tls/ws/p2p/${aPeerIdStr}`;
+
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: mesh.a.id, addrs: [aFailAddr, mesh.a.fipsAddr] },
+        { notisId: mesh.b.id, addrs: [mesh.b.webrtcAddr] },
+        { notisId: mesh.c.id, addrs: [mesh.c.fipsAddr] },
+      ],
+      network: NETWORK,
+      profile: PROFILE,
+      agentName: 'notis-fips-pass-test',
+      fips: true,
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+
+    // Phase 1 reports a failed dial for A at the tls/ws address; the
+    // FIPS pass then reads A over FIPS via B.
+    const aDials = captured.filter((e): e is Extract<MeshEvent, { kind: 'dial' }> =>
+      e.kind === 'dial' && e.nodeId === mesh.a.id,
+    );
+    expect(aDials.length, 'a dial event for A').toBeGreaterThanOrEqual(1);
+    expect(
+      aDials.some((d) => d.outcome.result === 'failed'),
+      "A's dial outcome is `failed`",
+    ).toBe(true);
+
+    const state = client.state();
+    const entryA = state.nodes.find((n) => n.notisId === mesh.a.id);
+    expect(entryA, 'A entry exists').toBeDefined();
+    expect(entryA!.transport, 'A read over FIPS').toBe('fips');
+    expect(entryA!.via, 'A\'s link rides through B').toBe(mesh.b.id);
+  }, 180_000);
+
+  it('the FIPS pass opens the link over a `local` node first', async () => {
+    const mesh = await buildFourMesh();
+    nodes.push(mesh.a, mesh.b, mesh.c, mesh.d);
+
+    // B first in firstContact (so entries order lists B before D) and
+    // D handed as a `local` seed through the `addLocal` path — the
+    // same path a real `local` node takes. Both B and D get an open,
+    // handshake-passed connection; the pick must land on D because it
+    // is `local`, not on B even though B comes first in entries.
+    const captured: MeshEvent[] = [];
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: mesh.b.id, addrs: [mesh.b.webrtcAddr] },
+        { notisId: mesh.a.id, addrs: [mesh.a.fipsAddr] },
+        { notisId: mesh.c.id, addrs: [mesh.c.fipsAddr] },
+      ],
+      seeds: [
+        { notisId: mesh.d.id, addrs: [mesh.d.webrtcAddr], local: true },
+      ],
+      network: NETWORK,
+      profile: PROFILE,
+      agentName: 'notis-fips-pass-test',
+      fips: true,
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+
+    const linkEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'fips-link' }> =>
+      e.kind === 'fips-link',
+    );
+    const openEvents = linkEvents.filter((e) => e.event === 'open');
+    expect(openEvents.length, 'one `open` event this check').toBeGreaterThanOrEqual(1);
+    expect(
+      openEvents.every((e) => e.via === mesh.d.id),
+      'every `open` names D (local), never B',
+    ).toBe(true);
+  }, 240_000);
 });

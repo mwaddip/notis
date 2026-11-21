@@ -4128,12 +4128,12 @@ class MeshClientImpl implements MeshClient {
     if (candidates.length === 0) return false;
 
     // MESH_INTERFACE → FIPS → "A reader links when a node's every other
-    // address failed" — "at most `FIPS_READER_LINKS_MAX` links". The
-    // reader opens a new link only where the stack holds fewer links
-    // than the cap; where it already holds one, the pass dials the
-    // candidates' FIPS addresses straight through it.
-    if (stack.link.linkPeers().length === 0) {
-      if (stack.link.linkPeers().length >= FIPS_READER_LINKS_MAX) return false;
+    // address failed" — "at most `FIPS_READER_LINKS_MAX` links". Open a
+    // new link only while the stack holds fewer than the cap and none
+    // is up. With a link already up the pass dials the candidates' FIPS
+    // addresses through it.
+    const linksUp = stack.link.linkPeers().length;
+    if (linksUp < FIPS_READER_LINKS_MAX && linksUp === 0) {
       // MESH_INTERFACE → FIPS → "A reader links when a node's every other
       // address failed" — "over a connection it holds whose handshake
       // passed". Phase 1's dial resolves at the transport open, not the
