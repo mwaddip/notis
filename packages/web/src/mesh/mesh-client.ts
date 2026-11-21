@@ -76,6 +76,7 @@ import {
   NodeList,
   type MeshContact,
   type FailureKind,
+  type MeshTransport,
   type NodeEntry,
 } from './node-list.js';
 import { tipEvent, type TipEvent } from './tip-events.js';
@@ -208,9 +209,27 @@ export function assertClientConfig(o: {
 export function clientDenyDialMultiaddr(
   ma: Multiaddr,
   configuredAddrsOf: (notisId: string) => readonly string[],
+  // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+  // last" — "The gater admits a FIPS address only while the client holds
+  // an up link, whoever asks for the dial, libp2p's own services
+  // included". The holder is a function so the gater reads the live
+  // state; a default of `() => false` leaves the gate shut for callers
+  // that pre-date the FIPS pass.
+  fipsLinkUp: () => boolean = () => false,
 ): boolean {
   const components = ma.getComponents();
   const names = components.map((c) => c.name);
+  // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"
+  // — "a client refuses such an address": an address carrying both a
+  // `fips` and a `p2p-circuit` component reaches no dial.
+  if (names.includes('fips') && names.includes('p2p-circuit')) {
+    return true;
+  }
+  // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+  // last" — a FIPS address is admitted only while a reader link is up.
+  if (names[0] === 'fips') {
+    return !fipsLinkUp();
+  }
   // Plain `/ws` without `/tls/` or `/wss`.
   if (names.includes('ws') && !names.includes('wss') && !names.includes('tls')) {
     return true;
@@ -328,7 +347,7 @@ export interface Disagreement {
 
 export interface ClientState {
   nodeId: string | null;
-  transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+  transport: MeshTransport | null;
   path: 'direct' | 'relay' | null;
   lastLeft: { nodeId: string; reason: string } | null;
   tip: { height: number; hash: string | null } | null;
@@ -485,7 +504,7 @@ export interface MeshConnectionEvent {
   connId: string;
   peer: string;
   peerKind: 'notis' | 'peer-id';
-  transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+  transport: MeshTransport | null;
   path: 'direct' | 'relay' | null;
   direction: 'inbound' | 'outbound';
 }
@@ -569,7 +588,7 @@ export interface MeshRequestEvent {
   route: 'mesh' | 'api';
   connection?: {
     id: string;
-    transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+    transport: MeshTransport | null;
     path: 'direct' | 'relay' | null;
   };
   head:
@@ -652,7 +671,7 @@ export interface MeshDiagnostics {
     peerKind: 'notis' | 'peer-id';
     remoteAddr: string;
     direction: 'inbound' | 'outbound';
-    transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+    transport: MeshTransport | null;
     path: 'direct' | 'relay' | null;
     limited: boolean;
     ageMs: number;
@@ -944,8 +963,12 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   const configuredHolder: { current: (notisId: string) => readonly string[] } = {
     current: () => [],
   };
+  // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+  // last" — the FIPS link holder reads whether a reader's FIPS link is
+  // up; until the FIPS pass wires it, the gate stays shut for every
+  // FIPS address.
   const denyDialMultiaddr = (ma: Multiaddr): boolean =>
-    clientDenyDialMultiaddr(ma, configuredHolder.current);
+    clientDenyDialMultiaddr(ma, configuredHolder.current, () => false);
 
   // NET_INTERFACE → The browser entry — `readerLibp2pOptions` carries
   // the browser transports, Noise, yamux, `identify`, `ping`, the
@@ -1693,7 +1716,7 @@ class MeshClientImpl implements MeshClient {
       const picked = this.pickReadyConnection(notisId);
       let connection: MeshRequestEvent['connection'] | undefined;
       if (picked !== null) {
-        let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+        let transport: MeshTransport | null = null;
         let path: 'direct' | 'relay' | null = null;
         try {
           const c = classifyConnectionAddr(picked.remoteAddr.toString(), this.libp2p.getConnections());
@@ -2182,7 +2205,7 @@ class MeshClientImpl implements MeshClient {
       } catch (e) {
         if (!(e instanceof MeshKeyError)) throw e;
       }
-      let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+      let transport: MeshTransport | null = null;
       let path: 'direct' | 'relay' | null = null;
       try {
         const classified = classifyConnectionAddr(c.remoteAddr.toString(), conns);
@@ -4064,7 +4087,7 @@ class MeshClientImpl implements MeshClient {
     } catch (e) {
       if (!(e instanceof MeshKeyError)) throw e;
     }
-    let transport: 'webrtc-direct' | 'webrtc' | 'wss' | null = null;
+    let transport: MeshTransport | null = null;
     let path: 'direct' | 'relay' | null = null;
     try {
       const c = classifyConnectionAddr(conn.remoteAddr.toString(), this.libp2p.getConnections());
@@ -4385,11 +4408,20 @@ export function classifyConnectionAddr(
   ma: string,
   connections?: readonly Connection[],
 ): {
-  transport: 'webrtc-direct' | 'webrtc' | 'wss';
+  transport: MeshTransport;
   path: 'direct' | 'relay';
 } {
   const components = multiaddr(ma).getComponents();
   const names = components.map((c) => c.name);
+  // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+  // last" — "A node reached over FIPS is that node; its entry's transport
+  // reads `fips`". A connection whose remote address starts with `fips`
+  // rides a FIPS link; `direct` for its path, since the FIPS link does
+  // not itself ride a p2p-circuit (→ FIPS → "A private node's relay
+  // addresses ride IP").
+  if (names[0] === 'fips') {
+    return { transport: 'fips', path: 'direct' };
+  }
   const circuitIdx = names.indexOf('p2p-circuit');
   const before = circuitIdx === -1 ? names : names.slice(0, circuitIdx);
 
@@ -4625,6 +4657,9 @@ function transportRank(ma: Multiaddr): number {
   // relayed path holds `/p2p-circuit/...` midway; a direct path does
   // not.
   const s = ma.toString();
+  // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+  // last" — after every other address, a plain circuit among them.
+  if (s.startsWith('/fips/')) return 4;
   if (s.includes('/p2p-circuit/')) {
     if (/\/p2p-circuit\/webrtc(?:\/|$)/.test(s)) return 1;
     return 3;

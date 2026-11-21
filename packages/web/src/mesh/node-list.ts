@@ -8,8 +8,50 @@
 // mutates nothing but its own entries and reads a monotonic clock the caller
 // supplies.
 
-import { MeshKeyError } from '@dagsocial/net/browser';
+import { multiaddr } from '@multiformats/multiaddr';
+import {
+  MeshKeyError,
+  parseFipsMultiaddr,
+  registerFipsProtocol,
+} from '@dagsocial/net/browser';
 import { RETRY_BASE_MS, RETRY_CAP_MS } from './protocols.js';
+
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+// — `acceptsAddr` parses a FIPS address through `multiaddr()`, which reads the
+// `fips` protocol only when it is registered. The call is idempotent.
+registerFipsProtocol();
+
+/**
+ * MESH_INTERFACE → The client's node list → "A FIPS address is ranked last" —
+ * the four transports the client labels a connection by. `fips` is the
+ * FIPS link; the other three are the libp2p browser transports the sorter
+ * ranks before it (→ "The secure WebSocket is the fallback").
+ */
+export type MeshTransport = 'webrtc-direct' | 'webrtc' | 'wss' | 'fips';
+
+/**
+ * MESH_INTERFACE → The client's node list → "A FIPS address is ranked last"
+ * — an address carrying a `fips` component that does not parse, or one
+ * carrying both a `fips` and a `p2p-circuit` component, is refused wherever
+ * it arrives. `acceptsAddr` is the intake filter every list entry point
+ * runs each address through. A string that does not carry `/fips/` is
+ * accepted as today; a FIPS address is accepted only when it parses as the
+ * strict `/fips/<npub>/p2p/<peer id>` shape (`parseFipsMultiaddr` answers
+ * a non-null pair) and carries no `/p2p-circuit/` component — a node is
+ * reached over FIPS at its own FIPS address, through no relay
+ * (→ FIPS → "A private node's relay addresses ride IP").
+ */
+export function acceptsAddr(addr: string): boolean {
+  if (!addr.includes('/fips/')) return true;
+  if (addr.includes('/p2p-circuit/')) return false;
+  let ma;
+  try {
+    ma = multiaddr(addr);
+  } catch {
+    return false;
+  }
+  return parseFipsMultiaddr(ma) !== null;
+}
 
 /**
  * MESH_INTERFACE → Discovery → "First contact" — a client starts from a list
@@ -143,8 +185,18 @@ export interface NodeEntry {
    * `ClientState.path`. Written by `mesh-client`'s decoration pass; the
    * node list itself holds no transport state.
    */
-  transport: 'webrtc-direct' | 'webrtc' | 'wss' | null;
+  transport: MeshTransport | null;
   path: 'direct' | 'relay' | null;
+  /**
+   * MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+   * last" — "A node reached over FIPS is that node; its entry's
+   * transport reads `fips` and names `via` — the node whose connection
+   * the link rides". `null` on an entry whose connection is not a FIPS
+   * one, and the node list emits `null` from its view; `mesh-client`'s
+   * decoration pass writes the notisId whose connection the FIPS link
+   * rides when the pair is `{ fips, ... }`.
+   */
+  via?: string | null;
   /**
    * MESH_INTERFACE → The client's node list → "An entry may carry an API
    * base" — the HTTPS base where the client holds no connection to the key.
@@ -253,6 +305,10 @@ export class NodeList {
       assertNotisId(a.notisId);
       // "the client's own key is none" (MESH_INTERFACE → Discovery).
       if (a.notisId === ownId) continue;
+      // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+      // last" — a refused FIPS address is dropped at intake, every entry
+      // point included.
+      const addrs = a.addrs.filter(acceptsAddr);
       const existing = this.entries_.get(a.notisId);
       if (existing) {
         // Two entries with one key are one entry (MESH_INTERFACE → Discovery →
@@ -261,8 +317,8 @@ export class NodeList {
         // configured.
         // The api too — the first non-null stands, since the pairing of a
         // base with a key is the list's word (→ Discovery → "First contact").
-        this.mergeAddrs(existing, a.addrs);
-        this.mergeConfigured(existing, a.addrs);
+        this.mergeAddrs(existing, addrs);
+        this.mergeConfigured(existing, addrs);
         if (existing.api === null && a.api !== undefined) existing.api = a.api;
       } else {
         this.entries_.set(a.notisId, {
@@ -278,8 +334,8 @@ export class NodeList {
           failures: 0,
           clockAtFailure: 0,
           storedRetryAtMs: 0,
-          addrs: [...a.addrs],
-          configured: [...a.addrs],
+          addrs: [...addrs],
+          configured: [...addrs],
           droppedAddrs: [],
           evidence: null,
           lastFailure: null,
@@ -292,12 +348,16 @@ export class NodeList {
 
   add(id: string, addrs: string[], known = false, api: string | null = null): void {
     assertNotisId(id);
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — the DHT and a seed arrive here; a refused FIPS address is
+    // dropped at intake.
+    const accepted = addrs.filter(acceptsAddr);
     const existing = this.entries_.get(id);
     if (existing) {
       // A lie is permanent (MESH_INTERFACE → The client's node list): no later
       // `add` revives a blacklisted entry's state.
       if (existing.status === 'blacklisted') return;
-      this.mergeAddrs(existing, addrs);
+      this.mergeAddrs(existing, accepted);
       if (known) existing.known = true;
       if (existing.api === null && api !== null) existing.api = api;
       return;
@@ -315,7 +375,7 @@ export class NodeList {
       failures: 0,
       clockAtFailure: 0,
       storedRetryAtMs: 0,
-      addrs: [...addrs],
+      addrs: [...accepted],
       // MESH_INTERFACE → Discovery → "A node added by hand":
       // `add` is a seed- or DHT-sourced add; its addresses are not
       // configured. `addByHand` is the one entry point that writes
@@ -344,11 +404,14 @@ export class NodeList {
    */
   addByHand(id: string, addrs: string[], trusted: boolean): void {
     assertNotisId(id);
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — a refused FIPS address is dropped at intake.
+    const accepted = addrs.filter(acceptsAddr);
     const existing = this.entries_.get(id);
     if (existing) {
       if (existing.status === 'blacklisted') return;
-      this.mergeAddrs(existing, addrs);
-      this.mergeConfigured(existing, addrs);
+      this.mergeAddrs(existing, accepted);
+      this.mergeConfigured(existing, accepted);
       existing.byHand = true;
       existing.yours = trusted;
       return;
@@ -366,8 +429,8 @@ export class NodeList {
       failures: 0,
       clockAtFailure: 0,
       storedRetryAtMs: 0,
-      addrs: [...addrs],
-      configured: [...addrs],
+      addrs: [...accepted],
+      configured: [...accepted],
       droppedAddrs: [],
       evidence: null,
       lastFailure: null,
@@ -398,14 +461,17 @@ export class NodeList {
   addLocal(id: string, addrs: string[]): boolean {
     assertNotisId(id);
     if (id === this.ownId) return false;
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — a refused FIPS address is dropped at intake.
+    const accepted = addrs.filter(acceptsAddr);
     const existing = this.entries_.get(id);
     if (existing) {
       if (existing.status === 'blacklisted') return false;
       const addrsBefore = existing.addrs.length;
       const configuredBefore = existing.configured.length;
       const markBefore = existing.local;
-      this.mergeAddrs(existing, addrs);
-      this.mergeConfigured(existing, addrs);
+      this.mergeAddrs(existing, accepted);
+      this.mergeConfigured(existing, accepted);
       existing.local = true;
       return existing.addrs.length !== addrsBefore
         || existing.configured.length !== configuredBefore
@@ -424,8 +490,8 @@ export class NodeList {
       failures: 0,
       clockAtFailure: 0,
       storedRetryAtMs: 0,
-      addrs: [...addrs],
-      configured: [...addrs],
+      addrs: [...accepted],
+      configured: [...accepted],
       droppedAddrs: [],
       evidence: null,
       lastFailure: null,
@@ -717,6 +783,12 @@ export class NodeList {
       // transport state, so it emits `null`/`null` here.
       transport: null,
       path: null,
+      // MESH_INTERFACE → The client's node list → "A FIPS address is
+      // ranked last" — `via` is the notisId whose connection a FIPS
+      // link rides, written by `mesh-client`'s decoration pass; the
+      // node list itself holds no transport state, so it emits `null`
+      // here.
+      via: null,
       api: e.api,
       seenMs: e.seenMs,
     };
