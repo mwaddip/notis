@@ -68,6 +68,11 @@ import {
   SYNC_PROTOCOL,
   postTextsHandler,
   type PostTextProvider,
+  createReaderFips,
+  FIPS_READER_LINKS_MAX,
+  FIPS_LINK_HINT_TIMEOUT_MS,
+  type FipsStack,
+  type FipsLinkChange,
 } from '@dagsocial/net/browser';
 import { HeldChain, type Placement } from './held-chain.js';
 import { headerFromJson } from './header-json.js';
@@ -213,8 +218,8 @@ export function clientDenyDialMultiaddr(
   // last" — "The gater admits a FIPS address only while the client holds
   // an up link, whoever asks for the dial, libp2p's own services
   // included". The holder is a function so the gater reads the live
-  // state; a default of `() => false` leaves the gate shut for callers
-  // that pre-date the FIPS pass.
+  // state. A caller that holds no FIPS stack passes `() => false` so the
+  // gate stays shut for every FIPS address.
   fipsLinkUp: () => boolean = () => false,
 ): boolean {
   const components = ma.getComponents();
@@ -462,7 +467,8 @@ export type MeshEvent =
   | MeshRequestBodyEvent
   | MeshServingStreamEvent
   | MeshServingCallEvent
-  | MeshLocalLookupEvent;
+  | MeshLocalLookupEvent
+  | MeshFipsLinkEvent;
 
 /**
  * MESH_INTERFACE → The client's node list → "The client reports what it
@@ -507,6 +513,15 @@ export interface MeshConnectionEvent {
   transport: MeshTransport | null;
   path: 'direct' | 'relay' | null;
   direction: 'inbound' | 'outbound';
+  /**
+   * MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+   * last" — "A node reached over FIPS is that node; its entry's transport
+   * reads `fips` and names `via` — the node whose connection the link
+   * rides". The notisId whose connection carries the FIPS link for a FIPS
+   * connection; `null` for every other transport and whenever the client
+   * holds no up link.
+   */
+  via: string | null;
 }
 
 /**
@@ -654,6 +669,25 @@ export interface MeshLocalLookupEvent {
     | { result: 'answered'; notisId: string; localAddrs: string[]; added: boolean }
     | { result: 'failed'; message: string }
     | { result: 'refused'; reason: string };
+}
+
+/**
+ * MESH_INTERFACE → FIPS → "A reader links when a node's every other address failed"
+ * / → "A reader's link closes at the end of a check" — the four moments the
+ * reader's one FIPS link report: `open` fires when the FIPS pass picks a
+ * connection to link over, before `openLink` runs; `up` fires when the link's
+ * FIPS handshake completes; `failed` fires when the chosen link does not come
+ * up within twice `FIPS_LINK_HINT_TIMEOUT_MS`, with the reason; `closed`
+ * fires for every end — a check that needs no FIPS dropping the link, the
+ * remote side ending it, or the client stopping. `via` is the notisId of
+ * the libp2p peer whose connection the link rides (`notisIdFromPeerId`'s
+ * reading of the peer id the link names).
+ */
+export interface MeshFipsLinkEvent {
+  kind: 'fips-link';
+  event: 'open' | 'up' | 'closed' | 'failed';
+  via: string;
+  reason?: string;
 }
 
 /**
@@ -927,6 +961,16 @@ export interface StartMeshClientOptions {
    * extension passes none.
    */
   localLookup?: { url: string };
+  /**
+   * MESH_INTERFACE → FIPS → "A reader links when a node's every other address
+   * failed" — `fips: true` runs a reader's FIPS node beside the client,
+   * joining its libp2p as a transport. The FIPS pass opens one link over a
+   * connection the client already holds when a check leaves a FIPS-addressed
+   * node unreachable at its other addresses, and dials that node over FIPS
+   * through the link. Default off: the client dials no `/fips/` address and
+   * emits no FIPS link event.
+   */
+  fips?: boolean;
 }
 
 export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshClient> {
@@ -963,12 +1007,22 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   const configuredHolder: { current: (notisId: string) => readonly string[] } = {
     current: () => [],
   };
+  // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+  // address failed" — a client started with `fips` runs a reader's FIPS
+  // node; the stack is built before `createLibp2p` so the holder reads
+  // its live up links once the stack is attached. Without a stack the
+  // holder answers false and the gater refuses every FIPS address.
+  const fipsStack: FipsStack | null = o.fips === true
+    ? await createReaderFips({ network: o.network })
+    : null;
   // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
-  // last" — the FIPS link holder reads whether a reader's FIPS link is
-  // up; until the FIPS pass wires it, the gate stays shut for every
-  // FIPS address.
+  // last" — the gater admits a FIPS address only while the reader holds
+  // an up link; the holder reads the stack's live up-link set so the
+  // gate opens the moment a link comes up and shuts the moment it ends.
+  const fipsLinkUp = (): boolean =>
+    fipsStack !== null && fipsStack.link.linkPeers().length > 0;
   const denyDialMultiaddr = (ma: Multiaddr): boolean =>
-    clientDenyDialMultiaddr(ma, configuredHolder.current, () => false);
+    clientDenyDialMultiaddr(ma, configuredHolder.current, fipsLinkUp);
 
   // NET_INTERFACE → The browser entry — `readerLibp2pOptions` carries
   // the browser transports, Noise, yamux, `identify`, `ping`, the
@@ -976,18 +1030,33 @@ export async function startMeshClient(o: StartMeshClientOptions): Promise<MeshCl
   // the ordering-block topic; the client adds the dial queue's
   // `addressSorter` for its one address order (MESH_INTERFACE → The
   // client's node list → "The secure WebSocket is the fallback").
-  const node = await createLibp2p(readerLibp2pOptions({
-    privateKey: key.privateKey,
-    magic: o.profile.magic,
-    network: o.network,
-    iceServers: () => iceHolder.current(),
-    denyDialMultiaddr,
-    addressSorter: notisAddressSorter,
-  }));
+  // MESH_INTERFACE → FIPS → "A reader dials over it" — a reader handed
+  // a FIPS stack appends the stack's libp2p transport, and the caller
+  // attaches the stack after `createLibp2p` and before `client.start()`.
+  const readerOpts: Parameters<typeof readerLibp2pOptions>[0] = fipsStack !== null
+    ? {
+        privateKey: key.privateKey,
+        magic: o.profile.magic,
+        network: o.network,
+        iceServers: () => iceHolder.current(),
+        denyDialMultiaddr,
+        addressSorter: notisAddressSorter,
+        fips: fipsStack,
+      }
+    : {
+        privateKey: key.privateKey,
+        magic: o.profile.magic,
+        network: o.network,
+        iceServers: () => iceHolder.current(),
+        denyDialMultiaddr,
+        addressSorter: notisAddressSorter,
+      };
+  const node = await createLibp2p(readerLibp2pOptions(readerOpts));
+  if (fipsStack !== null) await fipsStack.attach(node);
 
   const random = o.random ?? Math.random;
   const httpFetch = o.httpFetch ?? ((url, init) => globalThis.fetch(url, init));
-  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn, httpFetch);
+  const client = new MeshClientImpl(node, key.notisId, o, clock, wallClock, random, resolveFn, httpFetch, fipsStack);
   // MESH_INTERFACE → NAT → "A client's STUN list comes from the
   // public nodes it holds" — the client holds its node list, so
   // the holder derives the ICE configuration from it. `webRTC` reads
@@ -1254,6 +1323,25 @@ class MeshClientImpl implements MeshClient {
    */
   private servingLock: Promise<void> = Promise.resolve();
 
+  /**
+   * MESH_INTERFACE → FIPS → "A reader links when a node's every other
+   * address failed" — the reader's FIPS stack, non-null when the client
+   * was started with `fips: true`. `startMeshClient` creates it, hands
+   * it to `readerLibp2pOptions` as the FIPS transport, `attach`es it to
+   * libp2p, and hands it here; the client's `stop` stops it before
+   * `libp2p.stop()`. A test seam: the file's own case reaches the stack
+   * through this field to close a link between checks (→ FIPS →
+   * "A reader's link closes at the end of a check").
+   */
+  readonly fipsStack: FipsStack | null;
+  /**
+   * MESH_INTERFACE → FIPS — the function returned by
+   * `stack.link.onLinkChange` subscription made at `start()`, called at
+   * `stop()` so the client's `up`/`closed` event emitter is torn down
+   * before the stack is.
+   */
+  private fipsLinkUnsub: (() => void) | null = null;
+
   constructor(
     node: Libp2p,
     ownId: string,
@@ -1263,8 +1351,10 @@ class MeshClientImpl implements MeshClient {
     random: () => number,
     resolveFn: typeof resolveTip,
     httpFetch: HttpFetch,
+    fipsStack: FipsStack | null = null,
   ) {
     this.libp2p = node;
+    this.fipsStack = fipsStack;
     this.clock = clock;
     this.wallClock = wallClock;
     this.random = random;
@@ -1433,11 +1523,53 @@ class MeshClientImpl implements MeshClient {
     if (this.servingOn && this.servingTexts !== null) {
       await this.libp2p.handle(SYNC_PROTOCOL, this.makeServingHandler(this.servingTexts));
     }
+    // MESH_INTERFACE → FIPS → "A reader's link closes at the end of a
+    // check" — the one subscription that reports `up` and `closed` to
+    // the client's events sink. `open` and `failed` land from the FIPS
+    // pass itself; every other state change — a link that forms, one
+    // the client closes, one the remote drops — rides this listener,
+    // so a link you close and one net drops both report once.
+    if (this.fipsStack !== null) {
+      const stack = this.fipsStack;
+      this.fipsLinkUnsub = stack.link.onLinkChange((ev) => this.onFipsLinkChange(ev));
+    }
     // The first check runs at start (MESH_INTERFACE → The client's node
     // list → "A check"); a failure here does not take the client down, it
     // is reflected in the state and the next check comes on the ordinary
     // cadence.
     this.scheduleNextCheck(0);
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A reader's link closes at the end of a
+   * check" — fires `up` and `closed` to the events sink. `via` reads
+   * the libp2p peer's string through `notisIdFromPeerId`; a peer id
+   * that is not a Notis-shaped key is left as the raw peer id string,
+   * as the connection event reader does.
+   */
+  private onFipsLinkChange(ev: FipsLinkChange): void {
+    const via = this.viaFromRemotePeerStr(ev.remotePeer);
+    if (ev.state === 'up') {
+      this.emit({ kind: 'fips-link', event: 'up', via });
+    } else {
+      this.emit({ kind: 'fips-link', event: 'closed', via });
+    }
+  }
+
+  /**
+   * MESH_INTERFACE → Identity — "One key, two spellings" / The client's
+   * node list → "A FIPS address is ranked last" ("names `via` — the node
+   * whose connection the link rides"). Read a libp2p peer id string as a
+   * Notis key; where the reading throws (a non-Notis peer id), answer
+   * the peer id string, as the connection event reader does.
+   */
+  private viaFromRemotePeerStr(peerIdString: string): string {
+    try {
+      return notisIdFromPeerId(peerIdFromString(peerIdString));
+    } catch (e) {
+      if (!(e instanceof MeshKeyError)) throw e;
+      return peerIdString;
+    }
   }
 
   /**
@@ -2163,6 +2295,7 @@ class MeshClientImpl implements MeshClient {
       nodes: decorateEntries(this.nodeList.entries(), this.libp2p.getConnections(), {
         readMs: this.readMsMap,
         behindBy: this.behindByMap,
+        fipsVia: this.currentFipsVia(),
       }),
       seated,
       anchor,
@@ -2562,6 +2695,19 @@ class MeshClientImpl implements MeshClient {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (pubsub as any).removeEventListener('gossipsub:message', this.onGossipMessage);
     } catch { /* already torn down */ }
+    // MESH_INTERFACE → FIPS → "A reader's link closes at the end of a
+    // check" — stop the reader's FIPS stack before libp2p.stop(): the
+    // stack's `stop` drops every held link (each emitting `closed`
+    // through the subscription this shutdown has not yet unsubscribed),
+    // unregisters the link protocol handler, and tears down the TCP/FIPS
+    // endpoint. Only then does libp2p stop its transports.
+    if (this.fipsLinkUnsub !== null) {
+      this.fipsLinkUnsub();
+      this.fipsLinkUnsub = null;
+    }
+    if (this.fipsStack !== null) {
+      try { await this.fipsStack.stop(); } catch { /* already */ }
+    }
     await this.libp2p.stop();
   }
 
@@ -2646,14 +2792,27 @@ class MeshClientImpl implements MeshClient {
     // in phase 2).
     const beforeIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
     const nowMsPhase1 = this.clock();
+    // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed" — the per-check map `fipsPass` reads after this
+    // phase. A node held off the loop (open connection, retry window,
+    // no addresses) is not in the map; a node the loop dialled lands
+    // under its outcome, so the FIPS pass sees each node it may want.
+    const dialled = new Map<string, 'connected' | 'failed' | 'skipped'>();
     for (const id of beforeIds) {
       if (this.stopped) break;
       if (this.hasOpenConnection(id)) continue;
       const entry = this.nodeList.entry(id);
       if (!entry || entry.addrs.length === 0) continue; // api-only or no addresses: no dial
       if (entry.status === 'retry' && nowMsPhase1 < entry.retryAtMs) continue;
-      await this.dialByAddresses(id);
+      const result = await this.dialByAddresses(id);
+      dialled.set(id, result);
     }
+    // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed" — after phase 1 and before phase 2: open one link
+    // where a FIPS-addressed node is unreached and dial its FIPS
+    // addresses through the link. `fipsPass` returns whether it dialled
+    // any FIPS address this check, read at the check's end.
+    const fipsDialed = await this.fipsPass(dialled);
 
     // Phase 2: read each candidate's `/blocks/current` through the
     // timed fetch; its time to the body's end is the node's speed
@@ -3430,6 +3589,23 @@ class MeshClientImpl implements MeshClient {
     this.state_.disagreement = raisedThisCheck;
     this.standingDisagreement = standingRaisedThisCheck;
     this.emitStateChange();
+    // MESH_INTERFACE → FIPS → "A reader's link closes at the end of a
+    // check" — with no open FIPS connection and no FIPS dial this
+    // check, the link is not needed. Close every up link; the
+    // subscription on the stack emits the `closed` event.
+    if (this.fipsStack !== null && !fipsDialed) {
+      const hasFipsConn = this.libp2p.getConnections().some(
+        (c) => c.remoteAddr.toString().startsWith('/fips/'),
+      );
+      if (!hasFipsConn) {
+        const stack = this.fipsStack;
+        for (const peer of stack.link.linkPeers()) {
+          try {
+            await stack.link.close({ transport: stack.link.type, addr: peer.remoteKeyHex });
+          } catch { /* already */ }
+        }
+      }
+    }
     // MESH_INTERFACE → What the client remembers — called after
     // `emitStateChange()`, directly: a throw from the callback is the
     // caller's and propagates.
@@ -3652,9 +3828,9 @@ class MeshClientImpl implements MeshClient {
     }
   }
 
-  private async dialByAddresses(id: string): Promise<void> {
+  private async dialByAddresses(id: string): Promise<'connected' | 'failed' | 'skipped'> {
     const entry = this.nodeList.entry(id);
-    if (!entry) return;
+    if (!entry) return 'skipped';
     // MESH_INTERFACE → The client's node list → "The client reports what
     // it does" — "a dial's end": the clock starts at the function's
     // entry so `ms` covers the gater pre-filter and libp2p's dial
@@ -3667,15 +3843,29 @@ class MeshClientImpl implements MeshClient {
     // refuses it in every runtime; this pre-filter also records the
     // per-address diagnostic so a reader sees which address failed how
     // (the gater's bulk refusal lands as one `DialDeniedError`).
+    // MESH_INTERFACE → The client's node list → "A node's addresses are
+    // dialled as one operation" — "its non-FIPS addresses are, under one
+    // deadline; its FIPS addresses are dialled after, by the FIPS pass,
+    // only while a link is up". A FIPS address is split out here with
+    // no failure of its own: the FIPS pass dials it later.
     const dialable: string[] = [];
+    let hadNonFips = false;
     for (const addr of addrs) {
+      if (addr.startsWith('/fips/')) continue;
+      hadNonFips = true;
       if (/\/ws(?:\/|$)/.test(addr) && !/\/wss(?:\/|$)/.test(addr) && !/\/tls\//.test(addr)) {
         this.nodeList.failure(id, 'transport', `plain ws refused: ${addr}`, addr);
         continue;
       }
       dialable.push(addr);
     }
-    if (this.stopped) return;
+    if (this.stopped) return 'failed';
+    // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed" — "a node with no non-FIPS address qualifies once
+    // dialled for": nothing non-FIPS is a `skipped` result that records
+    // no failure of its own; the FIPS pass reads this entry as a
+    // candidate.
+    if (!hadNonFips) return 'skipped';
     if (dialable.length === 0) {
       // Nothing dialable: move the node to `retry` so the candidate
       // list drops it until the retry window elapses. Without this,
@@ -3691,7 +3881,7 @@ class MeshClientImpl implements MeshClient {
         outcome: { result: 'no-dialable' },
         ms: this.clock() - startMs,
       });
-      return;
+      return 'failed';
     }
 
     // MESH_INTERFACE → The client's node list → "A node's addresses are
@@ -3721,7 +3911,7 @@ class MeshClientImpl implements MeshClient {
         outcome: { result: 'connected' },
         ms: this.clock() - startMs,
       });
-      return; // success — connection open
+      return 'connected'; // success — connection open
     } catch (e) {
       // libp2p throws `AggregateError('All multiaddr dials failed')`
       // when more than one address was dialed and every one errored;
@@ -3751,7 +3941,7 @@ class MeshClientImpl implements MeshClient {
         }
       }
       const stillHere = this.nodeList.entry(id);
-      if (!stillHere || stillHere.status === 'blacklisted') return;
+      if (!stillHere || stillHere.status === 'blacklisted') return 'failed';
       // MESH_INTERFACE → The client's node list — the wrong-key row:
       // "that address dropped for that key when the dial's failure
       // names it; the entry otherwise unchanged". When attribution
@@ -3761,7 +3951,7 @@ class MeshClientImpl implements MeshClient {
       // deduped) never reaches the reported list, so a passed-over
       // address still listed does not block this branch.
       if (attributed !== null && attributed.every((row) => row.wrongKey !== null)) {
-        return;
+        return 'failed';
       }
       // The dial failed on a kind that is not just wrong-key — bump the
       // retry counter once and set `lastFailure` to the aggregate's own
@@ -3796,7 +3986,228 @@ class MeshClientImpl implements MeshClient {
         outcome: { result: 'failed', addresses, message },
         ms: this.clock() - startMs,
       });
+      return 'failed';
     }
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A reader links when a node's every other
+   * address failed" — dial one node's FIPS addresses, under the deadline
+   * `dialByAddresses` would have computed for that many addresses. Called
+   * by `fipsPass` alone, after a link is up. Records the outcome the way
+   * `dialByAddresses` does — `recordAddrFailure` on each reported address
+   * for its own failure kind, `nodeList.failure(id, kind, msg)` for the
+   * aggregate, and one `dial` event. A connection that opens runs through
+   * the client's existing connection-open path (handshake, gossip)
+   * unchanged.
+   */
+  private async dialFipsAddresses(id: string, fipsAddrs: readonly string[]): Promise<'connected' | 'failed'> {
+    const startMs = this.clock();
+    const dialable = [...fipsAddrs];
+    const multiaddrs = dialable.map((addr) => withPeerId(addr, id));
+    const wholeDialMs = Math.max(dialable.length * DIAL_TIMEOUT_MS, PEER_DIAL_MIN_MS);
+    const signal = AbortSignal.timeout(wholeDialMs);
+    const recorder = createDialProgressRecorder();
+    try {
+      await this.libp2p.dial(multiaddrs, { signal, onProgress: recorder.onProgress });
+      this.emit({
+        kind: 'dial', nodeId: id,
+        outcome: { result: 'connected' },
+        ms: this.clock() - startMs,
+      });
+      return 'connected';
+    } catch (e) {
+      const inner = unwrapAggregate(e);
+      const attributed = attributeAggregateDialErrors(recorder.reported, inner);
+      if (attributed !== null) {
+        for (const row of attributed) {
+          if (row.wrongKey !== null) {
+            const bareAddr = findBareAddrForDialable(dialable, row.addr) ?? row.addr;
+            this.nodeList.wrongKey(id, bareAddr, row.wrongKey.answeredPeerIdString);
+          }
+        }
+      }
+      const stillHere = this.nodeList.entry(id);
+      if (!stillHere || stillHere.status === 'blacklisted') return 'failed';
+      if (attributed !== null && attributed.every((row) => row.wrongKey !== null)) {
+        return 'failed';
+      }
+      if (attributed !== null) {
+        for (const row of attributed) {
+          if (row.wrongKey !== null) continue;
+          const bareAddr = findBareAddrForDialable(dialable, row.addr) ?? row.addr;
+          this.nodeList.recordAddrFailure(id, bareAddr, row.kind, row.message);
+        }
+      }
+      const kind = classifyDialError(e);
+      const message = messageOf(e);
+      this.nodeList.failure(id, kind, message);
+      this.latestEventReason.set(id, message ? `failure: ${kind}: ${message}` : `failure: ${kind}`);
+      const addresses = attributed === null ? null : attributed.map((row) => ({
+        addr: findBareAddrForDialable(dialable, row.addr) ?? row.addr,
+        kind: row.kind,
+        message: row.message,
+        wrongKey: row.wrongKey,
+      }));
+      this.emit({
+        kind: 'dial', nodeId: id,
+        outcome: { result: 'failed', addresses, message },
+        ms: this.clock() - startMs,
+      });
+      return 'failed';
+    }
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A reader links when a node's every other
+   * address failed" — the open connection a new FIPS link rides over.
+   * "A `local` node's first, then any other": a `local` entry's open
+   * connection whose handshake passed, else any other open connection
+   * whose handshake passed, refusing a limited one.
+   */
+  private pickLinkConnection(): Connection | null {
+    const conns = this.libp2p.getConnections();
+    // Entries in local-first order.
+    const entriesLocalFirst: NodeEntry[] = [];
+    const rest: NodeEntry[] = [];
+    for (const e of this.nodeList.entries()) {
+      if (e.local) entriesLocalFirst.push(e);
+      else rest.push(e);
+    }
+    const ordered = [...entriesLocalFirst, ...rest];
+    for (const e of ordered) {
+      const expected = toLibp2pPeerIdString(e.notisId);
+      const open = conns.filter((c) =>
+        c.remotePeer.toString() === expected
+        && c.status === 'open'
+        && c.limits == null
+        && this.handshakeResults.get(c.id) === 'passed',
+      );
+      if (open.length > 0) {
+        const direct = open.find((c) => c.direct);
+        return direct ?? open[0]!;
+      }
+    }
+    // No entry's connection. Fall back to any open, handshake-passed,
+    // unlimited connection on the libp2p host.
+    for (const c of conns) {
+      if (c.status !== 'open') continue;
+      if (c.limits != null) continue;
+      if (this.handshakeResults.get(c.id) !== 'passed') continue;
+      return c;
+    }
+    return null;
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A reader links when a node's every other
+   * address failed" — the pass after phase 1's dials. Candidates are the
+   * nodes in the per-check `dialled` map as `'failed'` or `'skipped'`
+   * that list a FIPS address and hold no open connection to the key. No
+   * candidate → nothing. With no up link and room under
+   * `FIPS_READER_LINKS_MAX`, open one over a connection the client holds
+   * to a handshake-passed peer (`pickLinkConnection`), wait for it up on
+   * `onLinkChange` naming that peer under twice `FIPS_LINK_HINT_TIMEOUT_MS`,
+   * then dial each candidate's FIPS addresses through the link. A link
+   * that never comes up ends the pass with a `failed` event and no FIPS
+   * dial this check.
+   */
+  private async fipsPass(
+    dialled: ReadonlyMap<string, 'connected' | 'failed' | 'skipped'>,
+  ): Promise<boolean> {
+    if (this.fipsStack === null) return false;
+    const stack = this.fipsStack;
+    const candidates: NodeEntry[] = [];
+    for (const e of this.nodeList.entries()) {
+      const d = dialled.get(e.notisId);
+      if (d !== 'failed' && d !== 'skipped') continue;
+      if (this.hasOpenConnection(e.notisId)) continue;
+      if (!e.addrs.some((a) => a.startsWith('/fips/'))) continue;
+      candidates.push(e);
+    }
+    if (candidates.length === 0) return false;
+
+    // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed" — "at most `FIPS_READER_LINKS_MAX` links". The
+    // reader opens a new link only where the stack holds fewer links
+    // than the cap; where it already holds one, the pass dials the
+    // candidates' FIPS addresses straight through it.
+    if (stack.link.linkPeers().length === 0) {
+      if (stack.link.linkPeers().length >= FIPS_READER_LINKS_MAX) return false;
+      // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+      // address failed" — "over a connection it holds whose handshake
+      // passed". Phase 1's dial resolves at the transport open, not the
+      // handshake's end, so an open connection may still be handshaking
+      // when this pass runs. Await every open connection's handshake
+      // once so the pick reads a stable `handshakeResults` set.
+      const openConns = this.libp2p.getConnections().filter((c) => c.status === 'open');
+      for (const c of openConns) {
+        const p = this.handshakeDone.get(c.id);
+        if (p !== undefined) {
+          try { await p; } catch { /* reflected in handshakeResults */ }
+        }
+      }
+      const conn = this.pickLinkConnection();
+      if (conn === null) return false;
+      const via = this.viaFromRemotePeerStr(conn.remotePeer.toString());
+      this.emit({ kind: 'fips-link', event: 'open', via });
+      // MESH_INTERFACE → FIPS → "A reader links when a node's every other
+      // address failed" — "A link not up within twice
+      // `FIPS_LINK_HINT_TIMEOUT_MS` is a failed link". The subscription
+      // is made before `openLink` so a very fast `up` is never missed.
+      const expectedPeer = conn.remotePeer.toString();
+      const upP = new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try { unsub(); } catch { /* already */ }
+          resolve(false);
+        }, 2 * FIPS_LINK_HINT_TIMEOUT_MS);
+        const unsub = stack.link.onLinkChange((ev) => {
+          if (settled) return;
+          if (ev.state !== 'up') return;
+          if (ev.remotePeer !== expectedPeer) return;
+          settled = true;
+          clearTimeout(timer);
+          try { unsub(); } catch { /* already */ }
+          resolve(true);
+        });
+      });
+      let openResult: string;
+      try {
+        openResult = await stack.link.openLink(conn);
+      } catch (e) {
+        this.emit({ kind: 'fips-link', event: 'failed', via, reason: messageOf(e) });
+        return false;
+      }
+      if (openResult === '') {
+        this.emit({
+          kind: 'fips-link', event: 'failed', via,
+          reason: 'openLink answered no remote key',
+        });
+        return false;
+      }
+      const up = await upP;
+      if (!up) {
+        this.emit({
+          kind: 'fips-link', event: 'failed', via,
+          reason: `link did not come up within ${2 * FIPS_LINK_HINT_TIMEOUT_MS} ms`,
+        });
+        return false;
+      }
+    }
+
+    // Link is up — dial each candidate's FIPS addresses through it.
+    let dialedAny = false;
+    for (const cand of candidates) {
+      if (this.stopped) break;
+      const fipsAddrs = cand.addrs.filter((a) => a.startsWith('/fips/'));
+      if (fipsAddrs.length === 0) continue;
+      dialedAny = true;
+      await this.dialFipsAddresses(cand.notisId, fipsAddrs);
+    }
+    return dialedAny;
   }
 
   private hasOpenConnection(notisId: string): boolean {
@@ -4094,11 +4505,31 @@ class MeshClientImpl implements MeshClient {
       transport = c.transport;
       path = c.path;
     } catch { /* an address the classifier does not name reads as null */ }
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — "A node reached over FIPS is that node; its entry's transport
+    // reads `fips` and names `via`". `via` names the link's libp2p peer
+    // (not the connection's), and is null for every non-FIPS transport.
+    const via = transport === 'fips' ? this.currentFipsVia() : null;
     this.emit({
       kind: 'connection', event, connId: conn.id,
       peer, peerKind, transport, path,
       direction: conn.direction,
+      via,
     });
+  }
+
+  /**
+   * MESH_INTERFACE → FIPS → "A key holds one link, and the libp2p peer that
+   * named it holds the key" and `FIPS_READER_LINKS_MAX = 1` — the notisId
+   * whose libp2p connection the reader's single FIPS link rides, read from
+   * the stack's up-link set. `null` when the client holds no FIPS stack or
+   * no up link.
+   */
+  private currentFipsVia(): string | null {
+    if (this.fipsStack === null) return null;
+    const peers = this.fipsStack.link.linkPeers();
+    if (peers.length === 0) return null;
+    return this.viaFromRemotePeerStr(peers[0]!.remotePeer);
   }
 
   /**
@@ -4497,23 +4928,30 @@ export function decorateEntries(
   /**
    * MESH_INTERFACE → The client's node list — "A check" and the
    * behind row: `readMs` and `behindBy` the mesh client holds from
-   * the latest check. Absent → both read `null`, so a caller that
-   * does not yet carry per-check metrics (the initial state build
-   * and the unit cases) stands unchanged.
+   * the latest check. `fipsVia` is the notisId whose libp2p connection
+   * carries the reader's current FIPS link (MESH_INTERFACE → The
+   * client's node list → "A FIPS address is ranked last" — "names
+   * `via` — the node whose connection the link rides"); null when the
+   * client holds no FIPS stack or no up link. Absent → every optional
+   * reads `null`, so a caller that does not yet carry per-check
+   * metrics (the initial state build and the unit cases) stands
+   * unchanged.
    */
   metrics?: {
     readonly readMs: ReadonlyMap<string, number>;
     readonly behindBy: ReadonlyMap<string, number | null>;
+    readonly fipsVia?: string | null;
   },
 ): NodeEntry[] {
   return entries.map((e) => {
     const expected = toLibp2pPeerIdString(e.notisId);
     const conn = pickConnectionForLabel(connections, expected);
+    const fipsVia = metrics?.fipsVia ?? null;
     const base: NodeEntry = conn === null
-      ? { ...e, transport: null, path: null }
+      ? { ...e, transport: null, path: null, via: null }
       : (() => {
         const { transport, path } = classifyConnectionAddr(conn.remoteAddr.toString(), connections);
-        return { ...e, transport, path };
+        return { ...e, transport, path, via: transport === 'fips' ? fipsVia : null };
       })();
     if (metrics === undefined) return base;
     return {
