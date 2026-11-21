@@ -232,8 +232,13 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
         const line = el('div', 'debug-line');
         line.appendChild(copyControl(node.notisId, shortHex(node.notisId, 16)));
         const conn = diag.connections.find((c) => c.peer === node.notisId);
+        // WEB_INTERFACE → The settings window → "The debug row" — "over FIPS
+        // `fips · through` the node its link rides"; every other transport
+        // reads `<transport> · <path>` as today.
         const reach = conn !== undefined
-          ? `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`
+          ? (conn.transport === 'fips' && node.via !== null && node.via !== undefined
+              ? `fips · through ${shortHex(node.via, 16)}`
+              : `${conn.transport ?? 'none'} · ${conn.path ?? 'none'}`)
           : node.api !== null ? node.api : 'not reached';
         line.appendChild(el('span', 'inkmute', ` · ${reach} · ${node.status}`));
         if (node.readMs !== null) line.appendChild(el('span', 'inkmute', ` · ${Math.round(node.readMs)} ms`));

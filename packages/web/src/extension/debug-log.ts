@@ -27,6 +27,7 @@ export type DebugEventKind =
   | 'serving-stream'
   | 'serving-call'
   | 'local-lookup'
+  | 'fips-link'
   | 'write'
   | 'sign'
   | 'wait';

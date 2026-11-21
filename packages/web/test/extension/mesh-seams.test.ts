@@ -646,6 +646,31 @@ describe("mesh client's reports in the debug log — a dial is stored with its f
   });
 });
 
+// WEB_INTERFACE → The extension → "The debug log" — "a FIPS link opened,
+// up, failed or closed and the node it rides". The sink's generic path
+// stores every non-`request` event under its own kind with its fields;
+// this case pins the `fips-link` kind reaches the log carrying its `event`
+// and `via`.
+describe("the sink records a fips-link event", () => {
+  it('a `fips-link` report is stored under kind `fips-link` with its event and via', async () => {
+    const log = makeDebugLog();
+    const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
+    const opts = await startWithDebug(fakeStorage(), start, log);
+    expect(typeof opts.events).toBe('function');
+    const ev: MeshEvent = {
+      kind: 'fips-link',
+      event: 'up',
+      via: HEX64_P,
+    };
+    opts.events!(ev);
+    await log.flush();
+    const list = await log.list();
+    const links = list.filter((e) => e.kind === 'fips-link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ event: 'up', via: HEX64_P });
+  });
+});
+
 describe("mesh client's log lines reach the console and the debug log", () => {
   it('a `log` line is written to `console.error` and recorded as an `error` event naming the mesh client', async () => {
     const log = makeDebugLog();
