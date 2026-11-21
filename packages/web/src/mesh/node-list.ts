@@ -31,19 +31,18 @@ export type MeshTransport = 'webrtc-direct' | 'webrtc' | 'wss' | 'fips';
 
 /**
  * MESH_INTERFACE → The client's node list → "A FIPS address is ranked last"
- * — an address carrying a `fips` component that does not parse, or one
- * carrying both a `fips` and a `p2p-circuit` component, is refused wherever
- * it arrives. `acceptsAddr` is the intake filter every list entry point
- * runs each address through. A string that does not carry `/fips/` is
- * accepted as today; a FIPS address is accepted only when it parses as the
- * strict `/fips/<npub>/p2p/<peer id>` shape (`parseFipsMultiaddr` answers
- * a non-null pair) and carries no `/p2p-circuit/` component — a node is
- * reached over FIPS at its own FIPS address, through no relay
+ * — `acceptsAddr` is the intake filter every list entry point runs each
+ * address through. A string that does not carry `/fips/` is accepted as
+ * today; a FIPS address is accepted only in the strict
+ * `/fips/<npub>/p2p/<peer id>` shape (`parseFipsMultiaddr` answers a
+ * non-null pair). A relay address over FIPS is refused by that shape
+ * alone: its components carry a `p2p-circuit` beside the `fips` and the
+ * `p2p`, so `parseFipsMultiaddr`'s two-component check returns null — a
+ * node is reached over FIPS at its own FIPS address, through no relay
  * (→ FIPS → "A private node's relay addresses ride IP").
  */
 export function acceptsAddr(addr: string): boolean {
   if (!addr.includes('/fips/')) return true;
-  if (addr.includes('/p2p-circuit/')) return false;
   let ma;
   try {
     ma = multiaddr(addr);
