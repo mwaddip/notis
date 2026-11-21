@@ -412,9 +412,6 @@ prefix the background checks the bridge's sender against; an empty one builds an
 no links row. Testnet's `notis-nodes`, each entry a node (→ The client is served from the node's own origin → "The
 three later tags"):
 
-> ⚠ **AHEAD OF CODE (2026-11-21).** The build's list names no FIPS address and the extension starts its client without
-> `fips`. The list below and the rules on FIPS in this section lead the code (Notis over FIPS, the extension).
-
 ```json
 [
   { "notisId": "68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09",
@@ -2192,9 +2189,6 @@ other value or none off — with or without an identity. While on, a hint stands
 may ask it for posts, and learn which ones you hold and your address.* A press that changes it redials every node at
 once, and the row reads the choice as the press left it. It renders only where the build hands the client a way to
 serve — the extension, which holds a post cache — so the web build has no such row.
-
-> ⚠ **AHEAD OF CODE (2026-11-21).** The row names no FIPS connection. Its `fips · through` reading below leads the code
-> (Notis over FIPS, the extension).
 
 **The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
 press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person

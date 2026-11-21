@@ -384,9 +384,6 @@ record and every identify with the node that sent it (measured 2026-11-19, `@mul
 (→ Discovery): a FIPS address naming another node's npub reaches a node whose libp2p handshake fails against the
 `/p2p/` id, and the dial fails.
 
-> ⚠ **AHEAD OF CODE (2026-11-21).** A private node announces a relay address over a relay's FIPS address, and a client
-> holds one. The rule below leads the code (Notis over FIPS, the extension).
-
 **A private node's relay addresses ride IP.** A node announces its own FIPS address and relay addresses whose relay hop
 is an IP address — never an address carrying both a `fips` and a `p2p-circuit` component, which libp2p builds from a
 relay's FIPS address: a node is reached over FIPS at its own FIPS address, through no relay. A client refuses such an
@@ -404,9 +401,6 @@ seconds"`) does not reach it, and this bound holds it instead. A stream's send b
 fips-tcp answers what is ready with no event, so each inbound datagram wakes the reads of its sender's streams and the
 endpoint's accepts, and a poll every `FIPS_TCP_POLL_MS` runs its timers. A connection that closes hands its queued bytes
 to fips-tcp ahead of its FIN, and waits on the mesh for neither.
-
-> ⚠ **AHEAD OF CODE (2026-11-21).** The extension's client runs no FIPS node. The two rules below lead the code (Notis
-> over FIPS, the extension).
 
 **A reader links when a node's every other address failed.** A client started with `fips` runs a reader's FIPS node. It
 opens a link in a check only when a node it dialled in that check has a FIPS address, the client holds no connection to
@@ -474,10 +468,6 @@ by a node's word. Before the first check settles a chain, a block adds nothing t
 **A valid proof of a lighter chain is not a lie**: an honest node that was itself cut off serves one. **Nor is a header
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
 runs behind would otherwise blacklist every honest node for good.
-
-> ⚠ **AHEAD OF CODE (2026-11-21).** The client hands libp2p a node's FIPS addresses with its others, ranks them beside a
-> plain circuit, admits them at its gater with no link, names no `fips` transport and reports no link. The rules below
-> on FIPS addresses lead the code (Notis over FIPS, the extension).
 
 **A node's addresses are dialled as one operation.** libp2p joins every dial to a peer into the one already in flight, so
 the client hands it all of a node's addresses at once, under one deadline — all but its FIPS addresses, which the FIPS
@@ -666,9 +656,6 @@ like every other (→ Transports). Let's Encrypt has issued IP certificates sinc
 behind NAT cannot hold one.
 
 ## Acceptance
-
-> ⚠ **AHEAD OF CODE (2026-11-21).** The stage runs eight scenarios. The ninth below leads the code (Notis over FIPS, the
-> extension).
 
 A stage on one machine runs the mesh end to end, its page on the client `@dagsocial/web` holds: public nodes, a node behind an endpoint-independent NAT and
 one behind a symmetric NAT, a browser behind NAT, a node on the browser's own network, an ACME test server, and hostile

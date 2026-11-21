@@ -1443,9 +1443,6 @@ attached after it — the link protocol's handler and the links over the connect
 forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
 node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
 
-> ⚠ **AHEAD OF CODE (2026-11-21).** The link reports no change, names no up link's peer, and `readerLibp2pOptions`
-> takes no FIPS stack. The clauses below naming them lead the code (Notis over FIPS, the extension).
-
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
   connection libp2p dials; `createReaderFips({ network })` answers a reader's, under a fresh key, forwarding off,
