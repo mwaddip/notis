@@ -365,6 +365,12 @@ export async function startExtensionMesh(
   // point's node". The client reads `LOCAL_IDENTITY_URL` at the end of
   // a check in which no node answered.
   startOpts.localLookup = { url: LOCAL_IDENTITY_URL };
+  // WEB_INTERFACE → The extension → "The mesh is the extension's first
+  // path" — the reader runs a FIPS node (MESH_INTERFACE → FIPS →
+  // "A reader links when a node's every other address failed"), so a node
+  // whose other addresses failed is reached over FIPS through a connection
+  // the reader holds.
+  startOpts.fips = true;
   const client = await opts.startMeshClient(startOpts);
   seatedClient = client;
   // The App starts at once — the first check never blocks a read

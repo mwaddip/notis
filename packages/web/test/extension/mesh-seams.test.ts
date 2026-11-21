@@ -283,6 +283,23 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(startOpts!.localLookup).toEqual({ url: LOCAL_IDENTITY_URL });
   });
 
+  it('the extension starts its client with FIPS', async () => {
+    // WEB_INTERFACE → The extension → "The mesh is the extension's first
+    // path" — the reader is started with `fips`, so a check dials a node's
+    // FIPS address when its other addresses failed
+    // (MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed").
+    let startOpts: StartMeshClientOptions | null = null;
+    const client = fakeClient();
+    const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} },
+      startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
+    });
+    expect(startOpts!.fips).toBe(true);
+  });
+
   it('a stored hand-added address is re-added via addByHand after start', async () => {
     const addCalls: string[] = [];
     const client = fakeClient({ addByHand: (id) => { addCalls.push(id); } });

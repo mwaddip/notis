@@ -234,7 +234,7 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
         const conn = diag.connections.find((c) => c.peer === node.notisId);
         // WEB_INTERFACE → The settings window → "The debug row" — "over FIPS
         // `fips · through` the node its link rides"; every other transport
-        // reads `<transport> · <path>` as today.
+        // reads `<transport> · <path>`.
         const reach = conn !== undefined
           ? (conn.transport === 'fips' && node.via !== null && node.via !== undefined
               ? `fips · through ${shortHex(node.via, 16)}`
