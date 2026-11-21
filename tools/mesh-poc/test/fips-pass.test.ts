@@ -14,6 +14,7 @@ import { createServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Libp2p } from '@libp2p/interface';
+import { multiaddr } from '@multiformats/multiaddr';
 import { profileFor, generateKeyPair } from '@dagsocial/types';
 import type { KeyPair, NetworkProfile, NetworkType } from '@dagsocial/types';
 import {
@@ -691,4 +692,128 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
       'every `open` names D (local), never B',
     ).toBe(true);
   }, 240_000);
+
+  it('a check with a link up dials a new candidate through it and opens no second link', async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.a, mesh.b, mesh.c);
+
+    const captured: MeshEvent[] = [];
+    // firstContact names A (FIPS only) and B (webrtc). C is not in the
+    // list at start; a `peer:discovery` event names C's FIPS address
+    // after the first check, so the second check finds it as a new
+    // candidate the pass dials through the standing link.
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: mesh.a.id, addrs: [mesh.a.fipsAddr] },
+        { notisId: mesh.b.id, addrs: [mesh.b.webrtcAddr] },
+      ],
+      network: NETWORK,
+      profile: PROFILE,
+      agentName: 'notis-fips-pass-test',
+      fips: true,
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+    const stack = (client as unknown as { fipsStack: FipsStack }).fipsStack;
+    expect(stack.link.linkPeers().length, 'one link up after the first check').toBe(1);
+    expect(
+      client.state().nodes.find((n) => n.notisId === mesh.a.id)!.transport,
+      'A read over FIPS on the first check',
+    ).toBe('fips');
+
+    const openCountBefore = captured.filter(
+      (e) => e.kind === 'fips-link' && e.event === 'open',
+    ).length;
+
+    // Dispatch `peer:discovery` for C with its FIPS address — the mesh
+    // client's `handleDiscovery` adds the entry through `NodeList.add`,
+    // the path a DHT-discovered peer takes (MESH_INTERFACE → Discovery).
+    const libp2p = (client as unknown as { libp2p: Libp2p }).libp2p;
+    (libp2p as unknown as { safeDispatchEvent: (name: string, detail: unknown) => void })
+      .safeDispatchEvent('peer:discovery', {
+        detail: {
+          id: mesh.c.libp2p.peerId,
+          multiaddrs: [multiaddr(mesh.c.fipsAddr)],
+        },
+      });
+
+    await client.check();
+
+    const linkEventsAfter = captured.filter((e): e is Extract<MeshEvent, { kind: 'fips-link' }> =>
+      e.kind === 'fips-link',
+    );
+    const openCountAfter = linkEventsAfter.filter((e) => e.event === 'open').length;
+    expect(openCountAfter, 'no new `open` event after the first check').toBe(openCountBefore);
+    expect(stack.link.linkPeers().length, 'still one link up').toBe(1);
+
+    const state = client.state();
+    const entryC = state.nodes.find((n) => n.notisId === mesh.c.id);
+    expect(entryC, 'C entry exists').toBeDefined();
+    expect(entryC!.transport, 'C read over FIPS').toBe('fips');
+    expect(entryC!.via, "C's link rides through B").toBe(mesh.b.id);
+  }, 180_000);
+
+  it("libp2p's own dial of a FIPS address is refused while no link is up", async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.a, mesh.b, mesh.c);
+
+    // No FIPS address in firstContact: the first check has no FIPS
+    // candidate, so the FIPS pass opens no link. The client holds a
+    // connection to B afterwards, which the manual `openLink` below
+    // rides.
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: mesh.b.id, addrs: [mesh.b.webrtcAddr] },
+      ],
+      network: NETWORK,
+      profile: PROFILE,
+      agentName: 'notis-fips-pass-test',
+      fips: true,
+      resolve: chainResolve(() => CHAIN, K),
+    });
+    clients.push(client);
+
+    await client.check();
+    const stack = (client as unknown as { fipsStack: FipsStack }).fipsStack;
+    expect(stack.link.linkPeers().length, 'no link up after the first check').toBe(0);
+
+    const libp2p = (client as unknown as { libp2p: Libp2p }).libp2p;
+    const aFipsMa = multiaddr(mesh.a.fipsAddr);
+
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — "The gater admits a FIPS address only while the client
+    // holds an up link, whoever asks for the dial, libp2p's own services
+    // included". With no link up, libp2p's own dial of A's FIPS address
+    // is refused by the gater as `DialDeniedError`.
+    let firstErr: unknown = null;
+    try {
+      await libp2p.dial(aFipsMa, { signal: AbortSignal.timeout(10_000) });
+    } catch (e) {
+      firstErr = e;
+    }
+    expect(firstErr, 'the first dial rejects').not.toBeNull();
+    const firstErrName = (firstErr as { name?: string } | null)?.name ?? '';
+    const firstErrMessage = (firstErr as { message?: string } | null)?.message ?? '';
+    expect(
+      firstErrName === 'DialDeniedError' || /denied/i.test(firstErrMessage),
+      `the first dial's error is dial-denied; saw name=${firstErrName} message=${firstErrMessage}`,
+    ).toBe(true);
+
+    // Open a link to B manually, so `fipsLinkUp()` answers true and the
+    // gater lets the next dial through.
+    const bPeerIdStr = mesh.b.libp2p.peerId.toString();
+    const bConn = libp2p.getConnections().find((c) => c.remotePeer.toString() === bPeerIdStr);
+    expect(bConn, 'the client holds a connection to B').toBeDefined();
+    const opened = await stack.link.openLink(bConn!);
+    expect(opened, 'openLink answers B\'s FIPS key').not.toBe('');
+    const up = await waitFor(() => stack.link.linkPeers().length > 0, 10_000);
+    expect(up, 'link to B comes up').toBe(true);
+
+    // Same address dials now. A throw here fails the case; a resolve is
+    // the rule's answer.
+    await libp2p.dial(aFipsMa, { signal: AbortSignal.timeout(20_000) });
+  }, 180_000);
 });
