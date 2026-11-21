@@ -713,9 +713,9 @@ The mesh holds when every step of the nine scenarios passes on what it measured;
    the cut stays dropped both ways, as for a reader whose network changed, which the nodes never hear close — its tip
    catches up by headers with no proof read, and gossip extends it after: a block whose parent is the client's tip
    reaches it by gossip with no check between (→ Block gossip → "A peer's gossip follows its newest connection").
-9. **Through one node.** A browser whose host routes to one node alone — the access point's shape — reaches two other
-   nodes by key through it over FIPS: its check reads all three, the two read `fips` through the one, and their
-   answers equal their direct HTTP answers byte for byte; a node reached that way and then cut reads `retry`, never
+9. **Through one node.** A browser whose host routes to one node alone — the access point's shape — reaches another
+   node by key through it over FIPS: its check reads both, the other reads `fips` through the one, and its answers
+   equal its direct HTTP answers byte for byte; a node reached that way and then cut reads `retry`, never
    `blacklisted`; a browser with direct paths to every node opens no FIPS link.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
