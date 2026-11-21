@@ -26,8 +26,6 @@ export {
 // MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold".
 export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
 export type { LibP2pLinkTransportOptions, FipsLinkChange } from './mesh/fips-link.js';
-// MESH_INTERFACE → FIPS → "A reader links when a node's every other address failed".
-export { FIPS_READER_LINKS_MAX } from './mesh/constants.js';
 // MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream".
 export {
   fipsDatagramEndpoint,

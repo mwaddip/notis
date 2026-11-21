@@ -51,8 +51,8 @@ export interface LibP2pLinkTransportOptions {
 
 /**
  * MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over it
- * completes" / "When a link ends" — an event `onLinkChange` reports: a
- * link came up, or an entry was dropped for any reason.
+ * completes" — an event `onLinkChange` reports: a link came up, or an
+ * entry was dropped for any reason.
  */
 export interface FipsLinkChange {
   readonly remoteKeyHex: string;
