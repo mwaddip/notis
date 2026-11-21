@@ -1443,9 +1443,8 @@ attached after it — the link protocol's handler and the links over the connect
 forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
 node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
 
-> ⚠ **AHEAD OF CODE (2026-11-21).** The link reports no change, names no up link's peer, `readerLibp2pOptions` takes no
-> FIPS stack and `FIPS_READER_LINKS_MAX` is not exported. The clauses below naming them lead the code (Notis over
-> FIPS, the extension).
+> ⚠ **AHEAD OF CODE (2026-11-21).** The link reports no change, names no up link's peer, and `readerLibp2pOptions`
+> takes no FIPS stack. The clauses below naming them lead the code (Notis over FIPS, the extension).
 
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
@@ -1462,7 +1461,6 @@ node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are 
 - `FIPS_PROTOCOL_NAME`, `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and
   `isFipsMultiaddr(ma)` — the FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
-- `FIPS_READER_LINKS_MAX` — the links a reader holds (`MESH_INTERFACE → FIPS`);
 - `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
 
 ---
