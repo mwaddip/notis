@@ -780,11 +780,11 @@ export function verdictS9NoLink(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 9 — "reaches two other nodes by key
-// through it over FIPS: its check reads all three, the two read `fips`
-// through the one". Scenario 9 step 2: every id in `otherEntries`
-// reads `ok` or `trailing` (a checked answer, ranking not reach), its
-// entry `transport` is `fips`, and its `via` names the access node.
+// MESH_INTERFACE → Acceptance 9 — "reaches another node by key through
+// it over FIPS: its check reads both, the other reads `fips` through
+// the one". Scenario 9 step 2: every id in `otherEntries` reads `ok`
+// or `trailing` (a checked answer, ranking not reach), its entry
+// `transport` is `fips`, and its `via` names the access node.
 // Measurement:
 //   `{ accessId: string,
 //      otherEntries: Array<{ notisId, status, transport, via }> }`.
@@ -802,8 +802,8 @@ export function verdictS9Through(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance 9 — "their answers equal their direct
-// HTTP answers byte for byte". Scenario 9 step 3: for every probed
+// MESH_INTERFACE → Acceptance 9 — "its answers equal its direct HTTP
+// answers byte for byte". Scenario 9 step 3: for every probed
 // `(nodeId, path)`, the SHA-256 and byte length the page recorded
 // equal the node's own HTTP answer read in its namespace. The miner
 // is paused for the step's duration, so one direct read is enough.

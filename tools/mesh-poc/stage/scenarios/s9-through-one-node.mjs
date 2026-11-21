@@ -1,10 +1,10 @@
 // MESH_INTERFACE → Acceptance 9 — "A browser whose host routes to one
-// node alone — the access point's shape — reaches two other nodes by
-// key through it over FIPS: its check reads all three, the two read
-// `fips` through the one, and their answers equal their direct HTTP
-// answers byte for byte; a node reached that way and then cut reads
-// `retry`, never `blacklisted`; a browser with direct paths to every
-// node opens no FIPS link."
+// node alone — the access point's shape — reaches another node by key
+// through it over FIPS: its check reads both, the other reads `fips`
+// through the one, and its answers equal its direct HTTP answers byte
+// for byte; a node reached that way and then cut reads `retry`, never
+// `blacklisted`; a browser with direct paths to every node opens no
+// FIPS link."
 //
 // Four sub-steps, in order:
 //   1. No faults — the stage default. Every node the browser's config
@@ -13,7 +13,7 @@
 //   2. The drop table — one add-table + add-chain + per-host drop in
 //      `notismesh-browser` naming every mesh host but the access
 //      host (pub1), lan1's and lan1-peer's 10.103.0.x addresses
-//      included (`s9ThroughOneNodeArgs`). Wait for every other
+//      included (`s9ThroughOneNodeArgs`). Wait for the other
 //      first-contact node to read `transport: 'fips'`, `via: pub1`.
 //      `verdictS9Through`.
 //   3. Pause `miner-steady` (SIGSTOP on its leaf PIDs, SIGCONT in
@@ -29,10 +29,8 @@
 //      `log.removeAll()` as a backstop.
 //
 // The stage default's first-contact set is pub1 + pub2 (`stage/up.mjs`
-// writes it). Only pub2 is an honest non-access public mesh host the
-// client knows at start; a reader of the stage topology sees no pub3.
-// `verdictS9Through` takes a list, so a topology that later added one
-// would need no verdict change.
+// writes it); pub2 is the other node the scenario asserts the FIPS
+// reach for. `verdictS9Through` takes a list of other ids.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
