@@ -1443,19 +1443,26 @@ attached after it — the link protocol's handler and the links over the connect
 forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
 node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
 
+> ⚠ **AHEAD OF CODE (2026-11-21).** The link reports no change, names no up link's peer, `readerLibp2pOptions` takes no
+> FIPS stack and `FIPS_READER_LINKS_MAX` is not exported. The clauses below naming them lead the code (Notis over
+> FIPS, the extension).
+
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
   connection libp2p dials; `createReaderFips({ network })` answers a reader's, under a fresh key, forwarding off,
   dialling, listening on nothing, opening no link of its own accord — the reader links by `link.openLink(connection)`
   over a connection it chooses, and dials a node it already holds a connection to with `force: true`, since libp2p
   otherwise answers the connection it holds;
-- `LibP2pLinkTransport` and `fipsLinkProtocol(network)` — the link and its protocol;
+- `LibP2pLinkTransport` and `fipsLinkProtocol(network)` — the link and its protocol; `onLinkChange(listener)` tells
+  each link up, once its FIPS handshake completes, and each link closed, for any reason — `{ remoteKeyHex, remotePeer,
+  state }` — and answers the function that stops telling; `linkPeers()` answers the up links' keys and libp2p peers;
 - `fipsTransport(…)`, `FipsTransportDialError` and `fipsDatagramEndpoint(node)` — the libp2p transport over TCP/FIPS
   streams, its dial refusal, and the datagram endpoint a TCP/FIPS endpoint is built over, whose activity names each
   datagram's sender so a connection wakes for its own peer alone;
 - `FIPS_PROTOCOL_NAME`, `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and
   `isFipsMultiaddr(ma)` — the FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
+- `FIPS_READER_LINKS_MAX` — the links a reader holds (`MESH_INTERFACE → FIPS`);
 - `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
 
 ---
@@ -1780,7 +1787,8 @@ the gossip rules (`gossipTopics`, `gossipMessageId`, `GOSSIP_SEEN_WINDOW_MS`, `g
 ordering-block topic's checks of → Stage 1 — the one copy, which the node's own validator calls; the handshake codec,
 `NODE_CAPABILITIES`, `READER_CAPABILITIES`, `SERVING_READER_CAPABILITIES` and `servesChain`; and the reader's side —
 `readerHandshake`, whose `capabilities` option declares the reader's set (`READER_CAPABILITIES` by default),
-`readerLibp2pOptions` — which registers the `fips` multiaddr code (`MESH_INTERFACE → FIPS`) —, `meshFetch` and
+`readerLibp2pOptions` — which registers the `fips` multiaddr code (`MESH_INTERFACE → FIPS`) and, handed a reader's
+FIPS stack as `fips`, adds its transport to the reader's; the caller attaches the stack —, `meshFetch` and
 `meshFetchOverConnection` (`GET` and `POST`), the mesh URL and the key's two
 spellings (`MESH_INTERFACE → Identity`), and a serving reader's answer — `SYNC_PROTOCOL`, `PostTextProvider`,
 `answerPostTextsRequest` and `postTextsHandler` (→ Readers → "A serving reader answers from what it holds"); and the

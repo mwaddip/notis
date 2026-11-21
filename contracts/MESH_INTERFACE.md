@@ -384,6 +384,14 @@ record and every identify with the node that sent it (measured 2026-11-19, `@mul
 (→ Discovery): a FIPS address naming another node's npub reaches a node whose libp2p handshake fails against the
 `/p2p/` id, and the dial fails.
 
+> ⚠ **AHEAD OF CODE (2026-11-21).** A private node announces a relay address over a relay's FIPS address, and a client
+> holds one. The rule below leads the code (Notis over FIPS, the extension).
+
+**A private node's relay addresses ride IP.** A node announces its own FIPS address and relay addresses whose relay hop
+is an IP address — never an address carrying both a `fips` and a `p2p-circuit` component, which libp2p builds from a
+relay's FIPS address: a node is reached over FIPS at its own FIPS address, through no relay. A client refuses such an
+address wherever it arrives (→ The client's node list → "A FIPS address is ranked last").
+
 **libp2p runs over a TCP/FIPS stream.** fips-tcp carries reliable, ordered streams over FIPS service datagrams; every
 FIPS node holds one endpoint on `FIPS_SERVICE_PORT`. **Every mesh node listens on it**: each accepted stream is an
 inbound libp2p connection, upgraded as any is — Noise to the node's key, then the muxer — its remote address
@@ -396,6 +404,22 @@ seconds"`) does not reach it, and this bound holds it instead. A stream's send b
 fips-tcp answers what is ready with no event, so each inbound datagram wakes the reads of its sender's streams and the
 endpoint's accepts, and a poll every `FIPS_TCP_POLL_MS` runs its timers. A connection that closes hands its queued bytes
 to fips-tcp ahead of its FIN, and waits on the mesh for neither.
+
+> ⚠ **AHEAD OF CODE (2026-11-21).** The extension's client runs no FIPS node. The two rules below lead the code (Notis
+> over FIPS, the extension).
+
+**A reader links when a node's every other address failed.** A client started with `fips` runs a reader's FIPS node. It
+opens a link in a check only when a node it dialled in that check has a FIPS address, the client holds no connection to
+it after the check's dials, and it failed at every other address it has — or has no other. It links over a connection it
+holds to a node whose handshake passed: a `local` node's first (→ Discovery → "A node the access point answers"), then
+any other, direct or relayed with no limit. It holds at most `FIPS_READER_LINKS_MAX` links. A link not up within twice
+`FIPS_LINK_HINT_TIMEOUT_MS` is a failed link, and the check dials no FIPS address; with a link up, it dials those
+nodes' FIPS addresses (→ The client's node list → "A FIPS address is ranked last"). A reader every node answers at
+another address — on the internet, every reader with a working path — opens no link.
+
+**A reader's link closes at the end of a check** in which it holds no FIPS connection and dialled no FIPS address. A
+link the reader closes is opened again only by a check that needs one; one that drops while its connection holds is
+opened again as an opener's link is (→ "A key holds one link, and the libp2p peer that named it holds the key").
 
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
@@ -411,6 +435,7 @@ makes to either is a patch under `patches/`, as the libp2p patches are (→ Plac
 | `FIPS_TCP_POLL_MS` | `50` | 50 ms between polls of a TCP/FIPS endpoint — a quarter of fips-tcp's 200 ms least retransmission timeout; data moves as it arrives |
 | `FIPS_TCP_SEND_BUFFER_BYTES` | `65_536` | 64 KiB of a TCP/FIPS stream's unsent data — fips-tcp's receive window; measured 2026-11-19, the rate is the same at 64 KiB, 256 KiB and 1 MiB |
 | `FIPS_TCP_CONNECTIONS_PER_PEER` | `2` | TCP/FIPS connections one peer holds to a node — a reader's one, and one overlapping its replacement |
+| `FIPS_READER_LINKS_MAX` | `1` | the links a reader holds — one, so the node a FIPS connection was routed through is the node its link rides |
 
 These are local bounds and cadences, outside the constants register as the mesh's others are (`CONSTANTS → Scope`).
 
@@ -450,8 +475,13 @@ by a node's word. Before the first check settles a chain, a block adds nothing t
 stamped ahead of the client's clock**: the verifier holds a header to the client's own time, and a client whose clock
 runs behind would otherwise blacklist every honest node for good.
 
+> ⚠ **AHEAD OF CODE (2026-11-21).** The client hands libp2p a node's FIPS addresses with its others, ranks them beside a
+> plain circuit, admits them at its gater with no link, names no `fips` transport and reports no link. The rules below
+> on FIPS addresses lead the code (Notis over FIPS, the extension).
+
 **A node's addresses are dialled as one operation.** libp2p joins every dial to a peer into the one already in flight, so
-the client hands it all of a node's addresses at once, under one deadline. When another address connects first, an
+the client hands it all of a node's addresses at once, under one deadline — all but its FIPS addresses, which the FIPS
+pass dials after (→ FIPS → "A reader links when a node's every other address failed"). When another address connects first, an
 address that answered with another key is not reported and stays listed; its next dial is refused again, at no cost to
 the key. When every address fails, each address libp2p reports it dialled has its failure recorded against it, matched
 in the order libp2p dialled them; an address no browser transport carries is passed over by libp2p and takes none. When
@@ -462,6 +492,14 @@ is dialled after it joins — the failure is recorded against the node alone.
 then WebRTC signalled over a relay, then the secure WebSocket, then any other address, a plain circuit among them — the
 one transport that leans on a certificate authority (→ The IP certificate) is dialled only after every WebRTC path has
 failed. Addresses of one transport keep libp2p's order among them.
+
+**A FIPS address is ranked last** — after every other address, a plain circuit among them — and dialled by the FIPS
+pass alone, under the deadline a dial of the node's addresses gets, its failure recorded against that address and the
+node as any dial's is. The gater admits a FIPS address only while the client holds an up link, whoever asks for the
+dial, libp2p's own services included. An address carrying a `fips` component that does not parse, or one carrying both a
+`fips` and a `p2p-circuit` component, is refused wherever it arrives — a first-contact entry, the memory, the DHT — and
+reaches no dial (→ FIPS → "A private node's relay addresses ride IP"). A node reached over FIPS is that node; its
+entry's transport reads `fips` and names `via` — the node whose connection the link rides.
 
 **A read opens no connection.** Every read the client makes over a mesh URL — a check's tips, headers and proofs, a
 fill's headers, each routed read, each `fetch` the page makes — opens its stream on a connection the client already
@@ -478,7 +516,8 @@ shown, never acted on.
 
 **The client reports what it does.** A client handed an event sink tells it each of these as it happens: a dial's end
 — the node, each address's outcome and the time it took; a connection opened or closed — the peer, its transport
-(WebRTC-direct, WebRTC over a relay, the secure WebSocket) and path, its direction; a handshake's verdict and reason;
+(WebRTC-direct, WebRTC over a relay, the secure WebSocket, FIPS) and path, its direction, and for FIPS the node the
+link rides; a FIPS link opened, up, failed or closed — the node whose connection carries it, and why it failed; a handshake's verdict and reason;
 a check's end — its number, its time, the tip, the agreement counts, the proofs read and each node's event in the table
 above; a gossiped block weighed — its height, its source and what became of it: it extended the chain, forked, left a
 gap, was held under a question, came before a chain settled, was refused with the lie's detail, or was ignored; a
@@ -628,10 +667,13 @@ behind NAT cannot hold one.
 
 ## Acceptance
 
+> ⚠ **AHEAD OF CODE (2026-11-21).** The stage runs eight scenarios. The ninth below leads the code (Notis over FIPS, the
+> extension).
+
 A stage on one machine runs the mesh end to end, its page on the client `@dagsocial/web` holds: public nodes, a node behind an endpoint-independent NAT and
 one behind a symmetric NAT, a browser behind NAT, a node on the browser's own network, an ACME test server, and hostile
 nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile host's lie outside the node it runs.
-The mesh holds when every step of the eight scenarios passes on what it measured; a step that did not run reads
+The mesh holds when every step of the nine scenarios passes on what it measured; a step that did not run reads
 `skipped`, never a pass.
 
 1. **No name, no hosted page.** The client reads a node's API by key from its first-contact nodes alone, over WebRTC-direct, with the
@@ -671,6 +713,10 @@ The mesh holds when every step of the eight scenarios passes on what it measured
    the cut stays dropped both ways, as for a reader whose network changed, which the nodes never hear close — its tip
    catches up by headers with no proof read, and gossip extends it after: a block whose parent is the client's tip
    reaches it by gossip with no check between (→ Block gossip → "A peer's gossip follows its newest connection").
+9. **Through one node.** A browser whose host routes to one node alone — the access point's shape — reaches two other
+   nodes by key through it over FIPS: its check reads all three, the two read `fips` through the one, and their
+   answers equal their direct HTTP answers byte for byte; a node reached that way and then cut reads `retry`, never
+   `blacklisted`; a browser with direct paths to every node opens no FIPS link.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.
