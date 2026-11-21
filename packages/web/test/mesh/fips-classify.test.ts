@@ -110,6 +110,42 @@ describe('fips: classification, rank and gate', () => {
     expect(entry!.addrs).toEqual([webrtc]);
   });
 
+  it('a relay address over a FIPS address is dropped at intake', () => {
+    // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"
+    // — a client refuses an address carrying both a `fips` and a
+    // `p2p-circuit` component wherever it arrives.
+    const composite = `/fips/${npub}/p2p/${relayPeerIdString}/p2p-circuit/p2p/${peerIdString}`;
+    const webrtc = `/ip4/8.8.8.8/udp/1/webrtc-direct/certhash/uEiA/p2p/${peerIdString}`;
+    const list = new NodeList(
+      [{ notisId, addrs: [composite, webrtc] }],
+      ownId,
+      () => 0,
+      () => 0,
+    );
+    const entry = list.entry(notisId);
+    expect(entry).toBeDefined();
+    expect(entry!.addrs).toEqual([webrtc]);
+  });
+
+  it('a FIPS address of the wrong shape is dropped at intake', () => {
+    // MESH_INTERFACE → The client's node list → "A FIPS address is ranked
+    // last" — an address whose `fips` component parses but is not the
+    // strict `/fips/<npub>/p2p/<peer id>` shape (`parseFipsMultiaddr`
+    // answers null) is refused wherever it arrives: a bare `/fips/<npub>`
+    // with no trailing `/p2p/<peer id>` is the one checked here.
+    const wrongShape = `/fips/${npub}`;
+    const webrtc = `/ip4/8.8.8.8/udp/1/webrtc-direct/certhash/uEiA/p2p/${peerIdString}`;
+    const list = new NodeList(
+      [{ notisId, addrs: [wrongShape, webrtc] }],
+      ownId,
+      () => 0,
+      () => 0,
+    );
+    const entry = list.entry(notisId);
+    expect(entry).toBeDefined();
+    expect(entry!.addrs).toEqual([webrtc]);
+  });
+
   it('state() names a FIPS connection', () => {
     const list = new NodeList(
       [{ notisId, addrs: [fipsAddr] }],
