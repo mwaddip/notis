@@ -16,6 +16,7 @@ import * as s5 from '../stage/scenarios/s5-impersonation.mjs';
 import * as s6 from '../stage/scenarios/s6-hostile.mjs';
 import * as s7 from '../stage/scenarios/s7-reach-and-load.mjs';
 import * as s8 from '../stage/scenarios/s8-prove-once.mjs';
+import * as s9 from '../stage/scenarios/s9-through-one-node.mjs';
 
 const TOPOLOGY = {
   network: 'devnet',
@@ -1343,5 +1344,172 @@ describe("s8 — parseTrackerValue reads cdp.mjs' double-encoded stdout", () => 
     expect(s8.parseTrackerValue(null)).toBeNull();
     expect(s8.parseTrackerValue(42 as any)).toBeNull();
     expect(s8.parseTrackerValue({} as any)).toBeNull();
+  });
+});
+
+describe('s9 (through one node)', () => {
+  const TOPO_S9 = {
+    network: 'devnet',
+    hosts: {
+      browser: { role: 'browser', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.11' },
+      pub1: {
+        role: 'public', nat: 'none', addr: '11.100.0.11',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+      },
+      pub2: {
+        role: 'public', nat: 'none', addr: '11.100.0.12',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+      },
+      'hostile-malformed': {
+        role: 'hostile', nat: 'none', addr: '11.100.0.31',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+      },
+      lan1: {
+        role: 'private', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.21',
+        mesh: { role: 'private', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+      },
+      'lan1-peer': {
+        role: 'private', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.22',
+        mesh: { role: 'private', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+      },
+    },
+  };
+
+  it('describe() lists four steps: direct paths, through-one, probe, cut', () => {
+    const names = s9.describe();
+    expect(names.length).toBe(4);
+    expect(names[0]).toMatch(/direct paths/);
+    expect(names[1]).toMatch(/pub2 reads fips through pub1/);
+    expect(names[2]).toMatch(/probe/);
+    expect(names[3]).toMatch(/cut/);
+  });
+
+  it('run({dryRun:true}) returns four skipped steps and records the drop + cut faults', async () => {
+    const r = await s9.run({ dryRun: true, topology: TOPO_S9 });
+    expect(r.scenario).toBe('s9');
+    expect(r.steps.length).toBe(4);
+    for (const step of r.steps) {
+      expect(step.verdict, step.name).toBe('skipped');
+    }
+    // One add-table per firewall + chain + per-host drops + its
+    // delete-table — two tables, each with its removal.
+    const adds = r.faults.filter((f: string) => / nft add /.test(f) && !f.includes('[fault:remove'));
+    const dels = r.faults.filter((f: string) => /\[fault:remove/.test(f) && / nft delete table /.test(f));
+    expect(adds.length, 'drop table + chain + per-host drops + cut table + chain + three drops')
+      .toBeGreaterThanOrEqual(8);
+    expect(dels.length, 'one delete per table — the drop and the cut').toBe(2);
+    // The probe window pauses miner-steady and resumes it.
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause') && f.includes('STOP')),
+      'STOP record present').toBe(true);
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause') && f.includes('CONT')),
+      'CONT record present').toBe(true);
+  });
+
+  // MESH_INTERFACE → Acceptance 9 — the drop table drops every mesh
+  // host but the access host. A drop on 11.100.x addresses alone
+  // would leave lan1 and lan1-peer reachable through natC's inside
+  // bridge with the browser (they both live under 10.103.0.x), so
+  // their own addresses are in the table.
+  it('s9ThroughOneNodeArgs with pub1 the access host drops every other mesh host, lan1 and lan1-peer included', () => {
+    const a = s9.s9ThroughOneNodeArgs(TOPO_S9, 'pub1');
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    const names = a.drops.map((d) => d.name).sort();
+    expect(names).toEqual(['hostile-malformed', 'lan1', 'lan1-peer', 'pub2']);
+    const line = a.drops.map((d) => d.argv.join(' ')).join('\n');
+    expect(line).toMatch(/ip daddr 11\.100\.0\.12 drop/);
+    expect(line).toMatch(/ip daddr 11\.100\.0\.31 drop/);
+    expect(line).toMatch(/ip daddr 10\.103\.0\.21 drop/);
+    expect(line).toMatch(/ip daddr 10\.103\.0\.22 drop/);
+    // pub1 is NOT dropped — it is the access host.
+    expect(line).not.toContain('11.100.0.11');
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s9_drop');
+  });
+
+  it('s9ThroughOneNodeArgs refuses an empty accessHost', () => {
+    expect(() => s9.s9ThroughOneNodeArgs(TOPO_S9, '')).toThrow(/accessHost/);
+  });
+
+  // MESH_INTERFACE → Acceptance 9 — the cut drops the inbound mesh
+  // and node ports on pub2's own namespace so pub1's running link
+  // falls (nftables' default input hook has no `ct state established
+  // accept`, so an existing flow's packets drop too).
+  it('s9CutArgs for pub2 builds a table + input chain + three drops on its mesh and node ports', () => {
+    const c = s9.s9CutArgs(TOPO_S9, 'pub2');
+    for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
+    }
+    expect(c.dropWebrtc.join(' ')).toContain('udp dport 4001 drop');
+    expect(c.dropMeshTcp.join(' ')).toContain('tcp dport 4002 drop');
+    expect(c.dropNotisTcp.join(' ')).toContain('tcp dport 9100 drop');
+    expect(c.deleteTable.join(' ')).toContain('nft delete table ip s9_cut');
+  });
+
+  it('s9CutArgs refuses a non-mesh host', () => {
+    expect(() => s9.s9CutArgs(TOPO_S9, 'browser')).toThrow(/mesh host/);
+  });
+});
+
+// MESH_INTERFACE → Acceptance — every nft rule the scenarios would
+// apply passes `nft -c -f` under unshare -rn (see the top-level case
+// in stage-run.test.ts). s9's argvs ride that same gate; the pure
+// check below pins s9's own rulesets to the stage's syntax.
+describe("s9 — the nft argvs pass nft -c under unshare -rn", () => {
+  it('s9ThroughOneNodeArgs + s9CutArgs builds rules nft -c accepts', () => {
+    const { spawnSync } = require('node:child_process');
+    const { mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+    const { tmpdir } = require('node:os');
+    const path = require('node:path');
+    const preflight = spawnSync('unshare', ['-rn', 'true'], { encoding: 'utf8', timeout: 5_000 });
+    if (preflight.status !== 0) {
+      process.stdout.write('[skip] s9 nft case: unshare -rn is not available\n');
+      expect(true).toBe(true);
+      return;
+    }
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: {
+          role: 'public', addr: '11.100.0.11',
+          mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+          node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+        },
+        pub2: {
+          role: 'public', addr: '11.100.0.12',
+          mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+          node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+        },
+      },
+    };
+    const drop = s9.s9ThroughOneNodeArgs(topology, 'pub1');
+    const cut = s9.s9CutArgs(topology, 'pub2');
+    // `nft -c -f` reads a ruleset file where each line is an nft
+    // command WITHOUT the leading `nft` word; the stage's own argv
+    // starts with `sudo ip netns exec <ns> nft`, so the file-form
+    // drops those six words.
+    const stripToRule = (argv: string[]): string => argv.slice(6).join(' ');
+    const dropRules = [drop.addTable, drop.addChain, ...drop.drops.map((d) => d.argv)].map(stripToRule).join('\n') + '\n';
+    const cutRules = [cut.addTable, cut.addChain, cut.dropWebrtc, cut.dropMeshTcp, cut.dropNotisTcp].map(stripToRule).join('\n') + '\n';
+    const dir = mkdtempSync(path.join(tmpdir(), 's9-nft-'));
+    try {
+      const dropFile = path.join(dir, 's9-drop.nft');
+      const cutFile = path.join(dir, 's9-cut.nft');
+      writeFileSync(dropFile, dropRules);
+      writeFileSync(cutFile, cutRules);
+      for (const file of [dropFile, cutFile]) {
+        const r = spawnSync('unshare', ['-rn', 'nft', '-c', '-f', file], { encoding: 'utf8', timeout: 10_000 });
+        if (r.status !== 0) {
+          throw new Error(`nft -c refused ${file}: ${(r.stderr || r.stdout || '').trim()}`);
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

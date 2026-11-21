@@ -266,6 +266,37 @@ describe('page/probe.ts', () => {
     expect(result.bytes).toBe(4);
     expect(result.sha256).toBe(expectedSha);
   });
+
+  // MESH_INTERFACE → Acceptance 9 — `?probe=<path>&node=<notisId>`
+  // probes that specific node, not whichever the client's state
+  // names first. The probe still waits until the state's `nodeId` is
+  // non-null (the client holds a connection) and then reads the
+  // mesh URL for the named node.
+  it('runProbe({ nodeId }) names the given node in the mesh URL and the result', async () => {
+    const root = document.createElement('div');
+    const stateNodeId = 'a'.repeat(64);
+    const otherNodeId = 'b'.repeat(64);
+    const body = new TextEncoder().encode('{"height":77}');
+    const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', body));
+    let expectedSha = '';
+    for (const b of digest) expectedSha += b.toString(16).padStart(2, '0');
+    const { client, emit, fetched } = buildFake({
+      nodeId: stateNodeId,
+      body,
+      expectUrl: `notis-mesh://${otherNodeId}/blocks/current`,
+    });
+    const promise = runProbe({ client, path: '/blocks/current', root, nodeId: otherNodeId });
+    emit(stateNodeId);
+    const result = await promise;
+    expect(result.nodeId, 'the named node is in the result').toBe(otherNodeId);
+    expect(result.sha256).toBe(expectedSha);
+    expect(fetched, 'the named node is in the mesh URL fetched').toEqual([`notis-mesh://${otherNodeId}/blocks/current`]);
+    const pre = root.querySelector('pre#probe');
+    expect(pre).not.toBeNull();
+    const parsed = JSON.parse(pre!.textContent ?? '');
+    expect(parsed.nodeId).toBe(otherNodeId);
+    expect(parsed.path).toBe('/blocks/current');
+  });
 });
 
 describe('page/probe.ts survives a render', () => {

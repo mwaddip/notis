@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// MESH_INTERFACE → Acceptance — the entry point for the eight
-// scenarios. `stage:run [s1 ... s8]` runs the named scenarios in the
-// order given (default: all eight, in order). Each scenario writes
+// MESH_INTERFACE → Acceptance — the entry point for the nine
+// scenarios. `stage:run [s1 ... s9]` runs the named scenarios in the
+// order given (default: all nine, in order). Each scenario writes
 // `stage/out/scenarios/<name>.json` with every step's verdict and the
 // measurement it rests on, and a per-scenario fault log. `--dry-run`
 // prints every fault each scenario would apply inside `notismesh-*`
@@ -25,6 +25,7 @@ import * as s5 from './scenarios/s5-impersonation.mjs';
 import * as s6 from './scenarios/s6-hostile.mjs';
 import * as s7 from './scenarios/s7-reach-and-load.mjs';
 import * as s8 from './scenarios/s8-prove-once.mjs';
+import * as s9 from './scenarios/s9-through-one-node.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -43,6 +44,7 @@ const SCENARIOS = {
   s6,
   s7,
   s8,
+  s9,
 };
 
 function parseArgs(argv) {

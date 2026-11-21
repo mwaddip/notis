@@ -1,12 +1,13 @@
-// MESH_INTERFACE → Acceptance — the one query parameter the page reads:
-// `?probe=<path>`. After the first state with a non-null `nodeId`
-// (which is the client's first check: a `resolveTip` success on a
-// first-contact node it could verify, `MESH_INTERFACE → The client's node list → "A
-// check"`), the page reads `<path>` through its own client's
-// `fetch` — a mesh URL `notis-mesh://<nodeId><path>` — and writes a
-// `<pre id="probe">` with `{ path, nodeId, status, bytes, sha256 }`:
-// the body's byte length and its SHA-256 as 64 lowercase hex. Text
-// only, no global, no other behaviour change.
+// MESH_INTERFACE → Acceptance — the query parameters the page reads
+// for a probe: `?probe=<path>` and, under MESH_INTERFACE →
+// Acceptance 9, `&node=<notisId>`. After the first state with a
+// non-null `nodeId` (`MESH_INTERFACE → The client's node list → "A
+// check"`), the page reads `<path>` through its own client's `fetch`
+// — a mesh URL `notis-mesh://<nodeId><path>`, where `<nodeId>` is the
+// caller's explicit choice when given, else the state's first — and
+// writes a `<pre id="probe">` with `{ path, nodeId, status, bytes,
+// sha256 }`: the body's byte length and its SHA-256 as 64 lowercase
+// hex. Text only, no global, no other behaviour change.
 //
 // Browser-safe: `globalThis.crypto.subtle.digest('SHA-256', body)` is
 // Web Crypto (CryptoSubtle) in every browser Notis supports, and in
@@ -27,10 +28,19 @@ export interface RunProbeOptions {
   client: Pick<MeshClient, 'fetch' | 'state' | 'onState'>;
   path: string;
   root: HTMLElement;
+  /**
+   * MESH_INTERFACE → Acceptance 9 — the node the probe reads. When
+   * given, the mesh URL names this node; the probe still waits until
+   * the client's state carries a non-null `nodeId` before the fetch,
+   * so the client holds at least one connection and `fetch` resolves
+   * through it. Absent: the state's first non-null `nodeId` is used.
+   */
+  nodeId?: string;
 }
 
 export async function runProbe(opts: RunProbeOptions): Promise<ProbeResult> {
-  const nodeId = await firstNodeId(opts.client);
+  const stateNodeId = await firstNodeId(opts.client);
+  const nodeId = opts.nodeId ?? stateNodeId;
   const url = meshBaseUrl(nodeId) + opts.path;
   const res = await opts.client.fetch(url);
   const buf = new Uint8Array(await res.arrayBuffer());
