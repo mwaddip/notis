@@ -18,11 +18,12 @@ import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { kadDHT } from '@libp2p/kad-dht';
 import { gossipsub } from '@libp2p/gossipsub';
-import type { AddressSorter, PrivateKey } from '@libp2p/interface';
+import type { AddressSorter, PrivateKey, Transport } from '@libp2p/interface';
 import type { Multiaddr } from '@multiformats/multiaddr';
 import { gossipsubOptions, gossipTopics } from '../gossip-rules.js';
 import { dhtProtocol, type MeshNetworkName } from './constants.js';
 import { registerFipsProtocol } from './fips-addr.js';
+import type { FipsStack } from './fips-stack.js';
 
 /**
  * NET_INTERFACE → The browser entry — `readerLibp2pOptions`'
@@ -45,6 +46,11 @@ export interface ReaderLibp2pOptions {
   readonly iceServers: () => RTCIceServer[];
   readonly denyDialMultiaddr: (ma: Multiaddr) => boolean;
   readonly addressSorter?: AddressSorter;
+  // NET_INTERFACE → The browser entry — "`readerLibp2pOptions` …, handed
+  // a reader's FIPS stack as `fips`, adds its transport to the reader's;
+  // the caller attaches the stack". MESH_INTERFACE → FIPS → "A reader
+  // dials over it".
+  readonly fips?: FipsStack;
 }
 
 /**
@@ -59,7 +65,7 @@ export function readerLibp2pOptions(
   o: ReaderLibp2pOptions,
 ): {
   privateKey: PrivateKey;
-  transports: ReturnType<typeof webRTCDirect | typeof webRTC | typeof circuitRelayTransport | typeof webSockets>[];
+  transports: ((components: unknown) => Transport)[];
   connectionEncrypters: ReturnType<typeof noise>[];
   streamMuxers: ReturnType<typeof yamux>[];
   connectionManager: { addressSorter?: AddressSorter };
@@ -83,12 +89,16 @@ export function readerLibp2pOptions(
   // back to its DEFAULT_ICE_SERVERS; `webRTC`'s `rtcConfiguration` is
   // a function the transport reads on every dial, so a changing STUN
   // list flows into every new peer connection.
-  const transports = [
-    webRTCDirect({ rtcConfiguration: { iceServers: [] } }),
-    webRTC({ rtcConfiguration: () => ({ iceServers: o.iceServers() }) }),
-    circuitRelayTransport(),
-    webSockets(),
+  const transports: ((components: unknown) => Transport)[] = [
+    webRTCDirect({ rtcConfiguration: { iceServers: [] } }) as (components: unknown) => Transport,
+    webRTC({ rtcConfiguration: () => ({ iceServers: o.iceServers() }) }) as (components: unknown) => Transport,
+    circuitRelayTransport() as (components: unknown) => Transport,
+    webSockets() as (components: unknown) => Transport,
   ];
+  // MESH_INTERFACE → FIPS → "A reader dials over it" — a reader handed
+  // a FIPS stack dials `/fips` addresses through it; the caller attaches
+  // the stack after `createLibp2p`.
+  if (o.fips !== undefined) transports.push(o.fips.transport);
   const connectionManager: { addressSorter?: AddressSorter } = {};
   if (o.addressSorter !== undefined) connectionManager.addressSorter = o.addressSorter;
   return {

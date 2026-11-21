@@ -92,6 +92,13 @@ export const FIPS_TCP_SEND_BUFFER_BYTES: 65536 = 65536;
 export const FIPS_TCP_CONNECTIONS_PER_PEER: 2 = 2;
 
 /**
+ * MESH_INTERFACE → FIPS → "A reader links when a node's every other
+ * address failed" — the links a reader holds; one, so the node a FIPS
+ * connection was routed through is the node its link rides.
+ */
+export const FIPS_READER_LINKS_MAX: 1 = 1;
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */

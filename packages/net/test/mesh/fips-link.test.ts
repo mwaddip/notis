@@ -27,6 +27,7 @@ import {
 import {
   fipsLinkProtocol,
   LibP2pLinkTransport,
+  type FipsLinkChange,
 } from '../../src/mesh/fips-link.js';
 import { FIPS_LINK_MTU } from '../../src/mesh/constants.js';
 
@@ -379,6 +380,58 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     const ev = await disc;
     expect(ev?.state).toBe('disconnected');
   }, 15_000);
+
+  // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over
+  // it completes" — `onLinkChange` fires `up` on `linkUp`; MESH_INTERFACE
+  // → FIPS → "A key holds one link, and the libp2p peer that named it
+  // holds the key" — it fires `closed` when the entry is dropped (the
+  // stream ends, the transport stops, `close(addr)`).
+  it('onLinkChange reports up once and closed once for a link that forms and ends', async () => {
+    a = await makePeer();
+    b = await makePeer();
+    const events: FipsLinkChange[] = [];
+    const unsub = a.transport.onLinkChange((ev) => { events.push(ev); });
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* stub */ });
+    await waitFor(
+      () => events.some((e) => e.state === 'up' && e.remoteKeyHex === b!.pubkeyHex),
+      3_000,
+    );
+    await conn.close();
+    await waitFor(
+      () => events.some((e) => e.state === 'closed' && e.remoteKeyHex === b!.pubkeyHex),
+      3_000,
+    );
+    const bPeer = b.libp2p.peerId.toString();
+    const forB = events.filter((e) => e.remoteKeyHex === b!.pubkeyHex);
+    expect(forB).toEqual([
+      { remoteKeyHex: b.pubkeyHex, remotePeer: bPeer, state: 'up' },
+      { remoteKeyHex: b.pubkeyHex, remotePeer: bPeer, state: 'closed' },
+    ]);
+    unsub();
+    const beforeLen = events.length;
+    const conn2 = await dial(a.libp2p, b.libp2p, true);
+    await a.transport.openLink(conn2).catch(() => { /* stub */ });
+    await waitPeer(a.node, b.pubkeyHex, 3_000);
+    await sleep(300);
+    expect(events.length).toBe(beforeLen);
+  }, 20_000);
+
+  it('linkPeers names the up link\'s libp2p peer', async () => {
+    a = await makePeer();
+    b = await makePeer();
+    expect(a.transport.linkPeers()).toEqual([]);
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* stub */ });
+    const up = await waitFor(() => a!.transport.linkPeers().length === 1, 3_000);
+    expect(up).toBe(true);
+    expect(a.transport.linkPeers()).toEqual([
+      { remoteKeyHex: b.pubkeyHex, remotePeer: b.libp2p.peerId.toString() },
+    ]);
+    await conn.close();
+    await waitFor(() => a!.transport.linkPeers().length === 0, 3_000);
+    expect(a.transport.linkPeers()).toEqual([]);
+  }, 20_000);
 
   it('an ended link is reopened over a connection still held', async () => {
     a = await makePeer({ retryBaseMs: 50, retryCapMs: 500 });
