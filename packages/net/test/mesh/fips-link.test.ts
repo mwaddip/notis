@@ -433,6 +433,32 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     expect(a.transport.linkPeers()).toEqual([]);
   }, 20_000);
 
+  // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over
+  // it completes" — an entry is held pending until FIPS's own handshake
+  // completes; before that, `linkPeers()` names nothing. The reader's
+  // gater reads `linkPeers().length > 0` as "a link is up", so a pending
+  // entry must not open the gate.
+  it('linkPeers names no link that is not up yet', async () => {
+    // A long hint timeout so the pending entry outlives this case; a raw
+    // libp2p peer writes a valid 33-byte compressed key for an identity
+    // whose secret it does not hold, so A's answerer holds the stream
+    // (the entry is held) but fips-ts's FMP handshake over it never
+    // completes and `linkUp` never fires.
+    a = await makePeer({ hintTimeoutMs: 10_000 });
+    raw = await makeLibp2p();
+    const conn = await dial(raw, a.libp2p);
+    const stream: Stream = await conn.newStream(fipsLinkProtocol('testnet'));
+    const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
+    const fresh = await generateIdentity();
+    await lp.write(fresh.publicKey);
+    // A's answering key proves A has held the stream; the entry is in
+    // `links` and still pending.
+    const answer = await lp.read();
+    expect(answer.subarray().length).toBe(33);
+    expect(a.transport.linkPeers()).toEqual([]);
+    expect(a.transport.linkedKeys()).toEqual([]);
+  }, 15_000);
+
   it('an ended link is reopened over a connection still held', async () => {
     a = await makePeer({ retryBaseMs: 50, retryCapMs: 500 });
     b = await makePeer();
