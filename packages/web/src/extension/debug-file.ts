@@ -7,6 +7,8 @@
 // `savedAt` (the number recorded in the document) and `nowMs` (the number
 // the filename is formed from).
 
+import { notisIdFromPeerId, MeshKeyError } from '@dagsocial/net/browser';
+import { peerIdFromString } from '@libp2p/peer-id';
 import type { DebugEvent } from './debug-log.js';
 import type { DebugSnapshot, ReaderFacts, SettingsFacts } from './debug-snapshot.js';
 
@@ -46,7 +48,7 @@ const HEX64 = /^[0-9a-f]{64}$/i;
 const BOX_ID = /^[0-9a-f]{64}-\d+$/i;
 
 /** The identifying-value classes the collection sorts into. */
-type ValueClass = 'key' | 'name' | 'tx' | 'post' | 'box' | 'hand-node' | 'local-node' | 'addr';
+type ValueClass = 'key' | 'name' | 'tx' | 'post' | 'box' | 'hand-node' | 'local-node' | 'addr' | 'npub';
 
 interface Collected {
   /** `[value, class]` pairs in collection order; duplicates allowed but
@@ -165,7 +167,97 @@ function collect(snapshot: DebugSnapshot, events: readonly DebugEvent[]): Collec
     collectFromMesh(c, snapshot.mesh.state.nodes);
   }
   collectFromEvents(c, events);
+  // WEB_INTERFACE → The extension → "The identifying values" — "the npub of
+  // its FIPS address wherever it stands, since an access point says where its
+  // reader stands". A seed node's npub is not identifying and stays, so the
+  // collection takes the npubs whose `/p2p/<peer id>` maps to a node already
+  // being replaced (its notisId reached `collectFromMesh` or
+  // `collectFromEvents` as a `local-node`).
+  const replacedNotisIds = new Set<string>();
+  for (const v of c.values) {
+    if (v.cls === 'local-node') replacedNotisIds.add(v.value);
+  }
+  for (const npub of collectNpubs(snapshot, events, replacedNotisIds)) {
+    pushUnique(c, npub, 'npub');
+  }
   return c;
+}
+
+// WEB_INTERFACE → The extension → "The identifying values" — "the npub of
+// its FIPS address wherever it stands". For each FIPS-shaped substring
+// `/fips/<npub>[/p2p/<peer id>]` anywhere in the snapshot or the events, if
+// the peer id maps (through the existing helpers) to a replaced notisId, or
+// the address stands beside a connection whose peer is a replaced notisId,
+// the npub is collected.
+const FIPS_REF_RE = /\/fips\/([0-9a-z]+)(?:\/p2p\/([^/\s"]+))?/g;
+
+function fipsRefs(s: string): Array<{ npub: string; peerId: string | null }> {
+  if (!s.includes('/fips/')) return [];
+  const out: Array<{ npub: string; peerId: string | null }> = [];
+  for (const m of s.matchAll(FIPS_REF_RE)) {
+    out.push({ npub: m[1]!, peerId: m[2] ?? null });
+  }
+  return out;
+}
+
+function notisIdOfPeerId(peerIdStr: string): string | null {
+  try {
+    return notisIdFromPeerId(peerIdFromString(peerIdStr));
+  } catch (e) {
+    if (e instanceof MeshKeyError) return null;
+    return null;
+  }
+}
+
+export function collectNpubs(
+  snapshot: DebugSnapshot,
+  events: readonly DebugEvent[],
+  replacedNotisIds: Set<string>,
+): string[] {
+  const out = new Set<string>();
+
+  const consider = (npub: string, peerId: string | null, fallback: string | null): void => {
+    let notisId: string | null = null;
+    if (peerId !== null) notisId = notisIdOfPeerId(peerId);
+    if (notisId === null) notisId = fallback;
+    if (notisId !== null && replacedNotisIds.has(notisId)) out.add(npub);
+  };
+
+  const walk = (s: string, fallback: string | null): void => {
+    for (const r of fipsRefs(s)) consider(r.npub, r.peerId, fallback);
+  };
+
+  if (!('error' in snapshot.mesh)) {
+    for (const node of snapshot.mesh.state.nodes) {
+      for (const a of node.addrs ?? []) walk(a, node.notisId);
+      for (const a of node.droppedAddrs ?? []) walk(a, node.notisId);
+      for (const k of Object.keys(node.lastFailures ?? {})) walk(k, node.notisId);
+    }
+    for (const conn of snapshot.mesh.diagnostics.connections) {
+      const peerAsNotis = conn.peerKind === 'notis' ? conn.peer : null;
+      walk(conn.remoteAddr, peerAsNotis);
+    }
+  }
+
+  // `dial` events carry each attributed address in `outcome.addresses[*].addr`
+  // beside the event's `nodeId`; a `connection` event names its peer and
+  // transport but no remote address, so no address walk arises there.
+  for (const e of events) {
+    if (e.kind !== 'dial') continue;
+    const outcome = e['outcome'];
+    if (outcome === null || typeof outcome !== 'object') continue;
+    const addresses = (outcome as { addresses?: unknown }).addresses;
+    if (!Array.isArray(addresses)) continue;
+    const nodeIdRaw = e['nodeId'];
+    const fallback = typeof nodeIdRaw === 'string' ? nodeIdRaw : null;
+    for (const a of addresses) {
+      if (a === null || typeof a !== 'object') continue;
+      const addr = (a as { addr?: unknown }).addr;
+      if (typeof addr === 'string') walk(addr, fallback);
+    }
+  }
+
+  return [...out];
 }
 
 interface PlaceholderMap {

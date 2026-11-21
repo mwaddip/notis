@@ -19,6 +19,7 @@ import type { Multiaddr } from '@multiformats/multiaddr';
 
 import type { MeshConfig } from './config.js';
 import { meshEndpoint } from './endpoint.js';
+import { FIPS_PROTOCOL_NAME } from './fips-addr.js';
 import {
   WEBRTC_CERT_LIFESPAN_MS,
   dhtProtocol,
@@ -51,15 +52,33 @@ export function meshListenAddrs(
  * — the same paragraph's close names the private role: a private
  * node announces its relay reservations. libp2p 3.5's `AddressManager`
  * runs this filter over every address it would otherwise announce
- * (`libp2p/src/address-manager/index.js` `getAddresses()`), and this
- * filter keeps `/p2p-circuit`-bearing addresses and — per
- * `MESH_INTERFACE → FIPS → "A node announces its FIPS address"` —
- * FIPS addresses beside them.
+ * (`libp2p/src/address-manager/index.js` `getAddresses()`).
+ *
+ * `MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"` —
+ * a plain relay address (a `p2p-circuit` component, no `fips` component)
+ * is kept, and so is the node's own FIPS address (first component
+ * `fips`, no `p2p-circuit`); a relay address libp2p built on a relay's
+ * FIPS address — carrying both components — is dropped. Decided by
+ * components, not substrings.
  */
 export function privateAnnounceFilter(mas: Multiaddr[]): Multiaddr[] {
   return mas.filter((ma) => {
-    const s = ma.toString();
-    return s.includes('/p2p-circuit') || s.includes('/fips/');
+    const components = ma.getComponents();
+    let hasFips = false;
+    let fipsFirst = false;
+    let hasCircuit = false;
+    for (let i = 0; i < components.length; i++) {
+      const name = components[i]!.name;
+      if (name === FIPS_PROTOCOL_NAME) {
+        hasFips = true;
+        if (i === 0) fipsFirst = true;
+      } else if (name === 'p2p-circuit') {
+        hasCircuit = true;
+      }
+    }
+    if (hasCircuit && !hasFips) return true;
+    if (fipsFirst && !hasCircuit) return true;
+    return false;
   });
 }
 

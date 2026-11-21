@@ -283,6 +283,23 @@ describe('startExtensionMesh — the lifecycle', () => {
     expect(startOpts!.localLookup).toEqual({ url: LOCAL_IDENTITY_URL });
   });
 
+  it('the extension starts its client with FIPS', async () => {
+    // WEB_INTERFACE → The extension → "The mesh is the extension's first
+    // path" — the reader is started with `fips`, so a check dials a node's
+    // FIPS address when its other addresses failed
+    // (MESH_INTERFACE → FIPS → "A reader links when a node's every other
+    // address failed").
+    let startOpts: StartMeshClientOptions | null = null;
+    const client = fakeClient();
+    const startMeshClient = vi.fn(async (opts: StartMeshClientOptions): Promise<MeshClient> => { startOpts = opts; return client; });
+    await startExtensionMesh({
+      firstContact: [], network: 'devnet', agentName: 'notis-extension', httpFetch: fetch.bind(globalThis),
+      check, storage: fakeStorage(), locks: fakeLocks(), window: { addEventListener: () => {} },
+      startMeshClient, postTexts: emptyPostTexts, debugLog: noopDebugLog(),
+    });
+    expect(startOpts!.fips).toBe(true);
+  });
+
   it('a stored hand-added address is re-added via addByHand after start', async () => {
     const addCalls: string[] = [];
     const client = fakeClient({ addByHand: (id) => { addCalls.push(id); } });
@@ -643,6 +660,31 @@ describe("mesh client's reports in the debug log — a dial is stored with its f
     const dials = list.filter((e) => e.kind === 'dial');
     expect(dials).toHaveLength(1);
     expect(dials[0]).toMatchObject({ nodeId: HEX64_P, ms: 123 });
+  });
+});
+
+// WEB_INTERFACE → The extension → "The debug log" — "a FIPS link opened,
+// up, failed or closed and the node it rides". The sink's generic path
+// stores every non-`request` event under its own kind with its fields;
+// this case pins the `fips-link` kind reaches the log carrying its `event`
+// and `via`.
+describe("the sink records a fips-link event", () => {
+  it('a `fips-link` report is stored under kind `fips-link` with its event and via', async () => {
+    const log = makeDebugLog();
+    const start = vi.fn(async (): Promise<MeshClient> => fakeClient());
+    const opts = await startWithDebug(fakeStorage(), start, log);
+    expect(typeof opts.events).toBe('function');
+    const ev: MeshEvent = {
+      kind: 'fips-link',
+      event: 'up',
+      via: HEX64_P,
+    };
+    opts.events!(ev);
+    await log.flush();
+    const list = await log.list();
+    const links = list.filter((e) => e.kind === 'fips-link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ event: 'up', via: HEX64_P });
   });
 });
 

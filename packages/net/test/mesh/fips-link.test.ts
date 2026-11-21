@@ -27,6 +27,7 @@ import {
 import {
   fipsLinkProtocol,
   LibP2pLinkTransport,
+  type FipsLinkChange,
 } from '../../src/mesh/fips-link.js';
 import { FIPS_LINK_MTU } from '../../src/mesh/constants.js';
 
@@ -378,6 +379,84 @@ describe('MESH_INTERFACE → FIPS: LibP2pLinkTransport link cases', () => {
     await conn.close();
     const ev = await disc;
     expect(ev?.state).toBe('disconnected');
+  }, 15_000);
+
+  // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over
+  // it completes" — `onLinkChange` fires `up` on `linkUp`; MESH_INTERFACE
+  // → FIPS → "A key holds one link, and the libp2p peer that named it
+  // holds the key" — it fires `closed` when the entry is dropped (the
+  // stream ends, the transport stops, `close(addr)`).
+  it('onLinkChange reports up once and closed once for a link that forms and ends', async () => {
+    a = await makePeer();
+    b = await makePeer();
+    const events: FipsLinkChange[] = [];
+    const unsub = a.transport.onLinkChange((ev) => { events.push(ev); });
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* stub */ });
+    await waitFor(
+      () => events.some((e) => e.state === 'up' && e.remoteKeyHex === b!.pubkeyHex),
+      3_000,
+    );
+    await conn.close();
+    await waitFor(
+      () => events.some((e) => e.state === 'closed' && e.remoteKeyHex === b!.pubkeyHex),
+      3_000,
+    );
+    const bPeer = b.libp2p.peerId.toString();
+    const forB = events.filter((e) => e.remoteKeyHex === b!.pubkeyHex);
+    expect(forB).toEqual([
+      { remoteKeyHex: b.pubkeyHex, remotePeer: bPeer, state: 'up' },
+      { remoteKeyHex: b.pubkeyHex, remotePeer: bPeer, state: 'closed' },
+    ]);
+    unsub();
+    const beforeLen = events.length;
+    const conn2 = await dial(a.libp2p, b.libp2p, true);
+    await a.transport.openLink(conn2).catch(() => { /* stub */ });
+    await waitPeer(a.node, b.pubkeyHex, 3_000);
+    await sleep(300);
+    expect(events.length).toBe(beforeLen);
+  }, 20_000);
+
+  it('linkPeers names the up link\'s libp2p peer', async () => {
+    a = await makePeer();
+    b = await makePeer();
+    expect(a.transport.linkPeers()).toEqual([]);
+    const conn = await dial(a.libp2p, b.libp2p);
+    await a.transport.openLink(conn).catch(() => { /* stub */ });
+    const up = await waitFor(() => a!.transport.linkPeers().length === 1, 3_000);
+    expect(up).toBe(true);
+    expect(a.transport.linkPeers()).toEqual([
+      { remoteKeyHex: b.pubkeyHex, remotePeer: b.libp2p.peerId.toString() },
+    ]);
+    await conn.close();
+    await waitFor(() => a!.transport.linkPeers().length === 0, 3_000);
+    expect(a.transport.linkPeers()).toEqual([]);
+  }, 20_000);
+
+  // MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over
+  // it completes" — an entry is held pending until FIPS's own handshake
+  // completes; before that, `linkPeers()` names nothing. The reader's
+  // gater reads `linkPeers().length > 0` as "a link is up", so a pending
+  // entry must not open the gate.
+  it('linkPeers names no link that is not up yet', async () => {
+    // A long hint timeout so the pending entry outlives this case; a raw
+    // libp2p peer writes a valid 33-byte compressed key for an identity
+    // whose secret it does not hold, so A's answerer holds the stream
+    // (the entry is held) but fips-ts's FMP handshake over it never
+    // completes and `linkUp` never fires.
+    a = await makePeer({ hintTimeoutMs: 10_000 });
+    raw = await makeLibp2p();
+    const conn = await dial(raw, a.libp2p);
+    const stream: Stream = await conn.newStream(fipsLinkProtocol('testnet'));
+    const lp = lpStream(stream, { maxDataLength: FIPS_LINK_MTU });
+    const fresh = await generateIdentity();
+    await lp.write(fresh.publicKey);
+    // A's answering key proves A has held the stream; the entry is in
+    // `links` and still pending.
+    const answer = await lp.read();
+    expect(answer.subarray().length).toBe(33);
+    expect(a.transport.linkPeers()).toEqual([]);
+    expect(a.transport.linkedKeys()).toEqual([]);
   }, 15_000);
 
   it('an ended link is reopened over a connection still held', async () => {

@@ -26,3 +26,7 @@ export function verdictS8NoProofs(m: unknown): Verdict;
 export function verdictS8Gossip(m: unknown): Verdict;
 export function verdictS8Fork(m: unknown): Verdict;
 export function verdictS8Gap(m: unknown): Verdict;
+export function verdictS9NoLink(m: unknown): Verdict;
+export function verdictS9Through(m: unknown): Verdict;
+export function verdictS9Probe(m: unknown): Verdict;
+export function verdictS9Cut(m: unknown): Verdict;

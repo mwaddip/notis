@@ -204,6 +204,19 @@ describe('readNodesMeta — the extension\'s per-network seed list', () => {
     expect(p.readNodesMeta()).toEqual([]);
     expect(p.BUILD_NODES).toEqual([]);
   });
+
+  it("a seed's FIPS address parses", async () => {
+    // WEB_INTERFACE → The extension → "The seed list, the faucet's base
+    // and the network's name" — each node's last address is its FIPS
+    // address (MESH_INTERFACE → FIPS), kept by parseNodeEntry under the
+    // same rules as any other multiaddr: no DNS component, ending in
+    // `/p2p/<peer id>`.
+    const fipsAddr = '/fips/npub1lpxz9sucre2dap6u9pa87hyp7hxqkgr73f453809kjy5jjxc52es02zp2u/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    const entry = { notisId: NID, addrs: [ADDR, fipsAddr], api: 'https://notis.fun/testnet/api' };
+    setMeta('notis-nodes', JSON.stringify([entry]));
+    const p = await importPrefs();
+    expect(p.BUILD_NODES).toEqual([{ notisId: NID, addrs: [ADDR, fipsAddr], api: 'https://notis.fun/testnet/api' }]);
+  });
 });
 
 describe('HAND_NODE_KEY — the hand-added node\'s address, in localStorage', () => {

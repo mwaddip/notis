@@ -3,7 +3,7 @@
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
 handful of first-contact nodes and **no DNS name**. The mesh runs inside each devnet `@dagsocial/node` — the
 node answers the mesh endpoint from its own HTTP, byte for byte. The stage runs the whole
-machinery inside Linux network namespaces on one host and the eight scenarios in
+machinery inside Linux network namespaces on one host and the nine scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
 ## Threat model
@@ -33,6 +33,7 @@ reaching the inviter by key — are later work; they are not here.
 | 9 | When no reachable node continues the kept chain, the page keeps its own and says, in these words: `No node reached continues the chain you verified.` | `MESH_INTERFACE → What the client remembers → "When no node continues it"` |
 | 10 | Malformed and invalid proofs blacklist with their evidence; a valid proof of a lighter chain reads `behind`. | `MESH_INTERFACE → The client's node list` |
 | 11 | A node added by the reader by hand is dialled at its private address; a remote node offering a private address is refused. | `MESH_INTERFACE → Discovery → "A node added by hand"` |
+| 12 | A browser whose host routes to one node alone reaches another node by key through it over FIPS; a node reached that way and then cut reads `retry`, never `blacklisted`; a browser with direct paths opens no FIPS link. | `MESH_INTERFACE → Acceptance → "Through one node"` |
 
 **Non-goals** — these are out of scope: multi-hop routing, DMs, node identities on chain and
 vouches, ranking by vouches, a remembered tip, any change to the node, the extension or the
@@ -124,7 +125,7 @@ timeout 10m  pnpm -r build
 timeout  5m  pnpm --filter @dagsocial/mesh-poc page:build
 
 timeout 20m  pnpm --filter @dagsocial/mesh-poc stage:up
-timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s6 s1 s2 s3 s4 s5 s7 s8
+timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s1 s2 s3 s4 s5 s6 s7 s8 s9
 timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
@@ -158,8 +159,8 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   every recorded PID is alive, and prints `stage up: <N> processes, <M> namespaces`. On
   failure it rolls back exactly what it created (SIGTERMs each recorded PID, deletes each
   namespace in reverse order, removes `/etc/netns/notismesh-*`).
-- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all eight,
-  `s1 s2 s3 s4 s5 s6 s7 s8`). Writes `stage/out/scenarios/<name>.json` per scenario:
+- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all nine,
+  `s1 s2 s3 s4 s5 s6 s7 s8 s9`). Writes `stage/out/scenarios/<name>.json` per scenario:
   `{ scenario, startedAt, endedAt, steps, faults }`, each step `{ name, verdict, measurement,
   timeMs }`. **A step that times out or throws is `FAIL`; the scenario's faults are removed and
   the run goes on. A step that did not run reads `skipped`, never a pass.** Each scenario writes
@@ -212,7 +213,7 @@ only `stage/out/pids.json`** — every other file under `stage/out/` stays, for 
 over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
 `stage/out.prev/` (replacing any older `.prev`) at its start.
 
-## The eight scenarios
+## The nine scenarios
 
 Each scenario's step list is `verdicts.mjs`'s rules in order. A `PASS` requires **positive
 evidence**: a vacuous read (no connection, no measurement) is never a pass. A step reads `skipped`
@@ -394,6 +395,30 @@ counts for `tip`/`header`/`proof`/`gossip`, and `forwarded`) is what step 1 and 
 measure through `state.traffic.proofReads`: `Proofs read` is the field a tester reads at a glance
 to confirm the "no proof read" claim.
 
+### s9 — Through one node (`MESH_INTERFACE → Acceptance 9`)
+
+Four sub-steps. The scenario reads one browser's path to one access node (pub1) with every other
+mesh host dropped at the browser's own namespace, so pub1 is the one reachable mesh node and the
+other reads only through a FIPS link that rides pub1's connection.
+
+| # | Step | Pass condition | What breaks it |
+|---|---|---|---|
+| 1 | `direct paths to every node: the client reads each one without opening a FIPS link` | Under no faults, within 60 s the page's `#state` carries `checks >= 1` and `nodeId` non-null; `<pre id="fips-links">` holds `[]` (no `fips-link` event) and no `state.nodes[i].transport` is `'fips'`. Measures `fipsLinkCount`, `entries`. | A `fips-link` event; an entry on `fips`; an empty `entries` set. |
+| 2 | `drop every mesh host but pub1: pub2 reads fips through pub1` | The `s9_drop` nft table in `notismesh-browser` drops every mesh host but pub1's address (lan1 and lan1-peer's 10.103.0.x addresses included, since they share natC's inside bridge with the browser). Within `6 · CHECK_INTERVAL_MS` the page's state reads the other first-contact id as `ok` or `trailing`, entry `transport: 'fips'`, entry `via: <pub1>`. Measures `accessId`, `otherEntries`. | The other id at `retry`, `blacklisted` or another transport; `via` naming another node. |
+| 3 | `probe each node through the page: the mesh's bytes equal the node's own byte for byte` | `miner-steady` is paused (SIGSTOP on its leaf PIDs, SIGCONT in `finally`). For pub1 and the other node, `?probe=<path>&node=<notisId>` reads `/blocks/current` and `/nipopow/proof/24/20` through the page, and the same path reads directly in the node's namespace; every pair's `sha256` and `bytes` match. Measures `probes`. | Any probe mismatch. |
+| 4 | `pub2 cut: pub2 reads retry, never blacklisted` | The `s9_cut` nft table in `notismesh-pub2` drops pub2's inbound webrtc UDP and the mesh and node TCP ports, so pub1's running FIPS link to pub2 falls under the running connection's packet loss. Within `2 · CHECK_INTERVAL_MS + 10 s` pub2's entry reads `retry`, and no poll in the window read it `blacklisted`. Measures `nodeId`, `status`, `blacklistedAtAnyPoll`. | `blacklisted` at any poll; a status other than `retry` at the end. |
+
+**What this holds** (`MESH_INTERFACE → FIPS → "A reader links when a node's every other address
+failed"`, `→ The client's node list → "A FIPS address is ranked last"`): a browser with direct
+paths dials no FIPS address; only when every other address of a node fails does the client open a
+link over a connection it holds and reach the node by key through it. The link is end-to-end
+authenticated by each node's key, so the node reached that way is that node — its proof, its tip
+and its answers equal what a reader with a direct path would read.
+
+**What a tester reports even on PASS:** pub2 reaching `blacklisted` at any poll in step 4 — a
+timeout, a refused connection, a dropped link or a non-2xx is `retry`, never permanent
+(`MESH_INTERFACE → The client's node list`).
+
 ## Firefox by hand
 
 The scenarios drive Chromium through CDP. The contract holds only where WebRTC-direct connects on
@@ -490,6 +515,26 @@ services is a failure.
    case its lookups never reach `dns.log` — also open `about:networking#dns` in the same
    Firefox window and read the DNS entries list. **Fails** if that list carries any STUN or
    relay host.
+
+5. **Through one node** (`MESH_INTERFACE → Acceptance 9`). Drop every mesh host but pub1 at the
+   browser's namespace, let the client's check run, and read `#state` and `#fips-links`:
+
+   ```bash
+   sudo ip netns exec notismesh-browser nft add table ip s9_drop
+   sudo ip netns exec notismesh-browser \
+     nft 'add chain ip s9_drop out { type filter hook output priority 0 ; }'
+   # One `nft add rule` per mesh host but pub1 (addresses from stage/out/identities.json).
+   # Wait a few checks, then read #state and #fips-links from DevTools.
+   # Expected: the other first-contact id reads status `ok` or `trailing`,
+   # entry `transport === 'fips'`, entry `via === <pub1>`; `#fips-links` lists
+   # at least one `{ event: 'up', via: <pub1> }` record.
+
+   # Remove.
+   sudo ip netns exec notismesh-browser nft delete table ip s9_drop
+   ```
+
+   **Fails** if the other id stays `retry`, if its entry's `transport` is not `'fips'`, or if
+   `#fips-links` is empty.
 
 ### What to report
 

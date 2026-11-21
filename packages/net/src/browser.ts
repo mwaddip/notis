@@ -177,11 +177,12 @@ export {
   FIPS_TCP_POLL_MS,
   FIPS_TCP_SEND_BUFFER_BYTES,
   FIPS_TCP_CONNECTIONS_PER_PEER,
+  FIPS_READER_LINKS_MAX,
 } from './mesh/constants.js';
 // MESH_INTERFACE → FIPS → "A link rides a libp2p connection the two ends already hold"
 // — the link protocol and the libp2p-stream transport fips-ts uses.
 export { fipsLinkProtocol, LibP2pLinkTransport } from './mesh/fips-link.js';
-export type { LibP2pLinkTransportOptions } from './mesh/fips-link.js';
+export type { LibP2pLinkTransportOptions, FipsLinkChange } from './mesh/fips-link.js';
 // MESH_INTERFACE → FIPS → "libp2p runs over a TCP/FIPS stream" — the libp2p
 // transport that carries libp2p connections over `@fips/tcp` streams.
 export {

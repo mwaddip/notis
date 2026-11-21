@@ -49,6 +49,17 @@ export interface LibP2pLinkTransportOptions {
   readonly random: () => number;
 }
 
+/**
+ * MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over it
+ * completes" — an event `onLinkChange` reports: a link came up, or an
+ * entry was dropped for any reason.
+ */
+export interface FipsLinkChange {
+  readonly remoteKeyHex: string;
+  readonly remotePeer: string;
+  readonly state: 'up' | 'closed';
+}
+
 // A held link stream. One `lpStream` per stream, used for the key frames,
 // every `send` and the receive loop (MESH_INTERFACE → FIPS → "Each side
 // names its key first"). Each `@libp2p/utils` byteStream listens to
@@ -98,6 +109,9 @@ export class LibP2pLinkTransport implements Transport {
   // clears every timer (MESH_INTERFACE → FIPS → "A key holds one link,
   // and the libp2p peer that named it holds the key").
   private readonly retries = new Map<string, RetryEntry>();
+  // Subscribers of `onLinkChange`. Each listener is wrapped in try/catch
+  // when fired so one throwing listener never breaks the transport.
+  private readonly linkListeners = new Set<(ev: FipsLinkChange) => void>();
   private ownKeyBytes: Uint8Array | null = null;
   private ownKeyHex: string | null = null;
   private stopped = false;
@@ -117,7 +131,13 @@ export class LibP2pLinkTransport implements Transport {
   async stop(): Promise<void> {
     this.stopped = true;
     // Close every held link; clear every timer — no handle outlives `stop`.
+    // Each dropped entry reports `closed` on `onLinkChange` before it goes.
     for (const entry of [...this.links.values()]) {
+      this.emitLinkChange({
+        remoteKeyHex: entry.remoteKeyHex,
+        remotePeer: entry.remotePeer,
+        state: 'closed',
+      });
       if (entry.hintTimer !== null) clearTimeout(entry.hintTimer);
       entry.hintTimer = null;
       try { entry.stream.abort(new Error('transport stopped')); } catch { /* already */ }
@@ -238,11 +258,13 @@ export class LibP2pLinkTransport implements Transport {
   /**
    * MESH_INTERFACE → FIPS → "A link is up once FIPS's own handshake over it
    * completes" — the stack calls this on fips-ts's `peer` event with
-   * `state: 'connected'`, which resets the opener's retry count.
+   * `state: 'connected'`, which resets the opener's retry count. The first
+   * call that moves an entry to `up` reports `up` on `onLinkChange`.
    */
   linkUp(remoteKeyHex: string): void {
     const entry = this.links.get(remoteKeyHex);
     if (!entry) return;
+    const wasUp = entry.state === 'up';
     entry.state = 'up';
     if (entry.hintTimer !== null) {
       clearTimeout(entry.hintTimer);
@@ -252,6 +274,13 @@ export class LibP2pLinkTransport implements Transport {
     if (r !== undefined) {
       if (r.timer !== null) clearTimeout(r.timer);
       this.retries.delete(entry.remotePeer);
+    }
+    if (!wasUp) {
+      this.emitLinkChange({
+        remoteKeyHex: entry.remoteKeyHex,
+        remotePeer: entry.remotePeer,
+        state: 'up',
+      });
     }
   }
 
@@ -265,6 +294,36 @@ export class LibP2pLinkTransport implements Transport {
       if (entry.state === 'up') out.push(entry.remoteKeyHex);
     }
     return out;
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — "`onLinkChange(listener)` tells each link
+   * up … and each link closed, for any reason". Returns the function that
+   * stops telling. A listener that throws never breaks the transport.
+   */
+  onLinkChange(listener: (ev: FipsLinkChange) => void): () => void {
+    this.linkListeners.add(listener);
+    return () => { this.linkListeners.delete(listener); };
+  }
+
+  /**
+   * NET_INTERFACE → The mesh — "`linkPeers()` answers the up links' keys
+   * and libp2p peers".
+   */
+  linkPeers(): Array<{ remoteKeyHex: string; remotePeer: string }> {
+    const out: Array<{ remoteKeyHex: string; remotePeer: string }> = [];
+    for (const entry of this.links.values()) {
+      if (entry.state === 'up') {
+        out.push({ remoteKeyHex: entry.remoteKeyHex, remotePeer: entry.remotePeer });
+      }
+    }
+    return out;
+  }
+
+  private emitLinkChange(ev: FipsLinkChange): void {
+    for (const listener of this.linkListeners) {
+      try { listener(ev); } catch { /* a listener never breaks the transport */ }
+    }
   }
 
   // ----- internal helpers -----
@@ -471,8 +530,14 @@ export class LibP2pLinkTransport implements Transport {
       entry.hintTimer = null;
     }
     try { entry.stream.abort(new Error(_reason)); } catch { /* already */ }
-    if (this.links.get(entry.remoteKeyHex) === entry) {
+    const removed = this.links.get(entry.remoteKeyHex) === entry;
+    if (removed) {
       this.links.delete(entry.remoteKeyHex);
+      this.emitLinkChange({
+        remoteKeyHex: entry.remoteKeyHex,
+        remotePeer: entry.remotePeer,
+        state: 'closed',
+      });
     }
   }
 }

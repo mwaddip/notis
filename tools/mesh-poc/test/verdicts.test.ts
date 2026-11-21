@@ -30,6 +30,10 @@ import {
   verdictS8Gossip,
   verdictS8Fork,
   verdictS8Gap,
+  verdictS9NoLink,
+  verdictS9Through,
+  verdictS9Probe,
+  verdictS9Cut,
 } from '../stage/lib/verdicts.mjs';
 
 describe('skipped — missing measurement', () => {
@@ -61,6 +65,10 @@ describe('skipped — missing measurement', () => {
     ['verdictS8Gossip', verdictS8Gossip],
     ['verdictS8Fork', verdictS8Fork],
     ['verdictS8Gap', verdictS8Gap],
+    ['verdictS9NoLink', verdictS9NoLink],
+    ['verdictS9Through', verdictS9Through],
+    ['verdictS9Probe', verdictS9Probe],
+    ['verdictS9Cut', verdictS9Cut],
   ];
   for (const [name, f] of verdicts) {
     it(`${name}: null → skipped`, () => {
@@ -1579,5 +1587,170 @@ describe('verdictS8Gap — the browser\'s tip catches up by headers with no proo
     const m: Record<string, unknown> = { ...PASS };
     delete m['baseline'];
     expect(verdictS8Gap(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS9NoLink — a client with direct paths opens no FIPS link', () => {
+  const PASS = {
+    fipsLinkCount: 0,
+    entries: [
+      { notisId: 'a'.repeat(64), transport: 'webrtc-direct' },
+      { notisId: 'b'.repeat(64), transport: 'webrtc-direct' },
+    ],
+  };
+  it('no link open AND no entry on FIPS → PASS', () => {
+    expect(verdictS9NoLink(PASS)).toBe('PASS');
+  });
+  it('one link open → FAIL', () => {
+    expect(verdictS9NoLink({ ...PASS, fipsLinkCount: 1 })).toBe('FAIL');
+  });
+  it('fipsLinkCount missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['fipsLinkCount'];
+    expect(verdictS9NoLink(m)).toBe('FAIL');
+  });
+  it('one entry reads transport fips → FAIL', () => {
+    expect(verdictS9NoLink({
+      ...PASS,
+      entries: [
+        { notisId: 'a'.repeat(64), transport: 'webrtc-direct' },
+        { notisId: 'b'.repeat(64), transport: 'fips' },
+      ],
+    })).toBe('FAIL');
+  });
+  it('entries empty → FAIL (no positive evidence the page was alive)', () => {
+    expect(verdictS9NoLink({ ...PASS, entries: [] })).toBe('FAIL');
+  });
+});
+
+describe('verdictS9Through — every other node reads fips through the access node', () => {
+  const ACCESS = 'a'.repeat(64);
+  const B = 'b'.repeat(64);
+  const PASS = {
+    accessId: ACCESS,
+    otherEntries: [
+      { notisId: B, status: 'ok', transport: 'fips', via: ACCESS },
+    ],
+  };
+  it('every other id ok/fips/via=access → PASS', () => {
+    expect(verdictS9Through(PASS)).toBe('PASS');
+  });
+  it('trailing is reach, not ranking → PASS', () => {
+    expect(verdictS9Through({
+      ...PASS,
+      otherEntries: [{ notisId: B, status: 'trailing', transport: 'fips', via: ACCESS }],
+    })).toBe('PASS');
+  });
+  it('one entry at retry → FAIL', () => {
+    expect(verdictS9Through({
+      ...PASS,
+      otherEntries: [{ notisId: B, status: 'retry', transport: 'fips', via: ACCESS }],
+    })).toBe('FAIL');
+  });
+  it('blacklisted → FAIL', () => {
+    expect(verdictS9Through({
+      ...PASS,
+      otherEntries: [{ notisId: B, status: 'blacklisted', transport: 'fips', via: ACCESS }],
+    })).toBe('FAIL');
+  });
+  it('entry transport is webrtc-direct → FAIL (the mechanism did not kick in)', () => {
+    expect(verdictS9Through({
+      ...PASS,
+      otherEntries: [{ notisId: B, status: 'ok', transport: 'webrtc-direct', via: ACCESS }],
+    })).toBe('FAIL');
+  });
+  it('entry via names another node → FAIL', () => {
+    expect(verdictS9Through({
+      ...PASS,
+      otherEntries: [{ notisId: B, status: 'ok', transport: 'fips', via: 'c'.repeat(64) }],
+    })).toBe('FAIL');
+  });
+  it('otherEntries empty → FAIL (no positive evidence)', () => {
+    expect(verdictS9Through({ ...PASS, otherEntries: [] })).toBe('FAIL');
+  });
+  it('accessId missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['accessId'];
+    expect(verdictS9Through(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS9Probe — the mesh\'s bytes equal the node\'s direct answer', () => {
+  const PASS = {
+    probes: [
+      {
+        nodeId: 'a'.repeat(64),
+        path: '/blocks/current',
+        probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+        direct: { sha256: 'ab'.repeat(32), bytes: 123 },
+      },
+    ],
+  };
+  it('one probe matches direct → PASS', () => {
+    expect(verdictS9Probe(PASS)).toBe('PASS');
+  });
+  it('sha256 mismatch → FAIL', () => {
+    expect(verdictS9Probe({
+      probes: [
+        {
+          nodeId: 'a'.repeat(64),
+          path: '/blocks/current',
+          probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+          direct: { sha256: 'cd'.repeat(32), bytes: 123 },
+        },
+      ],
+    })).toBe('FAIL');
+  });
+  it('bytes mismatch → FAIL', () => {
+    expect(verdictS9Probe({
+      probes: [
+        {
+          nodeId: 'a'.repeat(64),
+          path: '/blocks/current',
+          probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+          direct: { sha256: 'ab'.repeat(32), bytes: 456 },
+        },
+      ],
+    })).toBe('FAIL');
+  });
+  it('probes empty → FAIL', () => {
+    expect(verdictS9Probe({ probes: [] })).toBe('FAIL');
+  });
+  it('direct missing a field → FAIL', () => {
+    expect(verdictS9Probe({
+      probes: [
+        {
+          nodeId: 'a'.repeat(64),
+          path: '/blocks/current',
+          probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+          direct: { sha256: 'ab'.repeat(32) },
+        },
+      ],
+    })).toBe('FAIL');
+  });
+});
+
+describe('verdictS9Cut — a cut FIPS-reached node reads retry, never blacklisted', () => {
+  const PASS = {
+    nodeId: 'a'.repeat(64),
+    status: 'retry',
+    blacklistedAtAnyPoll: false,
+  };
+  it('retry and never blacklisted → PASS', () => {
+    expect(verdictS9Cut(PASS)).toBe('PASS');
+  });
+  it('status blacklisted → FAIL', () => {
+    expect(verdictS9Cut({ ...PASS, status: 'blacklisted' })).toBe('FAIL');
+  });
+  it('status ok → FAIL', () => {
+    expect(verdictS9Cut({ ...PASS, status: 'ok' })).toBe('FAIL');
+  });
+  it('blacklistedAtAnyPoll true (a mid-run blacklist that moved back to retry) → FAIL', () => {
+    expect(verdictS9Cut({ ...PASS, blacklistedAtAnyPoll: true })).toBe('FAIL');
+  });
+  it('nodeId missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['nodeId'];
+    expect(verdictS9Cut(m)).toBe('FAIL');
   });
 });

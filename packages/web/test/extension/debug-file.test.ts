@@ -251,6 +251,141 @@ describe("the debug file — a local node's key and addresses", () => {
     expect(ticked.text).toContain(LOCAL_ADDR_B);
   });
 
+  it("a local node's npub is replaced with its key", () => {
+    // WEB_INTERFACE → The extension → "The debug log" — "the npub of its
+    // FIPS address wherever it stands". For a node found at an access point,
+    // the npub of a FIPS address whose `/p2p/<peer id>` maps to that node's
+    // notisId is identifying; so is a connection's `remoteAddr` `/fips/<npub>`
+    // on the inbound side paired with the connection's `peer`.
+    //
+    // The peer id string `12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa`
+    // is derived from the Ed25519 public key with hex
+    // `68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09`
+    // (`packages/web/test/extension/mesh-seams.test.ts` uses the same pair).
+    const LOCAL_KEY_HEX = '68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09';
+    const LOCAL_NPUB = 'npub1lpxz9sucre2dap6u9pa87hyp7hxqkgr73f453809kjy5jjxc52es02zp2u';
+    const LOCAL_PEER_ID = '12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    const LOCAL_FIPS_ADDR = `/fips/${LOCAL_NPUB}/p2p/${LOCAL_PEER_ID}`;
+    const INBOUND_REMOTE = `/fips/${LOCAL_NPUB}`;
+
+    const node = {
+      notisId: LOCAL_KEY_HEX,
+      local: true,
+      addrs: [LOCAL_FIPS_ADDR],
+      api: null,
+      status: 'ok',
+      readMs: 12,
+      firstContact: false, known: false, byHand: false, yours: false,
+      failures: 0, retryAtMs: 0, behindBy: null,
+      droppedAddrs: [], evidence: null, lastFailure: null, lastFailures: {},
+      transport: 'fips', path: null, via: null, seenMs: null,
+    };
+    const snapshot: DebugSnapshot = {
+      ...snapshotWithValues(),
+      settings: {
+        serve: false,
+        links: 'here',
+        signPolicy: 'silent',
+        handNode: { address: '', off: false, key: null },
+      },
+      mesh: {
+        state: {
+          nodeId: null, transport: null, path: null, lastLeft: null, tip: null,
+          agreement: null, checks: 0,
+          traffic: { tipBytes: 0, proofBytes: 0, headerBytes: 0, gossipBytes: 0, proofReads: 0, forwarded: 0 },
+          nodes: [node],
+          seated: false, proofs: null, anchor: null, chain: null,
+          notContinued: false, disagreement: null,
+          localLookup: { reads: 0, last: null }, firstCheckEnded: false,
+        },
+        diagnostics: {
+          connections: [{
+            connId: 'c1',
+            peer: LOCAL_KEY_HEX,
+            peerKind: 'notis',
+            remoteAddr: INBOUND_REMOTE,
+            direction: 'inbound',
+            transport: 'fips',
+            path: null,
+            limited: false,
+            ageMs: 1234,
+            handshake: { verdict: 'passed', reason: null },
+          }],
+          gossip: { meshPeers: 0, directPeers: 0 },
+          iceServers: [],
+        },
+      },
+    } as unknown as DebugSnapshot;
+
+    const unticked = buildDebugFile({
+      snapshot, events: [], identifying: false, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(unticked.text).not.toContain(LOCAL_KEY_HEX);
+    expect(unticked.text).not.toContain(LOCAL_NPUB);
+    const parsed = JSON.parse(unticked.text);
+    expect(parsed.snapshot.mesh.state.nodes[0].notisId).toBe('local-node-1');
+
+    const ticked = buildDebugFile({
+      snapshot, events: [], identifying: true, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(ticked.text).toContain(LOCAL_KEY_HEX);
+    expect(ticked.text).toContain(LOCAL_NPUB);
+  });
+
+  it("a seed node's npub stays", () => {
+    // WEB_INTERFACE → The extension → "The debug log" — the npub is
+    // identifying only when it stands beside a local node's peer id; a
+    // seed node's npub is just a fact about the network and stays.
+    const SEED_KEY_HEX = '68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09';
+    const SEED_NPUB = 'npub1lpxz9sucre2dap6u9pa87hyp7hxqkgr73f453809kjy5jjxc52es02zp2u';
+    const SEED_PEER_ID = '12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    const SEED_FIPS_ADDR = `/fips/${SEED_NPUB}/p2p/${SEED_PEER_ID}`;
+
+    const node = {
+      notisId: SEED_KEY_HEX,
+      local: false,
+      addrs: [SEED_FIPS_ADDR],
+      api: 'https://notis.example',
+      status: 'ok',
+      readMs: 12,
+      firstContact: true, known: true, byHand: false, yours: false,
+      failures: 0, retryAtMs: 0, behindBy: null,
+      droppedAddrs: [], evidence: null, lastFailure: null, lastFailures: {},
+      transport: null, path: null, via: null, seenMs: null,
+    };
+    const snapshot: DebugSnapshot = {
+      ...snapshotWithValues(),
+      settings: {
+        serve: false,
+        links: 'here',
+        signPolicy: 'silent',
+        handNode: { address: '', off: false, key: null },
+      },
+      reader: {
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [],
+        lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      },
+      mesh: {
+        state: {
+          nodeId: null, transport: null, path: null, lastLeft: null, tip: null,
+          agreement: null, checks: 0,
+          traffic: { tipBytes: 0, proofBytes: 0, headerBytes: 0, gossipBytes: 0, proofReads: 0, forwarded: 0 },
+          nodes: [node],
+          seated: false, proofs: null, anchor: null, chain: null,
+          notContinued: false, disagreement: null,
+          localLookup: { reads: 0, last: null }, firstCheckEnded: false,
+        },
+        diagnostics: { connections: [], gossip: { meshPeers: 0, directPeers: 0 }, iceServers: [] },
+      },
+    } as unknown as DebugSnapshot;
+
+    const unticked = buildDebugFile({
+      snapshot, events: [], identifying: false, savedAt: FIXED_NOW, nowMs: FIXED_NOW,
+    });
+    expect(unticked.text).toContain(SEED_NPUB);
+  });
+
   it('an answered local-lookup event from an earlier page whose node the snapshot lacks is replaced too', () => {
     const EARLIER_KEY = '8'.repeat(64);
     const EARLIER_ADDR = '/ip4/198.51.100.3/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';

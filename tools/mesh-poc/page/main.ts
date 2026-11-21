@@ -33,6 +33,7 @@ import { startMeshClient, continues, createMeshMemoryStore } from '@dagsocial/we
 import type {
   MeshContact,
   MeshClient,
+  MeshEvent,
   NetworkName,
   ReadNeed,
   StorageLike,
@@ -192,6 +193,31 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   // entry; `startMeshClient` and `NodeList.add` de-duplicate by key.
   const seedsMerged = mergeSeeds(seedsFromConfig, seedsFromRecord);
 
+  // MESH_INTERFACE → FIPS — the page runs a reader's FIPS node and
+  // links lazily; MESH_INTERFACE → Acceptance 9 reads each `fips-link`
+  // event the client emits from the `<pre id="fips-links">` element
+  // this page writes, so the stage sees which link went up over which
+  // node and in which order. The write is at write time, never on a
+  // render; the element is a sibling of the state renderer's container
+  // and no render touches it.
+  const fipsLinkEvents: Array<Pick<Extract<MeshEvent, { kind: 'fips-link' }>, 'event' | 'via' | 'reason'>> = [];
+  const writeFipsLinks = (): void => {
+    let el = opts.root.querySelector('pre#fips-links');
+    if (el === null) {
+      el = document.createElement('pre');
+      el.id = 'fips-links';
+      opts.root.appendChild(el);
+    }
+    el.textContent = JSON.stringify(fipsLinkEvents);
+  };
+  writeFipsLinks();
+  const eventsSink = (e: MeshEvent): void => {
+    if (e.kind === 'fips-link') {
+      fipsLinkEvents.push({ event: e.event, via: e.via, ...(e.reason !== undefined ? { reason: e.reason } : {}) });
+      writeFipsLinks();
+    }
+  };
+
   const startFn = opts.startMeshClient ?? startMeshClient;
   let client: MeshClient;
   try {
@@ -202,6 +228,8 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
       profile,
       agentName: 'notis-mesh-poc',
       wallClock,
+      fips: true,
+      events: eventsSink,
       ...(useRecord
         ? {
             memory: {
@@ -266,12 +294,22 @@ export async function runMain(opts: RunMainOptions): Promise<void> {
   // stage alone, no production page does.
   (globalThis as unknown as { __meshClient?: MeshClient }).__meshClient = client;
 
-  // MESH_INTERFACE → Acceptance — the one query parameter the page honours:
-  // `?probe=<path>` reads `<path>` through the client's own fetch after the
-  // first state with a non-null `nodeId`, and writes `<pre id="probe">`.
+  // MESH_INTERFACE → Acceptance — the query parameters the page
+  // honours for a probe: `?probe=<path>` reads `<path>` through the
+  // client's own fetch after the first state with a non-null
+  // `nodeId`, and writes `<pre id="probe">`. MESH_INTERFACE →
+  // Acceptance 9 reads a specific node's answer, not whichever the
+  // client lands on first — `&node=<notisId>` names that node and the
+  // probe reads it. A `node` without a `probe` is ignored.
   const probePath = readProbePath();
+  const probeNode = readProbeNode();
   if (probePath !== null) {
-    void runProbe({ client, path: probePath, root: opts.root });
+    void runProbe({
+      client,
+      path: probePath,
+      root: opts.root,
+      ...(probeNode !== null ? { nodeId: probeNode } : {}),
+    });
   }
 
   // MESH_INTERFACE → The client's node list → "A routed read goes to
@@ -335,6 +373,13 @@ function readProbePath(): string | null {
   if (typeof globalThis.location === 'undefined') return null;
   const params = new URLSearchParams(globalThis.location.search);
   const value = params.get('probe');
+  return value === null || value === '' ? null : value;
+}
+
+function readProbeNode(): string | null {
+  if (typeof globalThis.location === 'undefined') return null;
+  const params = new URLSearchParams(globalThis.location.search);
+  const value = params.get('node');
   return value === null || value === '' ? null : value;
 }
 

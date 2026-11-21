@@ -416,10 +416,12 @@ three later tags"):
 [
   { "notisId": "68112eb3027cf9649a2ebc7f5caa48dbaf7fdb77ad3b1427176767ed2bf50d09",
     "addrs": ["/ip4/64.176.70.50/udp/9733/webrtc-direct/certhash/uEiAHocoutEO27UicmZa5J6i7mvNBHjnfOtnAeSTMAR0Ezg/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa",
-              "/ip4/70.34.243.81/tcp/443/tls/ws/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],
+              "/ip4/70.34.243.81/tcp/443/tls/ws/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa",
+              "/fips/npub1lpxz9sucre2dap6u9pa87hyp7hxqkgr73f453809kjy5jjxc52es02zp2u/p2p/12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa"],
     "api": "https://notis.fun/testnet/api" },
   { "notisId": "e6380c4a6f836f44d6076cde32c8226324b159ef1d909e88dcafdd96a5ca9e72",
-    "addrs": ["/ip4/65.20.105.28/udp/9733/webrtc-direct/certhash/uEiANgUbw3RldQddGIXGt_xk6i52NPumh1hAIG2nMKkHQRQ/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq"],
+    "addrs": ["/ip4/65.20.105.28/udp/9733/webrtc-direct/certhash/uEiANgUbw3RldQddGIXGt_xk6i52NPumh1hAIG2nMKkHQRQ/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq",
+              "/fips/npub18a05fdxfc2hud89tycw85dvz2xvh00hspd9n2smh74ujvqrlfunsea3krv/p2p/12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq"],
     "api": "https://node02.notis.fun/testnet/api" }
 ]
 ```
@@ -429,11 +431,13 @@ A certhash is the node's for the life of its key while its mesh directory is kep
 names the new one. notis.fun's second address is its secure WebSocket, on port 443 of an IPv4 address of its own
 (`MESH_INTERFACE → The IP certificate`): the client dials it after the WebRTC-direct address (`MESH_INTERFACE → The
 client's node list → "The secure WebSocket is the fallback"`), and its certificate renews with no change to the address.
+Each node's last address is its FIPS address (`MESH_INTERFACE → FIPS`), which the client dials only when the node's other addresses failed and a link is up (`MESH_INTERFACE → FIPS →
+"A reader links when a node's every other address failed"`); a node's npub is its for the life of its `fips.key`.
 
 **The mesh is the extension's first path.** The page reaches nodes by key over libp2p through the mesh client
 (`MESH_INTERFACE → The client's node list`), the client's own `src/mesh/`, which the extension build alone hands the
 App: one reader per page — a key made for the page, `net`'s reader options and handshake (`NET_INTERFACE → The
-browser entry`) — started at load with the seed list's nodes as its first contact (`MESH_INTERFACE → Discovery →
+browser entry`), with `fips` (`MESH_INTERFACE → FIPS → "A reader links when a node's every other address failed"`) — started at load with the seed list's nodes as its first contact (`MESH_INTERFACE → Discovery →
 "First contact"`), beside the nodes it remembers (→ "What the extension remembers") and the reader's own node (→ The
 settings window). **A node of the seed list is one entry, reached two ways**: over the mesh at the addresses the list names,
 and at its API base over HTTPS. **A read goes to a node its need allows over the mesh, and to an API base only when no
@@ -860,7 +864,7 @@ holds the seed is outside the log's path. **A page writes its events in batches*
 the mesh client's reports (`MESH_INTERFACE → The client's node list → "The client reports what it does"`) — a dial's
 end, a connection opened or closed, a handshake's verdict, a check's end, a gossiped block weighed, a request settled
 with its route and, over the mesh, the transport and path of its connection, a serving stream and its counts, a read
-of the access point's identity URL and its outcome; a
+of the access point's identity URL and its outcome, a FIPS link opened, up, failed or closed and the node it rides; a
 write's walk from the press to its ending, each node it tried a request of its own (→ "The mesh is the extension's
 first path"); each `sign` answer the page reads, with the policy in force (→ "`sign`, in the background, in order");
 each waiting write stored, and each outcome of the send pass, a walk no node answered among them (→ The wallet →
@@ -894,8 +898,8 @@ time. **A snapshot is a copy**: nothing in it moves until the next `refresh`.
 `savedAt`, whether the identifying values are in it, `snapshot`, `events` — saved by the reader as
 `notis-debug-<YYYYMMDD-HHMMSS>.json`. **The identifying values** are the reader's public key, the reader's name, the
 transaction, box and post ids of the reader's own writes, the hand-added node's key and address, a node found at an
-access point — its key and its addresses, from the snapshot and from each read's report in the log, since an access
-point says where its reader stands — and the address a node observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
+access point — its key and its addresses, from the snapshot and from each read's report in the log, and the npub of its
+FIPS address wherever it stands, since an access point says where its reader stands — and the address a node observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
 the key's as much as the key is. **Unless the reader ticks the box beside `save as file`, each is replaced by a
 placeholder** naming its class and a number — `key-1`, `tx-3` — one value one placeholder throughout the file, so the
 file still shows which entries are one thing. **The replacement is by value**: the identifying values are collected from the
@@ -2188,8 +2192,8 @@ serve — the extension, which holds a post cache — so the web build has no su
 
 **The debug row**, *debug: show*, opens the snapshot beneath it (→ The extension → "The debug log") at the reader's
 press, the word reading `hide` while it stands; the window opens with it closed. Open, it reads the lines a person
-glances at — the build and its commit; each node, how it is reached (its transport and path, or its API base, or that it is
-not reached), its standing and its read time in whole milliseconds, a node found at an access point reading `found on
+glances at — the build and its commit; each node, how it is reached (its transport and path — over FIPS `fips · through`
+the node its link rides — or its API base, or that it is not reached), its standing and its read time in whole milliseconds, a node found at an access point reading `found on
 this network`; the last read of the access point's identity URL — `not looked up`, `nothing answered`, `refused` or
 `found`; the chain's tip, the verdict and the agreement counts; the log's events and bytes against
 its bound — then the box *include my key, name and transaction ids* with `save as file`, `clear log`, and `refresh`,

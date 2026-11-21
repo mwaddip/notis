@@ -12,7 +12,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Libp2p } from 'libp2p';
+import { multiaddr } from '@multiformats/multiaddr';
 import { generateKeyPair } from '@dagsocial/types';
+import { generateIdentity } from '@fips/core';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -29,6 +31,9 @@ import {
 import { NetNode } from '../../src/index.js';
 import type { NetValidators, MeshConfig } from '../../src/index.js';
 import { dhtProtocol } from '../../src/browser.js';
+import { npubOf } from '../../src/mesh/fips-identity.js';
+import { registerFipsProtocol } from '../../src/mesh/fips-addr.js';
+import { privateAnnounceFilter } from '../../src/mesh/libp2p-options.js';
 import { makeConfig } from '../helpers.js';
 
 const validators: NetValidators = {
@@ -279,4 +284,26 @@ describe('mesh — a private NetNode', () => {
       expect(a.endsWith(`/p2p/${id.peerId}`)).toBe(true);
     }
   }, 30_000);
+
+  // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"
+  // — libp2p builds a relay address over a relay's FIPS address as
+  // `/fips/<relay npub>/p2p/<relay>/p2p-circuit/p2p/<self>`; a private
+  // node's announce filter drops it. The filter decides by components,
+  // not substrings: a plain IP relay address is kept, the node's own
+  // FIPS address is kept.
+  it('a relay address over the relay\'s FIPS address is not announced', async () => {
+    registerFipsProtocol();
+    const RELAY_PEER = '12D3KooWGpbmMichyTNz56FYsZd8W5rok6JaggtBaXKNqXsdQ8sa';
+    const SELF_PEER = '12D3KooWRK3WSeTr9LZQtEVz1FsdmfMMbZk59qJwpv5dW4ECrKvq';
+    const relayId = await generateIdentity();
+    const selfId = await generateIdentity();
+    const npubRelay = npubOf(relayId);
+    const npubSelf = npubOf(selfId);
+    const over = multiaddr(`/fips/${npubRelay}/p2p/${RELAY_PEER}/p2p-circuit/p2p/${SELF_PEER}`);
+    const plain = multiaddr(`/ip4/1.2.3.4/tcp/9733/p2p/${RELAY_PEER}/p2p-circuit/p2p/${SELF_PEER}`);
+    const own = multiaddr(`/fips/${npubSelf}/p2p/${SELF_PEER}`);
+    const bare = multiaddr('/ip4/10.0.0.2/tcp/9733');
+    const kept = privateAnnounceFilter([over, plain, own, bare]).map((m) => m.toString());
+    expect(kept).toEqual([plain.toString(), own.toString()]);
+  });
 });

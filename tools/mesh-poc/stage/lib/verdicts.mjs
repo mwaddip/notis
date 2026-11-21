@@ -762,3 +762,81 @@ export function verdictS8Gap(m) {
   if (!gossipFound) return 'FAIL';
   return 'PASS';
 }
+
+// MESH_INTERFACE → Acceptance 9 — "a browser with direct paths to every
+// node opens no FIPS link". Scenario 9 step 1: the client is handed no
+// faults, every node is reached at its other addresses, and the FIPS
+// pass opens nothing. Measurement:
+//   `{ fipsLinkCount: number, entries: Array<{ notisId, transport }> }`.
+export function verdictS9NoLink(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.fipsLinkCount !== 'number') return 'FAIL';
+  if (m.fipsLinkCount !== 0) return 'FAIL';
+  if (!Array.isArray(m.entries) || m.entries.length === 0) return 'FAIL';
+  for (const e of m.entries) {
+    if (e === null || typeof e !== 'object') return 'FAIL';
+    if (e.transport === 'fips') return 'FAIL';
+  }
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 9 — "reaches another node by key through
+// it over FIPS: its check reads both, the other reads `fips` through
+// the one". Scenario 9 step 2: every id in `otherEntries` reads `ok`
+// or `trailing` (a checked answer, ranking not reach), its entry
+// `transport` is `fips`, and its `via` names the access node.
+// Measurement:
+//   `{ accessId: string,
+//      otherEntries: Array<{ notisId, status, transport, via }> }`.
+export function verdictS9Through(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.accessId !== 'string') return 'FAIL';
+  if (!Array.isArray(m.otherEntries) || m.otherEntries.length === 0) return 'FAIL';
+  for (const e of m.otherEntries) {
+    if (e === null || typeof e !== 'object') return 'FAIL';
+    if (typeof e.notisId !== 'string') return 'FAIL';
+    if (e.status !== 'ok' && e.status !== 'trailing') return 'FAIL';
+    if (e.transport !== 'fips') return 'FAIL';
+    if (e.via !== m.accessId) return 'FAIL';
+  }
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 9 — "its answers equal its direct HTTP
+// answers byte for byte". Scenario 9 step 3: for every probed
+// `(nodeId, path)`, the SHA-256 and byte length the page recorded
+// equal the node's own HTTP answer read in its namespace. The miner
+// is paused for the step's duration, so one direct read is enough.
+// Measurement:
+//   `{ probes: Array<{ nodeId, path,
+//        probe: { sha256, bytes },
+//        direct: { sha256, bytes } }> }`.
+export function verdictS9Probe(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.probes) || m.probes.length === 0) return 'FAIL';
+  for (const p of m.probes) {
+    if (p === null || typeof p !== 'object') return 'FAIL';
+    if (typeof p.nodeId !== 'string') return 'FAIL';
+    if (typeof p.path !== 'string') return 'FAIL';
+    if (p.probe === null || typeof p.probe !== 'object') return 'FAIL';
+    if (p.direct === null || typeof p.direct !== 'object') return 'FAIL';
+    if (typeof p.probe.sha256 !== 'string' || typeof p.probe.bytes !== 'number') return 'FAIL';
+    if (typeof p.direct.sha256 !== 'string' || typeof p.direct.bytes !== 'number') return 'FAIL';
+    if (p.probe.sha256 !== p.direct.sha256) return 'FAIL';
+    if (p.probe.bytes !== p.direct.bytes) return 'FAIL';
+  }
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance 9 — "a node reached that way and then
+// cut reads `retry`, never `blacklisted`". Scenario 9 step 4: the cut
+// node's entry reads `retry` at the end of the step, and no poll in
+// the window read it `blacklisted`. Measurement:
+//   `{ nodeId: string, status: string, blacklistedAtAnyPoll: boolean }`.
+export function verdictS9Cut(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.nodeId !== 'string') return 'FAIL';
+  if (m.status !== 'retry') return 'FAIL';
+  if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
+  return 'PASS';
+}
