@@ -22,8 +22,9 @@ built-in and reading no Node global. **The client is `@dagsocial/web`'s `src/mes
 `@dagsocial/web/mesh`: the node list, the client's chain, the server pick, the STUN list, the check and the client over
 them, which run in the browser as written, held to it by the member's browser typecheck. `tools/mesh-poc` is a member
 under `tools/`: it depends on `@dagsocial/web` and on the members its stage and cases reach, and holds the page, the
-stage and the client's cases that start a WebRTC transport — node-datachannel's binding takes one live
-`RTCPeerConnection` per process, so each such file runs in a process of its own. No WASM. One native module, `node-datachannel` under
+stage and the client's cases that start a WebRTC transport — node-datachannel's binding holds its live
+`RTCPeerConnection`s on one thread per process, and a second worker thread holding one crashes it, so each such file
+runs in a process of its own. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
 **FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
@@ -34,7 +35,7 @@ are at an exact version, one version per package across the three.
 They reach places libp2p does not promise to keep — its `components` object, for a listener added after start (the
 secure WebSocket, a private node's relay listens) and for the listener addresses a private node prints; the dial
 queue's `dial-queue:calculated-addresses` progress event and its `AggregateError` order, for per-address attribution
-— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Five pinned
+— and each is held by a case against the real libp2p, so an upgrade that moves one fails its case. **Six
 packages carry local patches** (pnpm's `patchedDependencies`, the diffs under `patches/`), each held by a case against
 the patched package: `@libp2p/webrtc`, whose certificate renewal timer re-arms past Node's timer limit (→ Transports →
 "The WebRTC-direct certificate persists"); `@libp2p/http-utils`, whose `readHeaders` hands a request's body back to its
@@ -46,11 +47,16 @@ inbound connections still upgrading — an IPv6 address by its /64, an IPv4-mapp
 an address's count when an upgrade ends (`NET_INTERFACE → Readers → "An address upgrades at most four inbound
 connections at once, each within five seconds"`), and whose address manager passes over an address that names no IP —
 a FIPS address — where it would read one's IP: an observed address of that kind is not stored, and no IP or DNS mapping
-holds one (→ FIPS); and `@libp2p/gossipsub`, whose router moves its stream to a peer onto
+holds one (→ FIPS); `@libp2p/gossipsub`, whose router moves its stream to a peer onto
 the newer connection the peer's own stream arrives on, and keeps a peer whose replaced stream fails (→ Block gossip →
 "A peer's gossip follows its newest connection"), and which takes and lets go of a direct peer while it runs (→ Block
-gossip → "A node's readers are its router's direct peers"). A pin that moves carries its patch to the new version, the cases
-deciding that it still applies and still holds.
+gossip → "A node's readers are its router's direct peers"); and `node-datachannel`, the WebRTC stack `@libp2p/webrtc`
+runs in Node, whose polyfill `RTCPeerConnection` forgets a data channel the remote side opened once it closes, as it
+forgets one it opened, and closes its data channels when it closes — so a WebRTC connection that stays up holds no
+channel of a stream that ended. `node-datachannel` reaches the node through `@libp2p/webrtc`'s version range, `net`
+declaring it at that version for its case, and its patch names the one version the lockfile resolves: an install that
+resolves another fails on the unused patch. A pin that moves carries its patch to the new version, the cases deciding
+that it still applies and still holds.
 
 ## Identity
 
