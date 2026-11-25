@@ -205,3 +205,59 @@ describe("save as file takes the snapshot and the events at the press", () => {
     expect(bodyAfter).toContain('250');
   });
 });
+
+// WEB_INTERFACE → The extension → "The debug file" — the row's `show` and
+// `refresh` take the snapshot alone; the log's events are read only at the
+// press of `save as file`.
+describe("show and refresh do not list the log; save as file lists it once", () => {
+  it.fails("show and refresh call the log's `list` zero times; save as file calls it once", async () => {
+    let listCalls = 0;
+    const seam: DebugSeam = {
+      seams: {
+        build: () => ({ ...BUILD }),
+        settings: () => ({ ...SETTINGS }),
+        mesh: {
+          state: () => emptyState(),
+          diagnostics: () => ({ connections: [], gossip: { meshPeers: 0, directPeers: 0 }, iceServers: [] }),
+        },
+        postCache: { stats: () => Promise.resolve({ ...CACHE }) },
+        debugLog: { stats: () => Promise.resolve({ ...LOG_STATS }) },
+      },
+      log: {
+        clear: () => Promise.resolve(),
+        list: () => { listCalls += 1; return Promise.resolve([]); },
+      },
+      download: () => {},
+    };
+
+    const row = debugRow({
+      seam,
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => 0,
+    });
+    document.body.appendChild(row);
+
+    // show
+    const toggle = row.querySelector<HTMLButtonElement>('.field > button.word')!;
+    toggle.click();
+    await flush();
+    expect(listCalls, 'show did not list the log').toBe(0);
+
+    // refresh
+    const refresh = [...row.querySelectorAll<HTMLButtonElement>('button.word')]
+      .find((b) => b.textContent === 'refresh')!;
+    refresh.click();
+    await flush();
+    expect(listCalls, 'refresh did not list the log').toBe(0);
+
+    // save as file
+    const save = [...row.querySelectorAll<HTMLButtonElement>('button.word')]
+      .find((b) => b.textContent === 'save as file')!;
+    save.click();
+    await flush();
+    expect(listCalls, 'save as file listed the log once').toBe(1);
+  });
+});
