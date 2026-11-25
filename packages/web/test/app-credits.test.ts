@@ -812,7 +812,7 @@ describe('the wallet reads', () => {
 // `/credits/:key` and `/status`; the `/status` answer is the reader's own
 // state's.
 describe("the wallet's open and ↻ read /status beside /credits", () => {
-  it.fails('a wallet open reads /status alongside /credits', async () => {
+  it('a wallet open reads /status alongside /credits', async () => {
     const h = harness();
     await h.drive.loadFeed();
     // State starts with no reader-state read; statusCalls is 0.
@@ -823,7 +823,7 @@ describe("the wallet's open and ↻ read /status beside /credits", () => {
     expect(creditsCalls.filter((k) => k === ME).length, 'the wallet open read /credits').toBeGreaterThanOrEqual(1);
   });
 
-  it.fails("a wallet ↻ reads /status alongside /credits", async () => {
+  it("a wallet ↻ reads /status alongside /credits", async () => {
     const h = harness();
     await h.drive.loadFeed();
     await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
@@ -837,7 +837,7 @@ describe("the wallet's open and ↻ read /status beside /credits", () => {
     expect(creditsCalls.filter((k) => k === ME).length - creditsBefore, 'the ↻ read /credits').toBeGreaterThanOrEqual(1);
   });
 
-  it.fails("a /status answer landing at the wallet's open sets state.status so the empty balance row reads the faucet step", async () => {
+  it("a /status answer landing at the wallet's open sets state.status so the empty balance row reads the faucet step", async () => {
     const h = harness();
     // No reader-state was read at boot: no loadMembershipState run.
     await h.drive.loadFeed();
@@ -853,7 +853,7 @@ describe("the wallet's open and ↻ read /status beside /credits", () => {
     expect(line.querySelector('button.word')?.textContent).toBe('ask the faucet for $NOTIS');
   });
 
-  it.fails("a /status read that fails leaves the /credits read's landing intact", async () => {
+  it("a /status read that fails leaves the /credits read's landing intact", async () => {
     const h = harness();
     await h.drive.loadFeed();
     statusCalls = 0;

@@ -2763,6 +2763,26 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    // WEB_INTERFACE → The wallet window — the window's opening and ↻ read
+    // `/credits/:key` and `/status`; the `/status` answer is the reader's
+    // own state's (→ Reading the feed and threads → "No answer overwrites
+    // a newer one"), held under `newerRead('status', order)`. The status
+    // read lands on its own so a held /status never blocks the credits
+    // read from writing the row, and a failed /status leaves the credits
+    // read's landing intact.
+    let statusLanded = false;
+    const statusP: Promise<void> = this.client.status().then(
+      (s) => {
+        if (gen !== this.readerGen) return;
+        statusLanded = true;
+        if (this.newerRead('status', order)) this.state.status = s;
+        this.bumpTip(s.blockHeight);
+        // The balance row's empty states wait on a /status answer; a fresh
+        // status landing moves the row's figure in place.
+        this.renderCreditsRowInPlace();
+      },
+      () => {},
+    );
     const outcomes = await Promise.allSettled(
       this.figuresVerifier !== null
         ? [this.readOwnCredits(cur.pubKeyHex), this.readOwnCreditsPlain(cur.pubKeyHex)]
@@ -2777,14 +2797,18 @@ export class App {
     if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
       this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
     }
+    // Let the /status handler run its microtask so `statusLanded` reflects
+    // its landing before the no-node flag is computed.
+    await statusP;
+    if (gen !== this.readerGen) return;
     // WEB_INTERFACE → The extension → "The page's first node reads the
-    // reader's own state again" — a wallet read whose outcomes all failed
-    // leaves the wallet's piece unread; the first answered tick re-reads it.
-    // Any read that landed clears the flag.
-    const anyLanded = viewOutcome.status === 'fulfilled'
+    // reader's own state again" — a wallet refresh whose reads all failed
+    // leaves the wallet's piece unread; the first answered tick re-reads
+    // it. Any read that landed clears the flag.
+    const anyLanded = statusLanded
+      || viewOutcome.status === 'fulfilled'
       || (plainOutcome !== undefined && plainOutcome.status === 'fulfilled');
-    if (anyLanded) this.readerStateFoundNoNode = false;
-    else this.readerStateFoundNoNode = true;
+    this.readerStateFoundNoNode = !anyLanded;
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
