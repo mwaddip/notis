@@ -210,7 +210,7 @@ describe("save as file takes the snapshot and the events at the press", () => {
 // `refresh` take the snapshot alone; the log's events are read only at the
 // press of `save as file`.
 describe("show and refresh do not list the log; save as file lists it once", () => {
-  it.fails("show and refresh call the log's `list` zero times; save as file calls it once", async () => {
+  it("show and refresh call the log's `list` zero times; save as file calls it once", async () => {
     let listCalls = 0;
     const seam: DebugSeam = {
       seams: {

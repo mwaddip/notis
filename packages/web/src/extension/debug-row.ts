@@ -69,13 +69,10 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
 
   const takeAndRender = async (): Promise<void> => {
     const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
-    const [snap] = await Promise.all([
-      takeSnapshot(full),
-      // The log's events are not held in the row's closure; `save as file`
-      // re-reads them at the press (→ "The debug file"). Discarded here.
-      deps.seam.log.list(),
-    ]);
-    snapshot = snap;
+    // WEB_INTERFACE → The extension → "The debug file" — "show and refresh
+    // take the snapshot alone; the log's `list` is read at `save as file`".
+    // The row's log line reads the log's `stats` from the snapshot.
+    snapshot = await takeSnapshot(full);
     render();
   };
 
