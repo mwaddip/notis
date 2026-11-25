@@ -468,6 +468,16 @@ node asks it: a node reached again later, on a page whose feed has answered, rea
 check has ended, the feed's no-node line reads *searching for a connection…***; after a first check that reached no
 node — the access point's identity URL read and unanswered included — it reads as a failed listing does.
 
+> ⚠ **AHEAD OF CODE (2026-11-25).** A page reads the reader's own state at its boot alone: a page on an access point,
+> whose boot reads go to API bases no network reaches, holds none of it until a press reads it, and the wallet's empty
+> balance reads `—` meanwhile. The lead below leads the code (the first-node reads).
+
+**The page's first node reads the reader's own state again.** A page whose read of the reader's own state — the two
+listings, `/status`, the vouch set and the escrow, the bonds, the reader's name (→ Reading the feed and threads → "No
+answer overwrites a newer one") — failed before its first check reached a node reads it once more when that node is
+reached, beside the feed, and each piece lands as any read of it does. A page whose read of it answered reads nothing
+then; an identity loaded later reads its state as an identity change does (→ The identity module).
+
 **The mesh client's faults reach the page's console.** The extension hands its mesh client a log that writes each line
 to the page's console as an error: a check that threw, a state listener that threw, an accepted gossiped block with no
 value kept against it (`NET_INTERFACE → Inbound Processing → "A gossiped message is decoded once"`). A client handed no
@@ -892,11 +902,16 @@ client reports what it does"`); the reader — whether an identity is loaded and
 pending entry's kind, transaction id, expiry and stage, and each waiting write's kind, transaction id, sequence, ledger
 and chain, never its bytes; the post cache — its database's name, its entries, its bytes, the reader's own, those kept
 before a chain is named; the last tip, figures and names runs; and the log — its events, its bytes, its oldest event's
-time. **A snapshot is a copy**: nothing in it moves until the next `refresh`.
+time. **A snapshot is a copy**: nothing in it moves until the next `refresh` or `save as file`.
+
+> ⚠ **AHEAD OF CODE (2026-11-25).** `save as file` writes the snapshot and the events the row's last `show` or `refresh`
+> took, under a `savedAt` of the press. The sentence on the press below leads the code (the first-node reads).
 
 **The debug file** is the snapshot and every event, oldest first, as one JSON document — `format` `notis-debug/1`,
 `savedAt`, whether the identifying values are in it, `snapshot`, `events` — saved by the reader as
-`notis-debug-<YYYYMMDD-HHMMSS>.json`. **The identifying values** are the reader's public key, the reader's name, the
+`notis-debug-<YYYYMMDD-HHMMSS>.json`. **`save as file` takes the snapshot and the events at the press**, as `refresh`
+does, and the row shows that snapshot after it, so the file holds every event recorded until the press and `savedAt` is
+the moment both were taken. **The identifying values** are the reader's public key, the reader's name, the
 transaction, box and post ids of the reader's own writes, the hand-added node's key and address, a node found at an
 access point — its key and its addresses, from the snapshot and from each read's report in the log, and the npub of its
 FIPS address wherever it stands, since an access point says where its reader stands — and the address a node observes the reader at, where the client learns one: a transaction or a box leads to the key on the chain, so each is
@@ -2077,7 +2092,13 @@ balance      the spendable sum in gold · the locked line · or the faucet step
 send         the send form / the confirm row / the flight · the pending line
 ```
 
-The window's `↻` is live and re-reads `/credits/:key`, which the window also reads when it opens. A pending send
+> ⚠ **AHEAD OF CODE (2026-11-25).** The window's opening and `↻` read `/credits/:key` alone; the `/status` the
+> `balance` row's empty states wait on is read with the rest of the reader's own state. The sentence below leads the
+> code (the first-node reads).
+
+The window's `↻` is live and re-reads `/credits/:key` and `/status`, which the window also reads when it opens — the
+`balance` row's empty states wait on a `/status` answer, and that answer is the reader's own state's (→ Reading the
+feed and threads → "No answer overwrites a newer one"). A pending send
 reconciles whether or not the window is open (→ The wallet); the update in place happens where the row is.
 
 **The `balance` row**: the balance from `GET /credits/:key?pending=1` — the credits view's spendable sum (→ The
