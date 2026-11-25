@@ -34,6 +34,12 @@ let signResp: 'signed' | 'declined' | 'locked' | 'refused';
 let faucetCredits: (() => CreditGrant | Rejection) | null;
 let creditsCalls: string[];
 let creditsDefer: { resolve: (v: CreditsResult) => void } | null;
+// WEB_INTERFACE → The wallet window — the window's opening and ↻ read
+// `/credits/:key` and `/status`. The reader-state rule's own file is
+// test/app-first-node.test.ts; what belongs here is that the wallet's
+// /status read lands and is seen by the pending-status gate.
+let statusCalls: number;
+let statusThrows: boolean;
 const last = (): string => signCalls[signCalls.length - 1]!;
 
 function post(id: string, author: string): PostJson {
@@ -67,7 +73,11 @@ function fakeApi(): Api {
     feed: async () => ({ posts: [post('p1', 'bb'.repeat(32))], next: null, pending: [], pendingCount: 0 } as FeedResult),
     thread: async () => null,
     post: async (id) => ({ ...post(id, 'bb'.repeat(32)), confirmedAuthor: 'bb'.repeat(32) }),
-    status: async () => statusResult(),
+    status: async () => {
+      statusCalls += 1;
+      if (statusThrows) throw new Error('status offline');
+      return statusResult();
+    },
     currentBlock: async (): Promise<BlockCurrent> => ({ height: blockHeight, hash: null }),
     karma: async () => memberKarma(),
     vouchesByTarget: async (): Promise<VouchesTargetResult> => ({ vouches: [], count: 0, next: null }),
@@ -161,6 +171,8 @@ function harness(opts: { withPolicy?: boolean; requestFaucetOrigin?: (o: string)
     boxCount: 1, next: null,
   };
   creditsRecipient = { userId: REC, total: '0', boxes: [], boxCount: 0, next: null };
+  statusCalls = 0;
+  statusThrows = false;
 
   const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts), undefined, undefined, opts.requestFaucetOrigin);
   // Swap the faucet client for a controllable one, so tests drive the credits
@@ -793,5 +805,64 @@ describe('the wallet reads', () => {
     expect(h.drive.sendFlight?.stage).toBe('landed');
     // The App still updated walletCredits — a later open renders the moved balance.
     expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
+  });
+});
+
+// WEB_INTERFACE → The wallet window — the window's opening and `↻` read
+// `/credits/:key` and `/status`; the `/status` answer is the reader's own
+// state's.
+describe("the wallet's open and ↻ read /status beside /credits", () => {
+  it.fails('a wallet open reads /status alongside /credits', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    // State starts with no reader-state read; statusCalls is 0.
+    statusCalls = 0;
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    expect(statusCalls, 'the wallet open read /status').toBeGreaterThanOrEqual(1);
+    expect(creditsCalls.filter((k) => k === ME).length, 'the wallet open read /credits').toBeGreaterThanOrEqual(1);
+  });
+
+  it.fails("a wallet ↻ reads /status alongside /credits", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    statusCalls = 0;
+    const creditsBefore = creditsCalls.filter((k) => k === ME).length;
+    // The ↻ runs through the App's handler.
+    await (h.app as unknown as { refreshWalletCredits: () => Promise<void> }).refreshWalletCredits();
+    await flush();
+    expect(statusCalls, 'the ↻ read /status').toBeGreaterThanOrEqual(1);
+    expect(creditsCalls.filter((k) => k === ME).length - creditsBefore, 'the ↻ read /credits').toBeGreaterThanOrEqual(1);
+  });
+
+  it.fails("a /status answer landing at the wallet's open sets state.status so the empty balance row reads the faucet step", async () => {
+    const h = harness();
+    // No reader-state was read at boot: no loadMembershipState run.
+    await h.drive.loadFeed();
+    expect((h.app as unknown as { state: { status: StatusResult | null } }).state.status, 'state.status is unset at boot').toBeNull();
+    // Make the wallet empty so the row renders its empty-state branch.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    expect((h.app as unknown as { state: { status: StatusResult | null } }).state.status, 'the wallet open\'s /status landed').not.toBeNull();
+    // The balance row now reads the faucet step, not `—`.
+    const line = document.querySelector<HTMLElement>('.credits-line')!;
+    expect(line.textContent).not.toBe('—');
+    expect(line.querySelector('button.word')?.textContent).toBe('ask the faucet for $NOTIS');
+  });
+
+  it.fails("a /status read that fails leaves the /credits read's landing intact", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    statusCalls = 0;
+    statusThrows = true;
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    expect(statusCalls, 'the wallet open tried to read /status').toBeGreaterThanOrEqual(1);
+    // The /credits answer still lands — walletCredits holds the view.
+    expect(h.drive.walletCredits, 'walletCredits holds the /credits answer').not.toBeNull();
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CBOX);
   });
 });

@@ -131,3 +131,77 @@ describe("nodesBlock — the reach line of a FIPS connection", () => {
     expect(text).not.toContain('fips · none');
   });
 });
+
+// WEB_INTERFACE → The extension → "The debug file" — "save as file takes
+// the snapshot and the events at the press, as `refresh` does, and the row
+// shows that snapshot after it, so the file holds every event recorded until
+// the press and `savedAt` is the moment both were taken".
+describe("save as file takes the snapshot and the events at the press", () => {
+  it.fails("a save after an event recorded since the last show carries the event, a savedAt of the press, and the row shows the new snapshot", async () => {
+    // Mutable state the seam reads: the event log starts with one entry,
+    // and a second lands between `show` and `save as file`.
+    const events: import('../../src/extension/debug-log').DebugEvent[] = [
+      { t: 1, page: 'ab12cd34', kind: 'page' },
+    ];
+    let logBytes = 100;
+    const downloads: Array<{ filename: string; text: string }> = [];
+    let nowValue = 1_000_000;
+
+    const seam: DebugSeam = {
+      seams: {
+        build: () => ({ ...BUILD }),
+        settings: () => ({ ...SETTINGS }),
+        mesh: { state: () => emptyState(), diagnostics: () => ({ connections: [], gossip: { meshPeers: 0, directPeers: 0 }, iceServers: [] }) },
+        postCache: { stats: () => Promise.resolve({ ...CACHE }) },
+        debugLog: { stats: () => Promise.resolve({ ...LOG_STATS, events: events.length, bytes: logBytes }) },
+      },
+      log: {
+        clear: () => Promise.resolve(),
+        list: () => Promise.resolve([...events]),
+      },
+      download: (filename, text) => { downloads.push({ filename, text }); },
+    };
+
+    const row = debugRow({
+      seam,
+      reader: () => ({
+        identityLoaded: false, unlocked: false, pubKeyHex: null, name: null,
+        pending: [], waiting: [], lastTipRun: null, lastFiguresRun: null, lastNamesRun: null,
+      }),
+      now: () => nowValue,
+    });
+    document.body.appendChild(row);
+
+    // Open the row — the first snapshot and event list are taken.
+    const toggle = row.querySelector<HTMLButtonElement>('.field > button.word')!;
+    toggle.click();
+    await flush();
+    // The displayed log line names the show's read of the log.
+    const bodyBefore = row.querySelector<HTMLElement>('.debug-body')!.textContent ?? '';
+    expect(bodyBefore).toContain('1 events');
+
+    // Between show and save, a second event is recorded and the log bytes grow.
+    events.push({ t: 2, page: 'ab12cd34', kind: 'write' });
+    logBytes = 250;
+    // The clock advances — the press's `savedAt` reads this value.
+    nowValue = 2_000_000;
+
+    // Press `save as file`. The file must hold the second event and
+    // `savedAt` equal to the press's clock.
+    const save = [...row.querySelectorAll<HTMLButtonElement>('button.word')]
+      .find((b) => b.textContent === 'save as file')!;
+    save.click();
+    await flush();
+
+    expect(downloads.length).toBe(1);
+    const parsed = JSON.parse(downloads[0]!.text) as { savedAt: number; events: Array<{ kind: string }> };
+    expect(parsed.events.length, 'the file carries the event recorded since the last show').toBe(2);
+    expect(parsed.events[1]?.kind).toBe('write');
+    expect(parsed.savedAt, 'savedAt is the moment of the press').toBe(2_000_000);
+
+    // The row shows the new snapshot after the press.
+    const bodyAfter = row.querySelector<HTMLElement>('.debug-body')!.textContent ?? '';
+    expect(bodyAfter, 'the row\'s log line moved to the press\'s read').toContain('2 events');
+    expect(bodyAfter).toContain('250');
+  });
+});
