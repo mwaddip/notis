@@ -388,13 +388,16 @@ export class App {
    * WEB_INTERFACE → The extension → "The page's first node reads the
    * reader's own state again" — a page whose read of the reader's own
    * state failed before its first check reached a node reads it once
-   * more when that node is reached, beside the feed. Set at
-   * `loadMembershipState`'s catch and at `refreshWalletCredits` when its
-   * reads landed nothing; cleared on any read of either that lands. The
-   * cornerTick's first answered tick after the flag is set re-reads
-   * `rereadReaderState`.
+   * more when that node is reached, beside the feed. Each piece carries
+   * its own flag, set by its own read's failure and cleared by its own
+   * read's landing, so a landing of one does not clear the other's owed
+   * re-read. The cornerTick's first answered tick re-reads the pieces
+   * whose flags stand: the membership state through `loadMembershipState`,
+   * the wallet's listing through `refreshWalletCredits` while `@wallet`
+   * is open. A node change clears both through `dropReaderState`.
    */
-  private readerStateFoundNoNode = false;
+  private membershipFoundNoNode = false;
+  private walletCreditsFoundNoNode = false;
   // The presses waiting on the run in flight — a send to a handle that needs a
   // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
   // run's end settles each with its verdict and anchor; a run that ends without
@@ -2803,12 +2806,13 @@ export class App {
     if (gen !== this.readerGen) return;
     // WEB_INTERFACE → The extension → "The page's first node reads the
     // reader's own state again" — a wallet refresh whose reads all failed
-    // leaves the wallet's piece unread; the first answered tick re-reads
-    // it. Any read that landed clears the flag.
+    // leaves the wallet's listing unread; the first answered tick re-reads
+    // it. Any read that landed clears the wallet's own flag — the
+    // membership state's flag is cleared by its own read's landing.
     const anyLanded = statusLanded
       || viewOutcome.status === 'fulfilled'
       || (plainOutcome !== undefined && plainOutcome.status === 'fulfilled');
-    this.readerStateFoundNoNode = !anyLanded;
+    this.walletCreditsFoundNoNode = !anyLanded;
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
@@ -3215,8 +3219,9 @@ export class App {
     // WEB_INTERFACE → The extension → "The page's first node reads the
     // reader's own state again" — the re-read the change starts decides
     // afresh; a flag left over from the node before would re-read for no
-    // reason here.
-    this.readerStateFoundNoNode = false;
+    // reason here. Both pieces clear here, as the one flag was.
+    this.membershipFoundNoNode = false;
+    this.walletCreditsFoundNoNode = false;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -4102,14 +4107,14 @@ export class App {
       }
       karmaPlain = plain;
       // WEB_INTERFACE → The extension → "The page's first node reads the
-      // reader's own state again" — the boot read landed, so no re-read is
-      // owed at the next answered tick.
-      this.readerStateFoundNoNode = false;
+      // reader's own state again" — the membership state landed, so no
+      // re-read of it is owed at the next answered tick.
+      this.membershipFoundNoNode = false;
     } catch {
       // WEB_INTERFACE → The extension → "The page's first node reads the
-      // reader's own state again" — the boot read landed nothing, so the
-      // first node a page reaches reads the reader's state again.
-      if (gen === this.readerGen) this.readerStateFoundNoNode = true;
+      // reader's own state again" — the membership state read landed
+      // nothing, so the first node a page reaches reads it again.
+      if (gen === this.readerGen) this.membershipFoundNoNode = true;
       return; // a failed read leaves the last-known state; the ↻ retries
     }
     this.renderHeader();
@@ -5716,13 +5721,21 @@ export class App {
         void this.loadFeed();
       }
       // WEB_INTERFACE → The extension → "The page's first node reads the
-      // reader's own state again" — the first node a page reaches after a
-      // boot read of the reader's own state landed nothing reads it once
-      // more, beside the feed. Cleared here so a later cornerTick on a page
-      // whose reads answered reads nothing.
-      if (this.readerStateFoundNoNode) {
-        this.readerStateFoundNoNode = false;
-        this.rereadReaderState();
+      // reader's own state again" — the first node a page reaches re-reads
+      // each piece of the reader's own state whose flag stands, beside the
+      // feed: the membership state through `loadMembershipState`, the
+      // wallet's listing through `refreshWalletCredits` while `@wallet`
+      // is open. Each flag is cleared here so a later cornerTick on a page
+      // whose piece answered reads nothing for that piece.
+      if (this.membershipFoundNoNode) {
+        this.membershipFoundNoNode = false;
+        if (this.idm.current() !== null) void this.loadMembershipState();
+      }
+      if (this.walletCreditsFoundNoNode) {
+        this.walletCreditsFoundNoNode = false;
+        if (this.idm.current() !== null && openSet(this.state.workspace).has('@wallet')) {
+          void this.refreshWalletCredits();
+        }
       }
     }
   }

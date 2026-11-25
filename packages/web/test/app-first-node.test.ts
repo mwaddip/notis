@@ -572,7 +572,7 @@ describe("the page's first node reads the reader's own state again", () => {
   // own state again" — each piece (the membership state; the wallet's
   // listing) carries its own flag, so a landing of one does not clear the
   // other's owed re-read.
-  it.fails('the wallet lands after the membership read failed, the first answered tick re-reads the membership state', async () => {
+  it('the wallet lands after the membership read failed, the first answered tick re-reads the membership state', async () => {
     const h = await readerHarness({ walletOpen: true });
     // Boot: every reader-state read fails. Both pieces are owed a re-read.
     await h.drive.loadMembershipState();
@@ -597,7 +597,7 @@ describe("the page's first node reads the reader's own state again", () => {
     expect(h.state.reads.nameByOwner, 'the name was re-read at the first answered tick').toBeGreaterThan(nameCallsBefore);
   });
 
-  it.fails('the membership state lands after the wallet read failed, the first answered tick re-reads the wallet\'s listing and not the membership state', async () => {
+  it('the membership state lands after the wallet read failed, the first answered tick re-reads the wallet\'s listing and not the membership state', async () => {
     const h = await readerHarness({ walletOpen: true });
     // Boot: every reader-state read fails.
     await h.drive.refreshWalletCredits();
