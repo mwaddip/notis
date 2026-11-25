@@ -7,9 +7,11 @@
 // FIPS link."
 //
 // Four sub-steps, in order:
-//   1. No faults — the stage default. Every node the browser's config
-//      lists is reached at its other addresses; no `fips-link` event
-//      opens and no entry's transport reads `fips`. `verdictS9NoLink`.
+//   1. No faults — on the config the scenario writes at its start: the
+//      stage default with each first-contact node's FIPS address
+//      appended last. Every node the browser's config lists is reached
+//      at its other addresses; no `fips-link` event opens and no
+//      entry's transport reads `fips`. `verdictS9NoLink`.
 //   2. The drop table — one add-table + add-chain + per-host drop in
 //      `notismesh-browser` naming every mesh host but the access
 //      host (pub1), lan1's and lan1-peer's 10.103.0.x addresses

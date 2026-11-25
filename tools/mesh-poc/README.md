@@ -399,7 +399,9 @@ to confirm the "no proof read" claim.
 
 Four sub-steps. The scenario reads one browser's path to one access node (pub1) with every other
 mesh host dropped at the browser's own namespace, so pub1 is the one reachable mesh node and the
-other reads only through a FIPS link that rides pub1's connection.
+other reads only through a FIPS link that rides pub1's connection. At its start s9 writes the stage
+default with each first-contact node's FIPS address appended last (`withFipsAddresses`) as
+`config.json`, and its `finally` restores the default; scenarios 1–8 read the FIPS-free default.
 
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
@@ -517,9 +519,21 @@ services is a failure.
    relay host.
 
 5. **Through one node** (`MESH_INTERFACE → Acceptance 9`). Drop every mesh host but pub1 at the
-   browser's namespace, let the client's check run, and read `#state` and `#fips-links`:
+   browser's namespace, let the client's check run, and read `#state` and `#fips-links`. The
+   default `config.json` lists no FIPS address, so first write the config s9 writes — the default
+   with each first-contact node's FIPS address appended last — from `tools/mesh-poc`, then reload
+   the page (it fetches `config.json` once per load):
 
    ```bash
+   node --input-type=module -e "
+   import { readFileSync } from 'node:fs';
+   import { withFipsAddresses } from './stage/lib/config-variants.mjs';
+   import { writeConfigVariant } from './stage/lib/scenario-config.mjs';
+   const out = 'stage/out';
+   const base = JSON.parse(readFileSync(out + '/browser/config.default.json', 'utf8'));
+   const ids = JSON.parse(readFileSync(out + '/identities.json', 'utf8'));
+   writeConfigVariant(out, withFipsAddresses(base, ids));"
+
    sudo ip netns exec notismesh-browser nft add table ip s9_drop
    sudo ip netns exec notismesh-browser \
      nft 'add chain ip s9_drop out { type filter hook output priority 0 ; }'
@@ -531,6 +545,9 @@ services is a failure.
 
    # Remove.
    sudo ip netns exec notismesh-browser nft delete table ip s9_drop
+
+   # Restore the default config (reload the page to read it).
+   node --input-type=module -e "import { writeStageDefault } from './stage/lib/scenario-config.mjs'; writeStageDefault('stage/out');"
    ```
 
    **Fails** if the other id stays `retry`, if its entry's `transport` is not `'fips'`, or if
