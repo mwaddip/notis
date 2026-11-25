@@ -195,6 +195,9 @@ importers:
       it-length-prefixed:
         specifier: 11.0.1
         version: 11.0.1
+      node-datachannel:
+        specifier: 0.33.6
+        version: 0.33.6
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
