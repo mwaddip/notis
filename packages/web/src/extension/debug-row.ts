@@ -67,12 +67,18 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
   let snapshot: DebugSnapshot | null = null;
   let askingClear = false;
 
-  const takeAndRender = async (): Promise<void> => {
+  // WEB_INTERFACE → The extension → "The debug file" — "show and refresh
+  // take the snapshot alone; the log's `list` is read at `save as file`".
+  // One function takes the snapshot; `takeAndRender` and the `save as file`
+  // click handler both use it, the save adding the log's `list` beside it.
+  // The row's log line reads the log's `stats` from the snapshot.
+  const takeSnap = (): Promise<DebugSnapshot> => {
     const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
-    // WEB_INTERFACE → The extension → "The debug file" — "show and refresh
-    // take the snapshot alone; the log's `list` is read at `save as file`".
-    // The row's log line reads the log's `stats` from the snapshot.
-    snapshot = await takeSnapshot(full);
+    return takeSnapshot(full);
+  };
+
+  const takeAndRender = async (): Promise<void> => {
+    snapshot = await takeSnap();
     render();
   };
 
@@ -121,16 +127,12 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     save.addEventListener('click', () => {
       // WEB_INTERFACE → The extension → "The debug file" — "save as file
       // takes the snapshot and the events at the press, as `refresh` does,
-      // and the row shows that snapshot after it". The press re-takes
-      // through the same `takeAndRender` the row's `refresh` uses, then
-      // hands the file to the caller's download with a `savedAt` of the
-      // same moment.
+      // and the row shows that snapshot after it". The press takes the
+      // snapshot through the same `takeSnap` the row's `refresh` uses and
+      // reads the log's events beside it, then hands the file to the
+      // caller's download with a `savedAt` of the same moment.
       void (async () => {
-        const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
-        const [snap, evs] = await Promise.all([
-          takeSnapshot(full),
-          deps.seam.log.list(),
-        ]);
+        const [snap, evs] = await Promise.all([takeSnap(), deps.seam.log.list()]);
         snapshot = snap;
         const now = deps.now();
         const file = buildDebugFile({
