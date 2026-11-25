@@ -137,7 +137,7 @@ describe("nodesBlock — the reach line of a FIPS connection", () => {
 // shows that snapshot after it, so the file holds every event recorded until
 // the press and `savedAt` is the moment both were taken".
 describe("save as file takes the snapshot and the events at the press", () => {
-  it.fails("a save after an event recorded since the last show carries the event, a savedAt of the press, and the row shows the new snapshot", async () => {
+  it("a save after an event recorded since the last show carries the event, a savedAt of the press, and the row shows the new snapshot", async () => {
     // Mutable state the seam reads: the event log starts with one entry,
     // and a second lands between `show` and `save as file`.
     const events: import('../../src/extension/debug-log').DebugEvent[] = [

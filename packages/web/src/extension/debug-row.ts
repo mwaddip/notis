@@ -122,12 +122,27 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     const save = el('button', 'word', 'save as file') as HTMLButtonElement;
     save.type = 'button';
     save.addEventListener('click', () => {
-      if (snapshot === null) return;
-      const now = deps.now();
-      const file = buildDebugFile({
-        snapshot, events, identifying: ticked, savedAt: now, nowMs: now,
-      });
-      deps.seam.download(file.filename, file.text);
+      // WEB_INTERFACE → The extension → "The debug file" — "save as file
+      // takes the snapshot and the events at the press, as `refresh` does,
+      // and the row shows that snapshot after it". The press re-takes
+      // through the same `takeAndRender` the row's `refresh` uses, then
+      // hands the file to the caller's download with a `savedAt` of the
+      // same moment.
+      void (async () => {
+        const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
+        const [snap, evs] = await Promise.all([
+          takeSnapshot(full),
+          deps.seam.log.list(),
+        ]);
+        snapshot = snap;
+        events = evs;
+        const now = deps.now();
+        const file = buildDebugFile({
+          snapshot: snap, events: evs, identifying: ticked, savedAt: now, nowMs: now,
+        });
+        deps.seam.download(file.filename, file.text);
+        render();
+      })();
     });
     controls.appendChild(save);
 
