@@ -22,16 +22,13 @@ built-in and reading no Node global. **The client is `@dagsocial/web`'s `src/mes
 `@dagsocial/web/mesh`: the node list, the client's chain, the server pick, the STUN list, the check and the client over
 them, which run in the browser as written, held to it by the member's browser typecheck. `tools/mesh-poc` is a member
 under `tools/`: it depends on `@dagsocial/web` and on the members its stage and cases reach, and holds the page, the
-stage and the client's cases that start a WebRTC transport — node-datachannel's binding takes one live
-`RTCPeerConnection` per process, so each such file runs in a process of its own. No WASM. One native module, `node-datachannel` under
+stage and the client's cases that start a WebRTC transport — node-datachannel's binding holds its live
+`RTCPeerConnection`s on one thread per process, and a second worker thread holding one crashes it, so each such file
+runs in a process of its own. No WASM. One native module, `node-datachannel` under
 `@libp2p/webrtc`, serves WebRTC on Node.js: the WebRTC-direct listener and dials, and a private node's WebRTC.
 
 **FIPS is `mmalmi/fips-ts` and `mmalmi/fips-tcp`**, pure TypeScript, `@dagsocial/net`'s dependencies by release
 tarball (→ FIPS → "The FIPS packages are pinned by release tarball").
-
-> ⚠ **AHEAD OF CODE (2026-11-25).** No patch reaches `node-datachannel`: its polyfill `RTCPeerConnection` keeps every
-> data channel the remote side opens until the connection closes, and leaves its channels open when it closes. The
-> `node-datachannel` clause below leads the code (the node-datachannel patch).
 
 **libp2p is pinned.** `libp2p` and every `@libp2p/*` dependency of `net`, of `@dagsocial/web` and of `tools/mesh-poc`
 are at an exact version, one version per package across the three.
@@ -56,9 +53,10 @@ the newer connection the peer's own stream arrives on, and keeps a peer whose re
 gossip → "A node's readers are its router's direct peers"); and `node-datachannel`, the WebRTC stack `@libp2p/webrtc`
 runs in Node, whose polyfill `RTCPeerConnection` forgets a data channel the remote side opened once it closes, as it
 forgets one it opened, and closes its data channels when it closes — so a WebRTC connection that stays up holds no
-channel of a stream that ended. `node-datachannel` comes in through `@libp2p/webrtc`'s version range, and its patch
-names the one version the lockfile resolves: an install that resolves another fails on the unused patch. A pin that
-moves carries its patch to the new version, the cases deciding that it still applies and still holds.
+channel of a stream that ended. `node-datachannel` reaches the node through `@libp2p/webrtc`'s version range, `net`
+declaring it at that version for its case, and its patch names the one version the lockfile resolves: an install that
+resolves another fails on the unused patch. A pin that moves carries its patch to the new version, the cases deciding
+that it still applies and still holds.
 
 ## Identity
 
