@@ -95,7 +95,7 @@ async function openPair(): Promise<{
 }
 
 describe("node-datachannel@0.33.6's polyfill RTCPeerConnection, patched", () => {
-    it.fails(
+    it(
         "1. a data channel the remote side opened is forgotten once it closes",
         async () => {
             const pair = await openPair();
@@ -121,7 +121,7 @@ describe("node-datachannel@0.33.6's polyfill RTCPeerConnection, patched", () => 
         30_000,
     );
 
-    it.fails(
+    it(
         '2. close() on a connection that never connected closes its data channel',
         async () => {
             const pc = new RTCPeerConnection();

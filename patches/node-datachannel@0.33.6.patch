@@ -1,0 +1,89 @@
+diff --git a/dist/cjs/polyfill/RTCPeerConnection.cjs b/dist/cjs/polyfill/RTCPeerConnection.cjs
+index 1998508b3463988a7d6bfdbd4b124676dfd40d0d..f7c84be5997dd65c1861ec1951604cd7e339c1c5 100644
+--- a/dist/cjs/polyfill/RTCPeerConnection.cjs
++++ b/dist/cjs/polyfill/RTCPeerConnection.cjs
+@@ -94,6 +94,10 @@ class RTCPeerConnection extends EventTarget {
+     __privateGet(this, _peerConnection).onDataChannel((channel) => {
+       const dc = new RTCDataChannel.default(channel);
+       __privateGet(this, _dataChannels).add(dc);
++      dc.addEventListener("close", () => {
++        __privateGet(this, _dataChannels).delete(dc);
++        __privateWrapper(this, _dataChannelsClosed)._++;
++      });
+       this.dispatchEvent(new Events.RTCDataChannelEvent("datachannel", { channel: dc }));
+     });
+     __privateGet(this, _peerConnection).onLocalDescription((sdp, type) => {
+@@ -281,6 +285,12 @@ class RTCPeerConnection extends EventTarget {
+     throw new DOMException("Not implemented");
+   }
+   close() {
++    for (const channel of [...__privateGet(this, _dataChannels)]) {
++      try {
++        channel.close();
++      } catch {
++      }
++    }
+     __privateGet(this, _peerConnection).close();
+   }
+   createAnswer() {
+diff --git a/dist/esm/polyfill/RTCPeerConnection.mjs b/dist/esm/polyfill/RTCPeerConnection.mjs
+index 18141a49073f406ed095cb8e8c863ab6f6e35e81..2d8decf1f743d2711716e606f3f72233be434c69 100644
+--- a/dist/esm/polyfill/RTCPeerConnection.mjs
++++ b/dist/esm/polyfill/RTCPeerConnection.mjs
+@@ -90,6 +90,10 @@ class RTCPeerConnection extends EventTarget {
+     __privateGet(this, _peerConnection).onDataChannel((channel) => {
+       const dc = new RTCDataChannel(channel);
+       __privateGet(this, _dataChannels).add(dc);
++      dc.addEventListener("close", () => {
++        __privateGet(this, _dataChannels).delete(dc);
++        __privateWrapper(this, _dataChannelsClosed)._++;
++      });
+       this.dispatchEvent(new RTCDataChannelEvent("datachannel", { channel: dc }));
+     });
+     __privateGet(this, _peerConnection).onLocalDescription((sdp, type) => {
+@@ -277,6 +281,12 @@ class RTCPeerConnection extends EventTarget {
+     throw new DOMException("Not implemented");
+   }
+   close() {
++    for (const channel of [...__privateGet(this, _dataChannels)]) {
++      try {
++        channel.close();
++      } catch {
++      }
++    }
+     __privateGet(this, _peerConnection).close();
+   }
+   createAnswer() {
+diff --git a/src/polyfill/RTCPeerConnection.ts b/src/polyfill/RTCPeerConnection.ts
+index 8c56655986d0ae10f31a9bd479e735f29cc61037..34c2106088990771fcfc3e6b669c570e68903e39 100644
+--- a/src/polyfill/RTCPeerConnection.ts
++++ b/src/polyfill/RTCPeerConnection.ts
+@@ -166,6 +166,12 @@ export default class RTCPeerConnection extends EventTarget implements globalThis
+     this.#peerConnection.onDataChannel((channel) => {
+       const dc = new RTCDataChannel(channel);
+       this.#dataChannels.add(dc);
++      // as for channels created locally: forget it once closed, otherwise every
++      // channel the remote peer ever opened stays referenced until close()
++      dc.addEventListener('close', () => {
++        this.#dataChannels.delete(dc);
++        this.#dataChannelsClosed++;
++      });
+       this.dispatchEvent(new RTCDataChannelEvent('datachannel', { channel: dc }));
+     });
+ 
+@@ -354,6 +360,15 @@ export default class RTCPeerConnection extends EventTarget implements globalThis
+   }
+ 
+   close(): void {
++    // close the channels first: a native data channel that is never closed
++    // stays referenced (with its callbacks) after the peer connection closes
++    for (const channel of [...this.#dataChannels]) {
++      try {
++        channel.close();
++      } catch {
++        // already closing
++      }
++    }
+     this.#peerConnection.close();
+   }
+ 

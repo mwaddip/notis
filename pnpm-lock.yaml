@@ -25,6 +25,9 @@ patchedDependencies:
   libp2p@3.5.1:
     hash: 5974d3c921210c10d201afd55d6a4c8b138cc5dfe64e5d69842813f211e0eb60
     path: patches/libp2p@3.5.1.patch
+  node-datachannel@0.33.6:
+    hash: 651c46f41bff09e897e192b8cec1092c43073552e2621dc0f8942bd03e7eaffc
+    path: patches/node-datachannel@0.33.6.patch
 
 importers:
 
@@ -197,7 +200,7 @@ importers:
         version: 11.0.1
       node-datachannel:
         specifier: 0.33.6
-        version: 0.33.6
+        version: 0.33.6(patch_hash=651c46f41bff09e897e192b8cec1092c43073552e2621dc0f8942bd03e7eaffc)
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
@@ -4595,7 +4598,7 @@ snapshots:
       it-stream-types: 2.0.4
       main-event: 1.0.5
       multiformats: 14.0.5
-      node-datachannel: 0.33.6
+      node-datachannel: 0.33.6(patch_hash=651c46f41bff09e897e192b8cec1092c43073552e2621dc0f8942bd03e7eaffc)
       p-defer: 4.0.1
       p-event: 8.0.1
       p-timeout: 7.0.2
@@ -6530,7 +6533,7 @@ snapshots:
 
   node-addon-api@8.9.2: {}
 
-  node-datachannel@0.33.6:
+  node-datachannel@0.33.6(patch_hash=651c46f41bff09e897e192b8cec1092c43073552e2621dc0f8942bd03e7eaffc):
     dependencies:
       detect-libc: 2.1.2
     optionalDependencies:
