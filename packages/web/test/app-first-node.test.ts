@@ -513,7 +513,7 @@ async function readerHarness(opts: { walletOpen?: boolean } = {}): Promise<Reade
 }
 
 describe("the page's first node reads the reader's own state again", () => {
-  it.fails('a boot read of the reader\'s own state fails, the first check then reaches a node — state.status is set and ownName is read', async () => {
+  it('a boot read of the reader\'s own state fails, the first check then reaches a node — state.status is set and ownName is read', async () => {
     const h = await readerHarness();
     // Boot: the identity's state reads all fail.
     await h.drive.loadMembershipState();
@@ -551,7 +551,7 @@ describe("the page's first node reads the reader's own state again", () => {
     expect(h.state.reads.status, 'no re-read of status at the tick').toBe(statusCallsBefore);
   });
 
-  it.fails('a restored @wallet at boot whose read failed re-reads /credits at the first answered tick', async () => {
+  it('a restored @wallet at boot whose read failed re-reads /credits at the first answered tick', async () => {
     const h = await readerHarness({ walletOpen: true });
     // Boot: the wallet's read fails along with the rest.
     await h.drive.loadMembershipState();

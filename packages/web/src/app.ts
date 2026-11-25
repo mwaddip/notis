@@ -384,6 +384,17 @@ export class App {
    * is set re-reads the feed.
    */
   private feedFoundNoNode = false;
+  /**
+   * WEB_INTERFACE → The extension → "The page's first node reads the
+   * reader's own state again" — a page whose read of the reader's own
+   * state failed before its first check reached a node reads it once
+   * more when that node is reached, beside the feed. Set at
+   * `loadMembershipState`'s catch and at `refreshWalletCredits` when its
+   * reads landed nothing; cleared on any read of either that lands. The
+   * cornerTick's first answered tick after the flag is set re-reads
+   * `rereadReaderState`.
+   */
+  private readerStateFoundNoNode = false;
   // The presses waiting on the run in flight — a send to a handle that needs a
   // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
   // run's end settles each with its verdict and anchor; a run that ends without
@@ -2766,6 +2777,14 @@ export class App {
     if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
       this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
     }
+    // WEB_INTERFACE → The extension → "The page's first node reads the
+    // reader's own state again" — a wallet read whose outcomes all failed
+    // leaves the wallet's piece unread; the first answered tick re-reads it.
+    // Any read that landed clears the flag.
+    const anyLanded = viewOutcome.status === 'fulfilled'
+      || (plainOutcome !== undefined && plainOutcome.status === 'fulfilled');
+    if (anyLanded) this.readerStateFoundNoNode = false;
+    else this.readerStateFoundNoNode = true;
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
@@ -3169,6 +3188,11 @@ export class App {
     // what can wait").
     this.repNoAnswer = false;
     this.creditsNoAnswer = false;
+    // WEB_INTERFACE → The extension → "The page's first node reads the
+    // reader's own state again" — the re-read the change starts decides
+    // afresh; a flag left over from the node before would re-read for no
+    // reason here.
+    this.readerStateFoundNoNode = false;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -4053,7 +4077,15 @@ export class App {
         this.ownNameLoaded = true;
       }
       karmaPlain = plain;
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the boot read landed, so no re-read is
+      // owed at the next answered tick.
+      this.readerStateFoundNoNode = false;
     } catch {
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the boot read landed nothing, so the
+      // first node a page reaches reads the reader's state again.
+      if (gen === this.readerGen) this.readerStateFoundNoNode = true;
       return; // a failed read leaves the last-known state; the ↻ retries
     }
     this.renderHeader();
@@ -5658,6 +5690,15 @@ export class App {
       if (this.feedFoundNoNode) {
         this.feedFoundNoNode = false;
         void this.loadFeed();
+      }
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the first node a page reaches after a
+      // boot read of the reader's own state landed nothing reads it once
+      // more, beside the feed. Cleared here so a later cornerTick on a page
+      // whose reads answered reads nothing.
+      if (this.readerStateFoundNoNode) {
+        this.readerStateFoundNoNode = false;
+        this.rereadReaderState();
       }
     }
   }
