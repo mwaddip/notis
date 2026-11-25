@@ -187,6 +187,10 @@ describe('withFipsAddresses', () => {
   });
 
   it('refuses a null base config', () => {
-    expect(() => withFipsAddresses(null as unknown as typeof BASE_FIPS, IDS_FIPS)).toThrow();
+    expect(() => withFipsAddresses(null as unknown as typeof BASE_FIPS, IDS_FIPS)).toThrow(/base config must carry firstContact/);
+  });
+
+  it('refuses null identities', () => {
+    expect(() => withFipsAddresses(BASE_FIPS, null as unknown as typeof IDS_FIPS)).toThrow(/identities must be an object/);
   });
 });
