@@ -24,7 +24,7 @@ import {
   type DebugSnapshot,
 } from './debug-snapshot';
 import { buildDebugFile } from './debug-file';
-import { DEBUG_LOG_BYTES, type DebugEvent, type DebugLog } from './debug-log';
+import { DEBUG_LOG_BYTES, type DebugLog } from './debug-log';
 
 /** The debug seam main.ts composes and the App takes (WEB_INTERFACE → The
  *  settings window → "The debug row", → The extension → "The snapshot").
@@ -65,17 +65,17 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
   let open = false;
   let ticked = false;
   let snapshot: DebugSnapshot | null = null;
-  let events: DebugEvent[] = [];
   let askingClear = false;
 
   const takeAndRender = async (): Promise<void> => {
     const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
-    const [snap, evs] = await Promise.all([
+    const [snap] = await Promise.all([
       takeSnapshot(full),
+      // The log's events are not held in the row's closure; `save as file`
+      // re-reads them at the press (→ "The debug file"). Discarded here.
       deps.seam.log.list(),
     ]);
     snapshot = snap;
-    events = evs;
     render();
   };
 
@@ -135,7 +135,6 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
           deps.seam.log.list(),
         ]);
         snapshot = snap;
-        events = evs;
         const now = deps.now();
         const file = buildDebugFile({
           snapshot: snap, events: evs, identifying: ticked, savedAt: now, nowMs: now,
@@ -332,7 +331,6 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     if (open) {
       open = false;
       snapshot = null;
-      events = [];
       ticked = false;
       askingClear = false;
       setText(toggle, 'show');
