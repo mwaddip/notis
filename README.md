@@ -591,6 +591,21 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
 | `contracts/SPECIAL.md` | Per-subsystem attention weights for review |
 
+### Local patches and upstream
+
+A few dependencies carry local patches (`patches/`, pnpm's `patchedDependencies`), each held by a
+case against the patched package (`contracts/MESH_INTERFACE.md → "libp2p is pinned."`).
+[`UPSTREAM.md`](UPSTREAM.md) names each change's upstream pull request and its status.
+
+- **libp2p/js-libp2p** — the WebRTC-direct certificate's renewal timer; gossipsub's streams on a
+  peer's newer connection and its direct peers; the address manager and an address that names no
+  IP; the connection manager's bound on inbound connections still upgrading.
+- **libp2p/js-libp2p-http** — the request line's query; a request body's `content-type` and
+  `content-length`; body bytes that arrive with the headers; the Node-side server adapter kept out
+  of the browser.
+- **murat-dogan/node-datachannel** — the polyfill `RTCPeerConnection` forgets a data channel once it
+  closes and closes its channels with the connection.
+
 ---
 
 ## Roadmap
