@@ -7,9 +7,11 @@
 // FIPS link."
 //
 // Four sub-steps, in order:
-//   1. No faults — the stage default. Every node the browser's config
-//      lists is reached at its other addresses; no `fips-link` event
-//      opens and no entry's transport reads `fips`. `verdictS9NoLink`.
+//   1. No faults — on the config the scenario writes at its start: the
+//      stage default with each first-contact node's FIPS address
+//      appended last. Every node the browser's config lists is reached
+//      at its other addresses; no `fips-link` event opens and no
+//      entry's transport reads `fips`. `verdictS9NoLink`.
 //   2. The drop table — one add-table + add-chain + per-host drop in
 //      `notismesh-browser` naming every mesh host but the access
 //      host (pub1), lan1's and lan1-peer's 10.103.0.x addresses
@@ -38,7 +40,8 @@ import { FaultLog } from '../lib/fault-log.mjs';
 import {
   verdictS9NoLink, verdictS9Through, verdictS9Probe, verdictS9Cut,
 } from '../lib/verdicts.mjs';
-import { writeStageDefault } from '../lib/scenario-config.mjs';
+import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mjs';
+import { withFipsAddresses } from '../lib/config-variants.mjs';
 import {
   execIn, readDirect, findPid, signal, signalPid, leafPids, descendantPids,
 } from '../lib/measure.mjs';
@@ -150,6 +153,14 @@ export function applyFaults(log, topology) {
   // Dry-run: record every fault the scenario would apply so a reader
   // of the whole output sees the set per scenario. Exec mode applies
   // them inside `run(ctx)` one at a time.
+  //
+  // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — s9
+  // is the one scenario whose page config carries each first-contact
+  // node's FIPS address; the record names the write so a reader of
+  // the dry-run sees it beside the nft faults.
+  const variantRecord = `[config:${NAME}:write-variant] writeConfigVariant withFipsAddresses(config.default.json, identities.json)`;
+  log.records.push(variantRecord);
+  if (log.dryRun) process.stdout.write(variantRecord + '\n');
   const a = s9ThroughOneNodeArgs(topology, ACCESS_HOST);
   log.apply('browser-drop-add-table', a.addTable, a.deleteTable);
   log.apply('browser-drop-add-chain', a.addChain, null);
@@ -189,14 +200,23 @@ export async function run(ctx) {
 
   // MESH_INTERFACE → Acceptance — every scenario writes config.json
   // fresh at its start so none inherits a previous scenario's variant.
-  // s9 reads the stage default — pub1 and pub2 as first contact.
-  writeStageDefault(ctx.outDir);
-
+  // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — s9
+  // is the one scenario whose page config carries each first-contact
+  // node's FIPS address: the stage default lists WebRTC-direct (and
+  // pub1's secure WebSocket) alone, so scenarios 1-8 assert what a
+  // node with no FIPS address does; s9 reads `config.default.json`
+  // and appends each first-contact entry's FIPS address through
+  // `withFipsAddresses`, writes the variant with `writeConfigVariant`,
+  // and the finally block restores the stage default.
   const identitiesPath = join(ctx.outDir, 'identities.json');
   const identities = existsSync(identitiesPath) ? JSON.parse(readFileSync(identitiesPath, 'utf8')) : null;
   if (identities === null) {
     throw new Error('s9: identities.json missing; stage:up did not run');
   }
+  const defaultConfigPath = join(ctx.outDir, 'browser', 'config.default.json');
+  const baseConfig = JSON.parse(readFileSync(defaultConfigPath, 'utf8'));
+  const fipsVariant = withFipsAddresses(baseConfig, identities);
+  writeConfigVariant(ctx.outDir, fipsVariant);
   const accessId = identities[ACCESS_HOST]?.notisId;
   if (typeof accessId !== 'string') {
     throw new Error(`s9: identities.json has no ${ACCESS_HOST} row`);

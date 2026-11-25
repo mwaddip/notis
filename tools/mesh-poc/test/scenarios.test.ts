@@ -1410,6 +1410,22 @@ describe('s9 (through one node)', () => {
       'CONT record present').toBe(true);
   });
 
+  // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — the
+  // stage default lists each public node's WebRTC-direct and secure
+  // WebSocket addresses alone, so scenarios 1-8 assert what a node
+  // with no FIPS address does. s9 is the one scenario that appends
+  // each first-contact node's FIPS address through `withFipsAddresses`,
+  // written via `writeConfigVariant` so the drop table in step 2
+  // leaves FIPS the one path to pub2. The dry-run records that intent.
+  it('run({dryRun:true}) records the FIPS variant it would write through writeConfigVariant', async () => {
+    const r = await s9.run({ dryRun: true, topology: TOPO_S9 });
+    expect(r.faults.some((f: string) =>
+      f.includes('config:s9:write-variant')
+      && f.includes('writeConfigVariant')
+      && f.includes('withFipsAddresses')
+    ), 'FIPS variant write record present').toBe(true);
+  });
+
   // MESH_INTERFACE → Acceptance 9 — the drop table drops every mesh
   // host but the access host. A drop on 11.100.x addresses alone
   // would leave lan1 and lan1-peer reachable through natC's inside

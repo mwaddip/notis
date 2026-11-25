@@ -204,6 +204,45 @@ export function buildPrivateViaAnnouncedRelayPairVariant(baseConfig, { privRow, 
 }
 
 /**
+ * MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+ * and → "A reader links when a node's every other address failed" — a
+ * variant that appends each first-contact entry's FIPS address last, read
+ * from the identity line's `multiaddrs`. The identities row is matched by
+ * notisId; the one multiaddr starting with `/fips/` and carrying no
+ * `/p2p-circuit` is picked (MESH_INTERFACE → FIPS → "A private node's
+ * relay addresses ride IP" — a `/fips/…/p2p-circuit/…` address is refused
+ * wherever it arrives). Throws where a first-contact node has none — the
+ * scenario asserts FIPS reach, so a missing address is a stage defect.
+ */
+export function withFipsAddresses(baseConfig, identities) {
+  if (!baseConfig || !Array.isArray(baseConfig.firstContact)) {
+    throw new Error('base config must carry firstContact[]');
+  }
+  if (!identities || typeof identities !== 'object') {
+    throw new Error('identities must be an object');
+  }
+  const firstContact = baseConfig.firstContact.map((entry) => {
+    const row = Object.values(identities).find((r) => r?.notisId === entry.notisId);
+    if (!row || !Array.isArray(row.multiaddrs)) {
+      throw new Error(`first-contact ${entry.notisId}: no identities row with multiaddrs`);
+    }
+    const fips = row.multiaddrs.find((a) =>
+      typeof a === 'string' && a.startsWith('/fips/') && !a.includes('/p2p-circuit'),
+    );
+    if (fips === undefined) {
+      throw new Error(`first-contact ${entry.notisId}: no /fips/ multiaddr without /p2p-circuit in identities`);
+    }
+    const addrs = Array.isArray(entry.addrs) ? entry.addrs : [];
+    return { notisId: entry.notisId, addrs: [...addrs, fips] };
+  });
+  return {
+    network: baseConfig.network,
+    firstContact,
+    seeds: Array.isArray(baseConfig.seeds) ? baseConfig.seeds : [],
+  };
+}
+
+/**
  * Build a config variant that keeps the stage's own first-contact nodes AND adds a
  * list of hostile seeds. The seeds are refused by
  * `assertClientConfig` under the same rules first-contact nodes are, so each seed's

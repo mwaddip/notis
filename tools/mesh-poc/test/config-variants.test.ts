@@ -7,6 +7,7 @@ import {
   buildPrivateViaRelayVariant,
   buildWithHostileSeedsVariant,
   buildHostileSeeds,
+  withFipsAddresses,
 } from '../stage/lib/config-variants.mjs';
 
 const BASE_CONFIG = {
@@ -99,5 +100,97 @@ describe('buildHostileSeeds', () => {
   it('empty / null inputs → empty list', () => {
     expect(buildHostileSeeds(null, TOPOLOGY, { peerIdStringOf: fakePeerIdOf })).toEqual([]);
     expect(buildHostileSeeds(IDENTITIES, null, { peerIdStringOf: fakePeerIdOf })).toEqual([]);
+  });
+});
+
+// MESH_INTERFACE → FIPS → "A node's FIPS address is `/fips/<npub>/p2p/<peer id>`"
+// and "A reader links when a node's every other address failed" — a variant
+// that appends each first-contact entry's FIPS address last, read from the
+// identity line's `multiaddrs`. Scenario 9 writes it so the drop table
+// leaves FIPS the one path to the other first-contact node.
+describe('withFipsAddresses', () => {
+  const BASE_FIPS = {
+    network: 'devnet',
+    firstContact: [
+      { notisId: 'aa'.repeat(32), addrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'] },
+      { notisId: 'bb'.repeat(32), addrs: ['/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER'] },
+    ],
+    seeds: [],
+  };
+  const IDS_FIPS = {
+    pub1: {
+      notisId: 'aa'.repeat(32),
+      multiaddrs: [
+        '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER',
+        '/fips/npub1pub1address/p2p/PUB1PEER',
+      ],
+    },
+    pub2: {
+      notisId: 'bb'.repeat(32),
+      multiaddrs: [
+        '/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER',
+        '/fips/npub1pub2address/p2p/PUB2PEER',
+      ],
+    },
+  };
+
+  it('appends each first-contact node\'s FIPS address last', () => {
+    const r = withFipsAddresses(BASE_FIPS, IDS_FIPS);
+    expect(r.network).toBe('devnet');
+    expect(r.firstContact.length).toBe(2);
+    expect(r.firstContact[0]!.notisId).toBe('aa'.repeat(32));
+    expect(r.firstContact[0]!.addrs).toEqual([
+      '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER',
+      '/fips/npub1pub1address/p2p/PUB1PEER',
+    ]);
+    expect(r.firstContact[1]!.notisId).toBe('bb'.repeat(32));
+    expect(r.firstContact[1]!.addrs).toEqual([
+      '/ip4/10.100.0.12/udp/4001/webrtc-direct/certhash/CHASH2/p2p/PUB2PEER',
+      '/fips/npub1pub2address/p2p/PUB2PEER',
+    ]);
+    expect(r.seeds).toEqual([]);
+  });
+
+  // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP" —
+  // a `/fips/…/p2p-circuit/…` address is refused by the client wherever
+  // it arrives; `withFipsAddresses` picks the plain FIPS address only.
+  it('picks the /fips/ multiaddr that carries no /p2p-circuit', () => {
+    const idsWithCircuit = {
+      pub1: {
+        notisId: 'aa'.repeat(32),
+        multiaddrs: [
+          '/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER',
+          '/fips/npub1relay/p2p/RELAYPEER/p2p-circuit/p2p/PUB1PEER',
+          '/fips/npub1pub1address/p2p/PUB1PEER',
+        ],
+      },
+      pub2: IDS_FIPS.pub2,
+    };
+    const r = withFipsAddresses(BASE_FIPS, idsWithCircuit);
+    expect(r.firstContact[0]!.addrs[1]).toBe('/fips/npub1pub1address/p2p/PUB1PEER');
+  });
+
+  it('throws when a first-contact node has no FIPS address in identities', () => {
+    const noFips = {
+      pub1: {
+        notisId: 'aa'.repeat(32),
+        multiaddrs: ['/ip4/10.100.0.11/udp/4001/webrtc-direct/certhash/CHASH1/p2p/PUB1PEER'],
+      },
+      pub2: IDS_FIPS.pub2,
+    };
+    expect(() => withFipsAddresses(BASE_FIPS, noFips)).toThrow(/no \/fips\/ multiaddr/);
+  });
+
+  it('throws when a first-contact node has no identities row', () => {
+    const noRow = { pub2: IDS_FIPS.pub2 };
+    expect(() => withFipsAddresses(BASE_FIPS, noRow)).toThrow(/no identities row/);
+  });
+
+  it('refuses a null base config', () => {
+    expect(() => withFipsAddresses(null as unknown as typeof BASE_FIPS, IDS_FIPS)).toThrow(/base config must carry firstContact/);
+  });
+
+  it('refuses null identities', () => {
+    expect(() => withFipsAddresses(BASE_FIPS, null as unknown as typeof IDS_FIPS)).toThrow(/identities must be an object/);
   });
 });

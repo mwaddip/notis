@@ -22,6 +22,10 @@ export declare function buildPrivateViaAnnouncedRelayPairVariant(
   baseConfig: PageConfigShape,
   opts: { privRow: IdentityRow; identities: Record<string, IdentityRow> },
 ): PageConfigShape;
+export declare function withFipsAddresses(
+  baseConfig: PageConfigShape,
+  identities: Record<string, IdentityRow>,
+): PageConfigShape;
 export declare function buildWithHostileSeedsVariant(
   baseConfig: PageConfigShape,
   seeds: Array<{ notisId: string; addrs: string[] }>,
