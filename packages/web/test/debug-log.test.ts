@@ -152,32 +152,58 @@ describe('debug-log — two pages, one total', () => {
 });
 
 describe('debug-log — the batch: size, interval, flush', () => {
-  it('one write at the batch\'s size, one at the interval, one on `flush()`', async () => {
-    const idb = new IDBFactory();
+  it('a readwrite lands at the batch\'s size, at the interval, and on `flush()`', async () => {
+    const real = new IDBFactory();
+    let readwrites = 0;
+    // A factory that counts the readwrite transactions the module opens;
+    // the readonly transactions `list` and `stats` open after flushing
+    // an empty buffer are not counted, so an auto-flush (size or
+    // interval) and a manual `flush` each add exactly one.
+    const factory = {
+      open(name: string, version?: number): IDBOpenDBRequest {
+        const req = real.open(name, version);
+        req.addEventListener('success', () => {
+          const d = req.result;
+          const origTx = d.transaction.bind(d);
+          (d as unknown as { transaction: typeof d.transaction }).transaction = ((
+            stores: string | string[], mode?: IDBTransactionMode,
+          ) => {
+            if (mode === 'readwrite') readwrites += 1;
+            return origTx(stores, mode);
+          }) as typeof d.transaction;
+        });
+        return req;
+      },
+      deleteDatabase: real.deleteDatabase.bind(real),
+      databases: real.databases.bind(real),
+      cmp: real.cmp.bind(real),
+    } as unknown as IDBFactory;
     const t = fakeTimers();
     const log = createDebugLog({
-      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      indexedDB: factory, now: clock().tick, pageId: PAGE,
       boundBytes: 100_000, batchSize: 3, batchInterval: 1000, timers: t,
     });
-    // Under the size, nothing is written yet.
+    // Under the size, no readwrite yet.
     log.record('error', { message: 'a' });
     log.record('error', { message: 'b' });
-    expect((await log.stats()).events).toBe(0);
-    // At the size, one write.
+    expect(readwrites).toBe(0);
+    // At the size, one readwrite.
     log.record('error', { message: 'c' });
-    // Give the write time to land.
-    await new Promise<void>((r) => setTimeout(r, 0));
-    expect((await log.stats()).events).toBe(3);
-    // Under the size again, then fire the interval.
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(readwrites).toBe(1);
+    // Under the size again, then fire the interval — one more.
     log.record('error', { message: 'd' });
     const [firstHandle] = [...(t as unknown as { map: Map<unknown, { fn: () => void }> }).map.keys()];
     t.fire(firstHandle!);
-    await new Promise<void>((r) => setTimeout(r, 0));
-    expect((await log.stats()).events).toBe(4);
-    // Then a plain flush for the last one.
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(readwrites).toBe(2);
+    // Then a manual flush for the last one — one more.
     log.record('error', { message: 'e' });
     await log.flush();
-    expect((await log.stats()).events).toBe(5);
+    expect(readwrites).toBe(3);
+    // Every record lands; `list` over an empty buffer opens no readwrite.
+    expect((await log.list()).map((e) => e.message)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(readwrites).toBe(3);
   });
 });
 
@@ -392,8 +418,7 @@ describe('debug-log — list and stats include the buffered events', () => {
   // must include the events the buffer still holds. Without the flush
   // inside each read, a batch not yet written at 50 events or at the 2 s
   // interval is in neither answer.
-  it.fails('an event recorded and `list()` called before any flush returns it', async () => {
-    // expected [] to deeply equal [ 'buffered' ]
+  it('an event recorded and `list()` called before any flush returns it', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
@@ -405,8 +430,7 @@ describe('debug-log — list and stats include the buffered events', () => {
     expect(list.map((e) => e.message)).toEqual(['buffered']);
   });
 
-  it.fails('`stats()` in the same state counts the buffered event and its bytes', async () => {
-    // expected +0 to be 1 // Object.is equality
+  it('`stats()` in the same state counts the buffered event and its bytes', async () => {
     const idb = new IDBFactory();
     const t = fakeTimers();
     const log = createDebugLog({
