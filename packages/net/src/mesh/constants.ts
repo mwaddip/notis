@@ -109,6 +109,55 @@ export const FIPS_READER_LINKS_MAX: 1 = 1;
 export const FIPS_SESSION_IDLE_MS: 90000 = 90000;
 
 /**
+ * MESH_INTERFACE → FIPS → "A public peer is an npub at a `host:port`" —
+ * the port a `FIPS_PUBLIC_PEERS` entry that names none takes, and the
+ * port of every built-in peer; FIPS's own UDP port.
+ */
+export const FIPS_UDP_DEFAULT_PORT: 2121 = 2121;
+
+/**
+ * MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+ * its operator turns it on" — the most public peers a node dials,
+ * built-in or the operator's; room to double the built-in list's seven.
+ */
+export const FIPS_PUBLIC_PEERS_MAX: 16 = 16;
+
+/**
+ * MESH_INTERFACE → FIPS → "A node may accept public links" — the public
+ * links a node holds that it did not dial; a datagram from a new
+ * address past the cap is dropped, and a held link is never closed to
+ * make room.
+ */
+export const FIPS_PUBLIC_INBOUND_MAX: 256 = 256;
+
+/**
+ * MESH_INTERFACE → FIPS → "A public peer is an npub at a `host:port`" —
+ * one row of the FIPS public mesh's built-in peer list.
+ */
+export interface PublicFipsPeer {
+  readonly name: string;
+  readonly npub: string;
+  readonly host: string;
+  readonly port: number;
+}
+
+/**
+ * MESH_INTERFACE → FIPS → "The built-in list is the public test nodes" —
+ * the seven public test nodes the FIPS project keeps for new nodes and
+ * integration testing, in the contract's order. Each accepts a link
+ * from any npub.
+ */
+export const PUBLIC_FIPS_PEERS: readonly PublicFipsPeer[] = [
+  { name: 'test-us01', npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98', host: 'test-us01.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-us02', npub: 'npub10yffd020a4ag8zcy75f9pruq3rnghvvhd5hphl9s62zgp35s560qrksp9u', host: 'test-us02.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-us03', npub: 'npub136yqae6na688fs75g95ppps3lxe07fvxefj77938zf47uhm6074sxw8ctm', host: 'test-us03.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-us04', npub: 'npub1gd7ye2qp2lphhzx75fynnjzaxx4dqanddecet0wtt5ss5ek8h9ps62wdkf', host: 'test-us04.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-de01', npub: 'npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8', host: 'test-de01.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-es01', npub: 'npub17lpmzulpc98d8ff727k6e98atxn3phzupzsqqwe54ytduym747ws4tw5zm', host: 'test-es01.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+  { name: 'test-uk01', npub: 'npub1u0z26dc4qeneu5rvwvmpfhtwh3522ed6rlgxr9jarrfnjrc6ew4qxjysrs', host: 'test-uk01.fips.network', port: FIPS_UDP_DEFAULT_PORT },
+];
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */
