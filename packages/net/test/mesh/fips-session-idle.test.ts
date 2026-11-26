@@ -122,7 +122,7 @@ describe('MESH_INTERFACE → FIPS → "A FIPS session that carries no applicatio
 
   // (i) — both ends emit closed after FIPS_SESSION_IDLE_MS with no application
   // data; a later datagram opens a fresh session and is delivered.
-  it.fails('both ends end a session idle for FIPS_SESSION_IDLE_MS, and a later datagram opens a fresh one', async () => {
+  it('both ends end a session idle for FIPS_SESSION_IDLE_MS, and a later datagram opens a fresh one', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date', 'performance'] });
     const pair = await makePair();
     try {
@@ -173,7 +173,7 @@ describe('MESH_INTERFACE → FIPS → "A FIPS session that carries no applicatio
   // (the original FIPS daemon's idle removal); the near end's own idle
   // timer later fires and the next datagram opens a fresh session that
   // delivers.
-  it.fails('a session the far end dropped without a word recovers once the near end ends it, and the next datagram delivers', async () => {
+  it('a session the far end dropped without a word recovers once the near end ends it, and the next datagram delivers', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date', 'performance'] });
     const pair = await makePair();
     try {

@@ -14,10 +14,88 @@ index b6fe47b..494b12d 100644
          if (existing) {
              await existing.promise;
 diff --git a/dist/node/FspSessionManager.js b/dist/node/FspSessionManager.js
-index a333563..3640fab 100644
+index a333563..7d33db2 100644
 --- a/dist/node/FspSessionManager.js
 +++ b/dist/node/FspSessionManager.js
-@@ -535,6 +535,12 @@ export class FspSessionManager {
+@@ -10,6 +10,10 @@ import { encodeNpub } from "../identity/nip19.js";
+ import { compareNodeAddr, deriveNodeAddr, nodeAddrToHex } from "../nodeaddr/index.js";
+ import { peerNodeAddr, sameCompressedIdentity } from "./PeerState.js";
+ const FSP_REKEY_DRAIN_MS = 45_000;
++// MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++// — @dagsocial/net's FIPS_SESSION_IDLE_MS; the patch holds the literal because
++// it cannot import a workspace package.
++const FIPS_SESSION_IDLE_MS = 90_000;
+ const MAX_MISSING_SESSION_RECOVERIES = 64;
+ const MISSING_SESSION_RETRY_MS = 15_000;
+ const FSP_DEFAULT_PATH_MTU = 1_200;
+@@ -97,10 +101,16 @@ export class FspSessionManager {
+     async sendDatagram(args) {
+         const session = await this.ensureSession(args.dst);
+         const data = { srcPort: args.srcPort ?? 0, dstPort: args.dstPort, payload: args.payload };
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — outbound application data resets the idle counter.
++        session.lastApplicationActivityMs = Date.now();
+         await this.sendEncryptedFrame(session, (flags) => session.fsp.encryptDatagram(data, flags), { routeNeutral: !!decodeFspExtensionCapabilities(data) });
+     }
+     async sendEndpointData(args) {
+         const session = await this.ensureSession(args.dst);
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — outbound application data resets the idle counter.
++        session.lastApplicationActivityMs = Date.now();
+         await this.sendSessionMessage(session, FSP_MSG_ENDPOINT_DATA, args.payload);
+     }
+     sendSessionMessage(session, msgType, payload, options = {}) {
+@@ -139,6 +149,24 @@ export class FspSessionManager {
+     async sendReceiverReports() {
+         if (this.reportsSending)
+             return;
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — the 1 Hz report timer also sweeps established sessions whose
++        // last application datagram is older than FIPS_SESSION_IDLE_MS, and
++        // ends each one through the same removal path a restarted peer takes.
++        const nowMs = Date.now();
++        for (const [nodeHex, session] of [...this.sessions]) {
++            if (session.fsp.state !== "established")
++                continue;
++            if (nowMs - (session.lastApplicationActivityMs ?? nowMs) < FIPS_SESSION_IDLE_MS)
++                continue;
++            this.closeSessionHandles(session);
++            this.sessions.delete(nodeHex);
++            this.cfg.emitSession({
++                remotePubkey: session.remotePubkeyHex ?? nodeHex,
++                state: "closed",
++                ...(session.fsp.peerId && { peerId: session.fsp.peerId }),
++            });
++        }
+         if (this.sessions.size === 0) {
+             this.syncReportTimer();
+             return;
+@@ -332,10 +360,16 @@ export class FspSessionManager {
+             session.extensions ??= new FspExtensions();
+             if (await session.extensions.receive(result.data, (payload) => this.sendExtension(session, payload)))
+                 return;
++            // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++            // — inbound application data resets the idle counter.
++            session.lastApplicationActivityMs = Date.now();
+             await this.deliverDatagram(srcHex, peerId, result.data);
+             return;
+         }
+         if (result.msgType === FSP_MSG_ENDPOINT_DATA && result.endpointData) {
++            // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++            // — inbound application data resets the idle counter.
++            session.lastApplicationActivityMs = Date.now();
+             this.cfg.emitEndpointData({ peerId, src: srcHex, dst: this.localPubkeyHex, payload: result.endpointData });
+         }
+     }
+@@ -430,6 +464,7 @@ export class FspSessionManager {
+                 remoteNodeHex: srcNodeHex,
+                 fsp: next.fsp,
+                 currentKBit: false,
++                lastApplicationActivityMs: Date.now(),
+             };
+             this.sessions.set(srcNodeHex, session);
+             this.syncReportTimer();
+@@ -535,6 +570,12 @@ export class FspSessionManager {
          if (cached && cached.fsp.state === "established") {
              if (cached.remotePubkey)
                  this.cfg.assertPeerAllowed?.(cached.remotePubkey);
@@ -30,7 +108,7 @@ index a333563..3640fab 100644
              return cached;
          }
          const remotePubkey = fromHex(remotePubkeyHex);
-@@ -542,8 +548,15 @@ export class FspSessionManager {
+@@ -542,8 +583,15 @@ export class FspSessionManager {
          const remoteNodeAddr = deriveNodeAddr(remotePubkey);
          const remoteNodeHex = nodeAddrToHex(remoteNodeAddr);
          const existing = this.findExistingSession(remoteNodeHex, remotePubkeyHex);
@@ -47,3 +125,12 @@ index a333563..3640fab 100644
          // Cached coordinates can outlive their carrier. Establish a routed path
          // before signaling a transport that itself needs this FSP session.
          if (!this.cfg.routing.hasUsableRoute(remoteNodeHex)) {
+@@ -575,7 +623,7 @@ export class FspSessionManager {
+             localEpoch: this.localEpoch,
+             strictClient: this.cfg.strictClient,
+         });
+-        const session = { remoteNodeAddr, remoteNodeHex, remotePubkeyHex, remotePubkey, fsp, currentKBit: false };
++        const session = { remoteNodeAddr, remoteNodeHex, remotePubkeyHex, remotePubkey, fsp, currentKBit: false, lastApplicationActivityMs: Date.now() };
+         this.sessions.set(remoteNodeHex, session);
+         this.syncReportTimer();
+         this.indexSession(session, remotePubkeyHex);
