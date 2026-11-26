@@ -99,6 +99,16 @@ export const FIPS_TCP_CONNECTIONS_PER_PEER: 2 = 2;
 export const FIPS_READER_LINKS_MAX: 1 = 1;
 
 /**
+ * MESH_INTERFACE → FIPS → "A FIPS session that carries no application data
+ * for `FIPS_SESSION_IDLE_MS` ends" — 90 s with no application data ends a
+ * FIPS session, as the original FIPS daemon ends one, so a session with one
+ * ends at both ends together and the next datagram opens a fresh session.
+ * The `@fips/core` patch holds the same value as a literal since a patch
+ * cannot import a workspace package.
+ */
+export const FIPS_SESSION_IDLE_MS: 90000 = 90000;
+
+/**
  * MESH_INTERFACE → Discovery → "The DHT is Notis's own" — Kademlia runs
  * on `/notis/<network>/kad/1.0.0`, never on libp2p's default. Pure.
  */
