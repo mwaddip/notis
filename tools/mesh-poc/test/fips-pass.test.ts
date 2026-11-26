@@ -387,16 +387,12 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
       expect(s.nodes.find((n) => n.notisId === mesh.c.id)!.transport).toBe('fips');
     }
 
-    // The brief asks for "stop B; restart B with its key and ports".
-    // A WebRTC-direct listener re-binds on a random UDP port and a new
-    // TLS certificate (a new certhash) on every start, so a restart's
-    // webrtc address never matches the old one — the client's dial of
-    // B's old address would fail at the new process even with the same
-    // nodeKey. The closest in-tree exercise of the rule is to drop the
-    // FIPS link the client holds through B. The visible rules the brief
-    // names: "A and C read retry, never blacklisted" and "a later check
-    // links again" (an `open`/`up` event) — this case holds both without
-    // leaning on the fips-ts mesh's re-routing after a link drop.
+    // Close every link the client holds and close every FIPS
+    // connection; the node-list rule binds A and C to `retry`, never
+    // `blacklisted` (MESH_INTERFACE → The client's node list — the
+    // table rows), and the FIPS-pass rule binds the next check to
+    // open a link again (→ FIPS → "A reader links when a node's every
+    // other address failed").
     const stack = (client as unknown as { fipsStack: FipsStack }).fipsStack;
     for (const peer of stack.link.linkPeers()) {
       await stack.link.close({ transport: stack.link.type, addr: peer.remoteKeyHex });
@@ -408,9 +404,9 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
       }
     }
 
-    // Run checks. At the end of each: A, C are never `blacklisted`.
-    // Collect events; the next check's FIPS pass picks B's connection
-    // and opens a new link, firing one `open`/`up` pair.
+    // Each check runs under the invariant that A and C never blacklist;
+    // the pass that opens a new link fires one `open`/`up` pair and
+    // the check reads A and C over FIPS through the re-made link.
     captured.length = 0;
     const t0 = Date.now();
     let sawReOpen = false;
@@ -427,6 +423,15 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
       if (linkEvents.some((e) => e.event === 'open' && e.via === mesh.b.id)
           && linkEvents.some((e) => e.event === 'up' && e.via === mesh.b.id)) {
         sawReOpen = true;
+        // MESH_INTERFACE → FIPS → "A send to a key with no route waits
+        // for one" — the check that opens the link again reads A and C
+        // over FIPS through it. The patch at `@fips/core` holds a send
+        // on the re-made link for fips-ts's route lookup; the entries'
+        // `transport` names `fips` and their `status` is `ok`.
+        expect(a!.transport, 'A read over FIPS through the re-made link').toBe('fips');
+        expect(a!.status, 'A is ok after the re-made link').toBe('ok');
+        expect(c!.transport, 'C read over FIPS through the re-made link').toBe('fips');
+        expect(c!.status, 'C is ok after the re-made link').toBe('ok');
         break;
       }
       await new Promise((r) => setTimeout(r, 500));
@@ -513,8 +518,9 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
     const linkPeersAfterFirst = stack.link.linkPeers();
     expect(linkPeersAfterFirst.length, 'one link up after first check').toBe(1);
 
-    // Close the link from the client side. The link's `closed` fires
-    // through `onLinkChange`; the subscription at `start()` emits it.
+    // Close the link from the client side; the `closed` event fires
+    // through `onLinkChange` (MESH_INTERFACE → FIPS → "A reader's link
+    // closes at the end of a check").
     captured.length = 0;
     await stack.link.close({
       transport: stack.link.type,
@@ -525,11 +531,9 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
       5_000,
     );
 
-    // The next check needs FIPS again: open + up.
+    // Close every open FIPS connection so the next check lists A and
+    // C as FIPS pass candidates.
     captured.length = 0;
-    // A and C's FIPS connections are still open (closing the link
-    // leaves them alone). Close them so the next check lists them
-    // as candidates.
     const libp2p = (client as unknown as { libp2p: Libp2p }).libp2p;
     for (const conn of libp2p.getConnections()) {
       if (conn.remoteAddr.toString().startsWith('/fips/')) {
@@ -542,6 +546,18 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
     );
     expect(linkEvents.some((e) => e.event === 'open' && e.via === mesh.b.id)).toBe(true);
     expect(linkEvents.some((e) => e.event === 'up' && e.via === mesh.b.id)).toBe(true);
+
+    // MESH_INTERFACE → FIPS → "A send to a key with no route waits for
+    // one" — the check that opens the link again reads A and C over
+    // FIPS through it. The patch at `@fips/core` holds a send on the
+    // re-made link for fips-ts's route lookup.
+    const sAfter = client.state();
+    const aAfter = sAfter.nodes.find((n) => n.notisId === mesh.a.id);
+    const cAfter = sAfter.nodes.find((n) => n.notisId === mesh.c.id);
+    expect(aAfter!.transport, 'A read over FIPS through the re-made link').toBe('fips');
+    expect(aAfter!.status, 'A is ok after the re-made link').toBe('ok');
+    expect(cAfter!.transport, 'C read over FIPS through the re-made link').toBe('fips');
+    expect(cAfter!.status, 'C is ok after the re-made link').toBe('ok');
   }, 180_000);
 
   it('the link closes at the end of a check that needs no FIPS connection', async () => {
@@ -815,5 +831,94 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
     // Same address dials now. A throw here fails the case; a resolve is
     // the rule's answer.
     await libp2p.dial(aFipsMa, { signal: AbortSignal.timeout(20_000) });
+  }, 180_000);
+
+  it('a check whose FIPS pass needs a link opens it over a WebRTC connection, never over a standing FIPS connection', async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.a, mesh.b, mesh.c);
+
+    const captured: MeshEvent[] = [];
+    // Entries order places A first (FIPS only), then B (WebRTC), then
+    // C (FIPS only). After the first check the client holds a WebRTC
+    // connection to B and two FIPS connections through B — the rule
+    // this case drives is `pickLinkConnection` refusing the FIPS one.
+    const client = await startMeshClient({
+      firstContact: [
+        { notisId: mesh.a.id, addrs: [mesh.a.fipsAddr] },
+        { notisId: mesh.b.id, addrs: [mesh.b.webrtcAddr] },
+        { notisId: mesh.c.id, addrs: [mesh.c.fipsAddr] },
+      ],
+      network: NETWORK,
+      profile: PROFILE,
+      agentName: 'notis-fips-pass-test',
+      fips: true,
+      resolve: chainResolve(() => CHAIN, K),
+      events: (e) => captured.push(e),
+    });
+    clients.push(client);
+
+    await client.check();
+    const stack = (client as unknown as { fipsStack: FipsStack }).fipsStack;
+    const libp2p = (client as unknown as { libp2p: Libp2p }).libp2p;
+    // Controls: one link up and two FIPS connections after the first
+    // check — one to A, one to C.
+    expect(stack.link.linkPeers().length, 'one link up after the first check').toBe(1);
+    const fipsConnsBefore = libp2p.getConnections().filter(
+      (c) => c.remoteAddr.toString().startsWith('/fips/'),
+    );
+    expect(fipsConnsBefore.length, 'two FIPS connections after the first check').toBe(2);
+
+    // Close C's FIPS connection first — C becomes a FIPS pass
+    // candidate (no open connection, FIPS address); A's FIPS
+    // connection stands untouched. Then close B's link peer. A wait
+    // on `linkPeers` emptying stands under the close's own event. If
+    // A's FIPS connection is torn down with the link by libp2p, the
+    // test falls on its control below — the rule still binds the
+    // `pickLinkConnection` filter and the sister cases cover the
+    // every-FIPS-torn-down path.
+    const cPeerStr = mesh.c.libp2p.peerId.toString();
+    for (const conn of libp2p.getConnections()) {
+      if (conn.remotePeer.toString() === cPeerStr
+          && conn.remoteAddr.toString().startsWith('/fips/')) {
+        try { await conn.close(); } catch { /* already */ }
+      }
+    }
+    captured.length = 0;
+    await stack.link.close({
+      transport: stack.link.type,
+      addr: stack.link.linkPeers()[0]!.remoteKeyHex,
+    });
+    await waitFor(
+      () => captured.some((e) => e.kind === 'fips-link' && e.event === 'closed'),
+      5_000,
+    );
+    expect(stack.link.linkPeers().length, 'no link up after the close').toBe(0);
+    // Control: A's FIPS connection stands after the link close. The
+    // rule holds when it does — the next check's `pickLinkConnection`
+    // would mistakenly pick it without the filter.
+    const fipsConnsAfter = libp2p.getConnections().filter(
+      (c) => c.remoteAddr.toString().startsWith('/fips/'),
+    );
+    expect(fipsConnsAfter.length, "A's FIPS connection stands after the link close").toBe(1);
+    expect(
+      fipsConnsAfter[0]!.remotePeer.toString(),
+      "the standing FIPS connection is A's",
+    ).toBe(mesh.a.libp2p.peerId.toString());
+
+    // Next check: C is a FIPS candidate (no connection, FIPS address
+    // only), so the pass opens a new link. The rule: the pick is a
+    // connection that is not itself a FIPS one, so `via` names B, the
+    // WebRTC-direct node, never A.
+    captured.length = 0;
+    await client.check();
+
+    const openEvents = captured.filter((e): e is Extract<MeshEvent, { kind: 'fips-link' }> =>
+      e.kind === 'fips-link' && e.event === 'open',
+    );
+    expect(openEvents.length, 'one `open` event in the second check').toBeGreaterThanOrEqual(1);
+    expect(
+      openEvents.every((e) => e.via === mesh.b.id),
+      'every `open` names B (WebRTC), never A (FIPS)',
+    ).toBe(true);
   }, 180_000);
 });

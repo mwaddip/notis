@@ -589,6 +589,22 @@ export class NodeList {
   }
 
   /**
+   * MESH_INTERFACE → The client's node list → "A failure at an API base
+   * while a node's wait stands moves nothing on" — a failed read at a
+   * `retry` entry's API base whose wait has not come is kept as the
+   * entry's last failure, its kind and message, with no change to
+   * `failures`, `status` or the retry schedule. The caller gates this
+   * call on `status === 'retry'` and the current clock sitting before
+   * `retryAtMs`; here the method only records.
+   */
+  recordFailureWhileWaiting(id: string, kind: FailureKind, message = ''): void {
+    assertNotisId(id);
+    const e = this.unknown('recordFailureWhileWaiting', id);
+    if (e.status === 'blacklisted') return;
+    e.lastFailure = { kind, message, atMs: this.clock() };
+  }
+
+  /**
    * MESH_INTERFACE → The client's node list → "A node's addresses are
    * dialled as one operation" — "each address libp2p reports it dialled
    * has its failure recorded against it". Writes `lastFailures[addr]`

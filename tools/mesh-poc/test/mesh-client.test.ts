@@ -1502,14 +1502,14 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     expect(capturedNow!(), 'wallClock reads > 1e12 ms').toBeGreaterThan(1e12);
   }, 60_000);
 
-  it('a non-mesh URL in the resolve httpFetch surfaces as MeshUrlError', async () => {
-    // MESH_INTERFACE → The node endpoint — every URL `resolveTip` reads
-    // through `timedFetch` is `meshBaseUrl(id)`, so `idOfMeshUrl`
-    // throwing on it would be a bug upstream. The current catch
-    // swallows the throw and lets `this.fetch` throw a `MeshFetchError`
-    // further down, hiding the original bug; with the catch dropped,
-    // the `MeshUrlError` from `idOfMeshUrl` surfaces to the caller
-    // intact.
+  it('an http URL no base matches throws an upstream-bug error, not a mesh error', async () => {
+    // MESH_INTERFACE → The client's node list → "A check knows an API
+    // base's URL by the base it asked" — every URL the check hands the
+    // timed fetch is a base `idByBase` holds followed by a path. An
+    // http(s) URL outside that set is an upstream bug; the wrapper
+    // throws a plain Error naming the URL — never a `MeshUrlError` (an
+    // http URL is not a mesh one) and never a `MeshFetchError` (the
+    // outer catch does not swallow it as transport).
     //
     // Phase 4 only calls `resolve` when the check holds an unplaced
     // tip, so the test seats a reachable node (chain unsettled → every
@@ -1535,7 +1535,9 @@ describe('mesh-client — refusals, dialling by key, state and triggers', () => 
     clients.push(client);
     await client.check();
     expect(caught, 'the non-mesh URL caused a throw').toBeDefined();
-    expect(caught, 'the throw is a MeshUrlError, not a swallow-then-MeshFetchError').toBeInstanceOf(MeshUrlError);
+    expect(caught, 'the throw is neither a MeshUrlError nor a MeshFetchError').not.toBeInstanceOf(MeshUrlError);
+    expect(caught, 'the throw is neither a MeshUrlError nor a MeshFetchError').not.toBeInstanceOf(MeshFetchError);
+    expect((caught as Error).message, 'the message names the bug').toMatch(/no base matched/);
   }, 60_000);
 
   it('a routed read during a check still picks by the previous check\'s speeds', async () => {

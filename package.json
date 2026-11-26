@@ -20,7 +20,8 @@
       "@libp2p/http-fetch@4.0.4": "patches/@libp2p__http-fetch@4.0.4.patch",
       "@libp2p/gossipsub@17.2.1": "patches/@libp2p__gossipsub@17.2.1.patch",
       "libp2p@3.5.1": "patches/libp2p@3.5.1.patch",
-      "node-datachannel@0.33.6": "patches/node-datachannel@0.33.6.patch"
+      "node-datachannel@0.33.6": "patches/node-datachannel@0.33.6.patch",
+      "@fips/core@0.0.57": "patches/@fips__core@0.0.57.patch"
     }
   },
   "devDependencies": {

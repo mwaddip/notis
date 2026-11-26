@@ -432,4 +432,125 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     try { await c2.close(); } catch { /* already */ }
     expect(c1.id !== c2.id && thirdErr !== null && cConnsToReader.length <= 2).toBe(true);
   }, 120_000);
+
+  // MESH_INTERFACE → FIPS → "A send to a key with no route waits for
+  // one" — a reader dials C once over a link to B, closes its
+  // connection to B so the link ends, dials B again, opens the link
+  // again, and dials C's FIPS address straight after the link reports
+  // `up`. The session to C that outlived the old link's route reaches
+  // C once B's tree announcement over the new link lands.
+  it('the reader dials C straight after its re-made link to B and reads /blocks/current', async () => {
+    const mesh = await buildMesh();
+    nodes.push(mesh.b, mesh.c);
+    stubs.push(mesh.stubB.srv, mesh.stubC.srv);
+    dirs.push(mesh.dirB, mesh.dirC);
+
+    const stack = await createReaderFips({ network: 'testnet' });
+    stacks.push(stack);
+    const reader = await buildReader(stack);
+    hosts.push(reader);
+
+    // Control: a first dial to C over the first link works.
+    const bTcp = await nodeTcpAddress(mesh.b);
+    const connB1 = await reader.dial(multiaddr(bTcp));
+    const hsB1 = await readerHandshake(connB1, {
+      magic: MAGIC_TESTNET,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'fips-through-a-node-test',
+      chainHeight: 0,
+      timeoutMs: 10_000,
+    });
+    if (!hsB1.ok) throw new Error(`handshake with B failed: ${hsB1.reason}`);
+    await openReaderLink(stack, connB1, mesh.bFipsXOnlyHex, 15_000);
+    const cFipsMa = multiaddr(mesh.cFipsAddr);
+    const connC1 = await reader.dial(cFipsMa, { signal: AbortSignal.timeout(15_000) });
+    const hsC1 = await readerHandshake(connC1, {
+      magic: MAGIC_TESTNET,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'fips-through-a-node-test',
+      chainHeight: 0,
+      timeoutMs: 15_000,
+    });
+    if (!hsC1.ok) throw new Error(`handshake with C failed: ${hsC1.reason}`);
+    const cNotisId = notisIdFromPeerId(connC1.remotePeer);
+    const fetch1 = meshFetchOverConnection((wantNotisId) => {
+      if (wantNotisId !== cNotisId) return null;
+      return connC1;
+    }, { timeoutMs: 15_000 });
+    const res1 = await fetch1(`${meshBaseUrl(cNotisId)}/blocks/current`);
+    expect(res1.status).toBe(200);
+    expect(await res1.text()).toBe(mesh.stubC.currentJson);
+    try { await connC1.close(); } catch { /* already */ }
+
+    // The reader's connection to B closes, so its link ends.
+    await connB1.close();
+    const closed = await waitFor(
+      () => !stack.link.linkedKeys().includes(mesh.bFipsXOnlyHex),
+      15_000,
+    );
+    expect(closed).toBe(true);
+
+    // The reader dials B again and, straight after the new link
+    // reports `up`, dials C's FIPS address through it. The dial runs
+    // from inside the listener, as a client's own check would.
+    const connB2 = await reader.dial(multiaddr(bTcp));
+    const hsB2 = await readerHandshake(connB2, {
+      magic: MAGIC_TESTNET,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'fips-through-a-node-test',
+      chainHeight: 0,
+      timeoutMs: 10_000,
+    });
+    if (!hsB2.ok) throw new Error(`handshake with second B failed: ${hsB2.reason}`);
+
+    let dialOnUp: Promise<Connection> | null = null;
+    const off = stack.link.onLinkChange((ev) => {
+      if (ev.state === 'up' && ev.remoteKeyHex === mesh.bFipsXOnlyHex && dialOnUp === null) {
+        dialOnUp = reader.dial(cFipsMa, { signal: AbortSignal.timeout(15_000) });
+      }
+    });
+    try {
+      await stack.link.openLink(connB2);
+      const up = await waitFor(() => dialOnUp !== null, 15_000);
+      if (!up) throw new Error('second reader-to-B link did not come up');
+    } finally {
+      off();
+    }
+
+    const connC2 = await dialOnUp!;
+    const hsC2 = await readerHandshake(connC2, {
+      magic: MAGIC_TESTNET,
+      protocolVersion: PROTOCOL_VERSION,
+      agentName: 'fips-through-a-node-test',
+      chainHeight: 0,
+      timeoutMs: 15_000,
+    });
+    if (!hsC2.ok) throw new Error(`handshake with C on re-made link failed: ${hsC2.reason}`);
+    const fetch2 = meshFetchOverConnection((wantNotisId) => {
+      if (wantNotisId !== cNotisId) return null;
+      return connC2;
+    }, { timeoutMs: 15_000 });
+    const res2 = await fetch2(`${meshBaseUrl(cNotisId)}/blocks/current`);
+    expect(res2.status).toBe(200);
+    expect(await res2.text()).toBe(mesh.stubC.currentJson);
+  }, 120_000);
+
+  // MESH_INTERFACE → FIPS → "A stopped FIPS node starts no lookup" — once
+  // the reader's libp2p closes, the carrier of its link and its FIPS
+  // connection to C is gone. The reader's FIPS stack then stops well
+  // inside the 5 s lookup deadline: the TCP/FIPS endpoint's dispose
+  // awaits its queued sends, and a send after the FIPS node stopped
+  // reaches `ensureFirstContactRoute`, which must refuse at once.
+  it('the reader stack stops well inside the FIPS lookup deadline', async () => {
+    const { reader, stack } = await setup();
+    await reader.stop();
+    // Drop from `hosts` so `afterEach` does not try to stop the
+    // already-stopped libp2p again; `stack.stop()` is idempotent.
+    const i = hosts.indexOf(reader);
+    if (i !== -1) hosts.splice(i, 1);
+    const t0 = Date.now();
+    await stack.stop();
+    const elapsedMs = Date.now() - t0;
+    expect(elapsedMs).toBeLessThan(2_000);
+  }, 90_000);
 });

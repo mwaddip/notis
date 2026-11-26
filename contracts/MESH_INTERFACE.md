@@ -411,15 +411,28 @@ to fips-tcp ahead of its FIN, and waits on the mesh for neither.
 **A reader links when a node's every other address failed.** A client started with `fips` runs a reader's FIPS node. It
 opens a link in a check only when a node it dialled in that check has a FIPS address, the client holds no connection to
 it after the check's dials, and it failed at every other address it has — or has no other. It links over a connection it
-holds to a node whose handshake passed: a `local` node's first (→ Discovery → "A node the access point answers"), then
-any other, direct or relayed with no limit. It holds at most `FIPS_READER_LINKS_MAX` links. A link not up within twice
-`FIPS_LINK_HINT_TIMEOUT_MS` is a failed link, and the check dials no FIPS address; with a link up, it dials those
-nodes' FIPS addresses (→ The client's node list → "A FIPS address is ranked last"). A reader every node answers at
-another address — on the internet, every reader with a working path — opens no link.
+holds to a node whose handshake passed, never a FIPS connection, which rides a link itself: a `local` node's first (→
+Discovery → "A node the access point answers"), then any other, direct or relayed with no limit. It holds at most
+`FIPS_READER_LINKS_MAX` links. A link not up within twice `FIPS_LINK_HINT_TIMEOUT_MS` is a failed link, and the check
+dials no FIPS address; with a link up, it dials those nodes' FIPS addresses (→ The client's node list → "A FIPS address
+is ranked last"). A reader every node answers at another address — on the internet, every reader with a working path —
+opens no link.
 
 **A reader's link closes at the end of a check** in which it holds no FIPS connection and dialled no FIPS address. A
 link the reader closes is opened again only by a check that needs one; one that drops while its connection holds is
 opened again as an opener's link is (→ "A key holds one link, and the libp2p peer that named it holds the key").
+
+**A send to a key with no route waits for one.** A FIPS node holds a datagram to a key it has no route to — what a
+TCP/FIPS stream sends — for FIPS's route lookup, sent to the nodes its spanning tree places, tried again until one does,
+within fips-ts's 5 s lookup deadline, whether it has never reached the key or holds a session to it that outlived the
+link its route rode. So a reader's dial straight after a link comes up, a first link or one made again, reaches its node
+once the far end's tree announcement over that link lands; a key that stays unreachable fails after the deadline, and
+fips-ts's lookup backoff fails the sends after it at once. fips-ts holds a first contact's datagram so; Notis's patch to
+it holds a standing session's the same way (→ "The FIPS packages are pinned by release tarball").
+
+**A stopped FIPS node starts no lookup.** A datagram sent after the node's stop — a TCP/FIPS stream's last segments as
+its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
+reader's stop waits on no route.
 
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
@@ -459,6 +472,10 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 client holds no connection to its key — always, for one the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
 routed read goes to a node its need allows"). It is one entry whichever way it answers — one witness in every count —
 and the pairing of a base with a key is the list's word. A read at an API base holds no connection and dials nothing.
+
+**A check knows an API base's URL by the base it asked.** Every place a check maps a URL back to its entry — a tip
+read's speed and bytes, a proof read's echoed URL — maps a URL at an API base by the base the check asked, which may
+carry a path, never by parsing a key or a host out of the URL.
 
 **The client's chain.** The client holds its chain's last `k` headers and block 1's — from the start when it remembers a
 chain, seated from the kept proof as a check's winner seats one (→ What the client remembers). A check's proofs settle it — the
@@ -534,9 +551,15 @@ whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`, on a monotonic clock. 
 one instant — a node's restart drops every reader at once — across half the wait, so they do not return at one instant
 either. A success ends the run.
 
+**A failure at an API base while a node's wait stands moves nothing on.** A check reads a `retry` node at its API base
+whatever its wait (→ "Candidates"); a failure there before its time has come — a transport failure, or a lie read as
+one — is kept as the entry's last failure, its kind and message, and leaves the run and the wait as they were. The run
+counts the attempts its wait holds back, so a base no network reaches — a reader on an access point's network —
+holds no node out of reach at its other addresses for longer than their own failures do.
+
 **Candidates** are tried in this order: `ok`, `trailing`, `behind`, nodes not yet tried, then `retry` nodes whose time
 has come. A `blacklisted` node is never one. An entry the client holds no connection to is a candidate at its API base
-where it has one.
+where it has one, whatever its wait: a `retry` node whose time has not come is read there, and not dialled.
 
 **A check** runs at start, every `CHECK_INTERVAL_MS`, and at once after a failed routed read or a gossiped block that
 does not extend the client's tip (→ "The client's chain"). It dials the candidates it holds no connection to; reads
