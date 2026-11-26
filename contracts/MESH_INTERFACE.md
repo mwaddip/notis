@@ -489,9 +489,10 @@ reader's stop waits on no route.
 
 **A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends**, at a node and at a reader alike,
 as the original FIPS daemon ends one: measured 2026-11-26, the daemon removed a session idle for 90 s and dropped every
-later message on it as one for an unknown session, while the fips-ts end kept sending on it. Application data is a
-datagram to or from a service port, in either direction; a session's own reports and rekeys are not. Both ends of a
-session with an original let it go together, and the next datagram opens a fresh session.
+later message on it as one for an unknown session, while the fips-ts end kept sending on it. Application data is what
+a node's applications send or receive on the session — a datagram to or from a service port, or endpoint data — in
+either direction; the session's own reports, rekeys and control messages are not. Both ends of a session with an
+original let it go together, and the next datagram opens a fresh session.
 
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
