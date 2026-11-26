@@ -484,6 +484,15 @@ it holds a standing session's the same way (→ "The FIPS packages are pinned by
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
 
+> ⚠ **AHEAD OF CODE (2026-11-26).** fips-ts keeps an established FSP session until its node stops or its peer
+> restarts. The lead below and the table's `FIPS_SESSION_IDLE_MS` row lead the code (the `@fips/core` patch).
+
+**A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends**, at a node and at a reader alike,
+as the original FIPS daemon ends one: measured 2026-11-26, the daemon removed a session idle for 90 s and dropped every
+later message on it as one for an unknown session, while the fips-ts end kept sending on it. Application data is a
+datagram to or from a service port, in either direction; a session's own reports and rekeys are not. Both ends of a
+session with an original let it go together, and the next datagram opens a fresh session.
+
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
 makes to either is a patch under `patches/`, as the libp2p patches are (→ Place in the workspace), written by hand:
@@ -501,6 +510,7 @@ makes to either is a patch under `patches/`, as the libp2p patches are (→ Plac
 | `FIPS_UDP_DEFAULT_PORT` | `2121` | the port of a `FIPS_PUBLIC_PEERS` entry that names none, and of every built-in peer — FIPS's own UDP port |
 | `FIPS_PUBLIC_PEERS_MAX` | `16` | the most public peers a node dials, built-in or the operator's — room to double the built-in list's seven |
 | `FIPS_PUBLIC_INBOUND_MAX` | `256` | public links a node holds that it did not dial — measured 2026-11-26 on one forwarding node, 256 idle links held 7.3 MiB of heap and 512 held 13.1 MiB; half the 512 a 16 MiB budget allows, since a stranger's link carries a fuller filter and forwarded traffic the measured idle links did not |
+| `FIPS_SESSION_IDLE_MS` | `90_000` | 90 s with no application data ends a FIPS session — the original FIPS daemon's session idle timeout, so a session with one ends at both ends together |
 | `FIPS_READER_LINKS_MAX` | `1` | the links a reader holds — one, so the node a FIPS connection was routed through is the node its link rides |
 
 These are local bounds and cadences, outside the constants register as the mesh's others are (`CONSTANTS → Scope`).
