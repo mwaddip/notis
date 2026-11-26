@@ -272,7 +272,6 @@ export class UdpFipsTransport implements Transport {
       } else {
         const wasLinked = peer.linked;
         peer.linked = false;
-        peer.failures = 0;
         this.markFailureAndScheduleRetry(peer);
         // Where the caller is telling the transport that a held link
         // fell, hand that word to FipsNode as a transport-layer drop

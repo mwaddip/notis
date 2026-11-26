@@ -628,4 +628,53 @@ describe('UdpFipsTransport', () => {
     const after = timeouts();
     expect(peak - after).toBeGreaterThanOrEqual(10);
   }, 5000);
+
+  // MESH_INTERFACE → FIPS → "A public peer is an npub at a `host:port`"
+  // — the count of failures in a row ends when the peer's link comes
+  // up: after an up–down cycle the next discover yield rides the
+  // first retry's wait (half of `RETRY_BASE_MS · 2^0` with
+  // `random: () => 0` = 2500 ms), not the second (half of
+  // `RETRY_BASE_MS · 2^1` = 5000 ms).
+  it('the first retry runs after a link-up resets the peer failures counter', async () => {
+    const localIdentity = await generateIdentity();
+    const peerIdentity = await generateIdentity();
+    const t = new UdpFipsTransport({
+      listen: { host: '127.0.0.1', port: 0 },
+      peers: [{
+        name: 'p',
+        npub: encodeNpub(peerIdentity.xOnlyPubkey),
+        host: '127.0.0.1',
+        port: 1, // never dialled by this case
+      }],
+      inboundMax: 0,
+      resolve: loopbackResolver(new Map([['127.0.0.1', ['127.0.0.1']]])),
+      random: () => 0,
+    });
+    const ctx: TransportContext = { localIdentity, onPacket: () => undefined, logger: noopLogger };
+    await t.start(ctx);
+    try {
+      const iter = t.discover()[Symbol.asyncIterator]();
+      // Pull the first yield — the transport resolves the host and
+      // yields the peer, scheduling a retry at
+      // `retryIntervalMs(1, …)` inside `yieldPeer`.
+      const first = await iter.next();
+      expect(first.done).toBe(false);
+      const addr = (first.value as { remoteAddr: { addr: string } }).remoteAddr.addr;
+      // The caller tells the transport the link rose and then fell
+      // inside one retry window, as the stack would from a
+      // connect/disconnect pair. With the up branch resetting
+      // `peer.failures` the counter is 0 after `noteLink(true)`; the
+      // lone `noteLink(false)` then sets it to 1, wait = 2500 ms.
+      // Without the reset, `noteLink(false)` sets it to 2, wait = 5000 ms.
+      t.noteLink(addr, true);
+      const t0 = Date.now();
+      t.noteLink(addr, false);
+      const second = await iter.next();
+      const elapsed = Date.now() - t0;
+      expect(second.done).toBe(false);
+      expect(elapsed).toBeLessThan(4000);
+    } finally {
+      await t.stop();
+    }
+  }, 10000);
 });
