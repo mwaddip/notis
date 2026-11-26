@@ -36,6 +36,16 @@ export type { FipsTransportInit } from './mesh/fips-transport.js';
 // NET_INTERFACE → "A mesh node runs a FIPS stack".
 export { createFipsStack, createReaderFips } from './mesh/fips-stack.js';
 export type { FipsStack, CreateFipsStackOptions } from './mesh/fips-stack.js';
+// MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when its operator turns it on".
+export { UdpFipsTransport } from './mesh/fips-udp.js';
+export type { UdpFipsTransportOptions } from './mesh/fips-udp.js';
+export {
+  PUBLIC_FIPS_PEERS,
+  FIPS_UDP_DEFAULT_PORT,
+  FIPS_PUBLIC_PEERS_MAX,
+  FIPS_PUBLIC_INBOUND_MAX,
+} from './mesh/constants.js';
+export type { PublicFipsPeer } from './mesh/constants.js';
 export { HANDSHAKE_PROTOCOL, SYNC_PROTOCOL } from './sync.js';
 export {
   gossipTopics,

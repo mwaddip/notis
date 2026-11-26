@@ -581,7 +581,7 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
   // its operator turns it on" — a mesh `NetNode` with `fipsPublic` dials
   // every configured peer over UDP; the peer's FIPS node reads its
   // `peer` event with the node's FIPS key.
-  it.fails('a mesh node with `fipsPublic` links to a public FIPS node over UDP', async () => {
+  it('a mesh node with `fipsPublic` links to a public FIPS node over UDP', async () => {
     const p = await startPublicPeer();
     publicPeers.push(p);
     const up = await stubUpstream();
@@ -621,7 +621,7 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
   // its operator turns it on" — peering off, no UDP in the stack and
   // no UDP handle beyond the pre-start count; peering on, UDP in the
   // stack.
-  it.fails('a mesh node without `fipsPublic` opens no UDP socket and one with it does', async () => {
+  it('a mesh node without `fipsPublic` opens no UDP socket and one with it does', async () => {
     const info = (): string[] => (process as unknown as { getActiveResourcesInfo(): string[] }).getActiveResourcesInfo();
     const udpCount = (xs: string[]): number => xs.filter((x) => x === 'UDPWrap').length;
 
@@ -667,7 +667,7 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
   // MESH_INTERFACE → FIPS → "Public links are held apart from libp2p's"
   // — a public-link `stop()` ends every UDP socket and timer the stack
   // opened; the active-resources count returns to its pre-start level.
-  it.fails('`stop()` on a node with `fipsPublic` leaves no UDP socket or timer', async () => {
+  it('`stop()` on a node with `fipsPublic` leaves no UDP socket or timer', async () => {
     const info = (): string[] => (process as unknown as { getActiveResourcesInfo(): string[] }).getActiveResourcesInfo();
     const udpCount = (xs: string[]): number => xs.filter((x) => x === 'UDPWrap').length;
     const timeoutCount = (xs: string[]): number => xs.filter((x) => x === 'Timeout').length;
@@ -681,12 +681,15 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
     const beforeUdp = udpCount(info());
     const beforeTimers = timeoutCount(info());
 
+    // `assertMeshConfig` refuses `listen.port = 0`; pick an unlikely
+    // free port in the upper range for the bind.
+    const listenPort = 55000 + Math.floor(Math.random() * 1000);
     const node = new NetNode(makeConfig({
       nodeKey: generateKeyPair(),
       listenAddrs: '/ip4/127.0.0.1/tcp/0',
       mesh: publicMeshWithFipsPublic(dir, up.base, {
         peers: [{ name: 'p', npub: p.npub, host: '127.0.0.1', port: p.port }],
-        listen: { host: '127.0.0.1', port: 0 },
+        listen: { host: '127.0.0.1', port: listenPort },
       }),
     }), validators);
     await node.start();
@@ -704,7 +707,7 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
   // its operator turns it on" and "A public peer is an npub at a
   // `host:port`" — `assertMeshConfig` refuses an unusable list, each
   // refusal `MeshConfigError` naming the field.
-  it.fails.each([
+  it.each([
     {
       label: 'empty peers list',
       peers: [] as PublicFipsPeer[],
@@ -777,7 +780,7 @@ describe('MESH_INTERFACE → FIPS: public peering', () => {
   // stranger that is not in the peer list gets no link; with `listen`
   // set the node holds up to `FIPS_PUBLIC_INBOUND_MAX` strangers'
   // links.
-  it.fails('a node with `listen: null` takes no stranger link; a node with `listen` set does', async () => {
+  it('a node with `listen: null` takes no stranger link; a node with `listen` set does', async () => {
     // Stranger A is a bare FipsNode with its own UdpFipsTransport that
     // lists the node's address (filled in once the node starts).
     const dir = mkdtempSync(join(tmpdir(), 'net-fips-udp-listen-'));

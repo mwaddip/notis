@@ -2,7 +2,8 @@
 // A `wss` is refused at `start` with `MeshConfigError` naming what is
 // not built yet.
 
-import type { MeshNetworkName, PublicFipsPeer } from './constants.js';
+import { decodeNpub } from '@fips/core';
+import { FIPS_PUBLIC_PEERS_MAX, type MeshNetworkName, type PublicFipsPeer } from './constants.js';
 
 /**
  * `NET_INTERFACE → The mesh` — every refusal here is `MeshConfigError`,
@@ -231,6 +232,60 @@ export function assertMeshConfig(mesh: MeshConfig): void {
           `mesh.stunServers refused: ${JSON.stringify(url)}: port ${port} is not a 0..65535 integer`,
         );
       }
+    }
+  }
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+  // when its operator turns it on" — a `fipsPublic` whose list is
+  // empty, past `FIPS_PUBLIC_PEERS_MAX`, carries an npub `@fips/core`
+  // refuses, names an empty host, or a port outside 1..65535
+  // (listener or peer), is refused at start.
+  if (mesh.fipsPublic !== undefined) {
+    assertFipsPublic(mesh.fipsPublic);
+  }
+}
+
+function assertFipsPublic(
+  fipsPublic: { peers: readonly PublicFipsPeer[]; listen: { host: string; port: number } | null },
+): void {
+  if (fipsPublic.peers.length === 0) {
+    throw new MeshConfigError('mesh.fipsPublic.peers refused: an empty list');
+  }
+  if (fipsPublic.peers.length > FIPS_PUBLIC_PEERS_MAX) {
+    throw new MeshConfigError(
+      `mesh.fipsPublic.peers refused: ${fipsPublic.peers.length} entries, over FIPS_PUBLIC_PEERS_MAX (${FIPS_PUBLIC_PEERS_MAX})`,
+    );
+  }
+  for (const peer of fipsPublic.peers) {
+    try {
+      decodeNpub(peer.npub);
+    } catch (err) {
+      throw new MeshConfigError(
+        `mesh.fipsPublic.peers refused: npub ${JSON.stringify(peer.npub)}: ${(err as Error).message}`,
+      );
+    }
+    if (peer.host.length === 0) {
+      throw new MeshConfigError(
+        `mesh.fipsPublic.peers refused: empty host for npub ${JSON.stringify(peer.npub)}`,
+      );
+    }
+    if (!Number.isInteger(peer.port) || peer.port < 1 || peer.port > 65535) {
+      throw new MeshConfigError(
+        `mesh.fipsPublic.peers refused: port ${peer.port} for npub ${JSON.stringify(peer.npub)} is not a 1..65535 integer`,
+      );
+    }
+  }
+  if (fipsPublic.listen !== null) {
+    if (fipsPublic.listen.host.length === 0) {
+      throw new MeshConfigError('mesh.fipsPublic.listen refused: empty host');
+    }
+    if (
+      !Number.isInteger(fipsPublic.listen.port) ||
+      fipsPublic.listen.port < 1 ||
+      fipsPublic.listen.port > 65535
+    ) {
+      throw new MeshConfigError(
+        `mesh.fipsPublic.listen refused: port ${fipsPublic.listen.port} is not a 1..65535 integer`,
+      );
     }
   }
 }

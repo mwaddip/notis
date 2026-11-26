@@ -203,7 +203,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through a stranger', 
   // its operator turns it on" — A and C each list S alone. S's UDP
   // forwarding carries the reader's FIPS session with C, which A and
   // C hold no libp2p path to each other for.
-  it.fails('the reader reads `/blocks/current` on C through S over UDP, with no A↔C libp2p path', async () => {
+  it('the reader reads `/blocks/current` on C through S over UDP, with no A↔C libp2p path', async () => {
     const stranger = await startStranger();
     strangers.push(stranger);
 
