@@ -384,3 +384,38 @@ describe('debug-log — the error recorder', () => {
     expect(win.active()).toBe(0);
   });
 });
+
+describe('debug-log — list and stats include the buffered events', () => {
+  // WEB_INTERFACE → The extension → "The debug log" — a read of the log
+  // "answers every event recorded until the press": `save as file` takes
+  // the snapshot and the events at the press, so `list()` and `stats()`
+  // must include the events the buffer still holds. Without the flush
+  // inside each read, a batch not yet written at 50 events or at the 2 s
+  // interval is in neither answer.
+  it.fails('an event recorded and `list()` called before any flush returns it', async () => {
+    // expected [] to deeply equal [ 'buffered' ]
+    const idb = new IDBFactory();
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 50, batchInterval: 60_000, timers: t,
+    });
+    log.record('error', { message: 'buffered' });
+    const list = await log.list();
+    expect(list.map((e) => e.message)).toEqual(['buffered']);
+  });
+
+  it.fails('`stats()` in the same state counts the buffered event and its bytes', async () => {
+    // expected +0 to be 1 // Object.is equality
+    const idb = new IDBFactory();
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 50, batchInterval: 60_000, timers: t,
+    });
+    log.record('error', { message: 'buffered' });
+    const stats = await log.stats();
+    expect(stats.events).toBe(1);
+    expect(stats.bytes).toBeGreaterThan(0);
+  });
+});
