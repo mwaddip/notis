@@ -443,3 +443,41 @@ describe('debug-log — list and stats include the buffered events', () => {
     expect(stats.bytes).toBeGreaterThan(0);
   });
 });
+
+describe('debug-log — a read opens the database whatever the buffer holds', () => {
+  // WEB_INTERFACE → The extension → "A read of the log answers every event
+  // recorded until it" — the events a batch has not written yet are
+  // written first, and the read goes on through an open database whatever
+  // the buffer held: a release between the write and the read must not
+  // drop the stored events.
+  it.fails('a stored event, the connection released, nothing buffered: `list()` returns it and `stats()` counts it with `open: true`', async () => {
+    // expected [] to deeply equal [ 'stored' ]
+    const idb = new IDBFactory();
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: t,
+    });
+    // One event stored through a flush — the module's connection stands open.
+    log.record('error', { message: 'stored' });
+    await log.flush();
+    // Release the module's connection: open the database at a higher version
+    // from a second connection, which fires `versionchange` on the module's
+    // open connection and triggers `releaseConnection` (setting `db` to
+    // `null`).
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open('notis.debug', 2);
+      req.onupgradeneeded = (): void => { /* keep the schema */ };
+      req.onsuccess = (): void => { req.result.close(); resolve(); };
+      req.onerror = (): void => reject(req.error ?? new Error('open failed'));
+      req.onblocked = (): void => reject(new Error('open blocked'));
+    });
+    // The buffer is empty; the read must open the database again and answer
+    // the stored event.
+    const list = await log.list();
+    expect(list.map((e) => e.message)).toEqual(['stored']);
+    const stats = await log.stats();
+    expect(stats.events).toBe(1);
+    expect(stats.open).toBe(true);
+  });
+});
