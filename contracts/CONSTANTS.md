@@ -474,6 +474,7 @@ check can tell an omission from an exclusion.
 | `MODIFIER_POST_BODY` | the modifier type id — `NET_INTERFACE → ModifierRequest` |
 | `IDENTITY_RECORD_TAG`, `NETWORK_RECORD_TAG`, `NAME_RECORD_TAG`, `HOLDER_RECORD_TAG`, `POST_RECORD_TAG`, `LIKE_MARKER_TAG`, `INDEX_MARKER_TAG`, `VOUCH_PAIR_TAG`, `CAST_COUNT_TAG` | the first byte of each tree value that is not a box, `0x80`–`0x88` — layout discriminators, not tunables — `TYPES_INTERFACE → Layout — tree records`, the identity record's `TYPES_INTERFACE → Layout — IdentityRecord`; the tree's key tags are `TREE_TAG`'s (`TYPES_INTERFACE → The tree keys`) |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
+| `FIPS_UDP_DEFAULT_PORT`, `FIPS_PUBLIC_PEERS_MAX`, `FIPS_PUBLIC_INBOUND_MAX` | the mesh's local bounds, outside the register as the mesh's others are — `MESH_INTERFACE → FIPS` |
 | `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 
 ## What the register makes visible
