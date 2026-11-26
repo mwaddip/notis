@@ -534,4 +534,23 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
     expect(res2.status).toBe(200);
     expect(await res2.text()).toBe(mesh.stubC.currentJson);
   }, 120_000);
+
+  // MESH_INTERFACE → FIPS → "A stopped FIPS node starts no lookup" — once
+  // the reader's libp2p closes, the carrier of its link and its FIPS
+  // connection to C is gone. The reader's FIPS stack then stops well
+  // inside the 5 s lookup deadline: the TCP/FIPS endpoint's dispose
+  // awaits its queued sends, and a send after the FIPS node stopped
+  // reaches `ensureFirstContactRoute`, which must refuse at once.
+  it.fails('the reader stack stops well inside the FIPS lookup deadline', async () => {
+    const { reader, stack } = await setup();
+    await reader.stop();
+    // Drop from `hosts` so `afterEach` does not try to stop the
+    // already-stopped libp2p again; `stack.stop()` is idempotent.
+    const i = hosts.indexOf(reader);
+    if (i !== -1) hosts.splice(i, 1);
+    const t0 = Date.now();
+    await stack.stop();
+    const elapsedMs = Date.now() - t0;
+    expect(elapsedMs).toBeLessThan(2_000);
+  }, 90_000);
 });
