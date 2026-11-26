@@ -868,7 +868,9 @@ the one nobody expected. **Every page of the extension writes to the one log**, 
 eight hex drawn at load — beside its wall-clock time and its kind. **The background writes nothing**: every outcome it
 decides reaches a page as an answer (→ "Every message is answered"), and the page records it, so the context that
 holds the seed is outside the log's path. **A page writes its events in batches**, and at once when it is hidden
-(`visibilitychange`) and at `pagehide`; a page the browser ends loses what it held since its last write.
+(`visibilitychange`) and at `pagehide`; a page the browser ends loses what it held since its last write. **A read of
+the log answers every event recorded until it**: the events a batch has not written yet are written first, so the
+snapshot's counts and the debug file hold them.
 
 **What the log records**: a page's start — the version, the commit, the network, the browser's user agent; each of
 the mesh client's reports (`MESH_INTERFACE → The client's node list → "The client reports what it does"`) — a dial's
