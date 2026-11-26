@@ -11,7 +11,6 @@ import type { HttpFetch } from '@dagsocial/node-reads';
 import type { NodeTipResult, resolveTip } from '@dagsocial/nipopow-client';
 
 import { startMeshClient, type MeshClient } from '../../src/mesh/mesh-client.js';
-import { RETRY_BASE_MS } from '../../src/mesh/protocols.js';
 
 const PROFILE: NetworkProfile = profileFor('devnet' as NetworkType);
 const NOW = 1_000_000;
@@ -70,7 +69,7 @@ describe('mesh client — a failure at an api base while the wait stands moves n
     for (const c of clients.splice(0)) { try { await c.stop(); } catch { /* already stopped */ } }
   });
 
-  it.fails('a `retry` entry whose wait has not come: a transport failure at its api base updates `lastFailure` only', async () => {
+  it('a `retry` entry whose wait has not come: a transport failure at its api base updates `lastFailure` only', async () => {
     const http = controlledFetch();
     const apiBase = 'http://127.0.0.1:1/testnet/api';
     const client = await startMeshClient({
@@ -113,7 +112,7 @@ describe('mesh client — a failure at an api base while the wait stands moves n
     expect(after2.lastFailure!.kind, 'the new failure kind is transport').toBe('transport');
   }, 15_000);
 
-  it.fails('a malformed answer at its api base while the wait stands reads as a transport failure that moves nothing on', async () => {
+  it('a malformed answer at its api base while the wait stands reads as a transport failure that moves nothing on', async () => {
     const http = controlledFetch();
     const apiBase = 'http://127.0.0.1:1/testnet/api';
     const client = await startMeshClient({
@@ -156,9 +155,8 @@ describe('mesh client — a failure at an api base while the wait stands moves n
   it('control — once the wait has come, the same failure at the api base advances `failures` and `retryAtMs`', async () => {
     const http = controlledFetch();
     const apiBase = 'http://127.0.0.1:1/testnet/api';
-    // Clock that steps forward on each read: the first check runs at
-    // NOW; the second runs at NOW + 10 · RETRY_BASE_MS, past the first
-    // check's drawn wait.
+    // Clock that steps forward between checks: the first check runs at
+    // NOW; the second runs past the first check's drawn wait.
     const clockState = { now: NOW };
     const client = await startMeshClient({
       firstContact: [{ notisId: HEX64_A, addrs: [], api: apiBase }],

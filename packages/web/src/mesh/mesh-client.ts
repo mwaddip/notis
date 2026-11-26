@@ -3815,7 +3815,11 @@ class MeshClientImpl implements MeshClient {
         this.latestEventReason.set(ev.id, 'behind');
         break;
       case 'failure':
-        this.nodeList.failure(ev.id, ev.kind, ev.message ?? '');
+        if (this.apiFailureWhileWaiting(ev.id, route)) {
+          this.nodeList.recordFailureWhileWaiting(ev.id, ev.kind, ev.message ?? '');
+        } else {
+          this.nodeList.failure(ev.id, ev.kind, ev.message ?? '');
+        }
         this.latestEventReason.set(ev.id, ev.message ? `failure: ${ev.kind}: ${ev.message}` : `failure: ${ev.kind}`);
         break;
       case 'lie':
@@ -3827,7 +3831,11 @@ class MeshClientImpl implements MeshClient {
         // detail rides as the failure's message so the page shows why.
         if (route === 'api') {
           const detail = `api ${ev.evidence.kind}: ${ev.evidence.detail}`;
-          this.nodeList.failure(ev.id, 'transport', detail);
+          if (this.apiFailureWhileWaiting(ev.id, route)) {
+            this.nodeList.recordFailureWhileWaiting(ev.id, 'transport', detail);
+          } else {
+            this.nodeList.failure(ev.id, 'transport', detail);
+          }
           this.latestEventReason.set(ev.id, `failure: transport: ${detail}`);
         } else {
           this.nodeList.lie(ev.id, ev.evidence);
@@ -3835,6 +3843,18 @@ class MeshClientImpl implements MeshClient {
         }
         break;
     }
+  }
+
+  /**
+   * MESH_INTERFACE → The client's node list → "A failure at an API base
+   * while a node's wait stands moves nothing on" — the gate: an api
+   * route, an entry in `retry`, the current clock before `retryAtMs`.
+   */
+  private apiFailureWhileWaiting(id: string, route: 'mesh' | 'api'): boolean {
+    if (route !== 'api') return false;
+    const entry = this.nodeList.entry(id);
+    if (!entry || entry.status !== 'retry') return false;
+    return this.clock() < entry.retryAtMs;
   }
 
   private async dialByAddresses(id: string): Promise<'connected' | 'failed' | 'skipped'> {
