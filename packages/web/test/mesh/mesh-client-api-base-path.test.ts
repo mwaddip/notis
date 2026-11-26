@@ -72,7 +72,7 @@ describe('mesh client — a check reads an entry whose api carries a path at tha
     for (const s of servers.splice(0)) { s.close(); }
   });
 
-  it.fails('an api base carrying a path reaches `/blocks/current`; its tip read lands as the entry\'s speed and tipBytes', async () => {
+  it('an api base carrying a path reaches `/blocks/current`; its tip read lands as the entry\'s speed and tipBytes', async () => {
     const body = JSON.stringify({ height: 7, hash: 'b'.repeat(64) });
     const api = await startApiBase('/testnet/api', { status: 200, body });
     servers.push(api.srv);

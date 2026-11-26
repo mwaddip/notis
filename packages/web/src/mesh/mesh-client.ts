@@ -2829,10 +2829,8 @@ class MeshClientImpl implements MeshClient {
     // its API base where it has one. The map is used by the timed fetch
     // to attribute speed and bytes to the right entry, and by phase 4's
     // `urlToHash` loop to read the id back from the URL `resolveTip`
-    // echoes (MESH_INTERFACE → The client's node list → "An entry may
-    // carry an API base" — "Every place the check maps a URL back to
-    // its entry … maps an API base's URL to its entry too, by the base
-    // the check asked, never by parsing a key out of it").
+    // echoes (MESH_INTERFACE → The client's node list → "A check knows
+    // an API base's URL by the base it asked").
     const afterIds = this.nodeList.candidates().filter((id) => !this.notAChainNodes.has(id));
     const baseById = new Map<string, { url: string; route: 'mesh' | 'api' }>();
     const idByBase = new Map<string, string>();
@@ -3067,11 +3065,11 @@ class MeshClientImpl implements MeshClient {
 
       const nowMs = this.clock();
       for (const n of result.nodes) {
-        // MESH_INTERFACE → The client's node list → "An entry may carry
-        // an API base" — map the URL back to its entry by the base the
-        // check asked, never by parsing a key out of it. `idByBase`
-        // holds every base this check used; a URL outside it falls to
-        // `idOfMeshUrl` for a mesh URL, else a bug upstream.
+        // MESH_INTERFACE → The client's node list → "A check knows an
+        // API base's URL by the base it asked" — the resolver echoes
+        // the base verbatim, so `idByBase.get(n.url)` finds the entry
+        // whether the base carries a path or not; a mesh URL whose
+        // entry is not in the map falls to `idOfMeshUrl`.
         const nid = idByBase.get(n.url) ?? idOfMeshUrl(n.url);
         const route = baseById.get(nid)?.route ?? 'mesh';
         // A resolve failure or a lie applies through `tipEvent` so a
@@ -3716,15 +3714,26 @@ class MeshClientImpl implements MeshClient {
     idByBase: ReadonlyMap<string, string> = new Map<string, string>(),
   ): HttpFetch {
     return async (url, init) => {
-      // MESH_INTERFACE → The client's node list → "An entry may carry an
-      // API base" — the URL may be a mesh URL or an http(s) one the
-      // check asked at an entry's api base. `idByBase` holds every base
-      // this check used (populated in `runCheck` before this helper
-      // runs); a URL outside the map falls to `idOfMeshUrl` (bug
-      // upstream for an http URL that was not registered).
-      const baseAndPath = splitBaseAndPath(url);
-      const id = idByBase.get(baseAndPath.base) ?? idOfMeshUrl(url);
-      const path = baseAndPath.path;
+      // MESH_INTERFACE → The client's node list → "A check knows an API
+      // base's URL by the base it asked" — the URL is a base `idByBase`
+      // holds followed by a path; longest-prefix match finds it whether
+      // the base carries a path or not. `idByBase` holds every base this
+      // check used (populated in `runCheck` before this helper runs). An
+      // http(s) URL no base matches is an upstream bug; a mesh URL
+      // outside the map falls to `idOfMeshUrl` for callers that pass no
+      // map.
+      const match = urlToEntryBase(url, idByBase);
+      let id: string;
+      let path: string;
+      if (match !== null) {
+        id = match.id;
+        path = match.path;
+      } else if (url.startsWith('notis-mesh://')) {
+        id = idOfMeshUrl(url);
+        path = splitBaseAndPath(url).path;
+      } else {
+        throw new Error(`makeTimedFetch: no base matched ${url}`);
+      }
       const bytesBucket: keyof ClientTraffic | null =
         path === '/blocks/current' ? 'tipBytes'
         : path.startsWith('/blocks/') ? 'headerBytes'
@@ -4640,11 +4649,35 @@ type HeaderReadResult =
   | { kind: 'lie'; detail: string };
 
 /**
- * Split a mesh or http(s) URL into its base (`notis-mesh://<id>` or
- * `<scheme>://<host>[:<port>]`) and its path (starting with `/`). The
- * fragments are the pair `urlToHash` and `idByBase` walk — a consistent
- * split for either scheme, so the check's traffic bucket and its
- * speed-record key read the same way whichever route served the read.
+ * MESH_INTERFACE → The client's node list → "A check knows an API base's
+ * URL by the base it asked" — find the entry's id and path in a URL by
+ * matching the URL against the bases `idByBase` holds. A longer base
+ * wins over a shorter one so an entry whose base carries a path is not
+ * shadowed by a bare-host base at the same origin. `null` when no base
+ * matches: the mesh-URL fallback and the http(s) bug path sit in the
+ * caller.
+ */
+function urlToEntryBase(
+  url: string,
+  idByBase: ReadonlyMap<string, string>,
+): { id: string; path: string } | null {
+  let bestBase: string | null = null;
+  for (const base of idByBase.keys()) {
+    if (!url.startsWith(base)) continue;
+    // The URL is the base followed by a path starting with `/`, or the
+    // base itself.
+    if (url.length !== base.length && url[base.length] !== '/') continue;
+    if (bestBase === null || base.length > bestBase.length) bestBase = base;
+  }
+  if (bestBase === null) return null;
+  return { id: idByBase.get(bestBase)!, path: url.slice(bestBase.length) };
+}
+
+/**
+ * Split a mesh URL into its base (`notis-mesh://<id>`) and its path
+ * (starting with `/`). The caller uses this on the mesh-URL fallback
+ * of `urlToEntryBase`; for an http(s) URL the lookup goes through
+ * `urlToEntryBase` alone.
  */
 function splitBaseAndPath(url: string): { base: string; path: string } {
   if (url.startsWith('notis-mesh://')) {
