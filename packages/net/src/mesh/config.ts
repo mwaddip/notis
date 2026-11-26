@@ -2,7 +2,7 @@
 // A `wss` is refused at `start` with `MeshConfigError` naming what is
 // not built yet.
 
-import type { MeshNetworkName } from './constants.js';
+import type { MeshNetworkName, PublicFipsPeer } from './constants.js';
 
 /**
  * `NET_INTERFACE → The mesh` — every refusal here is `MeshConfigError`,
@@ -105,6 +105,19 @@ export interface MeshConfig {
    * not an IP literal, is refused at start.
    */
   readonly wss?: WssConfig;
+  /**
+   * `MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+   * when its operator turns it on"` — public FIPS peering. `peers`
+   * is the list a node dials (at most `FIPS_PUBLIC_PEERS_MAX`, each
+   * an npub at a `host:port`); `listen` is the address the UDP
+   * socket binds for inbound links (`null` to bind ephemeral and
+   * hold no link the node did not dial). Absent — the default —
+   * the node runs its FIPS stack over libp2p alone.
+   */
+  readonly fipsPublic?: {
+    readonly peers: readonly PublicFipsPeer[];
+    readonly listen: { host: string; port: number } | null;
+  };
 }
 
 /**
