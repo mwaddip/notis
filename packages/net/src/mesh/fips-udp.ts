@@ -78,11 +78,9 @@ interface PeerState {
   failures: number;
   linked: boolean;
   retryTimer: ReturnType<typeof setTimeout> | null;
-  yieldCount: number;
 }
 
 interface InboundState {
-  firstSeenMs: number;
   linked: boolean;
   releaseTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -172,7 +170,6 @@ export class UdpFipsTransport implements Transport {
         failures: 0,
         linked: false,
         retryTimer: null,
-        yieldCount: 0,
       });
     }
   }
@@ -277,12 +274,15 @@ export class UdpFipsTransport implements Transport {
         peer.linked = false;
         peer.failures = 0;
         this.markFailureAndScheduleRetry(peer);
-        // Tell FipsNode the path to this address dropped so it clears
-        // its peer entry and lets the next discovery dial run instead
-        // of short-circuiting on `peer.link.state === "established"`.
-        // The second noteLink(addr, false) a test listener feeds back
-        // from the resulting `peer disconnected` event is a no-op here
-        // because `peer.linked` is already false.
+        // Where the caller is telling the transport that a held link
+        // fell, hand that word to FipsNode as a transport-layer drop
+        // too: `FmpTransportPacketProcessor` otherwise holds the peer
+        // entry at `transportAddressKey(addr)` with `link.state ===
+        // "established"`, and `connectKnownPeer` would then return at
+        // once on the next yield, never redialling the address. A
+        // noteLink(addr, false) fed back from the resulting `peer
+        // disconnected` event is a no-op because `peer.linked` is
+        // already false.
         if (wasLinked) {
           try {
             this.ctx?.onConnectionState?.({
@@ -311,17 +311,14 @@ export class UdpFipsTransport implements Transport {
     }
   }
 
-  // Exposed for the mesh stack and tests; parse-only, no side effects.
+  // The port the `udp4` socket is bound to (ephemeral when `listen`
+  // was null or named a v6 host), or null before `start` and after
+  // `stop`. Reads the OS-assigned port off `dgram.Socket.address()`.
   listenPort4(): number | null { return this.boundPort4; }
+  // The port the `udp6` socket is bound to (ephemeral when `listen`
+  // was null or named a v4 host, or null when a host has no IPv6 and
+  // the `udp6` bind failed), or null before `start` and after `stop`.
   listenPort6(): number | null { return this.boundPort6; }
-  // The count of `discover()` yields for a configured peer whose
-  // resolved address matches `addr` — the transport's own retries,
-  // whatever the caller does with each yield. Used by cases watching
-  // the retry schedule independently of FipsNode's dedup.
-  yieldsForAddr(addr: string): number {
-    const peer = this.addrToPeer.get(addr);
-    return peer ? peer.yieldCount : 0;
-  }
 
   private async bindSocket4(listen: { host: string; port: number } | null): Promise<void> {
     const sock = dgram.createSocket({ type: 'udp4' });
@@ -388,7 +385,7 @@ export class UdpFipsTransport implements Transport {
         const taken = this.inbound.get(addrStr);
         if (taken === undefined) {
           if (this.inbound.size >= this.inboundMax) return; // drop past cap
-          const state: InboundState = { firstSeenMs: Date.now(), linked: false, releaseTimer: null };
+          const state: InboundState = { linked: false, releaseTimer: null };
           this.inbound.set(addrStr, state);
           this.armInboundRelease(addrStr);
         }
@@ -458,7 +455,6 @@ export class UdpFipsTransport implements Transport {
     }
     peer.resolvedAddr = addrStr;
     this.addrToPeer.set(addrStr, peer);
-    peer.yieldCount += 1;
     this.readyQueue.push(peer);
     if (this.discoverWaker !== null) { const w = this.discoverWaker; this.discoverWaker = null; w(); }
     this.markFailureAndScheduleRetry(peer);

@@ -401,13 +401,15 @@ describe('UdpFipsTransport', () => {
     await new Promise((r) => setTimeout(r, 10000));
     expect(a.connected.size).toBe(0);
     expect(b.connected.has(a.xOnlyHex)).toBe(false);
-    // The retry fires on the drawn schedule — with `random: () => 0`
-    // the first wait is RETRY_BASE_MS / 2 (2.5 s); after 10 s several
-    // yields of the same (addr, key) have landed, counted on the
-    // transport (FipsNode's pendingPeerConnects dedups the connects at
-    // its own layer, which this count is read apart from).
-    expect(a.transport.yieldsForAddr(`127.0.0.1:${bPort}`)).toBeGreaterThanOrEqual(2);
-  }, 20000);
+    // Eighteen seconds in all: FipsNode's handshake times out at 15 s,
+    // clears its pending-connect entry, and the next transport yield
+    // on the drawn schedule opens a fresh dial at the transport ---
+    // a second `transport.connect` call, which the harness wrapper
+    // records.
+    await new Promise((r) => setTimeout(r, 8000));
+    const dials = a.connectCalls.filter((c2) => c2.addr === `127.0.0.1:${bPort}`).length;
+    expect(dials).toBeGreaterThanOrEqual(2);
+  }, 25000);
 
   it('malformed datagrams leave the transport running and a later peer links through', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 4 });
@@ -451,7 +453,7 @@ describe('UdpFipsTransport', () => {
     peers.push(a);
     const linked1 = await waitFor(() => a.connected.has(b.xOnlyHex), 5000);
     expect(linked1).toBe(true);
-    const yieldsBefore = a.transport.yieldsForAddr(`127.0.0.1:${bPort}`);
+    const dialsBefore = a.connectCalls.filter((c) => c.addr === `127.0.0.1:${bPort}`).length;
     // B stops and B' comes up on the same port. The stack is what tells
     // the transport the link fell — here the test stands in for that
     // wiring with an explicit `noteLink(addr, false)`, and the draw
@@ -470,12 +472,14 @@ describe('UdpFipsTransport', () => {
     // A re-links to the same address within RETRY_BASE_MS (5 s). Allow
     // a cushion past it.
     const relinked = await waitFor(
-      () => a.connected.has(bReplacement.xOnlyHex),
+      () => bReplacement.connected.has(a.xOnlyHex),
       RETRY_BASE_MS + 5000,
     );
     expect(relinked).toBe(true);
-    const yieldsAfter = a.transport.yieldsForAddr(`127.0.0.1:${bPort}`);
-    expect(yieldsAfter).toBeGreaterThan(yieldsBefore);
+    // The relink is a fresh outbound dial — one more `transport.connect`
+    // than before, recorded by the harness wrapper.
+    const dialsAfter = a.connectCalls.filter((c) => c.addr === `127.0.0.1:${bPort}`).length;
+    expect(dialsAfter).toBeGreaterThan(dialsBefore);
   }, 20000);
 
   it('an IPv6 peer links over `[::1]` (skipped where the host has no IPv6 loopback)', async () => {
