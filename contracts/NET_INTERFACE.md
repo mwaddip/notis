@@ -1443,6 +1443,16 @@ attached after it — the link protocol's handler and the links over the connect
 forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
 node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
 
+> ⚠ **AHEAD OF CODE (2026-11-26).** The stack's `FipsNode` runs the link transport alone; the paragraph and the three
+> list entries marked *public peering* below lead the code (`fips-udp.ts`, the stack's `udp` option, `MeshConfig.fipsPublic`).
+
+**A mesh node with `fipsPublic` peers over UDP** (`MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+its operator turns it on"`): `MeshConfig.fipsPublic` — `{ peers, listen }`, absent with peering off — has `start` build
+the stack with a `UdpFipsTransport` beside the link transport, holding `FIPS_PUBLIC_INBOUND_MAX` links it did not dial
+where `listen` names an address and none where it is `null`; the stack tells the transport each UDP link's state from
+the `FipsNode`'s `peer` events. `assertMeshConfig` refuses an empty list, a list past `FIPS_PUBLIC_PEERS_MAX`, a bad
+npub and a port outside 1–65535 with `MeshConfigError`.
+
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
   connection libp2p dials; `createReaderFips({ network })` answers a reader's, under a fresh key, forwarding off,
@@ -1458,7 +1468,15 @@ node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are 
 - `FIPS_PROTOCOL_NAME`, `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and
   `isFipsMultiaddr(ma)` — the FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
-- `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
+- `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone;
+- *public peering*: `createFipsStack`'s `udp?: UdpFipsTransportOptions` — `{ listen, peers, inboundMax, resolve?,
+  random? }` — runs a `UdpFipsTransport` beside the link transport;
+- *public peering*: `UdpFipsTransport` — fips-ts's transport over UDP, `type` `udp`, `mtu` `FIPS_LINK_MTU`, a peer
+  addressed `<ipv4>:<port>` or `[<ipv6>]:<port>`, its configured peers dialled through `discover()`, `noteLink(addr,
+  up)` told each link's state;
+- *public peering*: `PublicFipsPeer` — `{ name, npub, host, port }` — `PUBLIC_FIPS_PEERS`, the built-in list, and
+  `FIPS_UDP_DEFAULT_PORT`, `FIPS_PUBLIC_PEERS_MAX` and `FIPS_PUBLIC_INBOUND_MAX`, at the root entry alone — never
+  `./browser`.
 
 ---
 
