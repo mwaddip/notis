@@ -30,7 +30,7 @@ where each change stands upstream. A patch leaves the tree when a release of its
 
 | Pull request | Change | Patch | Status |
 |---|---|---|---|
-| [#2](https://github.com/mmalmi/fips-ts/pull/2) | An established FSP session whose route is gone — its carrier link made again, the forwarder's tree announcement not yet landed — takes the route lookup a new session takes, instead of failing at once with `no route` | `@fips/core@0.0.57` | open, no review |
+| [#2](https://github.com/mmalmi/fips-ts/pull/2) | An established FSP session whose route is gone — its carrier link made again, the forwarder's tree announcement not yet landed — takes the route lookup a new session takes, instead of failing at once with `no route`; and a stopped node starts no route lookup | `@fips/core@0.0.57` | open, no review |
 
 ## murat-dogan/node-datachannel
 
