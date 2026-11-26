@@ -430,10 +430,6 @@ once the far end's tree announcement over that link lands; a key that stays unre
 fips-ts's lookup backoff fails the sends after it at once. fips-ts holds a first contact's datagram so; Notis's patch to
 it holds a standing session's the same way (→ "The FIPS packages are pinned by release tarball").
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** The `@fips/core` patch starts a standing session's route lookup on a stopped node
-> too: a reader's TCP/FIPS endpoint, whose last segments go out after its FIPS node stopped, waits out the 5 s lookup
-> deadline before it is disposed. The lead below leads the code (the reader's re-made link).
-
 **A stopped FIPS node starts no lookup.** A datagram sent after the node's stop — a TCP/FIPS stream's last segments as
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
