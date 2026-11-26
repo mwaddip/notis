@@ -623,4 +623,35 @@ describe("the page's first node reads the reader's own state again", () => {
     expect(h.state.reads.karma, 'karma was not re-read (the membership state landed)').toBe(karmaCallsBefore);
     expect(h.state.reads.nameByOwner, 'the name was not re-read (the membership state landed)').toBe(nameCallsBefore);
   });
+
+  // WEB_INTERFACE → The extension → "The page's first node reads the reader's
+  // own state again" — the wallet's piece of the reader's own state is its
+  // listing (the credits view the balance row reads); /status is the
+  // membership state's piece and carries its own flag. A /status landing in
+  // the wallet refresh is not the wallet's piece and does not clear its flag.
+  it.fails('@wallet open at boot, /credits fails while /status lands, the first answered tick re-reads the wallet\'s listing', async () => {
+    const h = await readerHarness({ walletOpen: true });
+    // Boot: /credits fails alone, /status (and every other read) lands. The
+    // wallet's piece is unread; the membership state's piece landed.
+    h.state.allThrow = false;
+    h.state.creditsThrows = true;
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.state.status, 'the membership read landed at boot').not.toBeNull();
+    expect(h.drive.walletCredits, 'the wallet read landed nothing at boot').toBeNull();
+    const creditsCallsBefore = h.state.reads.credits;
+    const karmaCallsBefore = h.state.reads.karma;
+    // The first node answers the tick, /credits now too. The wallet's flag
+    // stands across the /status landing at boot — /status is the membership
+    // state's piece, not the wallet's; the tick re-reads the wallet's listing
+    // and nothing of the membership state (which landed at boot).
+    h.state.creditsThrows = false;
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.state.reads.credits, 'credits was re-read at the first answered tick').toBeGreaterThan(creditsCallsBefore);
+    expect(h.state.reads.karma, 'karma was not re-read (the membership state landed at boot)').toBe(karmaCallsBefore);
+    expect(h.drive.walletCredits, 'walletCredits holds the node\'s answer').not.toBeNull();
+  });
 });
