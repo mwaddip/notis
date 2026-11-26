@@ -35,4 +35,18 @@ describe('NET_INTERFACE → The browser entry: readerLibp2pOptions and FIPS', ()
     expect(withFips.transports.length).toBe(without.transports.length + 1);
     expect(withFips.transports[withFips.transports.length - 1]).toBe(stack.transport);
   });
+
+  // NET_INTERFACE → The browser entry → "No connection monitor runs,
+  // on a node or a reader".
+  it.fails('readerLibp2pOptions returns connectionMonitor: { enabled: false }', () => {
+    const privateKey = nodeKeyFromKeyPair(generateKeyPair()).privateKey;
+    const opts = readerLibp2pOptions({
+      privateKey,
+      magic: MAGIC_TESTNET,
+      network: 'testnet' as const,
+      iceServers: (): RTCIceServer[] => [],
+      denyDialMultiaddr: (): boolean => false,
+    }) as unknown as { connectionMonitor?: { enabled: boolean } };
+    expect(opts.connectionMonitor).toEqual({ enabled: false });
+  });
 });
