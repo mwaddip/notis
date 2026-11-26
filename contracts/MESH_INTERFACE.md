@@ -408,10 +408,6 @@ fips-tcp answers what is ready with no event, so each inbound datagram wakes the
 endpoint's accepts, and a poll every `FIPS_TCP_POLL_MS` runs its timers. A connection that closes hands its queued bytes
 to fips-tcp ahead of its FIN, and waits on the mesh for neither.
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** The web client's `pickLinkConnection` takes any open, handshake-passed connection
-> with no limit, a FIPS connection included — one that rides the link it would carry. The clause *never a FIPS
-> connection* below leads the code (the reader's re-made link).
-
 **A reader links when a node's every other address failed.** A client started with `fips` runs a reader's FIPS node. It
 opens a link in a check only when a node it dialled in that check has a FIPS address, the client holds no connection to
 it after the check's dials, and it failed at every other address it has — or has no other. It links over a connection it
@@ -426,17 +422,13 @@ opens no link.
 link the reader closes is opened again only by a check that needs one; one that drops while its connection holds is
 opened again as an opener's link is (→ "A key holds one link, and the libp2p peer that named it holds the key").
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** fips-ts holds a send to a key it has never reached for its route lookup, but a send
-> on a session that outlived the link its route rode finds no next hop and fails at once with *no route* — a reader's
-> dial straight after a link it had dropped comes up again fails so, until the far end's tree announcement lands. The
-> lead below leads the code: the patch under `patches/` (the reader's re-made link).
-
-**A send to a key with no route waits for one.** A FIPS node holds a send to a key it has no route to for FIPS's route
-lookup — sent to the nodes its spanning tree places, tried again until one does, within fips-ts's 5 s lookup deadline —
-whether it has never reached the key or holds a session to it that outlived the link its route rode. So a reader's dial
-straight after a link comes up, a first link or one made again, reaches its node once the far end's tree announcement
-over that link lands. fips-ts holds a first contact's send so; Notis's patch to it holds a standing session's send the
-same way (→ "The FIPS packages are pinned by release tarball").
+**A send to a key with no route waits for one.** A FIPS node holds a datagram to a key it has no route to — what a
+TCP/FIPS stream sends — for FIPS's route lookup, sent to the nodes its spanning tree places, tried again until one does,
+within fips-ts's 5 s lookup deadline, whether it has never reached the key or holds a session to it that outlived the
+link its route rode. So a reader's dial straight after a link comes up, a first link or one made again, reaches its node
+once the far end's tree announcement over that link lands; a key that stays unreachable fails after the deadline, and
+fips-ts's lookup backoff fails the sends after it at once. fips-ts holds a first contact's datagram so; Notis's patch to
+it holds a standing session's the same way (→ "The FIPS packages are pinned by release tarball").
 
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
@@ -476,10 +468,6 @@ The client keeps one entry per node key and moves it by what a failure is eviden
 client holds no connection to its key — always, for one the list gives no address: a check's tip, header and proof reads, and a routed read no node serves over the mesh (→ "A
 routed read goes to a node its need allows"). It is one entry whichever way it answers — one witness in every count —
 and the pairing of a base with a key is the list's word. A read at an API base holds no connection and dials nothing.
-
-> ⚠ **AHEAD OF CODE (2026-11-26).** The web client's check maps a read's URL back to its entry by the URL's scheme and
-> host alone, so a base that carries a path — testnet's `https://notis.fun/testnet/api` — maps to no entry, and the
-> check's tip read there fails before any request is sent. The lead below leads the code (the reader's re-made link).
 
 **A check knows an API base's URL by the base it asked.** Every place a check maps a URL back to its entry — a tip
 read's speed and bytes, a proof read's echoed URL — maps a URL at an API base by the base the check asked, which may
@@ -558,10 +546,6 @@ handed no sink reports nothing, and what it reports moves nothing it decides.
 whole of `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`, on a monotonic clock. The draw spreads the clients that failed at
 one instant — a node's restart drops every reader at once — across half the wait, so they do not return at one instant
 either. A success ends the run.
-
-> ⚠ **AHEAD OF CODE (2026-11-26).** The web client counts a failure at an API base into the run whatever the entry's
-> wait, so a `retry` node read at its base each check doubles its wait each check, up to `RETRY_CAP_MS`, while its
-> mesh addresses go undialled. The lead below leads the code (the reader's re-made link).
 
 **A failure at an API base while a node's wait stands moves nothing on.** A check reads a `retry` node at its API base
 whatever its wait (→ "Candidates"); a failure there before its time has come — a transport failure, or a lie read as
