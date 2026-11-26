@@ -26,7 +26,7 @@
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*",
     "@dagsocial/wire": "workspace:*",
-    "@fips/core": "https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz",
+    "@fips/core": "https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.66/fips-core-0.0.61.tgz",
     "@fips/tcp": "https://github.com/mmalmi/fips-tcp/releases/download/fips-tcp-v0.2.5/fips-tcp-0.2.4.tgz",
     "@libp2p/autonat-v2": "2.1.8",
     "@libp2p/circuit-relay-v2": "4.2.17",

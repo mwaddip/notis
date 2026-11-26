@@ -1,0 +1,49 @@
+diff --git a/dist/node/FipsRouting.js b/dist/node/FipsRouting.js
+index b6fe47b..494b12d 100644
+--- a/dist/node/FipsRouting.js
++++ b/dist/node/FipsRouting.js
+@@ -303,6 +303,10 @@ export class FipsRouting {
+         }));
+     }
+     async ensureFirstContactRoute(target, targetHex, targetPubkey) {
++        // MESH_INTERFACE → FIPS → "A stopped FIPS node starts no lookup"
++        // — the predicate and message fips-ts's own route resolution uses.
++        if (!this.cfg.isStarted())
++            throw new Error("FIPS node stopped");
+         const existing = this.originLookups.get(targetHex);
+         if (existing) {
+             await existing.promise;
+diff --git a/dist/node/FspSessionManager.js b/dist/node/FspSessionManager.js
+index a333563..3640fab 100644
+--- a/dist/node/FspSessionManager.js
++++ b/dist/node/FspSessionManager.js
+@@ -535,6 +535,12 @@ export class FspSessionManager {
+         if (cached && cached.fsp.state === "established") {
+             if (cached.remotePubkey)
+                 this.cfg.assertPeerAllowed?.(cached.remotePubkey);
++            // MESH_INTERFACE → FIPS → "A send to a key with no route waits for one"
++            // — a standing session with no usable route runs the same first-contact
++            // lookup before it is returned.
++            if (!this.cfg.routing.hasUsableRoute(cached.remoteNodeHex)) {
++                await this.cfg.routing.ensureFirstContactRoute(cached.remoteNodeAddr, cached.remoteNodeHex, cached.remotePubkey);
++            }
+             return cached;
+         }
+         const remotePubkey = fromHex(remotePubkeyHex);
+@@ -542,8 +548,15 @@ export class FspSessionManager {
+         const remoteNodeAddr = deriveNodeAddr(remotePubkey);
+         const remoteNodeHex = nodeAddrToHex(remoteNodeAddr);
+         const existing = this.findExistingSession(remoteNodeHex, remotePubkeyHex);
+-        if (existing)
++        if (existing) {
++            // MESH_INTERFACE → FIPS → "A send to a key with no route waits for one"
++            // — a standing session with no usable route runs the same first-contact
++            // lookup before it is returned.
++            if (!this.cfg.routing.hasUsableRoute(remoteNodeHex)) {
++                await this.cfg.routing.ensureFirstContactRoute(remoteNodeAddr, remoteNodeHex, remotePubkey);
++            }
+             return existing;
++        }
+         // Cached coordinates can outlive their carrier. Establish a routed path
+         // before signaling a transport that itself needs this FSP session.
+         if (!this.cfg.routing.hasUsableRoute(remoteNodeHex)) {
