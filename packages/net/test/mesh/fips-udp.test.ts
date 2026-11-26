@@ -186,7 +186,7 @@ describe('UdpFipsTransport', () => {
     peers.length = 0;
   });
 
-  it.fails('two configured ends link over UDP and read `connected` with each other\'s key', async () => {
+  it('two configured ends link over UDP and read `connected` with each other\'s key', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 1 });
     peers.push(a);
     const aAddr = a.listenAddr()!;
@@ -202,7 +202,7 @@ describe('UdpFipsTransport', () => {
     expect(ok).toBe(true);
   }, 20000);
 
-  it.fails('inbound link from an address no peer list names is admitted while `inboundMax > 0`', async () => {
+  it('inbound link from an address no peer list names is admitted while `inboundMax > 0`', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 4 });
     peers.push(a);
     const aPort = a.transport.listenPort4()!;
@@ -216,7 +216,7 @@ describe('UdpFipsTransport', () => {
     expect(ok).toBe(true);
   }, 10000);
 
-  it.fails('a datagram crosses a forwarding stranger between two ends that each list only it', async () => {
+  it('a datagram crosses a forwarding stranger between two ends that each list only it', async () => {
     const s = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 4, forwarding: true });
     peers.push(s);
     const sPort = s.transport.listenPort4()!;
@@ -257,7 +257,7 @@ describe('UdpFipsTransport', () => {
     expect(arrived).toBe(true);
   }, 15000);
 
-  it.fails('inbound past `inboundMax` is dropped and the configured peer still links', async () => {
+  it('inbound past `inboundMax` is dropped and the configured peer still links', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 2 });
     peers.push(a);
     const aPort = a.transport.listenPort4()!;
@@ -289,7 +289,7 @@ describe('UdpFipsTransport', () => {
     expect(linkedStrangers).toBe(2);
   }, 15000);
 
-  it.fails('a half-open address past the cap is released and another address links in its place', async () => {
+  it('a half-open address past the cap is released and another address links in its place', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 1 });
     peers.push(a);
     const aPort = a.transport.listenPort4()!;
@@ -316,7 +316,7 @@ describe('UdpFipsTransport', () => {
     expect(linked).toBe(true);
   }, 20000);
 
-  it.fails('`inboundMax: 0` takes no address it did not dial; the configured peer still links', async () => {
+  it('`inboundMax: 0` takes no address it did not dial; the configured peer still links', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 0 });
     peers.push(a);
     const aPort = a.transport.listenPort4()!;
@@ -350,7 +350,7 @@ describe('UdpFipsTransport', () => {
     expect(okB).toBe(true);
   }, 20000);
 
-  it.fails('an unresolvable host delays no other peer and is tried again on the drawn wait', async () => {
+  it('an unresolvable host delays no other peer and is tried again on the drawn wait', async () => {
     const b = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 2 });
     peers.push(b);
     const bPort = b.transport.listenPort4()!;
@@ -380,7 +380,7 @@ describe('UdpFipsTransport', () => {
     expect(resolveCalls.bad).toBeGreaterThanOrEqual(2);
   }, 15000);
 
-  it.fails('a wrong npub listed at an address never links, and a second dial of that address follows the drawn wait', async () => {
+  it('a wrong npub listed at an address never links, and a second dial of that address follows the drawn wait', async () => {
     const b = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 2 });
     peers.push(b);
     const bPort = b.transport.listenPort4()!;
@@ -409,7 +409,7 @@ describe('UdpFipsTransport', () => {
     expect(a.transport.yieldsForAddr(`127.0.0.1:${bPort}`)).toBeGreaterThanOrEqual(2);
   }, 20000);
 
-  it.fails('malformed datagrams leave the transport running and a later peer links through', async () => {
+  it('malformed datagrams leave the transport running and a later peer links through', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 4 });
     peers.push(a);
     const aPort = a.transport.listenPort4()!;
@@ -437,7 +437,7 @@ describe('UdpFipsTransport', () => {
     expect(ok).toBe(true);
   }, 15000);
 
-  it.fails('a lost link is dialled again within the first drawn wait', async () => {
+  it('a lost link is dialled again within the first drawn wait', async () => {
     const b = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 2 });
     peers.push(b);
     const bPort = b.transport.listenPort4()!;
@@ -478,7 +478,7 @@ describe('UdpFipsTransport', () => {
     expect(yieldsAfter).toBeGreaterThan(yieldsBefore);
   }, 20000);
 
-  it.fails('an IPv6 peer links over `[::1]` (skipped where the host has no IPv6 loopback)', async () => {
+  it('an IPv6 peer links over `[::1]` (skipped where the host has no IPv6 loopback)', async () => {
     const a = await startUdpPeer({ listen: { host: '::1', port: 0 }, inboundMax: 2 });
     peers.push(a);
     if (a.transport.listenPort6() === null) {
@@ -495,7 +495,7 @@ describe('UdpFipsTransport', () => {
     expect(ok).toBe(true);
   }, 15000);
 
-  it.fails('`stop()` leaves no socket or timer behind', async () => {
+  it('`stop()` leaves no socket or timer behind', async () => {
     const info = (): string[] => (process as unknown as { getActiveResourcesInfo: () => string[] }).getActiveResourcesInfo();
     const count = (kind: string, xs: string[]): number => xs.filter((x) => x === kind).length;
     const before = { sockets: count('UDPWrap', info()), timeouts: count('Timeout', info()) };
@@ -537,7 +537,7 @@ describe('UdpFipsTransport', () => {
     expect(count('Timeout', xs)).toBeLessThanOrEqual(before.timeouts + 1);
   }, 15000);
 
-  it.fails('`send` to an address the transport did not dial or take throws `UdpFipsSendError`', async () => {
+  it('`send` to an address the transport did not dial or take throws `UdpFipsSendError`', async () => {
     const a = await startUdpPeer({ listen: { host: '127.0.0.1', port: 0 }, inboundMax: 0 });
     peers.push(a);
     await expect(
