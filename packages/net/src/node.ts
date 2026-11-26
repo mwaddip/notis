@@ -964,12 +964,8 @@ export class NetNode {
       inboundUpgradeTimeout: INBOUND_UPGRADE_TIMEOUT_MS,
       maxIncomingPendingConnectionsPerHost: PENDING_UPGRADES_PER_ADDRESS,
     };
-    // Disable the built-in connection monitor heartbeat.  When enabled it
-    // pings peers every 10 s via /ipfs/ping/1.0.0 and aborts the connection
-    // if the ping fails.  The AdaptiveTimeout uses a 2 s floor derived from
-    // an uninitialised moving average, so the first heartbeat almost always
-    // times out and kills the connection.  Explicit pings are still available
-    // via @libp2p/ping if needed.
+    // NET_INTERFACE → The browser entry → "No connection monitor
+    // runs, on a node or a reader".
     const connectionMonitor = { enabled: false };
 
     let libp2p: Libp2p;
