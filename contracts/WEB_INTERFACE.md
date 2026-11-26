@@ -468,10 +468,6 @@ node asks it: a node reached again later, on a page whose feed has answered, rea
 check has ended, the feed's no-node line reads *searching for a connection…***; after a first check that reached no
 node — the access point's identity URL read and unanswered included — it reads as a failed listing does.
 
-> ⚠ **AHEAD OF CODE (2026-11-25).** A page reads the reader's own state at its boot alone: a page on an access point,
-> whose boot reads go to API bases no network reaches, holds none of it until a press reads it, and the wallet's empty
-> balance reads `—` meanwhile. The lead below leads the code (the first-node reads).
-
 **The page's first node reads the reader's own state again.** A page whose read of the reader's own state — the two
 listings, `/status`, the vouch set and the escrow, the bonds, the reader's name (→ Reading the feed and threads → "No
 answer overwrites a newer one") — failed before its first check reached a node reads it once more when that node is
@@ -905,9 +901,6 @@ pending entry's kind, transaction id, expiry and stage, and each waiting write's
 and chain, never its bytes; the post cache — its database's name, its entries, its bytes, the reader's own, those kept
 before a chain is named; the last tip, figures and names runs; and the log — its events, its bytes, its oldest event's
 time. **A snapshot is a copy**: nothing in it moves until the next `refresh` or `save as file`.
-
-> ⚠ **AHEAD OF CODE (2026-11-25).** `save as file` writes the snapshot and the events the row's last `show` or `refresh`
-> took, under a `savedAt` of the press. The sentence on the press below leads the code (the first-node reads).
 
 **The debug file** is the snapshot and every event, oldest first, as one JSON document — `format` `notis-debug/1`,
 `savedAt`, whether the identifying values are in it, `snapshot`, `events` — saved by the reader as
@@ -2093,10 +2086,6 @@ browser. the profile window creates or imports one."* With one, rows:
 balance      the spendable sum in gold · the locked line · or the faucet step
 send         the send form / the confirm row / the flight · the pending line
 ```
-
-> ⚠ **AHEAD OF CODE (2026-11-25).** The window's opening and `↻` read `/credits/:key` alone; the `/status` the
-> `balance` row's empty states wait on is read with the rest of the reader's own state. The sentence below leads the
-> code (the first-node reads).
 
 The window's `↻` is live and re-reads `/credits/:key` and `/status`, which the window also reads when it opens — the
 `balance` row's empty states wait on a `/status` answer, and that answer is the reader's own state's (→ Reading the

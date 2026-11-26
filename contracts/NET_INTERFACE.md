@@ -1795,11 +1795,6 @@ some 23 times `createHash` (8 MiB: 173 ms against 7.4 ms, measured 2026-11-04 on
 under 1 KB, and a serving reader's answers, at most `MAX_INV_IDS` posts' text of at most `MAX_CONTENT_BYTES` each —
 some 120 KB.
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** `readerLibp2pOptions` leaves libp2p's connection monitor at its default, on: it
-> pings each of a reader's connections every 10 s and aborts one whose ping fails, a ping the ping service refuses
-> because another of its streams is open on that connection included. The lead below leads the code (the first-node
-> reads).
-
 **No connection monitor runs, on a node or a reader.** libp2p's connection monitor is off in the node's libp2p and in
 `readerLibp2pOptions` (`connectionMonitor: { enabled: false }`). Its heartbeat aborts a connection whose ping fails — a
 timeout under an estimate with no history yet, or a ping stream the ping service refuses while another is open on the
