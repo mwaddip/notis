@@ -1,11 +1,11 @@
 # Upstream
 
 Notis carries a few changes to its dependencies as local patches — pnpm's `patchedDependencies`, the diffs under
-`patches/` — each stated in `contracts/MESH_INTERFACE.md → "libp2p is pinned."` and held by a case against the patched
-package. This file names where each change stands upstream. A patch leaves the tree when a release of its package
-carries the change.
+`patches/` — each stated in `contracts/MESH_INTERFACE.md → "libp2p is pinned."` or, for the FIPS packages, `→ FIPS →
+"The FIPS packages are pinned by release tarball"`, and held by a case against the patched package. This file names
+where each change stands upstream. A patch leaves the tree when a release of its package carries the change.
 
-**Status read 2026-11-25.** Upstream moves without a commit here, so a status is as of its reading;
+**Status read 2026-11-26.** Upstream moves without a commit here, so a status is as of its reading;
 `gh pr view <n> -R <repo>` answers the current one.
 
 ## libp2p/js-libp2p
@@ -25,6 +25,12 @@ carries the change.
 | [#144](https://github.com/libp2p/js-libp2p-http/pull/144) | The request line carries the URL's query | `@libp2p/http-fetch@4.0.4` | open, no review |
 | [#145](https://github.com/libp2p/js-libp2p-http/pull/145) | A string body's `content-length` counts its UTF-8 bytes | `@libp2p/http-fetch@4.0.4` | open, no review |
 | [#146](https://github.com/libp2p/js-libp2p-http/pull/146) | String and bytes bodies keep the `content-type` the caller set | `@libp2p/http-fetch@4.0.4` | open, no review |
+
+## mmalmi/fips-ts
+
+| Pull request | Change | Patch | Status |
+|---|---|---|---|
+| [#2](https://github.com/mmalmi/fips-ts/pull/2) | An established FSP session whose route is gone — its carrier link made again, the forwarder's tree announcement not yet landed — takes the route lookup a new session takes, instead of failing at once with `no route` | `@fips/core@0.0.57` | open, no review |
 
 ## murat-dogan/node-datachannel
 
