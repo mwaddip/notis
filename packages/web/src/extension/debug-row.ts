@@ -67,11 +67,11 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
   let snapshot: DebugSnapshot | null = null;
   let askingClear = false;
 
-  // WEB_INTERFACE → The extension → "The debug file" — "show and refresh
-  // take the snapshot alone; the log's `list` is read at `save as file`".
-  // One function takes the snapshot; `takeAndRender` and the `save as file`
-  // click handler both use it, the save adding the log's `list` beside it.
-  // The row's log line reads the log's `stats` from the snapshot.
+  // WEB_INTERFACE → The extension → "The debug file" — one function takes
+  // the snapshot; `takeAndRender` (the row's `show` and `refresh`) and the
+  // `save as file` click handler both use it, and only the save reads the
+  // log's `list`, beside it. The row's log line reads the log's `stats`
+  // from the snapshot.
   const takeSnap = (): Promise<DebugSnapshot> => {
     const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
     return takeSnapshot(full);

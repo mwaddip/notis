@@ -3214,7 +3214,7 @@ export class App {
     // WEB_INTERFACE → The extension → "The page's first node reads the
     // reader's own state again" — the re-read the change starts decides
     // afresh; a flag left over from the node before would re-read for no
-    // reason here. Both pieces clear here, as the one flag was.
+    // reason here. Each piece's flag clears with the state it keyed on.
     this.membershipFoundNoNode = false;
     this.walletCreditsFoundNoNode = false;
     this.state.status = null;
