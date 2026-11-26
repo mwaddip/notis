@@ -4090,9 +4090,11 @@ class MeshClientImpl implements MeshClient {
   /**
    * MESH_INTERFACE → FIPS → "A reader links when a node's every other
    * address failed" — the open connection a new FIPS link rides over.
-   * "A `local` node's first, then any other": a `local` entry's open
-   * connection whose handshake passed, else any other open connection
-   * whose handshake passed, refusing a limited one.
+   * "A `local` node's first, then any other, direct or relayed with
+   * no limit" and "never a FIPS connection, which rides a link itself":
+   * a `local` entry's open connection whose handshake passed, else any
+   * other open connection whose handshake passed, refusing a limited
+   * one and refusing a connection whose remote address carries `/fips/`.
    */
   private pickLinkConnection(): Connection | null {
     const conns = this.libp2p.getConnections();
@@ -4110,6 +4112,7 @@ class MeshClientImpl implements MeshClient {
         c.remotePeer.toString() === expected
         && c.status === 'open'
         && c.limits == null
+        && !c.remoteAddr.toString().startsWith('/fips/')
         && this.handshakeResults.get(c.id) === 'passed',
       );
       if (open.length > 0) {
@@ -4118,10 +4121,11 @@ class MeshClientImpl implements MeshClient {
       }
     }
     // No entry's connection. Fall back to any open, handshake-passed,
-    // unlimited connection on the libp2p host.
+    // unlimited, non-FIPS connection on the libp2p host.
     for (const c of conns) {
       if (c.status !== 'open') continue;
       if (c.limits != null) continue;
+      if (c.remoteAddr.toString().startsWith('/fips/')) continue;
       if (this.handshakeResults.get(c.id) !== 'passed') continue;
       return c;
     }

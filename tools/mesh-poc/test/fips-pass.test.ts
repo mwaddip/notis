@@ -817,7 +817,7 @@ describe('MESH_INTERFACE → FIPS: the reader\'s FIPS pass', () => {
     await libp2p.dial(aFipsMa, { signal: AbortSignal.timeout(20_000) });
   }, 180_000);
 
-  it.fails('a check whose FIPS pass needs a link opens it over a WebRTC connection, never over a standing FIPS connection', async () => {
+  it('a check whose FIPS pass needs a link opens it over a WebRTC connection, never over a standing FIPS connection', async () => {
     const mesh = await buildMesh();
     nodes.push(mesh.a, mesh.b, mesh.c);
 
