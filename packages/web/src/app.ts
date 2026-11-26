@@ -2773,11 +2773,9 @@ export class App {
     // read lands on its own so a held /status never blocks the credits
     // read from writing the row, and a failed /status leaves the credits
     // read's landing intact.
-    let statusLanded = false;
     const statusP: Promise<void> = this.client.status().then(
       (s) => {
         if (gen !== this.readerGen) return;
-        statusLanded = true;
         if (this.newerRead('status', order)) this.state.status = s;
         this.bumpTip(s.blockHeight);
         // The balance row's empty states wait on a /status answer; a fresh
@@ -2800,19 +2798,16 @@ export class App {
     if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
       this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
     }
-    // Let the /status handler run its microtask so `statusLanded` reflects
-    // its landing before the no-node flag is computed.
+    // Let the /status handler run its microtask so its writes to state.status
+    // and the balance row land before this refresh returns.
     await statusP;
     if (gen !== this.readerGen) return;
     // WEB_INTERFACE → The extension → "The page's first node reads the
-    // reader's own state again" — a wallet refresh whose reads all failed
-    // leaves the wallet's listing unread; the first answered tick re-reads
-    // it. Any read that landed clears the wallet's own flag — the
-    // membership state's flag is cleared by its own read's landing.
-    const anyLanded = statusLanded
-      || viewOutcome.status === 'fulfilled'
-      || (plainOutcome !== undefined && plainOutcome.status === 'fulfilled');
-    this.walletCreditsFoundNoNode = !anyLanded;
+    // reader's own state again" — the wallet's piece of the reader's own
+    // state is its listing (the credits view the balance row reads); /status
+    // is the membership state's piece and carries its own flag. The flag
+    // stands when the view read did not land and clears when it did.
+    this.walletCreditsFoundNoNode = viewOutcome.status !== 'fulfilled';
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read

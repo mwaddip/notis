@@ -629,7 +629,7 @@ describe("the page's first node reads the reader's own state again", () => {
   // listing (the credits view the balance row reads); /status is the
   // membership state's piece and carries its own flag. A /status landing in
   // the wallet refresh is not the wallet's piece and does not clear its flag.
-  it.fails('@wallet open at boot, /credits fails while /status lands, the first answered tick re-reads the wallet\'s listing', async () => {
+  it('@wallet open at boot, /credits fails while /status lands, the first answered tick re-reads the wallet\'s listing', async () => {
     const h = await readerHarness({ walletOpen: true });
     // Boot: /credits fails alone, /status (and every other read) lands. The
     // wallet's piece is unread; the membership state's piece landed.
