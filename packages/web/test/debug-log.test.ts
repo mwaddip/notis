@@ -487,6 +487,9 @@ describe('debug-log — a read opens the database whatever the buffer holds', ()
     // the stored event.
     const list = await log.list();
     expect(list.map((e) => e.message)).toEqual(['stored']);
+    // Release the module's connection a second time so `stats()` cannot
+    // ride `list()`'s re-open — each read opens on its own.
+    forceCloseDatabase(moduleDb! as unknown as typeof IDBDatabase);
     const stats = await log.stats();
     expect(stats.events).toBe(1);
     expect(stats.open).toBe(true);
