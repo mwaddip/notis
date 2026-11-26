@@ -14,7 +14,7 @@ index b6fe47b..494b12d 100644
          if (existing) {
              await existing.promise;
 diff --git a/dist/node/FspSessionManager.js b/dist/node/FspSessionManager.js
-index a333563..7d33db2 100644
+index a333563..168fa5e 100644
 --- a/dist/node/FspSessionManager.js
 +++ b/dist/node/FspSessionManager.js
 @@ -10,6 +10,10 @@ import { encodeNpub } from "../identity/nip19.js";
@@ -108,24 +108,7 @@ index a333563..7d33db2 100644
              return cached;
          }
          const remotePubkey = fromHex(remotePubkeyHex);
-@@ -542,8 +583,15 @@ export class FspSessionManager {
-         const remoteNodeAddr = deriveNodeAddr(remotePubkey);
-         const remoteNodeHex = nodeAddrToHex(remoteNodeAddr);
-         const existing = this.findExistingSession(remoteNodeHex, remotePubkeyHex);
--        if (existing)
-+        if (existing) {
-+            // MESH_INTERFACE → FIPS → "A send to a key with no route waits for one"
-+            // — a standing session with no usable route runs the same first-contact
-+            // lookup before it is returned.
-+            if (!this.cfg.routing.hasUsableRoute(remoteNodeHex)) {
-+                await this.cfg.routing.ensureFirstContactRoute(remoteNodeAddr, remoteNodeHex, remotePubkey);
-+            }
-             return existing;
-+        }
-         // Cached coordinates can outlive their carrier. Establish a routed path
-         // before signaling a transport that itself needs this FSP session.
-         if (!this.cfg.routing.hasUsableRoute(remoteNodeHex)) {
-@@ -575,7 +623,7 @@ export class FspSessionManager {
+@@ -575,7 +616,7 @@ export class FspSessionManager {
              localEpoch: this.localEpoch,
              strictClient: this.cfg.strictClient,
          });
