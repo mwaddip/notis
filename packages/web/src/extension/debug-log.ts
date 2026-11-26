@@ -359,12 +359,13 @@ export function createDebugLog(deps: DebugLogDeps): DebugLog {
         events: 0, bytes: 0, oldestT: null, dropped, open: false, unavailable: true,
       });
     }
-    // WEB_INTERFACE → The extension → "The debug log" — a read "answers
-    // every event recorded until" it: the buffer the batch has not written
-    // yet is written first, so `save as file` writes a file through the
-    // press (→ "The debug file"). `flushInternal`'s refusals stand — a
-    // refused batch still counts in `dropped`.
-    return flushInternal().then(() => {
+    // WEB_INTERFACE → The extension → "A read of the log answers every
+    // event recorded until it" — the buffer the batch has not written yet
+    // is written first, and the read goes on through an open database
+    // whatever the buffer held, so `save as file` writes a file through
+    // the press (→ "The debug file"). `flushInternal`'s refusals stand —
+    // a refused batch still counts in `dropped`.
+    return flushInternal().then(() => openDb()).then(() => {
       if (db === null) {
         return { events: 0, bytes: 0, oldestT: null, dropped, open: false, unavailable: false };
       }
@@ -405,12 +406,13 @@ export function createDebugLog(deps: DebugLogDeps): DebugLog {
 
   function listInternal(): Promise<DebugEvent[]> {
     if (unavailable) return Promise.resolve([]);
-    // WEB_INTERFACE → The extension → "The debug log" — a read "answers
-    // every event recorded until" it: the buffer the batch has not written
-    // yet is written first, so `save as file` holds every event through
-    // the press (→ "The debug file"). `flushInternal`'s refusals stand —
-    // a refused batch still counts in `dropped`.
-    return flushInternal().then(() => {
+    // WEB_INTERFACE → The extension → "A read of the log answers every
+    // event recorded until it" — the buffer the batch has not written yet
+    // is written first, and the read goes on through an open database
+    // whatever the buffer held, so `save as file` holds every event
+    // through the press (→ "The debug file"). `flushInternal`'s refusals
+    // stand — a refused batch still counts in `dropped`.
+    return flushInternal().then(() => openDb()).then(() => {
       if (db === null) return [];
       return new Promise<DebugEvent[]>((resolve) => {
         let tx: IDBTransaction;

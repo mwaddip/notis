@@ -7,7 +7,7 @@
 // through the module's own entry points.
 
 import { describe, it, expect } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, forceCloseDatabase } from 'fake-indexeddb';
 import {
   createDebugLog,
   routeShape,
@@ -450,28 +450,39 @@ describe('debug-log — a read opens the database whatever the buffer holds', ()
   // written first, and the read goes on through an open database whatever
   // the buffer held: a release between the write and the read must not
   // drop the stored events.
-  it.fails('a stored event, the connection released, nothing buffered: `list()` returns it and `stats()` counts it with `open: true`', async () => {
-    // expected [] to deeply equal [ 'stored' ]
-    const idb = new IDBFactory();
+  it('a stored event, the connection released, nothing buffered: `list()` returns it and `stats()` counts it with `open: true`', async () => {
+    const real = new IDBFactory();
+    let moduleDb: IDBDatabase | null = null;
+    // Capture the module's opened connection so a `close` event can be
+    // dispatched on it, without upgrading the database (which would keep
+    // the module from opening again at version 1).
+    const factory = {
+      open(name: string, version?: number): IDBOpenDBRequest {
+        const req = real.open(name, version);
+        req.addEventListener('success', () => { moduleDb = req.result; });
+        return req;
+      },
+      deleteDatabase: real.deleteDatabase.bind(real),
+      databases: real.databases.bind(real),
+      cmp: real.cmp.bind(real),
+    } as unknown as IDBFactory;
     const t = fakeTimers();
     const log = createDebugLog({
-      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      indexedDB: factory, now: clock().tick, pageId: PAGE,
       boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: t,
     });
-    // One event stored through a flush — the module's connection stands open.
+    // One event stored through a flush — the module opens its connection.
     log.record('error', { message: 'stored' });
     await log.flush();
-    // Release the module's connection: open the database at a higher version
-    // from a second connection, which fires `versionchange` on the module's
-    // open connection and triggers `releaseConnection` (setting `db` to
-    // `null`).
-    await new Promise<void>((resolve, reject) => {
-      const req = idb.open('notis.debug', 2);
-      req.onupgradeneeded = (): void => { /* keep the schema */ };
-      req.onsuccess = (): void => { req.result.close(); resolve(); };
-      req.onerror = (): void => reject(req.error ?? new Error('open failed'));
-      req.onblocked = (): void => reject(new Error('open blocked'));
-    });
+    expect(moduleDb).not.toBeNull();
+    // Release the module's connection through a `close` event — the
+    // module's `releaseConnection` handler sets `db` to `null`. The
+    // database itself stays at version 1 with the event in it.
+    // `forceCloseDatabase` is fake-indexeddb's simulation of a database
+    // closed for abnormal reasons (the API fires the `close` event, as a
+    // real browser does). Its exported signature types the argument as the
+    // constructor rather than an instance; the cast is for that.
+    forceCloseDatabase(moduleDb! as unknown as typeof IDBDatabase);
     // The buffer is empty; the read must open the database again and answer
     // the stored event.
     const list = await log.list();
