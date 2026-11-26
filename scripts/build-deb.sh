@@ -107,6 +107,15 @@ LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
 #MESH_ACME_DIRECTORY=
 # The port the node answers the http-01 challenge on — default 80.
 #MESH_ACME_CHALLENGE_PORT=80
+# Links the mesh node to the public FIPS mesh — "on" or "off", refused
+# without MESH_ROLE (NODE_INTERFACE → Configuration).
+#FIPS_PUBLIC=off
+# Comma-separated <npub>@<host>[:<port>] replacing the built-in FIPS public
+# peer list; port defaults to 2121 (NODE_INTERFACE → Configuration).
+#FIPS_PUBLIC_PEERS=
+# <ip>:<port> or [<ip6>]:<port> the node accepts public FIPS links on; unset,
+# it links with no address it did not dial (NODE_INTERFACE → Configuration).
+#FIPS_UDP_LISTEN=0.0.0.0:2121
 # The web client's index.html; set, GET /shell/:id answers that shell with a
 # post's preview tags.
 #WEB_SHELL_PATH=/var/www/notis.fun/web/index.html

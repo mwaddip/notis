@@ -10,7 +10,12 @@ import {
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
-import type { MeshConfig } from '@dagsocial/net';
+import type { MeshConfig, PublicFipsPeer } from '@dagsocial/net';
+import {
+  PUBLIC_FIPS_PEERS,
+  FIPS_UDP_DEFAULT_PORT,
+  FIPS_PUBLIC_PEERS_MAX,
+} from '@dagsocial/net';
 import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
 import { DECIMAL_INT } from './decimal-int.js';
 
@@ -277,6 +282,9 @@ export function loadConfig(): Readonly<Config> {
       wss: process.env['MESH_WSS'],
       acmeDirectory: process.env['MESH_ACME_DIRECTORY'],
       acmeChallengePort: process.env['MESH_ACME_CHALLENGE_PORT'],
+      fipsPublic: process.env['FIPS_PUBLIC'],
+      fipsPublicPeers: process.env['FIPS_PUBLIC_PEERS'],
+      fipsUdpListen: process.env['FIPS_UDP_LISTEN'],
       network: profile.networkType,
       dbPath,
     }),
@@ -730,6 +738,171 @@ function parseMeshWss(
 }
 
 /**
+ * NODE_INTERFACE → Configuration — `FIPS_PUBLIC` is "on" or "off", unset
+ * reading "off" (MESH_INTERFACE → FIPS → "A node peers with the public FIPS
+ * mesh when its operator turns it on").
+ */
+function parseFipsPublic(raw: string | undefined): boolean {
+  if (raw === undefined || raw === 'off') return false;
+  if (raw === 'on') return true;
+  throw new Error(`Invalid FIPS_PUBLIC "${raw}" — must be "on" or "off"`);
+}
+
+/**
+ * NODE_INTERFACE → Configuration — `FIPS_PUBLIC_PEERS` is comma-separated
+ * `<npub>@<host>[:<port>]`, the port `FIPS_UDP_DEFAULT_PORT` where none is
+ * named and a bracketed IPv6 host as `MESH_STUN` reads one; each entry's
+ * `name` is its host. The npub's bech32 payload is decoded at start by
+ * `net`'s `assertMeshConfig`; this reader checks only the shape.
+ */
+function parseFipsPublicPeers(raw: string | undefined): PublicFipsPeer[] {
+  if (raw === undefined || raw === '') return [];
+  const entries = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+  if (entries.length > FIPS_PUBLIC_PEERS_MAX) {
+    throw new Error(
+      `Invalid FIPS_PUBLIC_PEERS — ${entries.length} entries, over FIPS_PUBLIC_PEERS_MAX (${FIPS_PUBLIC_PEERS_MAX})`,
+    );
+  }
+  const out: PublicFipsPeer[] = [];
+  for (const entry of entries) {
+    out.push(parseFipsPublicPeer(entry));
+  }
+  return out;
+}
+
+function parseFipsPublicPeer(entry: string): PublicFipsPeer {
+  const atIdx = entry.indexOf('@');
+  if (atIdx < 0) {
+    throw new Error(
+      `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — must be <npub>@<host>[:<port>]`,
+    );
+  }
+  const npub = entry.substring(0, atIdx);
+  if (!npub.startsWith('npub1')) {
+    throw new Error(
+      `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — npub does not begin with "npub1"`,
+    );
+  }
+  const hostPort = entry.substring(atIdx + 1);
+  let host: string;
+  let portStr: string | undefined;
+  if (hostPort.startsWith('[')) {
+    const idx = hostPort.indexOf(']');
+    if (idx < 0) {
+      throw new Error(
+        `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — a bracketed host must end with ]`,
+      );
+    }
+    host = hostPort.substring(1, idx);
+    const tail = hostPort.substring(idx + 1);
+    if (tail === '') {
+      portStr = undefined;
+    } else if (tail.startsWith(':')) {
+      portStr = tail.substring(1);
+    } else {
+      throw new Error(
+        `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — a bracketed host must be followed by :<port>`,
+      );
+    }
+  } else {
+    const idx = hostPort.lastIndexOf(':');
+    if (idx < 0) {
+      host = hostPort;
+      portStr = undefined;
+    } else {
+      host = hostPort.substring(0, idx);
+      portStr = hostPort.substring(idx + 1);
+    }
+  }
+  if (host.length === 0) {
+    throw new Error(`Invalid FIPS_PUBLIC_PEERS entry "${entry}" — host is empty`);
+  }
+  let port: number;
+  if (portStr === undefined) {
+    port = FIPS_UDP_DEFAULT_PORT;
+  } else {
+    if (!DECIMAL_INT.test(portStr)) {
+      throw new Error(
+        `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — port must be decimal digits only`,
+      );
+    }
+    port = Number(portStr);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(
+        `Invalid FIPS_PUBLIC_PEERS entry "${entry}" — port must be 1..65535`,
+      );
+    }
+  }
+  return { name: host, npub, host, port };
+}
+
+/**
+ * NODE_INTERFACE → Configuration — `FIPS_UDP_LISTEN` is `<ip>:<port>` or
+ * `[<ip6>]:<port>`; unset or empty, no inbound bind (MESH_INTERFACE → FIPS
+ * → "A node may accept public links"). A hostname is refused, as `MESH_STUN`
+ * refuses one.
+ */
+function parseFipsUdpListen(
+  raw: string | undefined,
+): { host: string; port: number } | null {
+  if (raw === undefined || raw === '') return null;
+  let host: string;
+  let portStr: string;
+  if (raw.startsWith('[')) {
+    const idx = raw.indexOf(']:');
+    if (idx < 0) {
+      throw new Error(
+        `Invalid FIPS_UDP_LISTEN "${raw}" — a bracketed host must end with ]:<port>`,
+      );
+    }
+    host = raw.substring(1, idx);
+    portStr = raw.substring(idx + 2);
+  } else {
+    const idx = raw.lastIndexOf(':');
+    if (idx < 0) {
+      throw new Error(
+        `Invalid FIPS_UDP_LISTEN "${raw}" — must be <ip>:<port> or [<ipv6>]:<port>`,
+      );
+    }
+    host = raw.substring(0, idx);
+    portStr = raw.substring(idx + 1);
+  }
+  if (host.length === 0) {
+    throw new Error(`Invalid FIPS_UDP_LISTEN "${raw}" — host is empty`);
+  }
+  if (!isIpLiteral(host)) {
+    throw new Error(
+      `Invalid FIPS_UDP_LISTEN "${raw}" — ${JSON.stringify(host)} is not an IP literal`,
+    );
+  }
+  if (!DECIMAL_INT.test(portStr)) {
+    throw new Error(
+      `Invalid FIPS_UDP_LISTEN "${raw}" — port must be decimal digits only`,
+    );
+  }
+  const port = Number(portStr);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid FIPS_UDP_LISTEN "${raw}" — port must be 1..65535`);
+  }
+  return { host, port };
+}
+
+/**
+ * The same permissive IP-literal shape `net`'s `assertMeshConfig` reads;
+ * the strict parse runs where a socket is opened.
+ */
+function isIpLiteral(s: string): boolean {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) {
+    for (const p of s.split('.')) {
+      const n = Number(p);
+      if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+    }
+    return true;
+  }
+  return s.includes(':') && !s.includes('/');
+}
+
+/**
  * NODE_INTERFACE → Configuration — the mesh a node runs, or `null`
  * with no `MESH_ROLE`. Every refusal names the setting at fault; the
  * strict refusals `MESH_INTERFACE` names (the IP literal on
@@ -738,6 +911,11 @@ function parseMeshWss(
  * node's listen set) land in `net`'s own `assertMeshConfig` at
  * `net.start()`; those the node can see at load without reading a
  * socket land here.
+ *
+ * `FIPS_PUBLIC=on` without `MESH_ROLE` is refused naming both settings
+ * (NODE_INTERFACE → Configuration — the `FIPS_PUBLIC` row). The reader
+ * answers `null` early when `MESH_ROLE` is unset, so the FIPS checks run
+ * where they still see the setting.
  */
 function parseMeshConfig(opts: {
   role: string | undefined;
@@ -748,10 +926,35 @@ function parseMeshConfig(opts: {
   wss: string | undefined;
   acmeDirectory: string | undefined;
   acmeChallengePort: string | undefined;
+  fipsPublic: string | undefined;
+  fipsPublicPeers: string | undefined;
+  fipsUdpListen: string | undefined;
   network: 'devnet' | 'testnet' | 'mainnet';
   dbPath: string;
 }): Omit<MeshConfig, 'httpBase'> | null {
-  if (opts.role === undefined) return null;
+  const fipsPublicOn = parseFipsPublic(opts.fipsPublic);
+  const fipsPublicPeersParsed = parseFipsPublicPeers(opts.fipsPublicPeers);
+  const fipsUdpListenParsed = parseFipsUdpListen(opts.fipsUdpListen);
+  if (!fipsPublicOn) {
+    if (fipsPublicPeersParsed.length > 0) {
+      throw new Error(
+        'Invalid FIPS_PUBLIC_PEERS — set without FIPS_PUBLIC=on',
+      );
+    }
+    if (fipsUdpListenParsed !== null) {
+      throw new Error(
+        'Invalid FIPS_UDP_LISTEN — set without FIPS_PUBLIC=on',
+      );
+    }
+  }
+  if (opts.role === undefined) {
+    if (fipsPublicOn) {
+      throw new Error(
+        'Invalid FIPS_PUBLIC "on" — MESH_ROLE must be set to "public" or "private"',
+      );
+    }
+    return null;
+  }
   if (opts.role !== 'public' && opts.role !== 'private') {
     throw new Error(
       `Invalid MESH_ROLE "${opts.role}" — must be "public" or "private"`,
@@ -790,6 +993,15 @@ function parseMeshConfig(opts: {
   if (role === 'private' && wss !== undefined) {
     throw new Error('Invalid MESH_WSS — a private node does not serve WSS');
   }
+  const fipsPublic = fipsPublicOn
+    ? {
+        peers:
+          fipsPublicPeersParsed.length > 0
+            ? fipsPublicPeersParsed
+            : [...PUBLIC_FIPS_PEERS],
+        listen: fipsUdpListenParsed,
+      }
+    : undefined;
   const mesh: Omit<MeshConfig, 'httpBase'> = {
     role,
     network: opts.network,
@@ -799,6 +1011,7 @@ function parseMeshConfig(opts: {
     ...(stun !== undefined ? { stun } : {}),
     ...(stunServers.length > 0 ? { stunServers } : {}),
     ...(wss !== undefined ? { wss } : {}),
+    ...(fipsPublic !== undefined ? { fipsPublic } : {}),
   };
   return mesh;
 }

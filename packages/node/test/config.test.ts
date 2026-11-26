@@ -1472,7 +1472,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: expected undefined to deeply equal { peers: [ { …(4) }, …(6) ], …(1) }
-    it.fails('FIPS_PUBLIC=on → fipsPublic takes PUBLIC_FIPS_PEERS and listen null', async () => {
+    it('FIPS_PUBLIC=on → fipsPublic takes PUBLIC_FIPS_PEERS and listen null', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       const { PUBLIC_FIPS_PEERS } = await import('@dagsocial/net');
@@ -1489,7 +1489,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
-    it.fails('FIPS_UDP_LISTEN=0.0.0.0:2121 → listen { host, port }', async () => {
+    it('FIPS_UDP_LISTEN=0.0.0.0:2121 → listen { host, port }', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       process.env['FIPS_UDP_LISTEN'] = '0.0.0.0:2121';
@@ -1507,7 +1507,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
-    it.fails('FIPS_UDP_LISTEN=[::]:2121 → listen { "::", 2121 }', async () => {
+    it('FIPS_UDP_LISTEN=[::]:2121 → listen { "::", 2121 }', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       process.env['FIPS_UDP_LISTEN'] = '[::]:2121';
@@ -1527,7 +1527,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
-    it.fails('FIPS_PUBLIC_PEERS replaces the list, defaults port to 2121, reads a bracketed IPv6 host', async () => {
+    it('FIPS_PUBLIC_PEERS replaces the list, defaults port to 2121, reads a bracketed IPv6 host', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       const npub = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
@@ -1554,7 +1554,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
-    it.fails('FIPS_PUBLIC=yes is refused naming FIPS_PUBLIC', async () => {
+    it('FIPS_PUBLIC=yes is refused naming FIPS_PUBLIC', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'yes';
       await expect(import('../src/config.js')).rejects.toThrow(/FIPS_PUBLIC/);
@@ -1565,7 +1565,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
-    it.fails('FIPS_PUBLIC_PEERS without FIPS_PUBLIC=on is refused naming FIPS_PUBLIC_PEERS', async () => {
+    it('FIPS_PUBLIC_PEERS without FIPS_PUBLIC=on is refused naming FIPS_PUBLIC_PEERS', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC_PEERS'] =
         'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com';
@@ -1577,7 +1577,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
-    it.fails('FIPS_UDP_LISTEN without FIPS_PUBLIC=on is refused naming FIPS_UDP_LISTEN', async () => {
+    it('FIPS_UDP_LISTEN without FIPS_PUBLIC=on is refused naming FIPS_UDP_LISTEN', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_UDP_LISTEN'] = '0.0.0.0:2121';
       await expect(import('../src/config.js')).rejects.toThrow(/FIPS_UDP_LISTEN/);
@@ -1588,7 +1588,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: expected null not to be null
-    it.fails('FIPS_PUBLIC=on without MESH_ROLE is refused naming FIPS_PUBLIC and MESH_ROLE', async () => {
+    it('FIPS_PUBLIC=on without MESH_ROLE is refused naming FIPS_PUBLIC and MESH_ROLE', async () => {
       process.env['FIPS_PUBLIC'] = 'on';
       const err = await import('../src/config.js').then(
         () => null,
@@ -1604,7 +1604,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
-    it.fails('17 FIPS_PUBLIC_PEERS entries is refused naming FIPS_PUBLIC_PEERS', async () => {
+    it('17 FIPS_PUBLIC_PEERS entries is refused naming FIPS_PUBLIC_PEERS', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       const npub = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
@@ -1626,7 +1626,7 @@ describe('config', () => {
       ['port 65536', 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com:65536'],
     ];
     for (const [label, entry] of BAD_PEERS) {
-      it.fails(`FIPS_PUBLIC_PEERS with ${label} is refused naming FIPS_PUBLIC_PEERS`, async () => {
+      it(`FIPS_PUBLIC_PEERS with ${label} is refused naming FIPS_PUBLIC_PEERS`, async () => {
         process.env['MESH_ROLE'] = 'private';
         process.env['FIPS_PUBLIC'] = 'on';
         process.env['FIPS_PUBLIC_PEERS'] = entry;
@@ -1638,7 +1638,7 @@ describe('config', () => {
     //
     // Last assertion at the base:
     //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
-    it.fails('FIPS_UDP_LISTEN=example.com:2121 is refused naming FIPS_UDP_LISTEN', async () => {
+    it('FIPS_UDP_LISTEN=example.com:2121 is refused naming FIPS_UDP_LISTEN', async () => {
       process.env['MESH_ROLE'] = 'private';
       process.env['FIPS_PUBLIC'] = 'on';
       process.env['FIPS_UDP_LISTEN'] = 'example.com:2121';
