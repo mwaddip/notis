@@ -384,6 +384,20 @@ export class App {
    * is set re-reads the feed.
    */
   private feedFoundNoNode = false;
+  /**
+   * WEB_INTERFACE → The extension → "The page's first node reads the
+   * reader's own state again" — a page whose read of the reader's own
+   * state failed before its first check reached a node reads it once
+   * more when that node is reached, beside the feed. Each piece carries
+   * its own flag, set by its own read's failure and cleared by its own
+   * read's landing, so a landing of one does not clear the other's owed
+   * re-read. The cornerTick's first answered tick re-reads the pieces
+   * whose flags stand: the membership state through `loadMembershipState`,
+   * the wallet's listing through `refreshWalletCredits` while `@wallet`
+   * is open. A node change clears both through `dropReaderState`.
+   */
+  private membershipFoundNoNode = false;
+  private walletCreditsFoundNoNode = false;
   // The presses waiting on the run in flight — a send to a handle that needs a
   // fresh anchor (WEB_INTERFACE → The extension → "The verified names"). The
   // run's end settles each with its verdict and anchor; a run that ends without
@@ -2752,6 +2766,24 @@ export class App {
     const order = this.beginRead();
     const plainStamp = this.listingStamp();
     const plainOrder = this.figuresVerifier !== null ? this.beginRead() : 0;
+    // WEB_INTERFACE → The wallet window — the window's opening and ↻ read
+    // `/credits/:key` and `/status`; the `/status` answer is the reader's
+    // own state's (→ Reading the feed and threads → "No answer overwrites
+    // a newer one"), held under `newerRead('status', order)`. The status
+    // read lands on its own so a held /status never blocks the credits
+    // read from writing the row, and a failed /status leaves the credits
+    // read's landing intact.
+    const statusP: Promise<void> = this.client.status().then(
+      (s) => {
+        if (gen !== this.readerGen) return;
+        if (this.newerRead('status', order)) this.state.status = s;
+        this.bumpTip(s.blockHeight);
+        // The balance row's empty states wait on a /status answer; a fresh
+        // status landing moves the row's figure in place.
+        this.renderCreditsRowInPlace();
+      },
+      () => {},
+    );
     const outcomes = await Promise.allSettled(
       this.figuresVerifier !== null
         ? [this.readOwnCredits(cur.pubKeyHex), this.readOwnCreditsPlain(cur.pubKeyHex)]
@@ -2766,6 +2798,16 @@ export class App {
     if (plainOutcome !== undefined && plainOutcome.status === 'fulfilled') {
       this.takeCreditsPlain(plainOutcome.value, plainStamp, plainOrder);
     }
+    // Let the /status handler run its microtask so its writes to state.status
+    // and the balance row land before this refresh returns.
+    await statusP;
+    if (gen !== this.readerGen) return;
+    // WEB_INTERFACE → The extension → "The page's first node reads the
+    // reader's own state again" — the wallet's piece of the reader's own
+    // state is its listing (the credits view the balance row reads); /status
+    // is the membership state's piece and carries its own flag. The flag
+    // stands when the view read did not land and clears when it did.
+    this.walletCreditsFoundNoNode = viewOutcome.status !== 'fulfilled';
   }
 
   /** Take a /credits listing as the balance row's, beside the stamp its read
@@ -3169,6 +3211,12 @@ export class App {
     // what can wait").
     this.repNoAnswer = false;
     this.creditsNoAnswer = false;
+    // WEB_INTERFACE → The extension → "The page's first node reads the
+    // reader's own state again" — the re-read the change starts decides
+    // afresh; a flag left over from the node before would re-read for no
+    // reason here. Each piece's flag clears with the state it keyed on.
+    this.membershipFoundNoNode = false;
+    this.walletCreditsFoundNoNode = false;
     this.state.status = null;
     this.vouched.clear();
     this.escrowHeldUntil = null;
@@ -4053,7 +4101,15 @@ export class App {
         this.ownNameLoaded = true;
       }
       karmaPlain = plain;
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the membership state landed, so no
+      // re-read of it is owed at the next answered tick.
+      this.membershipFoundNoNode = false;
     } catch {
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the membership state read landed
+      // nothing, so the first node a page reaches reads it again.
+      if (gen === this.readerGen) this.membershipFoundNoNode = true;
       return; // a failed read leaves the last-known state; the ↻ retries
     }
     this.renderHeader();
@@ -5658,6 +5714,23 @@ export class App {
       if (this.feedFoundNoNode) {
         this.feedFoundNoNode = false;
         void this.loadFeed();
+      }
+      // WEB_INTERFACE → The extension → "The page's first node reads the
+      // reader's own state again" — the first node a page reaches re-reads
+      // each piece of the reader's own state whose flag stands, beside the
+      // feed: the membership state through `loadMembershipState`, the
+      // wallet's listing through `refreshWalletCredits` while `@wallet`
+      // is open. Each flag is cleared here so a later cornerTick on a page
+      // whose piece answered reads nothing for that piece.
+      if (this.membershipFoundNoNode) {
+        this.membershipFoundNoNode = false;
+        if (this.idm.current() !== null) void this.loadMembershipState();
+      }
+      if (this.walletCreditsFoundNoNode) {
+        this.walletCreditsFoundNoNode = false;
+        if (this.idm.current() !== null && openSet(this.state.workspace).has('@wallet')) {
+          void this.refreshWalletCredits();
+        }
       }
     }
   }

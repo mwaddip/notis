@@ -70,6 +70,7 @@ export function readerLibp2pOptions(
   streamMuxers: ReturnType<typeof yamux>[];
   connectionManager: { addressSorter?: AddressSorter };
   connectionGater: { denyDialMultiaddr: (ma: Multiaddr) => boolean };
+  connectionMonitor: { enabled: false };
   services: {
     identify: ReturnType<typeof identify>;
     ping: ReturnType<typeof ping>;
@@ -108,6 +109,9 @@ export function readerLibp2pOptions(
     streamMuxers: [yamux()],
     connectionManager,
     connectionGater: { denyDialMultiaddr: o.denyDialMultiaddr },
+    // NET_INTERFACE → The browser entry → "No connection monitor
+    // runs, on a node or a reader".
+    connectionMonitor: { enabled: false },
     services: {
       identify: identify(),
       ping: ping(),

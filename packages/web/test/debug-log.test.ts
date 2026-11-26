@@ -7,7 +7,7 @@
 // through the module's own entry points.
 
 import { describe, it, expect } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, forceCloseDatabase } from 'fake-indexeddb';
 import {
   createDebugLog,
   routeShape,
@@ -152,32 +152,58 @@ describe('debug-log — two pages, one total', () => {
 });
 
 describe('debug-log — the batch: size, interval, flush', () => {
-  it('one write at the batch\'s size, one at the interval, one on `flush()`', async () => {
-    const idb = new IDBFactory();
+  it('a readwrite lands at the batch\'s size, at the interval, and on `flush()`', async () => {
+    const real = new IDBFactory();
+    let readwrites = 0;
+    // A factory that counts the readwrite transactions the module opens;
+    // the readonly transactions `list` and `stats` open after flushing
+    // an empty buffer are not counted, so an auto-flush (size or
+    // interval) and a manual `flush` each add exactly one.
+    const factory = {
+      open(name: string, version?: number): IDBOpenDBRequest {
+        const req = real.open(name, version);
+        req.addEventListener('success', () => {
+          const d = req.result;
+          const origTx = d.transaction.bind(d);
+          (d as unknown as { transaction: typeof d.transaction }).transaction = ((
+            stores: string | string[], mode?: IDBTransactionMode,
+          ) => {
+            if (mode === 'readwrite') readwrites += 1;
+            return origTx(stores, mode);
+          }) as typeof d.transaction;
+        });
+        return req;
+      },
+      deleteDatabase: real.deleteDatabase.bind(real),
+      databases: real.databases.bind(real),
+      cmp: real.cmp.bind(real),
+    } as unknown as IDBFactory;
     const t = fakeTimers();
     const log = createDebugLog({
-      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      indexedDB: factory, now: clock().tick, pageId: PAGE,
       boundBytes: 100_000, batchSize: 3, batchInterval: 1000, timers: t,
     });
-    // Under the size, nothing is written yet.
+    // Under the size, no readwrite yet.
     log.record('error', { message: 'a' });
     log.record('error', { message: 'b' });
-    expect((await log.stats()).events).toBe(0);
-    // At the size, one write.
+    expect(readwrites).toBe(0);
+    // At the size, one readwrite.
     log.record('error', { message: 'c' });
-    // Give the write time to land.
-    await new Promise<void>((r) => setTimeout(r, 0));
-    expect((await log.stats()).events).toBe(3);
-    // Under the size again, then fire the interval.
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(readwrites).toBe(1);
+    // Under the size again, then fire the interval — one more.
     log.record('error', { message: 'd' });
     const [firstHandle] = [...(t as unknown as { map: Map<unknown, { fn: () => void }> }).map.keys()];
     t.fire(firstHandle!);
-    await new Promise<void>((r) => setTimeout(r, 0));
-    expect((await log.stats()).events).toBe(4);
-    // Then a plain flush for the last one.
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(readwrites).toBe(2);
+    // Then a manual flush for the last one — one more.
     log.record('error', { message: 'e' });
     await log.flush();
-    expect((await log.stats()).events).toBe(5);
+    expect(readwrites).toBe(3);
+    // Every record lands; `list` over an empty buffer opens no readwrite.
+    expect((await log.list()).map((e) => e.message)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(readwrites).toBe(3);
   });
 });
 
@@ -382,5 +408,90 @@ describe('debug-log — the error recorder', () => {
     }
     detach();
     expect(win.active()).toBe(0);
+  });
+});
+
+describe('debug-log — list and stats include the buffered events', () => {
+  // WEB_INTERFACE → The extension → "The debug log" — a read of the log
+  // "answers every event recorded until the press": `save as file` takes
+  // the snapshot and the events at the press, so `list()` and `stats()`
+  // must include the events the buffer still holds. Without the flush
+  // inside each read, a batch not yet written at 50 events or at the 2 s
+  // interval is in neither answer.
+  it('an event recorded and `list()` called before any flush returns it', async () => {
+    const idb = new IDBFactory();
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 50, batchInterval: 60_000, timers: t,
+    });
+    log.record('error', { message: 'buffered' });
+    const list = await log.list();
+    expect(list.map((e) => e.message)).toEqual(['buffered']);
+  });
+
+  it('`stats()` in the same state counts the buffered event and its bytes', async () => {
+    const idb = new IDBFactory();
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: idb, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 50, batchInterval: 60_000, timers: t,
+    });
+    log.record('error', { message: 'buffered' });
+    const stats = await log.stats();
+    expect(stats.events).toBe(1);
+    expect(stats.bytes).toBeGreaterThan(0);
+  });
+});
+
+describe('debug-log — a read opens the database whatever the buffer holds', () => {
+  // WEB_INTERFACE → The extension → "A read of the log answers every event
+  // recorded until it" — the events a batch has not written yet are
+  // written first, and the read goes on through an open database whatever
+  // the buffer held: a release between the write and the read must not
+  // drop the stored events.
+  it('a stored event, the connection released, nothing buffered: `list()` returns it and `stats()` counts it with `open: true`', async () => {
+    const real = new IDBFactory();
+    let moduleDb: IDBDatabase | null = null;
+    // Capture the module's opened connection so a `close` event can be
+    // dispatched on it, without upgrading the database (which would keep
+    // the module from opening again at version 1).
+    const factory = {
+      open(name: string, version?: number): IDBOpenDBRequest {
+        const req = real.open(name, version);
+        req.addEventListener('success', () => { moduleDb = req.result; });
+        return req;
+      },
+      deleteDatabase: real.deleteDatabase.bind(real),
+      databases: real.databases.bind(real),
+      cmp: real.cmp.bind(real),
+    } as unknown as IDBFactory;
+    const t = fakeTimers();
+    const log = createDebugLog({
+      indexedDB: factory, now: clock().tick, pageId: PAGE,
+      boundBytes: 100_000, batchSize: 1, batchInterval: 60_000, timers: t,
+    });
+    // One event stored through a flush — the module opens its connection.
+    log.record('error', { message: 'stored' });
+    await log.flush();
+    expect(moduleDb).not.toBeNull();
+    // Release the module's connection through a `close` event — the
+    // module's `releaseConnection` handler sets `db` to `null`. The
+    // database itself stays at version 1 with the event in it.
+    // `forceCloseDatabase` is fake-indexeddb's simulation of a database
+    // closed for abnormal reasons (the API fires the `close` event, as a
+    // real browser does). Its exported signature types the argument as the
+    // constructor rather than an instance; the cast is for that.
+    forceCloseDatabase(moduleDb! as unknown as typeof IDBDatabase);
+    // The buffer is empty; the read must open the database again and answer
+    // the stored event.
+    const list = await log.list();
+    expect(list.map((e) => e.message)).toEqual(['stored']);
+    // Release the module's connection a second time so `stats()` cannot
+    // ride `list()`'s re-open — each read opens on its own.
+    forceCloseDatabase(moduleDb! as unknown as typeof IDBDatabase);
+    const stats = await log.stats();
+    expect(stats.events).toBe(1);
+    expect(stats.open).toBe(true);
   });
 });

@@ -16,7 +16,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Api } from '../src/api/client';
 import type { AppIdentity, TipRun, TipVerifier } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
-import type { BlockCurrent, FeedResult, KarmaResult, StatusResult } from '../src/api/dto';
+import type {
+  BlockCurrent, FeedResult, KarmaResult, StatusResult, CreditsResult, UsernameResult,
+  VouchesVoucherResult, VouchesTargetResult, VouchCooldownsResult, BondsResult,
+} from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { jsonResponse } from './honest-page';
 
@@ -319,5 +322,336 @@ describe('the seed walk and the msg(e) branch stand beside the no-node rule', ()
     await (h.drive.cornerTick as () => Promise<void>)();
     await flush();
     expect(h.state.feedCalls, 'no re-read on a non-no-node failure').toBe(feedCallsAfterFail);
+  });
+});
+
+// WEB_INTERFACE → The extension → "The page's first node reads the reader's
+// own state again" — a page whose read of the reader's own state (the two
+// listings, /status, the vouch set and the escrow, the bonds, the reader's
+// name) failed before its first check reached a node reads it once more when
+// that node is reached, beside the feed. A page whose read of it answered
+// reads nothing then.
+
+interface ReaderDrive {
+  loadFeed(): Promise<void>;
+  cornerTick(): Promise<void>;
+  loadMembershipState(): Promise<void>;
+  refreshWalletCredits(): Promise<void>;
+  state: {
+    feed: { error: string | null; loaded: boolean };
+    status: StatusResult | null;
+    workspace: unknown;
+  };
+  ownName: UsernameResult | null;
+  ownNameLoaded: boolean;
+  walletCredits: CreditsResult | null;
+  openWallet(): void;
+}
+
+interface ReaderState {
+  reads: {
+    karma: number; status: number; vouchesByVoucher: number; vouchCooldowns: number;
+    bonds: number; nameByOwner: number; credits: number; currentBlock: number; feed: number;
+  };
+  allThrow: boolean;      // when true every reader-state read throws
+  currentBlockThrows: boolean;
+  statusThrows: boolean;  // for the wallet-status case: a /status that fails alone
+  creditsThrows: boolean; // for the wallet-status case: a /credits that fails alone
+}
+
+interface ReaderHarness {
+  app: unknown;
+  state: ReaderState;
+  verifier: { settle: (run: TipRun) => void; runCalls: number };
+  drive: ReaderDrive;
+}
+
+function makeIdentityLoaded(): AppIdentity {
+  return {
+    current: () => ({ pubKeyHex: PUB, locked: false }),
+    sign: async () => ({ signature: 'ab'.repeat(64) }),
+    draft: async () => ({ pubKeyHex: PUB }),
+    create: async () => ({ pubKeyHex: PUB }),
+    discardDraft: () => {},
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
+    importFile: async () => ({ pubKeyHex: PUB }),
+    exportFile: async () => '{}',
+    unlock: async () => {},
+    lock: async () => {},
+    forget: async () => {},
+    backedUp: () => true,
+    onChange: () => {},
+  };
+}
+
+async function readerHarness(opts: { walletOpen?: boolean } = {}): Promise<ReaderHarness> {
+  const state: ReaderState = {
+    reads: {
+      karma: 0, status: 0, vouchesByVoucher: 0, vouchCooldowns: 0,
+      bonds: 0, nameByOwner: 0, credits: 0, currentBlock: 0, feed: 0,
+    },
+    allThrow: true,
+    currentBlockThrows: true,
+    statusThrows: false,
+    creditsThrows: false,
+  };
+  const emptyFeed = (): FeedResult => ({ posts: [], next: null, pending: [], pendingCount: 0 });
+  const karmaAnswer = (): KarmaResult => karmaResult({
+    userId: PUB, total: '0', effective: '0', boxes: [], boxCount: 0, height: 6000,
+  });
+  const creditsAnswer = (): CreditsResult => ({
+    userId: PUB, total: '0', boxes: [], boxCount: 0, next: null,
+  });
+  const fail = (what: string): never => { throw new Error(`${what} offline`); };
+  const fakeApi: Api = {
+    feed: async (): Promise<FeedResult> => {
+      state.reads.feed += 1;
+      if (state.allThrow) return fail('feed');
+      return emptyFeed();
+    },
+    thread: async () => null,
+    post: async () => null,
+    status: async (): Promise<StatusResult> => {
+      state.reads.status += 1;
+      if (state.allThrow || state.statusThrows) return fail('status');
+      return statusResult();
+    },
+    currentBlock: async (): Promise<BlockCurrent> => {
+      state.reads.currentBlock += 1;
+      if (state.currentBlockThrows) return fail('currentBlock');
+      return { height: 6001, hash: null };
+    },
+    karma: async (): Promise<KarmaResult> => {
+      state.reads.karma += 1;
+      if (state.allThrow) return fail('karma');
+      return karmaAnswer();
+    },
+    vouchesByTarget: async (): Promise<VouchesTargetResult> => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async (): Promise<VouchesVoucherResult> => {
+      state.reads.vouchesByVoucher += 1;
+      if (state.allThrow) return fail('vouchesByVoucher');
+      return { vouches: [], count: 0, next: null };
+    },
+    vouchCooldowns: async (): Promise<VouchCooldownsResult> => {
+      state.reads.vouchCooldowns += 1;
+      if (state.allThrow) return fail('vouchCooldowns');
+      return { cooldowns: [], count: 0, next: null };
+    },
+    bonds: async (): Promise<BondsResult> => {
+      state.reads.bonds += 1;
+      if (state.allThrow) return fail('bonds');
+      return { bonds: [], bondCount: 0, next: null };
+    },
+    usernameByOwner: async (): Promise<UsernameResult | null> => {
+      state.reads.nameByOwner += 1;
+      if (state.allThrow) return fail('usernameByOwner');
+      return null;
+    },
+    credits: async (): Promise<CreditsResult> => {
+      state.reads.credits += 1;
+      if (state.allThrow || state.creditsThrows) return fail('credits');
+      return creditsAnswer();
+    },
+    usernameByName: async () => null,
+  };
+
+  const verifierState = {
+    runCalls: 0,
+    pending: [] as Array<(run: TipRun) => void>,
+  };
+  const verifier: TipVerifier = {
+    run(): Promise<TipRun> {
+      verifierState.runCalls += 1;
+      return new Promise((settle) => { verifierState.pending.push(settle); });
+    },
+  };
+  const settleLast = (run: TipRun): void => {
+    const p = verifierState.pending.shift();
+    if (p !== undefined) p(run);
+  };
+
+  // Fresh prefs module per case — the test asserts no node answers at boot
+  // and none should be stored, so no walk and a bare base.
+  vi.resetModules();
+  document.head.innerHTML = '';
+  const prefs = await import('../src/prefs');
+  localStorage.removeItem(prefs.KEY_NODE);
+  prefs.setNode('');
+
+  const { App } = await import('../src/app');
+  const { PendingLedger } = await import('../src/wallet/ledger');
+  const ledger = new PendingLedger(PUB);
+  const app = new App(
+    fakeApi,
+    {} as unknown as WriteClient,
+    makeIdentityLoaded(),
+    ledger,
+    undefined,
+    undefined,
+    verifier,
+  );
+  const appbar = document.createElement('div');
+  const feed = document.createElement('section'); feed.id = 'feed';
+  const panes = document.createElement('section'); panes.id = 'panes';
+  const workspace = document.createElement('div'); workspace.className = 'workspace';
+  workspace.append(feed, panes);
+  document.body.append(appbar, workspace);
+  (app as unknown as { mount(a: HTMLElement, f: HTMLElement, p: HTMLElement): void }).mount(appbar, feed, panes);
+  if (opts.walletOpen === true) {
+    (app as unknown as { openWallet(): void }).openWallet();
+  }
+
+  return {
+    app,
+    state,
+    verifier: {
+      get runCalls() { return verifierState.runCalls; },
+      settle: settleLast,
+    },
+    drive: app as unknown as ReaderDrive,
+  };
+}
+
+describe("the page's first node reads the reader's own state again", () => {
+  it('a boot read of the reader\'s own state fails, the first check then reaches a node — state.status is set and ownName is read', async () => {
+    const h = await readerHarness();
+    // Boot: the identity's state reads all fail.
+    await h.drive.loadMembershipState();
+    await flush();
+    expect(h.drive.state.status, 'the boot read of the reader\'s own state landed nothing').toBeNull();
+    expect(h.drive.ownNameLoaded, 'the name is not loaded yet').toBe(false);
+    const statusCallsBefore = h.state.reads.status;
+    const nameCallsBefore = h.state.reads.nameByOwner;
+    // The first node answers.
+    h.state.allThrow = false;
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    // The reader's own state reads once more. state.status now holds the
+    // node's answer, the name is loaded.
+    expect(h.state.reads.status, 'status was re-read at the first answered tick').toBeGreaterThan(statusCallsBefore);
+    expect(h.state.reads.nameByOwner, 'the name was re-read').toBeGreaterThan(nameCallsBefore);
+    expect(h.drive.state.status, 'state.status now holds the node\'s answer').not.toBeNull();
+    expect(h.drive.ownNameLoaded, 'ownNameLoaded is true').toBe(true);
+  });
+
+  it('a boot read of the reader\'s own state that answered reads nothing more at the first answered tick', async () => {
+    const h = await readerHarness();
+    // Boot: every reader-state read answers.
+    h.state.allThrow = false;
+    await h.drive.loadMembershipState();
+    await flush();
+    expect(h.drive.state.status, 'state.status is set at boot').not.toBeNull();
+    const statusCallsBefore = h.state.reads.status;
+    // The first node answers.
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    // No re-read at the tick: the boot read answered.
+    expect(h.state.reads.status, 'no re-read of status at the tick').toBe(statusCallsBefore);
+  });
+
+  it('a restored @wallet at boot whose read failed re-reads /credits at the first answered tick', async () => {
+    const h = await readerHarness({ walletOpen: true });
+    // Boot: the wallet's read fails along with the rest.
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.walletCredits, 'the wallet\'s read landed nothing').toBeNull();
+    const creditsCallsBefore = h.state.reads.credits;
+    // The first node answers.
+    h.state.allThrow = false;
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.state.reads.credits, 'credits was re-read at the first answered tick').toBeGreaterThan(creditsCallsBefore);
+    expect(h.drive.walletCredits, 'walletCredits holds the node\'s answer').not.toBeNull();
+  });
+
+  // WEB_INTERFACE → The extension → "The page's first node reads the reader's
+  // own state again" — each piece (the membership state; the wallet's
+  // listing) carries its own flag, so a landing of one does not clear the
+  // other's owed re-read.
+  it('the wallet lands after the membership read failed, the first answered tick re-reads the membership state', async () => {
+    const h = await readerHarness({ walletOpen: true });
+    // Boot: every reader-state read fails. Both pieces are owed a re-read.
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.state.status, 'the membership read landed nothing at boot').toBeNull();
+    expect(h.drive.walletCredits, 'the wallet read landed nothing at boot').toBeNull();
+    // The wallet's reads land before the first answered tick (another node
+    // answered the wallet alone). The membership state is not re-read here.
+    h.state.allThrow = false;
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.walletCredits, 'the wallet read landed').not.toBeNull();
+    const karmaCallsBefore = h.state.reads.karma;
+    const nameCallsBefore = h.state.reads.nameByOwner;
+    // The first node answers the tick. The membership state's flag stands
+    // across the wallet's landing — the tick re-reads it.
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.state.reads.karma, 'karma was re-read at the first answered tick').toBeGreaterThan(karmaCallsBefore);
+    expect(h.state.reads.nameByOwner, 'the name was re-read at the first answered tick').toBeGreaterThan(nameCallsBefore);
+  });
+
+  it('the membership state lands after the wallet read failed, the first answered tick re-reads the wallet\'s listing and not the membership state', async () => {
+    const h = await readerHarness({ walletOpen: true });
+    // Boot: every reader-state read fails.
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.walletCredits, 'the wallet read landed nothing at boot').toBeNull();
+    // The membership state lands before the first answered tick — /credits
+    // still fails so the wallet's piece is unread.
+    h.state.allThrow = false;
+    h.state.creditsThrows = true;
+    await h.drive.loadMembershipState();
+    await flush();
+    expect(h.drive.state.status, 'the membership read landed').not.toBeNull();
+    const karmaCallsBefore = h.state.reads.karma;
+    const nameCallsBefore = h.state.reads.nameByOwner;
+    const creditsCallsBefore = h.state.reads.credits;
+    // The first node answers the tick, /credits now too. The wallet's
+    // listing's flag stands across the membership state's landing.
+    h.state.creditsThrows = false;
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.state.reads.credits, 'credits was re-read at the first answered tick').toBeGreaterThan(creditsCallsBefore);
+    expect(h.state.reads.karma, 'karma was not re-read (the membership state landed)').toBe(karmaCallsBefore);
+    expect(h.state.reads.nameByOwner, 'the name was not re-read (the membership state landed)').toBe(nameCallsBefore);
+  });
+
+  // WEB_INTERFACE → The extension → "The page's first node reads the reader's
+  // own state again" — the wallet's piece of the reader's own state is its
+  // listing (the credits view the balance row reads); /status is the
+  // membership state's piece and carries its own flag. A /status landing in
+  // the wallet refresh is not the wallet's piece and does not clear its flag.
+  it('@wallet open at boot, /credits fails while /status lands, the first answered tick re-reads the wallet\'s listing', async () => {
+    const h = await readerHarness({ walletOpen: true });
+    // Boot: /credits fails alone, /status (and every other read) lands. The
+    // wallet's piece is unread; the membership state's piece landed.
+    h.state.allThrow = false;
+    h.state.creditsThrows = true;
+    await h.drive.loadMembershipState();
+    await h.drive.refreshWalletCredits();
+    await flush();
+    expect(h.drive.state.status, 'the membership read landed at boot').not.toBeNull();
+    expect(h.drive.walletCredits, 'the wallet read landed nothing at boot').toBeNull();
+    const creditsCallsBefore = h.state.reads.credits;
+    const karmaCallsBefore = h.state.reads.karma;
+    // The first node answers the tick, /credits now too. The wallet's flag
+    // stands across the /status landing at boot — /status is the membership
+    // state's piece, not the wallet's; the tick re-reads the wallet's listing
+    // and nothing of the membership state (which landed at boot).
+    h.state.creditsThrows = false;
+    h.state.currentBlockThrows = false;
+    await h.drive.cornerTick();
+    await flush();
+    expect(h.state.reads.credits, 'credits was re-read at the first answered tick').toBeGreaterThan(creditsCallsBefore);
+    expect(h.state.reads.karma, 'karma was not re-read (the membership state landed at boot)').toBe(karmaCallsBefore);
+    expect(h.drive.walletCredits, 'walletCredits holds the node\'s answer').not.toBeNull();
   });
 });

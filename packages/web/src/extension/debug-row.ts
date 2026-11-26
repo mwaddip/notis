@@ -24,7 +24,7 @@ import {
   type DebugSnapshot,
 } from './debug-snapshot';
 import { buildDebugFile } from './debug-file';
-import { DEBUG_LOG_BYTES, type DebugEvent, type DebugLog } from './debug-log';
+import { DEBUG_LOG_BYTES, type DebugLog } from './debug-log';
 
 /** The debug seam main.ts composes and the App takes (WEB_INTERFACE → The
  *  settings window → "The debug row", → The extension → "The snapshot").
@@ -65,17 +65,20 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
   let open = false;
   let ticked = false;
   let snapshot: DebugSnapshot | null = null;
-  let events: DebugEvent[] = [];
   let askingClear = false;
 
-  const takeAndRender = async (): Promise<void> => {
+  // WEB_INTERFACE → The extension → "The debug file" — one function takes
+  // the snapshot; `takeAndRender` (the row's `show` and `refresh`) and the
+  // `save as file` click handler both use it, and only the save reads the
+  // log's `list`, beside it. The row's log line reads the log's `stats`
+  // from the snapshot.
+  const takeSnap = (): Promise<DebugSnapshot> => {
     const full: SnapshotSeams = { ...deps.seam.seams, reader: deps.reader };
-    const [snap, evs] = await Promise.all([
-      takeSnapshot(full),
-      deps.seam.log.list(),
-    ]);
-    snapshot = snap;
-    events = evs;
+    return takeSnapshot(full);
+  };
+
+  const takeAndRender = async (): Promise<void> => {
+    snapshot = await takeSnap();
     render();
   };
 
@@ -122,12 +125,22 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     const save = el('button', 'word', 'save as file') as HTMLButtonElement;
     save.type = 'button';
     save.addEventListener('click', () => {
-      if (snapshot === null) return;
-      const now = deps.now();
-      const file = buildDebugFile({
-        snapshot, events, identifying: ticked, savedAt: now, nowMs: now,
-      });
-      deps.seam.download(file.filename, file.text);
+      // WEB_INTERFACE → The extension → "The debug file" — "save as file
+      // takes the snapshot and the events at the press, as `refresh` does,
+      // and the row shows that snapshot after it". The press takes the
+      // snapshot through the same `takeSnap` the row's `refresh` uses and
+      // reads the log's events beside it, then hands the file to the
+      // caller's download with a `savedAt` of the same moment.
+      void (async () => {
+        const [snap, evs] = await Promise.all([takeSnap(), deps.seam.log.list()]);
+        snapshot = snap;
+        const now = deps.now();
+        const file = buildDebugFile({
+          snapshot: snap, events: evs, identifying: ticked, savedAt: now, nowMs: now,
+        });
+        deps.seam.download(file.filename, file.text);
+        render();
+      })();
     });
     controls.appendChild(save);
 
@@ -317,7 +330,6 @@ export function debugRow(deps: DebugRowDeps): HTMLElement {
     if (open) {
       open = false;
       snapshot = null;
-      events = [];
       ticked = false;
       askingClear = false;
       setText(toggle, 'show');
