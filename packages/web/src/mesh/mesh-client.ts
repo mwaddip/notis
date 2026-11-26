@@ -3729,8 +3729,12 @@ class MeshClientImpl implements MeshClient {
         id = match.id;
         path = match.path;
       } else if (url.startsWith('notis-mesh://')) {
+        // Mesh-URL fallback for callers that pass no map: the path is
+        // everything from the first `/` after the id, empty when none.
         id = idOfMeshUrl(url);
-        path = splitBaseAndPath(url).path;
+        const rest = url.slice('notis-mesh://'.length);
+        const slash = rest.indexOf('/');
+        path = slash === -1 ? '' : rest.slice(slash);
       } else {
         throw new Error(`makeTimedFetch: no base matched ${url}`);
       }
@@ -4695,28 +4699,6 @@ function urlToEntryBase(
   }
   if (bestBase === null) return null;
   return { id: idByBase.get(bestBase)!, path: url.slice(bestBase.length) };
-}
-
-/**
- * Split a mesh URL into its base (`notis-mesh://<id>`) and its path
- * (starting with `/`). The caller uses this on the mesh-URL fallback
- * of `urlToEntryBase`; for an http(s) URL the lookup goes through
- * `urlToEntryBase` alone.
- */
-function splitBaseAndPath(url: string): { base: string; path: string } {
-  if (url.startsWith('notis-mesh://')) {
-    const rest = url.slice('notis-mesh://'.length);
-    const slash = rest.indexOf('/');
-    if (slash === -1) return { base: url, path: '' };
-    return { base: 'notis-mesh://' + rest.slice(0, slash), path: rest.slice(slash) };
-  }
-  // http(s)://host[:port]/path — find the first '/' after the scheme's `//`.
-  const schemeEnd = url.indexOf('://');
-  if (schemeEnd === -1) return { base: url, path: '' };
-  const after = schemeEnd + 3;
-  const slash = url.indexOf('/', after);
-  if (slash === -1) return { base: url, path: '' };
-  return { base: url.slice(0, slash), path: url.slice(slash) };
 }
 
 /**
