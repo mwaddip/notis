@@ -13,11 +13,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   FipsNode,
   generateIdentity,
+  noopLogger,
   toHex,
   encodeNpub,
   type DatagramEvent,
   type FipsIdentity,
   type PeerEvent,
+  type ReceivedTransportPacket,
+  type TransportContext,
 } from '@fips/core';
 
 import {
@@ -404,8 +407,8 @@ describe('UdpFipsTransport', () => {
     // Eighteen seconds in all: FipsNode's handshake times out at 15 s,
     // clears its pending-connect entry, and the next transport yield
     // on the drawn schedule opens a fresh dial at the transport ---
-    // a second `transport.connect` call, which the harness wrapper
-    // records.
+    // a second `transport.connect` call, which the peer's own
+    // `connectCalls` log records.
     await new Promise((r) => setTimeout(r, 8000));
     const dials = a.connectCalls.filter((c2) => c2.addr === `127.0.0.1:${bPort}`).length;
     expect(dials).toBeGreaterThanOrEqual(2);
@@ -477,7 +480,7 @@ describe('UdpFipsTransport', () => {
     );
     expect(relinked).toBe(true);
     // The relink is a fresh outbound dial — one more `transport.connect`
-    // than before, recorded by the harness wrapper.
+    // than before, recorded on the peer's `connectCalls` log.
     const dialsAfter = a.connectCalls.filter((c) => c.addr === `127.0.0.1:${bPort}`).length;
     expect(dialsAfter).toBeGreaterThan(dialsBefore);
   }, 20000);
@@ -548,5 +551,81 @@ describe('UdpFipsTransport', () => {
       a.transport.send({ transport: 'udp', addr: '127.0.0.1:1' }, new Uint8Array([0])),
     ).rejects.toBeInstanceOf(UdpFipsSendError);
     void hasIpv6Loopback;
+  }, 5000);
+
+  it('a datagram over `FIPS_LINK_MTU` is dropped at the socket handler and never reaches `onPacket`', async () => {
+    // The transport runs under a mock `TransportContext` so the test
+    // reads the handler's input directly, apart from FipsNode.
+    const localIdentity = await generateIdentity();
+    const seen: ReceivedTransportPacket[] = [];
+    const ctx: TransportContext = {
+      localIdentity,
+      onPacket: (packet) => { seen.push(packet); },
+      logger: noopLogger,
+    };
+    const t = new UdpFipsTransport({
+      listen: { host: '127.0.0.1', port: 0 },
+      peers: [],
+      inboundMax: 4,
+    });
+    await t.start(ctx);
+    try {
+      const aPort = t.listenPort4()!;
+      const { createSocket } = await import('node:dgram');
+      const sender = createSocket('udp4');
+      await new Promise<void>((r) => sender.bind(0, '127.0.0.1', r));
+      const sendOne = (bytes: Uint8Array): Promise<void> => new Promise((resolve, reject) => {
+        sender.send(bytes, aPort, '127.0.0.1', (err) => (err ? reject(err) : resolve()));
+      });
+      // Under the cap: reaches `onPacket`.
+      await sendOne(new Uint8Array([0x42]));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(seen.length).toBe(1);
+      // Over the cap: dropped at the handler; `onPacket` is not called.
+      const oversized = new Uint8Array(FIPS_LINK_MTU + 1);
+      oversized[0] = 0xaa;
+      await sendOne(oversized);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(seen.length).toBe(1);
+      sender.close();
+    } finally {
+      await t.stop();
+    }
+  }, 5000);
+
+  it('`stop()` clears every retry timer it scheduled', async () => {
+    // Ten configured peers with a resolver that answers every host
+    // give ten retry timers in flight after the first drain; `stop()`
+    // must bring the count back down. Reads the active `Timeout`
+    // entries through `process.getActiveResourcesInfo()`.
+    const info = (): string[] => (process as unknown as { getActiveResourcesInfo: () => string[] }).getActiveResourcesInfo();
+    const timeouts = (): number => info().filter((x) => x === 'Timeout').length;
+    const localIdentity = await generateIdentity();
+    const identity = await generateIdentity();
+    const t = new UdpFipsTransport({
+      listen: { host: '127.0.0.1', port: 0 },
+      peers: Array.from({ length: 10 }, (_, i) => ({
+        name: `p${i}`,
+        npub: encodeNpub(identity.xOnlyPubkey),
+        host: '127.0.0.1',
+        port: 100 + i,
+      })),
+      inboundMax: 0,
+      resolve: async (h: string) => h === '127.0.0.1' ? ['127.0.0.1'] : (() => { throw new Error('no'); })(),
+      random: () => 0,
+    });
+    const ctx: TransportContext = { localIdentity, onPacket: () => undefined, logger: noopLogger };
+    await t.start(ctx);
+    const iter = t.discover()[Symbol.asyncIterator]();
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.race([iter.next(), new Promise((r) => setTimeout(r, 50))]);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    const peak = timeouts();
+    expect(peak).toBeGreaterThanOrEqual(10);
+    await t.stop();
+    await new Promise((r) => setImmediate(r));
+    const after = timeouts();
+    expect(peak - after).toBeGreaterThanOrEqual(10);
   }, 5000);
 });
