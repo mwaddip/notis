@@ -10,6 +10,9 @@ overrides:
   proxy-addr@<2.0.8: ^2.0.8
 
 patchedDependencies:
+  '@fips/core@0.0.57':
+    hash: 89e0ac53e681ef8e0951b9ee2c040914b604afdbb161c18c6a1ac5cd89226877
+    path: patches/@fips__core@0.0.57.patch
   '@libp2p/gossipsub@17.2.1':
     hash: c38d29b305e1b817bf209598ce000d08ff7dc6ad8516b62462c44bcd884c1f1b
     path: patches/@libp2p__gossipsub@17.2.1.patch
@@ -100,7 +103,7 @@ importers:
         version: link:../wire
       '@fips/core':
         specifier: https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz
-        version: https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz
+        version: https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz(patch_hash=89e0ac53e681ef8e0951b9ee2c040914b604afdbb161c18c6a1ac5cd89226877)
       '@fips/tcp':
         specifier: https://github.com/mmalmi/fips-tcp/releases/download/fips-tcp-v0.2.5/fips-tcp-0.2.4.tgz
         version: https://github.com/mmalmi/fips-tcp/releases/download/fips-tcp-v0.2.5/fips-tcp-0.2.4.tgz
@@ -4184,7 +4187,7 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
-  '@fips/core@https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz':
+  '@fips/core@https://github.com/mmalmi/fips-ts/releases/download/runtime-v0.0.62/fips-core-0.0.57.tgz(patch_hash=89e0ac53e681ef8e0951b9ee2c040914b604afdbb161c18c6a1ac5cd89226877)':
     dependencies:
       '@noble/ciphers': 1.3.0
       '@noble/curves': 1.9.7

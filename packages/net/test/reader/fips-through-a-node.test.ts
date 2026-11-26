@@ -439,7 +439,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
   // again, and dials C's FIPS address straight after the link reports
   // `up`. The session to C that outlived the old link's route reaches
   // C once B's tree announcement over the new link lands.
-  it.fails('the reader dials C straight after its re-made link to B and reads /blocks/current', async () => {
+  it('the reader dials C straight after its re-made link to B and reads /blocks/current', async () => {
     const mesh = await buildMesh();
     nodes.push(mesh.b, mesh.c);
     stubs.push(mesh.stubB.srv, mesh.stubC.srv);
