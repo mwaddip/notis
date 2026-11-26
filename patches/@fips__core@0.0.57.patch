@@ -19,3 +19,18 @@ index 3b19cf8..92f9670 100644
          if (session && session.fsp.state === "handshaking") {
              await this.waitForSessionSetup(session, remoteNodeHex);
              return session;
+diff --git a/dist/node/FipsRouting.js b/dist/node/FipsRouting.js
+index fad5061..430b0dd 100644
+--- a/dist/node/FipsRouting.js
++++ b/dist/node/FipsRouting.js
+@@ -290,6 +290,10 @@ export class FipsRouting {
+         }));
+     }
+     async ensureFirstContactRoute(target, targetHex, targetPubkey) {
++        // MESH_INTERFACE → FIPS → "A stopped FIPS node starts no lookup"
++        // — the predicate and message fips-ts's own route resolution uses.
++        if (!this.cfg.isStarted())
++            throw new Error("FIPS node stopped");
+         const existing = this.originLookups.get(targetHex);
+         if (existing) {
+             await existing.promise;

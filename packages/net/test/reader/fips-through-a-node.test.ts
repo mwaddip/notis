@@ -541,7 +541,7 @@ describe('MESH_INTERFACE → FIPS: a reader reaches a node through another', () 
   // inside the 5 s lookup deadline: the TCP/FIPS endpoint's dispose
   // awaits its queued sends, and a send after the FIPS node stopped
   // reaches `ensureFirstContactRoute`, which must refuse at once.
-  it.fails('the reader stack stops well inside the FIPS lookup deadline', async () => {
+  it('the reader stack stops well inside the FIPS lookup deadline', async () => {
     const { reader, stack } = await setup();
     await reader.stop();
     // Drop from `hosts` so `afterEach` does not try to stop the
