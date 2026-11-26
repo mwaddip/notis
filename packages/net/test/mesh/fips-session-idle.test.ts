@@ -75,6 +75,7 @@ interface Pair {
   sessionsA: SessionEvent[];
   sessionsB: SessionEvent[];
   bReceived: number[];
+  bEndpointReceived: number[];
   stop: () => Promise<void>;
 }
 
@@ -102,8 +103,10 @@ async function makePair(): Promise<Pair> {
   nodeA.on('session', (e) => { sessionsA.push(e); });
   nodeB.on('session', (e) => { sessionsB.push(e); });
   const bReceived: number[] = [];
+  const bEndpointReceived: number[] = [];
   const handler: FipsServiceHandler = (ctx) => { bReceived.push(ctx.payload.length); };
   nodeB.registerService(42, handler);
+  nodeB.on('endpointData', (ev) => { bEndpointReceived.push(ev.payload.length); });
   await nodeA.start();
   await nodeB.start();
   await nodeA.connect({ transport: 'memory', addr: pkB });
@@ -112,7 +115,7 @@ async function makePair(): Promise<Pair> {
     try { await nodeA.stop(); } catch { /* idempotent */ }
     try { await nodeB.stop(); } catch { /* idempotent */ }
   };
-  return { nodeA, nodeB, pkA, pkB, sessionsA, sessionsB, bReceived, stop };
+  return { nodeA, nodeB, pkA, pkB, sessionsA, sessionsB, bReceived, bEndpointReceived, stop };
 }
 
 describe('MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"', () => {
@@ -162,6 +165,32 @@ describe('MESH_INTERFACE → FIPS → "A FIPS session that carries no applicatio
         await drain();
       }
       expect(pair.bReceived.length).toBeGreaterThanOrEqual(6);
+      expect(pair.sessionsA.filter((e) => e.state === 'closed').length).toBe(0);
+      expect(pair.sessionsB.filter((e) => e.state === 'closed').length).toBe(0);
+    } finally {
+      await pair.stop();
+    }
+  });
+
+  // (iv) — a session carrying only endpoint data (no service-port
+  // datagrams) every 30 s for 200 s never ends. Endpoint data counts as
+  // application data on the ruling MESH_INTERFACE → FIPS lead names, so
+  // both the outbound and inbound endpoint-data paths reset the idle
+  // counter.
+  it('a session carrying one endpoint-data datagram every 30 s for 200 s never ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date', 'performance'] });
+    const pair = await makePair();
+    try {
+      await pair.nodeA.sendEndpointData({ dst: pair.pkB, payload: new Uint8Array([1]) });
+      await drain();
+      const sends = 200_000 / 30_000;
+      for (let i = 1; i < sends; i += 1) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        await drain();
+        await pair.nodeA.sendEndpointData({ dst: pair.pkB, payload: new Uint8Array([i + 1]) });
+        await drain();
+      }
+      expect(pair.bEndpointReceived.length).toBeGreaterThanOrEqual(6);
       expect(pair.sessionsA.filter((e) => e.state === 'closed').length).toBe(0);
       expect(pair.sessionsB.filter((e) => e.state === 'closed').length).toBe(0);
     } finally {
