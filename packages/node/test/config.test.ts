@@ -1455,7 +1455,7 @@ describe('config', () => {
   // its operator turns it on".
   describe('20. FIPS_* settings', () => {
     // Positive control: unset FIPS_PUBLIC reads `off`
-    // (NODE_INTERFACE → Configuration → the FIPS_PUBLIC row, default `off`),
+    // (NODE_INTERFACE → Configuration — the FIPS_PUBLIC row, default `off`),
     // so the mesh holds no fipsPublic.
     it('no FIPS_PUBLIC → mesh.fipsPublic undefined', async () => {
       process.env['MESH_ROLE'] = 'private';
