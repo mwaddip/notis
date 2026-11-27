@@ -862,8 +862,8 @@ describe('verdictS2Priv2 reads priv2 reached through a relay that carries its da
   // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
   // the node behind the symmetric NAT is reached through a relay
   // that carries its data: priv2's entry reads `ok` or `trailing`,
-  // never `blacklisted`, its path is `relay`, and the latest routed
-  // read landed on priv2. The verdict reads a measurement the
+  // never `blacklisted`, its path is `relay`. Where the latest routed
+  // read landed is not read. The verdict reads a measurement the
   // scenario builds across the poll window; a mutation deleting any
   // pass condition turns one of these cases red.
 
@@ -910,8 +910,20 @@ describe('verdictS2Priv2 reads priv2 reached through a relay that carries its da
     expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true })).toBe('FAIL');
   });
 
-  it.fails('PASS on priv2 ok over its relay while the latest routed read landed on another node', () => {
+  it('PASS on priv2 ok over its relay while the latest routed read landed on another node', () => {
     expect(verdictS2Priv2({ ...base(), latestReadNodeId: OTHER })).toBe('PASS');
+  });
+
+  it('FAIL when priv2 reads retry and the latest routed read landed on another node', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Status: 'retry', latestReadNodeId: OTHER })).toBe('FAIL');
+  });
+
+  it('FAIL when priv2 is reached directly and the latest routed read landed on another node', () => {
+    expect(verdictS2Priv2({ ...base(), priv2Path: 'direct', latestReadNodeId: OTHER })).toBe('FAIL');
+  });
+
+  it('FAIL when priv2 was blacklisted at a poll and the latest routed read landed on another node', () => {
+    expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true, latestReadNodeId: OTHER })).toBe('FAIL');
   });
 
   it('FAIL when expectedNodeId is missing', () => {

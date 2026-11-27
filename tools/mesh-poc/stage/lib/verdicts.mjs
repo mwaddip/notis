@@ -168,9 +168,10 @@ export function verdictS2Priv1(m) {
 // node behind the symmetric NAT has no direct path to the browser
 // behind its NAT, so it is reached through the relay with its data
 // relayed; the entry reads `ok` or `trailing`, never `retry` for want
-// of a direct path, never `blacklisted`, and a routed read lands on
-// it. The scenario waits for a routed read to land on priv2 and reads
-// the entry's path and status.
+// of a direct path, never `blacklisted`. The verdict reads priv2's
+// entry status and path and whether priv2 was blacklisted at any poll;
+// where routed reads land is Acceptance 7's, so `latestReadNodeId` is
+// recorded and not read.
 // Measurement:
 //   `{ expectedNodeId, priv2Status, priv2Path, latestReadNodeId,
 //      blacklistedAtAnyPoll }`.
@@ -179,7 +180,6 @@ export function verdictS2Priv2(m) {
   if (typeof m.expectedNodeId !== 'string') return 'FAIL';
   if (m.priv2Status !== 'ok' && m.priv2Status !== 'trailing') return 'FAIL';
   if (m.priv2Path !== 'relay') return 'FAIL';
-  if (m.latestReadNodeId !== m.expectedNodeId) return 'FAIL';
   if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
   return 'PASS';
 }
