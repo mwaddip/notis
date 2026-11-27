@@ -840,3 +840,26 @@ export function verdictS9Cut(m) {
   if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
   return 'PASS';
 }
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the stranger lists
+// both Notis nodes among its peers (`fipsctl show peers`, by each node's
+// npub). The real logic lands under this lead.
+export function verdictS10StrangerPeers(_m) { return 'invalid'; }
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the split: neither
+// Notis node holds a non-FIPS libp2p connection to the other, so their
+// one FIPS path runs through the stranger. The real logic lands under
+// this lead.
+export function verdictS10Split(_m) { return 'invalid'; }
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — a browser that
+// reaches the one Notis node reads the other over FIPS through it, the
+// other entry's `transport` is `fips` and its `via` names the one. The
+// real logic lands under this lead.
+export function verdictS10Through(_m) { return 'invalid'; }
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the browser's
+// mesh answers equal each node's own HTTP byte for byte, and the stranger's
+// `fipsctl show routing` forwarded count rises across the probe. The real
+// logic lands under this lead.
+export function verdictS10Probe(_m) { return 'invalid'; }
