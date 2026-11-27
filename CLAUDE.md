@@ -65,9 +65,10 @@ Ten packages, in dependency order:
 - `@dagsocial/net` — libp2p + Gossipsub relay, the headers-first sync scheduler (whom to ask for what: headers by
   locator, blocks by id), peer management, readers apart from peers by the codes a handshake declares, and the mesh: with
   `NetConfig.mesh` a node is reachable by key over WebRTC-direct, a relay or the opt-in secure WebSocket, its HTTP API
-  answered over libp2p, and is a FIPS node — linked to its Notis peers over libp2p streams, reached by readers over
-  TCP/FIPS through them. `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block
-  check, the reader's libp2p options and mesh fetch, the reader's FIPS stack.
+  answered over libp2p, and is a FIPS node — linked to its Notis peers over libp2p streams and, where its operator
+  turns peering on, to the public FIPS mesh over UDP, reached by readers over TCP/FIPS through them.
+  `@dagsocial/net/browser` is the half a browser runs — the handshake, the gossip rules, the block check, the reader's
+  libp2p options and mesh fetch, the reader's FIPS stack.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, AVL+ state root, block creator, and the header
   pipeline — the one place a chain is chosen, by verified work; it runs `consensus`'s rules over its store. Its `.deb`
   carries the opt-in access-point tool, which turns a box into a Wi-Fi network that carries the mesh alone
@@ -102,7 +103,7 @@ Six tools live under `tools/` — in the workspace by the `tools/*` glob, so in 
   for its tip, figures, names and posts verifiers.
 - `@dagsocial/mesh-poc` — the mesh's stage: a browser page on `@dagsocial/web/mesh` reaches a node's HTTP API by the
   node's key over libp2p, with no DNS name. The page, the mesh client's cases that start a WebRTC transport, and a stage
-  of network namespaces — one node run with `MESH_ROLE` per host — that runs `MESH_INTERFACE → Acceptance`'s eight
+  of network namespaces — one node run with `MESH_ROLE` per host — that runs `MESH_INTERFACE → Acceptance`'s
   scenarios; the stage needs root and is run by hand; its unit checks run in `pnpm -r test`.
 - `@dagsocial/test-state` — prepared devnet states: a generator that builds a state once through the product's own
   write paths, a per-user cache keyed by the fingerprint of the node's built runtime, and `up`/`down`, which bring a
