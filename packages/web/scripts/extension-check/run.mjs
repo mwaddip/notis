@@ -6558,9 +6558,12 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     } else {
     // Count entries in A's `notis.posts.<chain>` database on the prep
     // page — the one source that answers whether a row stands. Poll
-    // under a bound until it is at least `prepCachedTarget`.
+    // under a bound until it holds at least `prepCachedTarget` entries
+    // and every id in `prepRRootIds`: W1's author press and W5's strip
+    // press read R's roots from the snapshot the wait stops at
+    // (EXTENSION_CHECK_INTERFACE → "A block waits for what it reads, never on the time steps before it took").
     if (prepChainDb !== null) {
-      await recordWait(`W1 prep cached count (target ${prepCachedTarget})`, prepCachedBoundMs, async () => {
+      await recordWait(`W1 prep cached count (target ${prepCachedTarget}) and R's roots cached (${prepRRootIds.length})`, prepCachedBoundMs, async () => {
         const t0 = Date.now();
         while (Date.now() - t0 < prepCachedBoundMs) {
           const snap = await pCx.eval(`(async () => {
@@ -6588,7 +6591,8 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
           })()`);
           prepCached = typeof snap?.count === 'number' ? snap.count : 0;
           prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
-          if (prepCached >= prepCachedTarget) return;
+          const cachedNow = new Set(prepCachedIds);
+          if (prepCached >= prepCachedTarget && prepRRootIds.every((id) => cachedNow.has(id))) return;
           await sleep(1000);
         }
       });

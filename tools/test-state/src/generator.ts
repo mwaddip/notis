@@ -4,7 +4,12 @@
 // state's write scripts in order; reads the manifest's figures from A;
 // stops the processes by their pids; and writes the state into the cache.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createPrivateKey, createPublicKey, randomBytes } from 'node:crypto';
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  randomBytes,
+} from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -22,6 +27,7 @@ import { loadNodeKey } from '@dagsocial/net';
 import { NETWORK_PROFILES } from '@dagsocial/types';
 import { allowlistedEnv } from './env.js';
 import { writeState, type Manifest } from './cache.js';
+import { judgeFaucetGrantHoldings } from './faucet-box.js';
 import { computeFingerprint } from './fingerprint.js';
 import { runMiner, type MinerHandle } from './miner.js';
 
@@ -46,6 +52,15 @@ export function devnetFaucet(): { publicKeyHex: string; secretKeyHex: string } {
     );
   }
   return { publicKeyHex, secretKeyHex: DEVNET_FAUCET_PKCS8_HEX };
+}
+
+// A fresh Ed25519 public key — 32 bytes, printed as 64 lowercase hex
+// characters. The generator asks its faucet for one credit grant to such a
+// key, and the key enters no state and is kept by nothing.
+export function throwawayEd25519PublicKeyHex(): string {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const spki = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+  return spki.subarray(-32).toString('hex');
 }
 
 // NET_INTERFACE → The node key. The notisId is the 32-byte Ed25519 public
@@ -200,8 +215,8 @@ export async function endProcess(
   }
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
   if (!res.ok) throw new Error(`${url} returned ${res.status}: ${await res.text()}`);
   return (await res.json()) as T;
 }
@@ -437,8 +452,9 @@ export async function generate(
         throw new Error(`generator refuses a ${status.networkType ?? 'unknown'} node`);
       }
 
-      // 2. Spawn the faucet pointing at A. The faucet refuses PORT=0, so a
-      //    free loopback port is taken from the OS and passed as PORT.
+      // 2. Spawn the faucet pointing at A, then the miner. The faucet refuses
+      //    PORT=0, so a free loopback port is taken from the OS and passed
+      //    as PORT.
       const { pickFreePort } = await import('./loader.js');
       const faucetBoundPort = await pickFreePort();
       const faucetLog = join(workDir, 'faucet.log');
@@ -479,7 +495,7 @@ export async function generate(
       const faucetBase = `http://127.0.0.1:${faucetPort!}`;
 
       try {
-        // 3. Start the miner in-process at the generator's cadence.
+        // 2 (cont.). Start the miner in-process at the generator's cadence.
         const miner: MinerHandle = await runMiner({
           nodeApiUrl: apiBase,
           miningSecret,
@@ -488,7 +504,7 @@ export async function generate(
         });
 
         try {
-          // 4. Mine to the starting height.
+          // 3. Mine to the starting height.
           const reachStartingHeight = await fetch(
             `http://127.0.0.1:${miner.controlPort}/mine-to`,
             {
@@ -504,7 +520,8 @@ export async function generate(
             );
           }
 
-          // 5. Run each promotion. The key file is `{ pubKeyHex, privKeyBase64 }`.
+          // 4. Run each promotion, then the claim — the state's write scripts
+          //    in order. The key file is `{ pubKeyHex, privKeyBase64 }`.
           const identities: Array<{
             label: string;
             pubKeyHex: string;
@@ -536,7 +553,7 @@ export async function generate(
             identities.push({ label, pubKeyHex: promoted.pubKeyHex, keyFile });
           }
 
-          // 6. Run the claim, if any.
+          // 4 (cont.). Run the claim, if any.
           let claimed: { boxId: string; claimedAtBlock: number; name: string } | null = null;
           if (def.claim) {
             const { identity: claimLabel, name: claimName } = def.claim;
@@ -558,7 +575,55 @@ export async function generate(
             claimed = { ...result, name: claimName };
           }
 
-          // 7. Read the manifest's figures from A.
+          // 5. Move the faucet's credits into one box
+          //    (TEST_STATE_INTERFACE → Generation →
+          //    "The faucet's credits stand in one box made by the state's
+          //    last write"). The grant goes to a throwaway Ed25519 public
+          //    key no state records and no block reads; the wait ends when
+          //    the throwaway's credits read on A list the grant's box.
+          const preGrantFaucetHoldings = await fetchJson<{
+            boxes?: ReadonlyArray<{ boxId: string }>;
+          }>(`${apiBase}/credits/${faucetKey.publicKeyHex}`);
+          const preGrantBoxIds = (preGrantFaucetHoldings.boxes ?? []).map(
+            (b) => b.boxId,
+          );
+          const throwawayPubKeyHex = throwawayEd25519PublicKeyHex();
+          const grant = await fetchJson<{ txId?: string; boxId?: string }>(
+            `${faucetBase}/faucet/credits`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pubkey: throwawayPubKeyHex }),
+            },
+          );
+          if (typeof grant.boxId !== 'string' || grant.boxId === '') {
+            throw new Error(
+              'generator: faucet /faucet/credits answered without a boxId; cannot track the grant',
+            );
+          }
+          const grantBoxId = grant.boxId;
+          const grantDeadlineMs = 180_000;
+          const grantT0 = Date.now();
+          let grantLanded = false;
+          while (Date.now() - grantT0 < grantDeadlineMs) {
+            const throwawayHoldings = await fetchJson<{
+              boxes?: ReadonlyArray<{ boxId: string }>;
+            }>(`${apiBase}/credits/${throwawayPubKeyHex}`);
+            const boxIds = (throwawayHoldings.boxes ?? []).map((b) => b.boxId);
+            if (boxIds.some((id) => id.toLowerCase() === grantBoxId.toLowerCase())) {
+              grantLanded = true;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 1_500));
+          }
+          if (!grantLanded) {
+            throw new Error(
+              `generator: the faucet grant ${grantBoxId} did not land on ` +
+                `/credits/${throwawayPubKeyHex} within ${grantDeadlineMs} ms`,
+            );
+          }
+
+          // 6. Read the manifest's figures from A.
           const tip = await fetchJson<{ height: number; hash: string }>(
             `${apiBase}/blocks/current`,
           );
@@ -583,6 +648,28 @@ export async function generate(
               memberSinceBlock: karma.memberSinceBlock ?? null,
               postIds: (authored.posts ?? []).map((p) => p.id),
             });
+          }
+
+          // The faucet's holdings on A, beside the manifest's figures
+          // (TEST_STATE_INTERFACE → Generation → "The faucet's credits stand
+          // in one box made by the state's last write").
+          const postGrantFaucetHoldings = await fetchJson<{
+            boxes?: ReadonlyArray<{ boxId: string }>;
+          }>(`${apiBase}/credits/${faucetKey.publicKeyHex}`);
+          const postGrantBoxIds = (postGrantFaucetHoldings.boxes ?? []).map(
+            (b) => b.boxId,
+          );
+          const grantVerdict = judgeFaucetGrantHoldings({
+            preGrantBoxIds,
+            currentBoxIds: postGrantBoxIds,
+          });
+          if (!grantVerdict.ok) {
+            throw new Error(
+              `generator: the faucet's credits after the grant do not stand ` +
+                `in one box made by the grant: ${grantVerdict.reason} ` +
+                `(pre-grant=[${preGrantBoxIds.join(', ')}], ` +
+                `grant box=${grantBoxId})`,
+            );
           }
 
           // notisId is the node key's public half (`loadNodeKey`'s
@@ -616,7 +703,7 @@ export async function generate(
             processRecords.map((r) => JSON.stringify(r)).join('\n') + '\n',
           );
 
-          // 8. Stop miner, faucet, A. `endProcess` awaits the exit event,
+          // 7. Stop miner, faucet, A. `endProcess` awaits the exit event,
           //    so no further wait is needed — A's SIGTERM handler closes
           //    the store before exit, and a `-wal` or `-shm` beside the
           //    store after A's clean exit fails the generation, naming
@@ -641,7 +728,7 @@ export async function generate(
             }
           }
 
-          // 9. Write to the cache. The state's files: the store, the node
+          // 8. Write to the cache. The state's files: the store, the node
           //    key, the mesh state (where one exists), each identity key,
           //    the manifest. `.mesh` is a directory on a mesh node.
           const stageDir = mkdtempSync(join(tmpdir(), `dagsocial-test-state-stage-${def.name}-`));
