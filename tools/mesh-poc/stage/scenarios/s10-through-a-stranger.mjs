@@ -26,13 +26,13 @@
 //   3. Through the stranger — s9's browser drop pattern reaches pub1
 //      alone from the browser. The other first-contact node (pub2)
 //      reads `transport: 'fips'` and `via: pub1` in the page's state.
-//      The wait is `FIPS_SESSION_IDLE_MS + 2 * CHECK_INTERVAL_MS`
-//      (150 s): fips-ts's `@fips/core` ends an idle FSP session after
-//      90 s (its `FIPS_SESSION_IDLE_MS` in `FspSessionManager`), so
-//      pub1's dead direct link to pub2 at the FIPS layer drops within
-//      that window and the next route lookup rides the stranger; two
-//      check intervals past the drop let the browser's check settle on
-//      the new path. `verdictS10Through`.
+//      The wait is `FIPS_LINK_DEAD_MS` plus the first four retry
+//      waits plus `2 * CHECK_INTERVAL_MS` (195 s): pub1's direct link
+//      to pub2 ends after 30 s with nothing received, the browser's
+//      dials to pub2 that fail before it push pub2's entry along the
+//      client's retry schedule (5 + 10 + 20 + 40 s at most), and two
+//      check intervals past that let the check settle on the path
+//      through the stranger. `verdictS10Through`.
 //   4. Probes byte for byte, forwarded count rose. Pause `miner-steady`
 //      (as s9 does), read the stranger's `fipsctl show routing`
 //      `forwarding.forwarded_packets` before probing, probe pub2's
@@ -75,15 +75,22 @@ const DIAL_TARGETS = [ACCESS_HOST, 'priv1'];
 // the check where every other address of a candidate failed; the
 // retry back-off takes a dropped node to `retry` on the next check.
 const CHECK_INTERVAL_MS = 30_000;
-// MESH_INTERFACE → FIPS → "A FIPS session that carries no application
-// data for `FIPS_SESSION_IDLE_MS` ends" — fips-ts's `@fips/core` 0.0.61
-// reads 90 000 ms in `FspSessionManager`; after the split the dead
-// pub1→pub2 direct link ends within that window at the FIPS layer,
-// the next route lookup rides the stranger, and the browser's next
-// check settles on the new path. Two check intervals past the drop
-// bound the wait so a slow route lookup does not hide a real failure.
-const FIPS_SESSION_IDLE_MS = 90_000;
-const THROUGH_WAIT_MS = FIPS_SESSION_IDLE_MS + 2 * CHECK_INTERVAL_MS;
+// MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for
+// `FIPS_LINK_DEAD_MS` ends" — after the split pub1's direct link to
+// pub2 ends after 30 000 ms with nothing received.
+const FIPS_LINK_DEAD_MS = 30_000;
+// MESH_INTERFACE → The client's node list → "Retry" — the `n`th
+// failure's wait is drawn in half to whole of
+// `min(RETRY_CAP_MS, RETRY_BASE_MS · 2^(n−1))`; the whole of the first
+// four failures' waits is 5 + 10 + 20 + 40 s with `RETRY_BASE_MS`
+// 5 000 ms.
+const RETRY_BASE_MS = 5_000;
+const FIRST_FOUR_RETRY_WAITS_MS = RETRY_BASE_MS * (1 + 2 + 4 + 8);
+// The wait: the link's end, the browser's failed dials walking pub2's
+// entry along the retry schedule, and two check intervals for the
+// check to settle on the path through the stranger.
+const THROUGH_WAIT_MS =
+  FIPS_LINK_DEAD_MS + FIRST_FOUR_RETRY_WAITS_MS + 2 * CHECK_INTERVAL_MS;
 // The step-2 TCP dial: short-timeout per-target so the step reports
 // in a few seconds, not a few minutes.
 const DIAL_TIMEOUT_MS = 3_000;
