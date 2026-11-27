@@ -102,7 +102,7 @@ interface Pair {
   stop: () => Promise<void>;
 }
 
-async function makePair(): Promise<Pair> {
+async function makePair(opts: { cutBToAOnConnected?: boolean } = {}): Promise<Pair> {
   const idA = await generateIdentity();
   const idB = await generateIdentity();
   const pkA = toHex(idA.publicKey);
@@ -113,7 +113,10 @@ async function makePair(): Promise<Pair> {
   const nodeB = new FipsNode({ identity: idB, transports: [makeB()], forwarding: false });
   const peersA: PeerEvent[] = [];
   const peersB: PeerEvent[] = [];
-  nodeA.on('peer', (e) => { peersA.push(e as PeerEvent); });
+  nodeA.on('peer', (e) => {
+    peersA.push(e as PeerEvent);
+    if (opts.cutBToAOnConnected && (e as PeerEvent).state === 'connected') gate.deliverBToA = false;
+  });
   nodeB.on('peer', (e) => { peersB.push(e as PeerEvent); });
   const bReceived: Uint8Array[] = [];
   nodeB.registerService(42, (ctx) => { bReceived.push(ctx.payload); });
@@ -296,6 +299,31 @@ describe('MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS
       try { await nodeA.stop(); } catch { /* idempotent */ }
       try { await nodeS.stop(); } catch { /* idempotent */ }
       try { await nodeC.stop(); } catch { /* idempotent */ }
+    }
+  });
+
+  // (vi) — a link whose handshake completes and whose far end then sends
+  // nothing at all ends too: the carrier drops every packet from the far
+  // end once the near end reports `connected`, and the near end emits
+  // `peer disconnected` within `FIPS_LINK_DEAD_MS` plus one heartbeat.
+  //
+  // Plain `it` fails at:
+  //   AssertionError: expected 0 to be greater than or equal to 1
+  //     ❯ expect(pair.peersA.filter((e) => e.state === 'disconnected').length)
+  //       .toBeGreaterThanOrEqual(1);
+  it.fails('a link that comes up and whose far end sends nothing after the handshake ends within FIPS_LINK_DEAD_MS plus one heartbeat', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date', 'performance'] });
+    // The carrier drops every packet from the far end from the moment
+    // the near end reports `connected`; the near end's own packets still
+    // reach it.
+    const pair = await makePair({ cutBToAOnConnected: true });
+    try {
+      expect(pair.peersA.filter((e) => e.state === 'connected').length).toBeGreaterThanOrEqual(1); // control: the link is up
+      await vi.advanceTimersByTimeAsync(FIPS_LINK_DEAD_MS + 6_000);
+      await drainFake();
+      expect(pair.peersA.filter((e) => e.state === 'disconnected').length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await pair.stop();
     }
   });
 });
