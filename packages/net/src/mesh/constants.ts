@@ -99,6 +99,17 @@ export const FIPS_TCP_CONNECTIONS_PER_PEER: 2 = 2;
 export const FIPS_READER_LINKS_MAX: 1 = 1;
 
 /**
+ * MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for
+ * `FIPS_LINK_DEAD_MS` ends" — 30 s with nothing received ends a FIPS link
+ * over libp2p and over UDP alike, as the original FIPS daemon ends one:
+ * its `node.link_dead_timeout_secs` is 30 s by default and never less.
+ * Anything authenticated the far end sends on the link resets the stamp.
+ * The `@fips/core` patch holds the same value as a literal since a patch
+ * cannot import a workspace package.
+ */
+export const FIPS_LINK_DEAD_MS: 30000 = 30000;
+
+/**
  * MESH_INTERFACE → FIPS → "A FIPS session that carries no application data
  * for `FIPS_SESSION_IDLE_MS` ends" — 90 s with no application data ends a
  * FIPS session, as the original FIPS daemon ends one, so a session with one

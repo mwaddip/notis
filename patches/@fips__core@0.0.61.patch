@@ -1,3 +1,44 @@
+diff --git a/dist/node/FipsNode.js b/dist/node/FipsNode.js
+index a8916ec..2fd3b0b 100644
+--- a/dist/node/FipsNode.js
++++ b/dist/node/FipsNode.js
+@@ -15,6 +15,10 @@ import { PeerAdmission } from "./PeerAdmission.js";
+ const defaultRandom = { bytes: (n) => randomBytes(n) };
+ const FMP_HANDSHAKE_RESEND_MS = 1_000;
+ const FMP_HEARTBEAT_INTERVAL_MS = 5_000;
++// MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++// — @dagsocial/net's FIPS_LINK_DEAD_MS; the patch holds the literal because
++// it cannot import a workspace package.
++const FIPS_LINK_DEAD_MS = 30_000;
+ export class FipsNode {
+     identity;
+     forwarding;
+@@ -640,6 +644,25 @@ export class FipsNode {
+                 this.emit("error", { err: err, where: "send Heartbeat" });
+             }
+         }));
++        // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++        // — sweep established peers whose last authenticated packet is older
++        // than FIPS_LINK_DEAD_MS, through the same path a transport-level
++        // disconnect takes; emit peer disconnected, clear every map the peer
++        // sits in, and leave no timer. The near end's transport.close(addr)
++        // tells the carrier the link is dead (libp2p aborts its stream and
++        // the opener's retry runs over the still-held connection; UDP's
++        // retry runs when the stack's listener hears peer disconnected).
++        for (const peer of [...this.peers.values()]) {
++            if (peer.link.state !== "established")
++                continue;
++            if ((nowMs - (peer.lastAuthActivityMs ?? nowMs)) < FIPS_LINK_DEAD_MS)
++                continue;
++            try {
++                await peer.transport.close?.(peer.remoteAddr);
++            }
++            catch { /* already closed */ }
++            this.onTransportConn(peer.transport, { remoteAddr: peer.remoteAddr, state: "disconnected" });
++        }
+     }
+ }
+ function sessionEventNodeHex(remote) {
 diff --git a/dist/node/FipsRouting.js b/dist/node/FipsRouting.js
 index b6fe47b..494b12d 100644
 --- a/dist/node/FipsRouting.js
@@ -13,6 +54,23 @@ index b6fe47b..494b12d 100644
          const existing = this.originLookups.get(targetHex);
          if (existing) {
              await existing.promise;
+diff --git a/dist/node/FmpTransportPacketProcessor.js b/dist/node/FmpTransportPacketProcessor.js
+index 38779a5..6c8c3d6 100644
+--- a/dist/node/FmpTransportPacketProcessor.js
++++ b/dist/node/FmpTransportPacketProcessor.js
+@@ -409,6 +409,12 @@ export class FmpTransportPacketProcessor {
+         const { peer, link, promotePending } = match;
+         this.cfg.assertPeerAllowed?.(peer.pubkey);
+         const { msgType, payload } = receiveFmpLinkPacket(peer, link, packet, this.cfg.emitError);
++        // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++        // — anything authenticated the far end sends on the link resets
++        // the stamp FipsNode's heartbeat-tick sweep reads; stamp after
++        // decryptIncoming (inside receiveFmpLinkPacket), so a spoofed
++        // packet cannot keep a dead link alive.
++        peer.lastAuthActivityMs = Date.now();
+         if (peer.link === link)
+             peer.outgoingHandshake?.confirmCarrier?.();
+         if (promotePending) {
 diff --git a/dist/node/FspSessionManager.js b/dist/node/FspSessionManager.js
 index a333563..168fa5e 100644
 --- a/dist/node/FspSessionManager.js
