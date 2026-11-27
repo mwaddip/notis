@@ -1796,31 +1796,56 @@ describe('verdictS10StrangerPeers — the stranger lists both Notis nodes among 
   });
 });
 
-describe('verdictS10Split — neither Notis node holds a non-FIPS libp2p connection to the other', () => {
+describe('verdictS10Split — pub2 reaches no Notis host, and the stranger still lists pub2', () => {
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the split
+  // isolates pub2 to the stranger: a TCP dial from pub2's namespace to
+  // every other Notis host's p2p port fails, and the stranger's
+  // `fipsctl show peers` still names pub2 (since pub2↔stranger is the
+  // one path left open).
+  const PUB2 = 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7';
+  const PUB1 = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
   const PASS = {
-    pub1Pub2Direct: [],
-    pub2Pub1Direct: [],
+    pub2Npub: PUB2,
+    pub2DialsToOther: [
+      { host: 'pub1', addr: '11.100.0.11', port: 9100, failed: true },
+      { host: 'priv1', addr: '10.101.0.11', port: 9100, failed: true },
+    ],
+    strangerPeers: [PUB1, PUB2],
   };
-  it('both direct address lists empty → PASS', () => {
+  // Run as plain `it` against s10's current verdictS10Split (which reads
+  // pub1Pub2Direct / pub2Pub1Direct):
+  //   AssertionError: expected 'FAIL' to be 'PASS' // Object.is equality
+  it.fails('every dial failed and stranger lists pub2 → PASS', () => {
     expect(verdictS10Split(PASS)).toBe('PASS');
   });
-  // MESH_INTERFACE → Acceptance → "Through a stranger" — pub1 still
-  // connected to pub2 over a non-FIPS address breaks the split.
-  it('pub1 still holds a direct connection to pub2 → FAIL', () => {
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — a dial that
+  // connected says pub2 reached a Notis host directly.
+  it('a dial to pub1 succeeded → FAIL', () => {
     expect(verdictS10Split({
       ...PASS,
-      pub1Pub2Direct: ['/ip4/11.100.0.12/tcp/9100/p2p/12D3KooWExampleFortyThree'],
+      pub2DialsToOther: [
+        { host: 'pub1', addr: '11.100.0.11', port: 9100, failed: false },
+        { host: 'priv1', addr: '10.101.0.11', port: 9100, failed: true },
+      ],
     })).toBe('FAIL');
   });
-  it('pub2 still holds a direct connection to pub1 → FAIL', () => {
-    expect(verdictS10Split({
-      ...PASS,
-      pub2Pub1Direct: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAE/p2p/12D3KooWExampleFortyTwo'],
-    })).toBe('FAIL');
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — "the stranger
+  // still lists pub2 among its peers": the stranger's answer missing
+  // pub2's npub says pub2's FIPS link to the stranger is gone too.
+  it('the stranger does not list pub2 → FAIL', () => {
+    expect(verdictS10Split({ ...PASS, strangerPeers: [PUB1] })).toBe('FAIL');
   });
-  it('pub1Pub2Direct missing → FAIL', () => {
+  it('pub2DialsToOther empty → FAIL (no positive evidence)', () => {
+    expect(verdictS10Split({ ...PASS, pub2DialsToOther: [] })).toBe('FAIL');
+  });
+  it('pub2Npub missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
-    delete m['pub1Pub2Direct'];
+    delete m['pub2Npub'];
+    expect(verdictS10Split(m)).toBe('FAIL');
+  });
+  it('strangerPeers missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['strangerPeers'];
     expect(verdictS10Split(m)).toBe('FAIL');
   });
 });
