@@ -26,6 +26,12 @@ export {
 } from './cache.js';
 
 export {
+  judgeFaucetGrantHoldings,
+  type FaucetGrantHoldingsInput,
+  type FaucetGrantHoldingsVerdict,
+} from './faucet-box.js';
+
+export {
   runMiner,
   type MinerConfig,
   type MinerHandle,
