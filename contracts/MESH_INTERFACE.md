@@ -475,6 +475,18 @@ it holds a standing session's the same way (→ "The FIPS packages are pinned by
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
 
+> ⚠ **AHEAD OF CODE (2026-11-27).** fips-ts sends a heartbeat on each link every 5 s and acts on none it misses: a
+> link ends only when its transport says so, so a link whose far end went silent — a libp2p connection that died
+> without a close, a public peer that stopped answering — stays up and routes into nothing. The lead below and the
+> table's `FIPS_LINK_DEAD_MS` row lead the code (the `@fips/core` patch).
+
+**A FIPS link that carries nothing for `FIPS_LINK_DEAD_MS` ends**, over libp2p and over UDP alike, as the original FIPS
+daemon ends one: its `node.link_dead_timeout_secs` is 30 s by default and never less. Anything authenticated the far end
+sends on the link counts — its heartbeats, every 5 s from fips-ts and every 10 s from the original, keep a live link
+well inside the bound. A link that ends so is a link that ended (→ "A key holds one link, and the libp2p peer that named
+it holds the key"): the end that opened a Notis link opens it again, a public peer is dialled again on its retry
+schedule (→ "A public peer is an npub at a `host:port`"), and routing takes the paths that remain.
+
 **A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends**, at a node and at a reader alike,
 as the original FIPS daemon ends one: measured 2026-11-26, the daemon removed a session idle for 90 s and dropped every
 later message on it as one for an unknown session, while the fips-ts end kept sending on it. Application data is what
@@ -499,6 +511,7 @@ makes to either is a patch under `patches/`, as the libp2p patches are (→ Plac
 | `FIPS_UDP_DEFAULT_PORT` | `2121` | the port of a `FIPS_PUBLIC_PEERS` entry that names none, and of every built-in peer — FIPS's own UDP port |
 | `FIPS_PUBLIC_PEERS_MAX` | `16` | the most public peers a node dials, built-in or the operator's — room to double the built-in list's seven |
 | `FIPS_PUBLIC_INBOUND_MAX` | `256` | public links a node holds that it did not dial — measured 2026-11-26 on one forwarding node, 256 idle links held 7.3 MiB of heap and 512 held 13.1 MiB; half the 512 a 16 MiB budget allows, since a stranger's link carries a fuller filter and forwarded traffic the measured idle links did not |
+| `FIPS_LINK_DEAD_MS` | `30_000` | 30 s with nothing received ends a FIPS link — the original FIPS daemon's `node.link_dead_timeout_secs` default and floor; six of fips-ts's 5 s heartbeats, three of the original's 10 s ones |
 | `FIPS_SESSION_IDLE_MS` | `90_000` | 90 s with no application data ends a FIPS session — the original FIPS daemon's session idle timeout, so a session with one ends at both ends together |
 | `FIPS_READER_LINKS_MAX` | `1` | the links a reader holds — one, so the node a FIPS connection was routed through is the node its link rides |
 
