@@ -6558,40 +6558,57 @@ async function waitingWritesSteps(cx, bcx, targetId = 'unknown') {
     } else {
     // Count entries in A's `notis.posts.<chain>` database on the prep
     // page — the one source that answers whether a row stands. Poll
-    // under a bound until it is at least `prepCachedTarget`.
+    // under a bound until the count is at least `prepCachedTarget` AND
+    // every id in `prepRRootIds` stands in the cache — a card W1 can
+    // click has its id in both sets, so a snapshot that counts
+    // enough entries without holding R's roots releases the prep
+    // where W1 has no R card to pick. The bound unchanged, the
+    // snapshot at expiry left as it is, and the detail that W1
+    // draws names what was missing.
     if (prepChainDb !== null) {
-      await recordWait(`W1 prep cached count (target ${prepCachedTarget})`, prepCachedBoundMs, async () => {
-        const t0 = Date.now();
-        while (Date.now() - t0 < prepCachedBoundMs) {
-          const snap = await pCx.eval(`(async () => {
-            if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
-            return new Promise((resolve) => {
-              let req;
-              try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
-              catch { resolve({ count: 0, ids: [] }); return; }
-              req.onerror = () => resolve({ count: 0, ids: [] });
-              req.onsuccess = () => {
-                const db = req.result;
-                if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
-                const tx = db.transaction('entries', 'readonly');
-                const store = tx.objectStore('entries');
-                const c = store.count();
-                const k = store.getAllKeys();
-                let cnt = 0;
-                let keys = [];
-                c.onsuccess = () => { cnt = c.result; };
-                k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
-                tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
-                tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
-              };
-            });
-          })()`);
-          prepCached = typeof snap?.count === 'number' ? snap.count : 0;
-          prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
-          if (prepCached >= prepCachedTarget) return;
-          await sleep(1000);
-        }
-      });
+      await recordWait(
+        `W1 prep cached count (target ${prepCachedTarget}) and R's roots cached (${prepRRootIds.length})`,
+        prepCachedBoundMs,
+        async () => {
+          const t0 = Date.now();
+          while (Date.now() - t0 < prepCachedBoundMs) {
+            const snap = await pCx.eval(`(async () => {
+              if (typeof indexedDB === 'undefined') return { count: 0, ids: [] };
+              return new Promise((resolve) => {
+                let req;
+                try { req = indexedDB.open(${JSON.stringify(prepChainDb)}); }
+                catch { resolve({ count: 0, ids: [] }); return; }
+                req.onerror = () => resolve({ count: 0, ids: [] });
+                req.onsuccess = () => {
+                  const db = req.result;
+                  if (!db.objectStoreNames.contains('entries')) { db.close(); resolve({ count: 0, ids: [] }); return; }
+                  const tx = db.transaction('entries', 'readonly');
+                  const store = tx.objectStore('entries');
+                  const c = store.count();
+                  const k = store.getAllKeys();
+                  let cnt = 0;
+                  let keys = [];
+                  c.onsuccess = () => { cnt = c.result; };
+                  k.onsuccess = () => { keys = Array.isArray(k.result) ? k.result : []; };
+                  tx.oncomplete = () => { db.close(); resolve({ count: cnt, ids: keys }); };
+                  tx.onerror = () => { db.close(); resolve({ count: 0, ids: [] }); };
+                };
+              });
+            })()`);
+            prepCached = typeof snap?.count === 'number' ? snap.count : 0;
+            prepCachedIds = Array.isArray(snap?.ids) ? snap.ids : [];
+            const cachedSetNow = new Set(prepCachedIds);
+            const rRootsCachedNow = prepRRootIds.filter((id) => cachedSetNow.has(id));
+            if (
+              prepCached >= prepCachedTarget
+              && rRootsCachedNow.length === prepRRootIds.length
+            ) {
+              return;
+            }
+            await sleep(1000);
+          }
+        },
+      );
     }
     // Intersect R's root ids (read from the node before the page opened)
     // with the cache's ids: a card W1 can click has its id in both.
