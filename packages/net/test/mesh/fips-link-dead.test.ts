@@ -305,13 +305,9 @@ describe('MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS
   // (vi) — a link whose handshake completes and whose far end then sends
   // nothing at all ends too: the carrier drops every packet from the far
   // end once the near end reports `connected`, and the near end emits
-  // `peer disconnected` within `FIPS_LINK_DEAD_MS` plus one heartbeat.
-  //
-  // Plain `it` fails at:
-  //   AssertionError: expected 0 to be greater than or equal to 1
-  //     ❯ expect(pair.peersA.filter((e) => e.state === 'disconnected').length)
-  //       .toBeGreaterThanOrEqual(1);
-  it.fails('a link that comes up and whose far end sends nothing after the handshake ends within FIPS_LINK_DEAD_MS plus one heartbeat', async () => {
+  // `peer disconnected` within `FIPS_LINK_DEAD_MS` plus one heartbeat, and
+  // not before `FIPS_LINK_DEAD_MS`.
+  it('a link that comes up and whose far end sends nothing after the handshake ends within FIPS_LINK_DEAD_MS plus one heartbeat', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date', 'performance'] });
     // The carrier drops every packet from the far end from the moment
     // the near end reports `connected`; the near end's own packets still
@@ -319,7 +315,10 @@ describe('MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS
     const pair = await makePair({ cutBToAOnConnected: true });
     try {
       expect(pair.peersA.filter((e) => e.state === 'connected').length).toBeGreaterThanOrEqual(1); // control: the link is up
-      await vi.advanceTimersByTimeAsync(FIPS_LINK_DEAD_MS + 6_000);
+      await vi.advanceTimersByTimeAsync(FIPS_LINK_DEAD_MS - 1_000);
+      await drainFake();
+      expect(pair.peersA.filter((e) => e.state === 'disconnected').length).toBe(0);
+      await vi.advanceTimersByTimeAsync(7_000);
       await drainFake();
       expect(pair.peersA.filter((e) => e.state === 'disconnected').length).toBeGreaterThanOrEqual(1);
     } finally {

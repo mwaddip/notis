@@ -28,7 +28,7 @@ index a8916ec..2fd3b0b 100644
 +        for (const peer of [...this.peers.values()]) {
 +            if (peer.link.state !== "established")
 +                continue;
-+            if ((nowMs - (peer.lastAuthActivityMs ?? nowMs)) < FIPS_LINK_DEAD_MS)
++            if ((nowMs - peer.lastAuthActivityMs) < FIPS_LINK_DEAD_MS)
 +                continue;
 +            try {
 +                await peer.transport.close?.(peer.remoteAddr);
@@ -58,7 +58,31 @@ diff --git a/dist/node/FmpTransportPacketProcessor.js b/dist/node/FmpTransportPa
 index 38779a5..6c8c3d6 100644
 --- a/dist/node/FmpTransportPacketProcessor.js
 +++ b/dist/node/FmpTransportPacketProcessor.js
-@@ -409,6 +409,12 @@ export class FmpTransportPacketProcessor {
+@@ -128,6 +128,9 @@
+             replacedHandshake.resolve();
+         }
+         if (!wasEstablished) {
++            // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++            // — a link carries a stamp from the moment it is established.
++            peer.lastAuthActivityMs = Date.now();
+             this.cfg.emitPeer(peerEvent(peer, "connected"));
+             this.replayPendingLookupsAfterEstablishment(peer, replySent);
+         }
+@@ -300,8 +303,12 @@
+             this.cfg.peers.set(transportAddressKey(peer.remoteAddr), peer);
+             this.cfg.logger.info("FMP peer restart detected", peer.pubkeyHex);
+         }
+-        if (!wasEstablished)
++        if (!wasEstablished) {
++            // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++            // — a link carries a stamp from the moment it is established.
++            peer.lastAuthActivityMs = Date.now();
+             void this.confirmOutgoingHandshake(peer, remoteAddr);
++        }
+         this.cfg.logger.debug("fips msg2 handled", remoteAddr.transport, remoteAddr.addr);
+     }
+     async confirmOutgoingHandshake(peer, remoteAddr) {
+@@ -409,6 +416,12 @@
          const { peer, link, promotePending } = match;
          this.cfg.assertPeerAllowed?.(peer.pubkey);
          const { msgType, payload } = receiveFmpLinkPacket(peer, link, packet, this.cfg.emitError);
