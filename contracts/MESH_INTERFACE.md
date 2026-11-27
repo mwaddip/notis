@@ -475,11 +475,6 @@ it holds a standing session's the same way (→ "The FIPS packages are pinned by
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
 
-> ⚠ **AHEAD OF CODE (2026-11-27).** fips-ts sends a heartbeat on each link every 5 s and acts on none it misses: a
-> link ends only when its transport says so, so a link whose far end went silent — a libp2p connection that died
-> without a close, a public peer that stopped answering — stays up and routes into nothing. The lead below and the
-> table's `FIPS_LINK_DEAD_MS` row lead the code (the `@fips/core` patch).
-
 **A FIPS link that carries nothing for `FIPS_LINK_DEAD_MS` ends**, over libp2p and over UDP alike, as the original FIPS
 daemon ends one: its `node.link_dead_timeout_secs` is 30 s by default and never less. Anything authenticated the far end
 sends on the link counts — its heartbeats, every 5 s from fips-ts and every 10 s from the original, keep a live link
@@ -802,9 +797,6 @@ The mesh holds when every step of the ten scenarios passes on what it measured; 
     original FIPS daemon's release — reach each other over it: a browser that reaches the one alone reads the other over
     FIPS through it, its answers equal its direct HTTP answers byte for byte, and the stranger lists both nodes among its
     peers.
-
-> ⚠ **AHEAD OF CODE (2026-11-26).** The stage runs scenarios 1–9; scenario 10 above, and the count of ten that opens
-> this section, lead the code (the stage's `s10-through-a-stranger`).
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.
