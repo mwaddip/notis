@@ -1812,10 +1812,7 @@ describe('verdictS10Split — pub2 reaches no Notis host, and the stranger still
     ],
     strangerPeers: [PUB1, PUB2],
   };
-  // Run as plain `it` against s10's current verdictS10Split (which reads
-  // pub1Pub2Direct / pub2Pub1Direct):
-  //   AssertionError: expected 'FAIL' to be 'PASS' // Object.is equality
-  it.fails('every dial failed and stranger lists pub2 → PASS', () => {
+  it('every dial failed and stranger lists pub2 → PASS', () => {
     expect(verdictS10Split(PASS)).toBe('PASS');
   });
   // MESH_INTERFACE → Acceptance → "Through a stranger" — a dial that

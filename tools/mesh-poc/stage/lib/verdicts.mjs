@@ -857,19 +857,27 @@ export function verdictS10StrangerPeers(m) {
   return 'PASS';
 }
 
-// MESH_INTERFACE → Acceptance → "Through a stranger" — "their only FIPS
-// path is now the stranger": the split cut TCP and WebRTC-direct between
-// the two Notis nodes, so neither reads a `connection:open` to the other
-// whose addr is not a `/fips/` one. Scenario 10 step 2 — the lists are
-// the standing non-FIPS addresses each side has to the other at the end
-// of the wait. Measurement:
-//   `{ pub1Pub2Direct: string[], pub2Pub1Direct: string[] }`.
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the split
+// isolates pub2 to the stranger: every TCP dial from pub2's namespace
+// to another Notis host's p2p port fails, and the stranger's `fipsctl
+// show peers` answer still lists pub2 among its peers (the one path
+// pub2 holds). A libp2p connection list is the wrong witness: libp2p
+// does not tear down a silent TCP connection within the wait, while
+// FIPS's own heartbeats end the link riding it. Measurement:
+//   `{ pub2Npub: string,
+//      pub2DialsToOther: Array<{ host, addr, port, failed: boolean }>,
+//      strangerPeers: string[] }`.
 export function verdictS10Split(m) {
   if (missing(m)) return 'skipped';
-  if (!Array.isArray(m.pub1Pub2Direct)) return 'FAIL';
-  if (!Array.isArray(m.pub2Pub1Direct)) return 'FAIL';
-  if (m.pub1Pub2Direct.length !== 0) return 'FAIL';
-  if (m.pub2Pub1Direct.length !== 0) return 'FAIL';
+  if (typeof m.pub2Npub !== 'string') return 'FAIL';
+  if (!Array.isArray(m.pub2DialsToOther)) return 'FAIL';
+  if (m.pub2DialsToOther.length === 0) return 'FAIL';
+  for (const d of m.pub2DialsToOther) {
+    if (d === null || typeof d !== 'object') return 'FAIL';
+    if (d.failed !== true) return 'FAIL';
+  }
+  if (!Array.isArray(m.strangerPeers)) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub2Npub)) return 'FAIL';
   return 'PASS';
 }
 

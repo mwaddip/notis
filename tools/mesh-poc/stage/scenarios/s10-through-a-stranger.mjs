@@ -9,24 +9,36 @@
 //   1. The stranger lists pub1 and pub2 among its peers. `fipsctl show
 //      peers` names each Notis node's own npub (read from the stage's
 //      `stage/out/stranger/identity.json` and each Notis node's
-//      `/mesh/identity`). `verdictS10StrangerPeers`.
-//   2. The split — one add-table + add-chain(out, in) + two drops in
-//      each of pub1's and pub2's namespaces, naming the other node's
-//      addr alone. The stranger's addr is never named, so pub1↔stranger
-//      and pub2↔stranger UDP links stand. Wait until neither Notis node
-//      reads a non-FIPS standing `connection:open` to the other's peer
-//      id in its own `notis.log`. `verdictS10Split`.
+//      `/mesh/identity` → its `/fips/<npub>/p2p/<peer id>` multiaddr).
+//      `verdictS10StrangerPeers`.
+//   2. The split — an `s10_split` nft table in pub2's namespace alone,
+//      hooking input and output at policy `drop` and letting through
+//      only loopback (so the direct reads s10 makes from inside pub2's
+//      namespace still answer on `127.0.0.1`) and traffic to and from
+//      the stranger's addr (so pub2↔stranger UDP stands). pub1's
+//      namespace gets nothing; every other Notis host on the stage
+//      (priv1, priv2, the lan hosts, the hostile hosts) still peers
+//      pub1 over libp2p and the public FIPS mesh, so the one FIPS path
+//      to pub2 is the one that runs through the stranger. The verdict
+//      names what the isolation holds: from pub2's namespace a TCP
+//      dial to pub1's and priv1's p2p ports fails, and the stranger
+//      still lists pub2 among its peers. `verdictS10Split`.
 //   3. Through the stranger — s9's browser drop pattern reaches pub1
 //      alone from the browser. The other first-contact node (pub2)
 //      reads `transport: 'fips'` and `via: pub1` in the page's state.
-//      `verdictS10Through`.
+//      The wait is `FIPS_SESSION_IDLE_MS + 2 * CHECK_INTERVAL_MS`
+//      (150 s): fips-ts's `@fips/core` ends an idle FSP session after
+//      90 s (its `FIPS_SESSION_IDLE_MS` in `FspSessionManager`), so
+//      pub1's dead direct link to pub2 at the FIPS layer drops within
+//      that window and the next route lookup rides the stranger; two
+//      check intervals past the drop let the browser's check settle on
+//      the new path. `verdictS10Through`.
 //   4. Probes byte for byte, forwarded count rose. Pause `miner-steady`
 //      (as s9 does), read the stranger's `fipsctl show routing`
 //      `forwarding.forwarded_packets` before probing, probe pub2's
 //      `/blocks/current` and `/nipopow/proof/24/20` through the page,
 //      read each path directly in pub2's namespace, read the forwarded
-//      count again — the two equal and the count rose.
-//      `verdictS10Probe`.
+//      count again — the two equal and the count rose. `verdictS10Probe`.
 //
 // `finally`: every table s10 added removed through `log.removeAll` and
 // the daemon's control socket backstopped, `miner-steady` resumed in
@@ -41,7 +53,6 @@ import {
 } from '../lib/verdicts.mjs';
 import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mjs';
 import { withFipsAddresses } from '../lib/config-variants.mjs';
-import { peerIdStringOf } from '../lib/config.mjs';
 import {
   execIn, readDirect, readBodyDirect, findPid, signal, signalPid, leafPids, descendantPids,
 } from '../lib/measure.mjs';
@@ -53,28 +64,36 @@ const DROP_TABLE = 's10_drop';
 const ACCESS_HOST = 'pub1';
 const OTHER_HOST = 'pub2';
 const STRANGER_HOST = 'stranger';
+// The other Notis hosts a step-2 dial from pub2's namespace targets.
+// pub1 is the access node s10 wants pub2 unreachable from; priv1 is a
+// private Notis host on the stage, so the dial also covers a host
+// behind a NAT. Both dials failing says pub2 reaches no Notis host.
+const DIAL_TARGETS = [ACCESS_HOST, 'priv1'];
 
 // MESH_INTERFACE → The client's node list — a check runs every
 // `CHECK_INTERVAL_MS` (30 000 ms). The FIPS pass opens the link on
 // the check where every other address of a candidate failed; the
 // retry back-off takes a dropped node to `retry` on the next check.
 const CHECK_INTERVAL_MS = 30_000;
-// A FIPS link open, FIPS-stream handshake and node's first check reads
-// the node's tip past its other addresses' deadlines; six check
-// intervals bound the wait so a slow handshake does not hide a real
-// failure.
-const THROUGH_WAIT_MS = 6 * CHECK_INTERVAL_MS;
-// The split waits for libp2p's own connection teardown on both sides,
-// which runs on its keepalive cadence; the bound carries two check
-// intervals plus a minute to cover a slow close.
-const SPLIT_WAIT_MS = 2 * CHECK_INTERVAL_MS + 60_000;
+// MESH_INTERFACE → FIPS → "A FIPS session that carries no application
+// data for `FIPS_SESSION_IDLE_MS` ends" — fips-ts's `@fips/core` 0.0.61
+// reads 90 000 ms in `FspSessionManager`; after the split the dead
+// pub1→pub2 direct link ends within that window at the FIPS layer,
+// the next route lookup rides the stranger, and the browser's next
+// check settles on the new path. Two check intervals past the drop
+// bound the wait so a slow route lookup does not hide a real failure.
+const FIPS_SESSION_IDLE_MS = 90_000;
+const THROUGH_WAIT_MS = FIPS_SESSION_IDLE_MS + 2 * CHECK_INTERVAL_MS;
+// The step-2 TCP dial: short-timeout per-target so the step reports
+// in a few seconds, not a few minutes.
+const DIAL_TIMEOUT_MS = 3_000;
 
 const PROBE_PATHS = ['/blocks/current', '/nipopow/proof/24/20'];
 
 export function describe() {
   return [
     'the stranger lists pub1 and pub2 among its peers',
-    'the split: neither Notis node holds a non-fips libp2p connection to the other',
+    'pub2 reaches no Notis host, and the stranger still lists pub2',
     'drop every mesh host but pub1: pub2 reads fips through pub1',
     'probe each node through the page: the mesh\'s bytes equal the node\'s own byte for byte, the stranger\'s forwarded count rose',
   ];
@@ -82,50 +101,52 @@ export function describe() {
 
 /**
  * MESH_INTERFACE → Acceptance → "Through a stranger" — the nft argvs
- * the split applies and removes inside pub1's and pub2's namespaces. In
- * each, one `add table` + `add chain` on output and on input + two
- * drops (`ip daddr <other> drop` and `ip saddr <other> drop`). The
- * stranger's addr is never named, so pub1↔stranger and pub2↔stranger
- * UDP packets stay — the only FIPS path between the two Notis nodes
- * now rides through the stranger.
+ * the split applies and removes inside the isolated host's namespace
+ * alone. Input and output chains land at policy `drop`; `iifname lo`
+ * and `oifname lo` accept let through local traffic (the direct reads
+ * s10 runs from inside the host's own namespace, which the kernel
+ * routes via `lo` whether the url names `127.0.0.1` or the host's own
+ * external addr); `ip saddr <stranger>` accept on input and `ip daddr
+ * <stranger>` accept on output let the one FIPS UDP flow — pub2 to
+ * the stranger and back — stand. Every other packet drops: no libp2p,
+ * no FIPS mesh link to any other Notis host, so the one path to
+ * another Notis node rides through the stranger.
  */
-export function s10SplitArgs(topology, hostA, hostB) {
-  if (typeof hostA !== 'string' || hostA === '') {
-    throw new Error('s10SplitArgs: hostA must be a non-empty string');
+export function s10SplitArgs(topology, isolatedHost, strangerHost) {
+  if (typeof isolatedHost !== 'string' || isolatedHost === '') {
+    throw new Error('s10SplitArgs: isolatedHost must be a non-empty string');
   }
-  if (typeof hostB !== 'string' || hostB === '') {
-    throw new Error('s10SplitArgs: hostB must be a non-empty string');
+  if (typeof strangerHost !== 'string' || strangerHost === '') {
+    throw new Error('s10SplitArgs: strangerHost must be a non-empty string');
   }
-  const rowA = topology?.hosts?.[hostA];
-  const rowB = topology?.hosts?.[hostB];
-  if (!rowA || typeof rowA.addr !== 'string') {
-    throw new Error(`s10SplitArgs: topology lacks ${hostA}'s addr`);
+  const isolatedRow = topology?.hosts?.[isolatedHost];
+  const strangerRow = topology?.hosts?.[strangerHost];
+  if (!isolatedRow || typeof isolatedRow.addr !== 'string') {
+    throw new Error(`s10SplitArgs: topology lacks ${isolatedHost}'s addr`);
   }
-  if (!rowB || typeof rowB.addr !== 'string') {
-    throw new Error(`s10SplitArgs: topology lacks ${hostB}'s addr`);
+  if (isolatedRow.mesh === undefined) {
+    throw new Error(`s10SplitArgs: ${isolatedHost} has no mesh entry`);
   }
-  if (rowA.mesh === undefined || rowB.mesh === undefined) {
-    throw new Error(`s10SplitArgs: both hosts must carry a mesh entry; ${hostA} or ${hostB} does not`);
+  if (!strangerRow || typeof strangerRow.addr !== 'string') {
+    throw new Error(`s10SplitArgs: topology lacks ${strangerHost}'s addr`);
   }
-  const addrA = rowA.addr;
-  const addrB = rowB.addr;
-  const half = (ns, otherAddr) => ({
+  const ns = `notismesh-${isolatedHost}`;
+  const strangerAddr = strangerRow.addr;
+  return {
     addTable: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'table', 'ip', SPLIT_TABLE],
-    addChainOut: [
-      'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', SPLIT_TABLE,
-      'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', '}',
-    ],
     addChainIn: [
       'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', SPLIT_TABLE,
-      'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', '}',
+      'in', '{', 'type', 'filter', 'hook', 'input', 'priority', '0', ';', 'policy', 'drop', ';', '}',
     ],
-    dropOut: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'out', 'ip', 'daddr', otherAddr, 'drop'],
-    dropIn: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'in', 'ip', 'saddr', otherAddr, 'drop'],
+    addChainOut: [
+      'sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'chain', 'ip', SPLIT_TABLE,
+      'out', '{', 'type', 'filter', 'hook', 'output', 'priority', '0', ';', 'policy', 'drop', ';', '}',
+    ],
+    acceptLoIn: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'in', 'iifname', 'lo', 'accept'],
+    acceptLoOut: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'out', 'oifname', 'lo', 'accept'],
+    acceptStrangerIn: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'in', 'ip', 'saddr', strangerAddr, 'accept'],
+    acceptStrangerOut: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', SPLIT_TABLE, 'out', 'ip', 'daddr', strangerAddr, 'accept'],
     deleteTable: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', SPLIT_TABLE],
-  });
-  return {
-    hostA: half(`notismesh-${hostA}`, addrB),
-    hostB: half(`notismesh-${hostB}`, addrA),
   };
 }
 
@@ -177,17 +198,14 @@ export function applyFaults(log, topology) {
   log.records.push(variantRecord);
   if (log.dryRun) process.stdout.write(variantRecord + '\n');
 
-  const split = s10SplitArgs(topology, ACCESS_HOST, OTHER_HOST);
-  log.apply(`${ACCESS_HOST}-split-add-table`, split.hostA.addTable, split.hostA.deleteTable);
-  log.apply(`${ACCESS_HOST}-split-add-chain-out`, split.hostA.addChainOut, null);
-  log.apply(`${ACCESS_HOST}-split-add-chain-in`, split.hostA.addChainIn, null);
-  log.apply(`${ACCESS_HOST}-split-drop-out`, split.hostA.dropOut, null);
-  log.apply(`${ACCESS_HOST}-split-drop-in`, split.hostA.dropIn, null);
-  log.apply(`${OTHER_HOST}-split-add-table`, split.hostB.addTable, split.hostB.deleteTable);
-  log.apply(`${OTHER_HOST}-split-add-chain-out`, split.hostB.addChainOut, null);
-  log.apply(`${OTHER_HOST}-split-add-chain-in`, split.hostB.addChainIn, null);
-  log.apply(`${OTHER_HOST}-split-drop-out`, split.hostB.dropOut, null);
-  log.apply(`${OTHER_HOST}-split-drop-in`, split.hostB.dropIn, null);
+  const split = s10SplitArgs(topology, OTHER_HOST, STRANGER_HOST);
+  log.apply(`${OTHER_HOST}-split-add-table`, split.addTable, split.deleteTable);
+  log.apply(`${OTHER_HOST}-split-add-chain-in`, split.addChainIn, null);
+  log.apply(`${OTHER_HOST}-split-add-chain-out`, split.addChainOut, null);
+  log.apply(`${OTHER_HOST}-split-accept-lo-in`, split.acceptLoIn, null);
+  log.apply(`${OTHER_HOST}-split-accept-lo-out`, split.acceptLoOut, null);
+  log.apply(`${OTHER_HOST}-split-accept-stranger-in`, split.acceptStrangerIn, null);
+  log.apply(`${OTHER_HOST}-split-accept-stranger-out`, split.acceptStrangerOut, null);
 
   const drop = s10BrowserDropArgs(topology, ACCESS_HOST);
   log.apply('browser-drop-add-table', drop.addTable, drop.deleteTable);
@@ -209,41 +227,26 @@ export function applyFaults(log, topology) {
 }
 
 /**
- * Walk a `notis:<host>.log` file and return every standing non-FIPS
- * address for the named peer id — a `connection:open` line naming
- * that peer id whose matching `connection:close` with the same id has
- * not landed, and whose `addr=` field does not begin with `/fips/`.
- *
- * Returns `[]` when the log file does not exist. The log line shapes
- * are `[net] connection:open id=<id> peer=<pid> dir=<dir> addr=<multiaddr>`
- * and `[net] connection:close id=<id> ...`.
+ * MESH_INTERFACE → Acceptance → "Through a stranger" — a TCP dial from
+ * `ns` to `addr:port` that fails within `timeoutMs`. Shape matches s4
+ * and s7's UDP/TCP dial wrappers: curl runs with `--connect-timeout`
+ * so a dropped SYN times out in seconds, a refused dial exits
+ * `Connection refused` at once. Returns `true` when curl's exit was
+ * non-zero (dial failed); `false` when curl opened the connection.
  */
-function standingDirectAddrsToPeer(logPath, peerIdString) {
-  if (!logPath || !existsSync(logPath)) return [];
-  const text = readFileSync(logPath, 'utf8');
-  const openById = new Map();
-  const openRe = /\[net\] connection:open\s+(.+)/;
-  const closeRe = /\[net\] connection:close\s+id=(\S+)/;
-  for (const line of text.split('\n')) {
-    const m = openRe.exec(line);
-    if (m) {
-      const fields = {};
-      for (const kv of m[1].matchAll(/(\w+)=(\S+)/g)) fields[kv[1]] = kv[2];
-      if (typeof fields.id === 'string') {
-        openById.set(fields.id, { peer: fields.peer ?? null, addr: fields.addr ?? '' });
-      }
-      continue;
-    }
-    const c = closeRe.exec(line);
-    if (c) openById.delete(c[1]);
+function tcpDialFails(ns, addr, port, { user, timeoutMs = DIAL_TIMEOUT_MS }) {
+  const seconds = Math.max(1, Math.floor(timeoutMs / 1000));
+  try {
+    execIn(ns, [
+      'curl', '-s', '-o', '/dev/null',
+      '--connect-timeout', String(seconds),
+      '--max-time', String(seconds + 1),
+      `http://${addr}:${port}/`,
+    ], { user, timeoutMs: timeoutMs + 3_000 });
+    return false;
+  } catch {
+    return true;
   }
-  const out = [];
-  for (const { peer, addr } of openById.values()) {
-    if (peer !== peerIdString) continue;
-    if (typeof addr !== 'string' || addr.startsWith('/fips/')) continue;
-    out.push(addr);
-  }
-  return out;
 }
 
 /**
@@ -392,14 +395,22 @@ export async function run(ctx) {
   const pub2Npub = notisNpubOf(OTHER_HOST);
 
   const browserUrl = `http://localhost:${ctx.topology.hosts.browser.httpPort}/`;
-  const splitArgs = s10SplitArgs(ctx.topology, ACCESS_HOST, OTHER_HOST);
+  const splitArgs = s10SplitArgs(ctx.topology, OTHER_HOST, STRANGER_HOST);
   const dropArgs = s10BrowserDropArgs(ctx.topology, ACCESS_HOST);
   const minerEntry = findPid(ctx.pids?.pids, 'miner-steady');
   let pausedPids = [];
-  const accessPeerIdString = peerIdStringOf(accessId);
-  const otherPeerIdString = peerIdStringOf(otherId);
-  const accessLogPath = join(ctx.outDir, ACCESS_HOST, 'notis.log');
-  const otherLogPath = join(ctx.outDir, OTHER_HOST, 'notis.log');
+  const otherNs = `notismesh-${OTHER_HOST}`;
+  // The dial targets' addresses and ports, resolved from the topology.
+  // A target whose row is missing the fields the dial needs is dropped
+  // from the list so the step reports only what it could dial.
+  const dialTargets = [];
+  for (const host of DIAL_TARGETS) {
+    const row = ctx.topology.hosts?.[host];
+    if (!row) continue;
+    const port = row.node?.p2pPort;
+    if (typeof row.addr !== 'string' || typeof port !== 'number') continue;
+    dialTargets.push({ host, addr: row.addr, port });
+  }
 
   try {
     // --- Step 1: the stranger lists pub1 and pub2 among its peers ---
@@ -412,29 +423,42 @@ export async function run(ctx) {
       return { verdict: verdictS10StrangerPeers(m), measurement: m };
     });
 
-    // --- Step 2: the split — apply, wait for libp2p to drop its ---
-    // --- direct connections between pub1 and pub2.                ---
-    log.apply(`${ACCESS_HOST}-split-add-table`, splitArgs.hostA.addTable, splitArgs.hostA.deleteTable);
-    log.apply(`${ACCESS_HOST}-split-add-chain-out`, splitArgs.hostA.addChainOut, null);
-    log.apply(`${ACCESS_HOST}-split-add-chain-in`, splitArgs.hostA.addChainIn, null);
-    log.apply(`${ACCESS_HOST}-split-drop-out`, splitArgs.hostA.dropOut, null);
-    log.apply(`${ACCESS_HOST}-split-drop-in`, splitArgs.hostA.dropIn, null);
-    log.apply(`${OTHER_HOST}-split-add-table`, splitArgs.hostB.addTable, splitArgs.hostB.deleteTable);
-    log.apply(`${OTHER_HOST}-split-add-chain-out`, splitArgs.hostB.addChainOut, null);
-    log.apply(`${OTHER_HOST}-split-add-chain-in`, splitArgs.hostB.addChainIn, null);
-    log.apply(`${OTHER_HOST}-split-drop-out`, splitArgs.hostB.dropOut, null);
-    log.apply(`${OTHER_HOST}-split-drop-in`, splitArgs.hostB.dropIn, null);
+    // --- Step 2: isolate pub2 to the stranger ---
+    // The `s10_split` table lives in pub2's namespace alone — input
+    // and output chains at policy drop, loopback and stranger traffic
+    // accepted; pub1's namespace keeps its usual peers so pub2 is the
+    // one Notis host whose only path to the mesh rides the stranger.
+    log.apply(`${OTHER_HOST}-split-add-table`, splitArgs.addTable, splitArgs.deleteTable);
+    log.apply(`${OTHER_HOST}-split-add-chain-in`, splitArgs.addChainIn, null);
+    log.apply(`${OTHER_HOST}-split-add-chain-out`, splitArgs.addChainOut, null);
+    log.apply(`${OTHER_HOST}-split-accept-lo-in`, splitArgs.acceptLoIn, null);
+    log.apply(`${OTHER_HOST}-split-accept-lo-out`, splitArgs.acceptLoOut, null);
+    log.apply(`${OTHER_HOST}-split-accept-stranger-in`, splitArgs.acceptStrangerIn, null);
+    log.apply(`${OTHER_HOST}-split-accept-stranger-out`, splitArgs.acceptStrangerOut, null);
 
     await rec.step(describe()[1], async () => {
-      const deadline = Date.now() + SPLIT_WAIT_MS;
-      let pub1Pub2Direct = standingDirectAddrsToPeer(accessLogPath, otherPeerIdString);
-      let pub2Pub1Direct = standingDirectAddrsToPeer(otherLogPath, accessPeerIdString);
-      while ((pub1Pub2Direct.length > 0 || pub2Pub1Direct.length > 0) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        pub1Pub2Direct = standingDirectAddrsToPeer(accessLogPath, otherPeerIdString);
-        pub2Pub1Direct = standingDirectAddrsToPeer(otherLogPath, accessPeerIdString);
+      // A TCP dial from pub2's namespace to each target's p2p port
+      // fails within DIAL_TIMEOUT_MS; nftables drops the SYN so curl
+      // times out.
+      const pub2DialsToOther = [];
+      for (const t of dialTargets) {
+        pub2DialsToOther.push({
+          host: t.host,
+          addr: t.addr,
+          port: t.port,
+          failed: tcpDialFails(otherNs, t.addr, t.port, {
+            user: ctx.invokingUser,
+            timeoutMs: DIAL_TIMEOUT_MS,
+          }),
+        });
       }
-      const m = { pub1Pub2Direct, pub2Pub1Direct };
+      // The stranger still lists pub2 among its peers — the one path
+      // the split leaves open.
+      const buf = execIn(`notismesh-${STRANGER_HOST}`, [
+        stranger.fipsctlBin, '-s', stranger.sockPath, 'show', 'peers',
+      ], { user: ctx.invokingUser, timeoutMs: 8_000 });
+      const strangerPeers = parseStrangerPeerNpubs(buf);
+      const m = { pub2Npub, pub2DialsToOther, strangerPeers };
       return { verdict: verdictS10Split(m), measurement: m };
     });
 
@@ -537,7 +561,6 @@ export async function run(ctx) {
     // Belt and braces: in case `log.removeAll` hit a transient failure
     // on either table, try the table deletes directly so a later
     // scenario does not read a leaked drop.
-    tryDeleteTable(`notismesh-${ACCESS_HOST}`, SPLIT_TABLE);
     tryDeleteTable(`notismesh-${OTHER_HOST}`, SPLIT_TABLE);
     tryDeleteTable('notismesh-browser', DROP_TABLE);
     try { writeStageDefault(ctx.outDir); }

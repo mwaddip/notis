@@ -1574,24 +1574,27 @@ describe('s10 (through a stranger)', () => {
     const names = s10.describe();
     expect(names.length).toBe(4);
     expect(names[0]).toMatch(/stranger lists pub1 and pub2/);
-    expect(names[1]).toMatch(/the split/);
+    expect(names[1]).toMatch(/pub2 reaches no Notis host/);
     expect(names[2]).toMatch(/pub2 reads fips through pub1/);
     expect(names[3]).toMatch(/forwarded count rose/);
   });
 
-  it('run({dryRun:true}) returns four skipped steps and records the split + browser drop faults', async () => {
+  it('run({dryRun:true}) returns four skipped steps and records the pub2 split and browser drop faults', async () => {
     const r = await s10.run({ dryRun: true, topology: TOPO_S10 });
     expect(r.scenario).toBe('s10');
     expect(r.steps.length).toBe(4);
     for (const step of r.steps) {
       expect(step.verdict, step.name).toBe('skipped');
     }
-    // Split in both notismesh-pub1 and notismesh-pub2, plus the
-    // browser drop: three nft tables added, three deleted.
+    // Two nft tables added: pub2's split, browser's drop; two
+    // deleted. pub1's namespace gets no fault.
     const addTables = r.faults.filter((f: string) => / nft add table ip s10_(split|drop)/.test(f));
     const delTables = r.faults.filter((f: string) => / nft delete table ip s10_(split|drop)/.test(f));
-    expect(addTables.length, 'three tables added: pub1-split, pub2-split, browser-drop').toBe(3);
-    expect(delTables.length, 'three tables removed').toBe(3);
+    expect(addTables.length, 'two tables added: pub2-split, browser-drop').toBe(2);
+    expect(delTables.length, 'two tables removed').toBe(2);
+    // pub1's namespace has no s10 fault at all.
+    const pub1Faults = r.faults.filter((f: string) => / notismesh-pub1 nft /.test(f));
+    expect(pub1Faults, `no fault in notismesh-pub1: ${pub1Faults.join('\n')}`).toEqual([]);
     // The probe window pauses miner-steady and resumes it.
     expect(r.faults.some((f: string) => f.includes('miner-steady-pause') && f.includes('STOP')),
       'STOP record present').toBe(true);
@@ -1615,37 +1618,46 @@ describe('s10 (through a stranger)', () => {
   });
 
   // MESH_INTERFACE → Acceptance → "Through a stranger" — the split
-  // names pub1 and pub2's addresses alone, never the stranger's. In
-  // pub1's namespace it drops both ways with pub2's addr; in pub2's
-  // namespace it drops both ways with pub1's addr.
-  it('s10SplitArgs for pub1 and pub2 builds a table + chains + four drops per side, naming the other\'s addr', () => {
-    const s = s10.s10SplitArgs(TOPO_S10, 'pub1', 'pub2');
-    for (const side of [s.hostA, s.hostB]) {
-      expect(side.addTable.join(' ')).toContain('nft add table ip s10_split');
-      expect(side.addChainOut.join(' ')).toContain('hook output');
-      expect(side.addChainIn.join(' ')).toContain('hook input');
-      expect(side.deleteTable.join(' ')).toContain('nft delete table ip s10_split');
+  // isolates pub2 to the stranger: its namespace gets two chains at
+  // policy drop plus accepts for loopback and stranger traffic. pub1's
+  // namespace gets nothing (the stage left as-is reaches pub2 only
+  // through the stranger's FIPS forwarding).
+  it('s10SplitArgs for pub2 + stranger builds one table in pub2\'s namespace alone, accepting lo and stranger', () => {
+    const s = s10.s10SplitArgs(TOPO_S10, 'pub2', 'stranger');
+    for (const argv of [s.addTable, s.addChainIn, s.addChainOut, s.acceptLoIn, s.acceptLoOut, s.acceptStrangerIn, s.acceptStrangerOut, s.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
     }
-    // pub1's side runs in notismesh-pub1 and names pub2's addr both
-    // on daddr (out chain) and saddr (in chain).
-    expect(s.hostA.addTable.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub1']);
-    expect(s.hostA.dropOut.join(' ')).toContain('ip daddr 11.100.0.12 drop');
-    expect(s.hostA.dropIn.join(' ')).toContain('ip saddr 11.100.0.12 drop');
-    // pub2's side names pub1's addr both ways.
-    expect(s.hostB.addTable.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
-    expect(s.hostB.dropOut.join(' ')).toContain('ip daddr 11.100.0.11 drop');
-    expect(s.hostB.dropIn.join(' ')).toContain('ip saddr 11.100.0.11 drop');
-    // The stranger's addr (11.100.0.37) never appears in either side —
-    // its UDP links to pub1 and pub2 stand.
-    const whole = [...s.hostA.dropOut, ...s.hostA.dropIn, ...s.hostB.dropOut, ...s.hostB.dropIn].join(' ');
-    expect(whole).not.toContain('11.100.0.37');
+    expect(s.addTable.join(' ')).toContain('nft add table ip s10_split');
+    expect(s.addChainIn.join(' ')).toContain('hook input');
+    expect(s.addChainIn.join(' ')).toContain('policy drop');
+    expect(s.addChainOut.join(' ')).toContain('hook output');
+    expect(s.addChainOut.join(' ')).toContain('policy drop');
+    // Loopback accepts let the direct reads s10 makes inside pub2's
+    // namespace answer (the kernel routes `127.0.0.1` via `lo`).
+    expect(s.acceptLoIn.join(' ')).toContain('iifname lo accept');
+    expect(s.acceptLoOut.join(' ')).toContain('oifname lo accept');
+    // The stranger's addr is explicitly accepted in and out — the one
+    // UDP flow the split leaves open.
+    expect(s.acceptStrangerIn.join(' ')).toContain('ip saddr 11.100.0.37 accept');
+    expect(s.acceptStrangerOut.join(' ')).toContain('ip daddr 11.100.0.37 accept');
+    expect(s.deleteTable.join(' ')).toContain('nft delete table ip s10_split');
+    // No rule names pub1's addr — pub1's namespace gets no nft from
+    // s10; whatever pub1 reaches reaches it as before.
+    const whole = [
+      ...s.acceptLoIn, ...s.acceptLoOut,
+      ...s.acceptStrangerIn, ...s.acceptStrangerOut,
+    ].join(' ');
+    expect(whole).not.toContain('11.100.0.11');
   });
 
-  it('s10SplitArgs refuses an empty hostA', () => {
-    expect(() => s10.s10SplitArgs(TOPO_S10, '', 'pub2')).toThrow(/hostA/);
+  it('s10SplitArgs refuses an empty isolatedHost', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, '', 'stranger')).toThrow(/isolatedHost/);
   });
-  it('s10SplitArgs refuses a hostB that has no mesh', () => {
-    expect(() => s10.s10SplitArgs(TOPO_S10, 'pub1', 'stranger')).toThrow(/mesh/);
+  it('s10SplitArgs refuses a strangerHost not in the topology', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, 'pub2', 'nowhere')).toThrow(/addr/);
+  });
+  it('s10SplitArgs refuses an isolatedHost with no mesh entry', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, 'stranger', 'stranger')).toThrow(/mesh/);
   });
 
   it('s10BrowserDropArgs with pub1 the access host drops every other mesh host, lan1 included, stranger not', () => {
@@ -1813,23 +1825,28 @@ describe("s10 — the nft argvs pass nft -c under unshare -rn", () => {
           mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
           node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
         },
+        stranger: {
+          role: 'stranger', addr: '11.100.0.37',
+          fips: { udpPort: 2121 },
+        },
       },
     };
-    const split = s10.s10SplitArgs(topology, 'pub1', 'pub2');
+    const split = s10.s10SplitArgs(topology, 'pub2', 'stranger');
     const drop = s10.s10BrowserDropArgs(topology, 'pub1');
     const stripToRule = (argv: string[]): string => argv.slice(6).join(' ');
-    const pub1Rules = [split.hostA.addTable, split.hostA.addChainOut, split.hostA.addChainIn, split.hostA.dropOut, split.hostA.dropIn].map(stripToRule).join('\n') + '\n';
-    const pub2Rules = [split.hostB.addTable, split.hostB.addChainOut, split.hostB.addChainIn, split.hostB.dropOut, split.hostB.dropIn].map(stripToRule).join('\n') + '\n';
+    const splitRules = [
+      split.addTable, split.addChainIn, split.addChainOut,
+      split.acceptLoIn, split.acceptLoOut,
+      split.acceptStrangerIn, split.acceptStrangerOut,
+    ].map(stripToRule).join('\n') + '\n';
     const dropRules = [drop.addTable, drop.addChain, ...drop.drops.map((d) => d.argv)].map(stripToRule).join('\n') + '\n';
     const dir = mkdtempSync(path.join(tmpdir(), 's10-nft-'));
     try {
-      const pub1File = path.join(dir, 's10-pub1-split.nft');
-      const pub2File = path.join(dir, 's10-pub2-split.nft');
+      const splitFile = path.join(dir, 's10-pub2-split.nft');
       const dropFile = path.join(dir, 's10-browser-drop.nft');
-      writeFileSync(pub1File, pub1Rules);
-      writeFileSync(pub2File, pub2Rules);
+      writeFileSync(splitFile, splitRules);
       writeFileSync(dropFile, dropRules);
-      for (const file of [pub1File, pub2File, dropFile]) {
+      for (const file of [splitFile, dropFile]) {
         const r = spawnSync('unshare', ['-rn', 'nft', '-c', '-f', file], { encoding: 'utf8', timeout: 10_000 });
         if (r.status !== 0) {
           throw new Error(`nft -c refused ${file}: ${(r.stderr || r.stdout || '').trim()}`);
