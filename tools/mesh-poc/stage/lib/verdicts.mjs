@@ -883,8 +883,8 @@ export function verdictS10Split(m) {
 
 // MESH_INTERFACE → Acceptance → "Through a stranger" — "a browser that
 // reaches the one alone reads the other over FIPS through it". Scenario
-// 10 step 3: the other node's entry reads `ok` or `trailing` (a checked
-// answer, ranking not reach), its `transport` is `fips`, and its `via`
+// 10 step 3: the other node's entry reads `ok`, `trailing` or `behind` (a
+// checked answer, ranking not reach), its `transport` is `fips`, and its `via`
 // names the access node. Measurement:
 //   `{ accessId: string,
 //      otherEntry: { notisId, status, transport, via } }`.
@@ -894,7 +894,10 @@ export function verdictS10Through(m) {
   const e = m.otherEntry;
   if (e === null || typeof e !== 'object') return 'FAIL';
   if (typeof e.notisId !== 'string') return 'FAIL';
-  if (e.status !== 'ok' && e.status !== 'trailing') return 'FAIL';
+  // pub2, isolated to the stranger, receives no blocks, so a node reached
+  // over FIPS through pub1 may read `behind`; the transport and the `via`
+  // are what the step holds.
+  if (e.status !== 'ok' && e.status !== 'trailing' && e.status !== 'behind') return 'FAIL';
   if (e.transport !== 'fips') return 'FAIL';
   if (e.via !== m.accessId) return 'FAIL';
   return 'PASS';

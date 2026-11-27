@@ -1874,7 +1874,7 @@ describe('verdictS10Through — the other Notis node reads fips via the access n
   });
   // The isolated node receives no blocks, so a node reached over FIPS
   // through the access node may read `behind`; transport and `via` hold.
-  it.fails('behind over fips via the access node → PASS', () => {
+  it('behind over fips via the access node → PASS', () => {
     expect(verdictS10Through({
       ...PASS,
       otherEntry: { notisId: OTHER, status: 'behind', transport: 'fips', via: ACCESS },

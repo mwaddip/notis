@@ -484,7 +484,10 @@ export async function run(ctx) {
            const nodes = Array.isArray(s.nodes) ? s.nodes : [];
            const e = nodes.find((n) => n.notisId === ${JSON.stringify(otherId)});
            if (!e) return false;
-           if (e.status !== 'ok' && e.status !== 'trailing') return false;
+           // pub2, isolated to the stranger, receives no blocks, so a node
+           // reached over FIPS through pub1 may read 'behind'; the transport
+           // and the via are what the step holds.
+           if (e.status !== 'ok' && e.status !== 'trailing' && e.status !== 'behind') return false;
            if (e.transport !== 'fips') return false;
            if (e.via !== ${JSON.stringify(accessId)}) return false;
            return true;
