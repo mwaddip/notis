@@ -11,10 +11,6 @@ runs. The client is a reader in the nodes' own block gossip, under `net`'s rules
 mesh is the extension's first path"`) — and `@dagsocial/mesh-poc` holds the page, the stage and the client's cases on
 Node.js (→ Place in the workspace); what the stage has to show is → Acceptance.
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** A mesh node's FIPS node links to Notis peers alone, so it carries Notis's traffic
-> alone. The sentence below leads the code (public FIPS peering, → FIPS → "A node peers with the public FIPS mesh when
-> its operator turns it on").
-
 It carries Notis's own traffic, and the FIPS traffic it forwards for the public FIPS mesh (→ FIPS); never IP: no exit
 to the internet, no IP tunnel.
 
@@ -373,12 +369,6 @@ not a valid compressed secp256k1 key, or a frame over the cap is closed, and the
 connection libp2p authenticated to both libp2p keys, so the key a side names is bound to that side by the connection
 itself; a key the far end's FIPS handshake does not prove fails that handshake, and no link forms.
 
-> ⚠ **AHEAD OF CODE (2026-11-26).** A mesh node's FIPS node has the libp2p link transport alone and links to no public
-> FIPS node; `net` has no UDP transport and the node reads no `FIPS_PUBLIC`, `FIPS_PUBLIC_PEERS` or `FIPS_UDP_LISTEN`.
-> The four leads below, the built-in list and the table's `FIPS_UDP_DEFAULT_PORT`, `FIPS_PUBLIC_PEERS_MAX` and
-> `FIPS_PUBLIC_INBOUND_MAX` rows lead the code (`net`'s UDP transport, the FIPS stack's `udp` option, the node's
-> settings).
-
 **A node peers with the public FIPS mesh when its operator turns it on.** With `FIPS_PUBLIC=on`
 (`NODE_INTERFACE → Configuration`) a mesh node's FIPS node runs a second transport — FIPS over UDP, one FIPS packet per
 datagram, the link protocol the original FIPS daemon speaks — beside the libp2p link transport, and links to each public
@@ -397,8 +387,9 @@ schedule. FIPS's handshake proves the npub: an address answering for another key
 
 **A node may accept public links.** With `FIPS_UDP_LISTEN` set the node binds that address and links with any FIPS node
 that dials it, FIPS's handshake naming the dialler's key; unset, it binds an ephemeral port for its own dials and links
-with no address it did not dial. It holds at most `FIPS_PUBLIC_INBOUND_MAX` links it did not dial: a datagram from a
-new address past the cap is dropped, and a held link is never closed to make room.
+with no address it did not dial. It takes at most `FIPS_PUBLIC_INBOUND_MAX` addresses it did not dial, a handshake
+still under way counting as one: a datagram from a new address past the cap is dropped, an address whose link is not up
+within twice `FIPS_LINK_HINT_TIMEOUT_MS` of its first datagram is let go, and a held link is never closed to make room.
 
 **Public links are held apart from libp2p's.** A link over UDP takes no libp2p connection slot, no Notis peer's place
 and no reader's budget (→ Block gossip → "A node's readers are its router's direct peers"), and a Notis link over
@@ -483,9 +474,6 @@ it holds a standing session's the same way (→ "The FIPS packages are pinned by
 **A stopped FIPS node starts no lookup.** A datagram sent after the node's stop — a TCP/FIPS stream's last segments as
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
-
-> ⚠ **AHEAD OF CODE (2026-11-26).** fips-ts keeps an established FSP session until its node stops or its peer
-> restarts. The lead below and the table's `FIPS_SESSION_IDLE_MS` row lead the code (the `@fips/core` patch).
 
 **A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends**, at a node and at a reader alike,
 as the original FIPS daemon ends one: measured 2026-11-26, the daemon removed a session idle for 90 s and dropped every
