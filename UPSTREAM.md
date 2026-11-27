@@ -43,6 +43,9 @@ where each change stands upstream. A patch leaves the tree when a release of its
 - `@fips/core@0.0.61` — an established FSP session that carries no application data for 90 s ends, as the original FIPS
   daemon ends one, so both ends of a session with it let the session go together (`contracts/MESH_INTERFACE.md` → FIPS →
   "A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends").
+- `@fips/core@0.0.61` — a link that receives nothing for 30 s ends, as the original FIPS daemon ends one, so routing leaves
+  a far end that went silent (`contracts/MESH_INTERFACE.md` → FIPS → "A FIPS link that carries nothing for
+  `FIPS_LINK_DEAD_MS` ends").
 - `libp2p@3.5.1` — the connection manager holds each address to a bound on its inbound connections still upgrading,
   and the upgrader releases an address's count when an upgrade ends (`contracts/NET_INTERFACE.md → Readers → "An
   address upgrades at most four inbound connections at once, each within five seconds"`).
