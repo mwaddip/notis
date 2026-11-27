@@ -73,6 +73,10 @@ describe('skipped — missing measurement', () => {
     ['verdictS9Through', verdictS9Through],
     ['verdictS9Probe', verdictS9Probe],
     ['verdictS9Cut', verdictS9Cut],
+    ['verdictS10StrangerPeers', verdictS10StrangerPeers],
+    ['verdictS10Split', verdictS10Split],
+    ['verdictS10Through', verdictS10Through],
+    ['verdictS10Probe', verdictS10Probe],
   ];
   for (const [name, f] of verdicts) {
     it(`${name}: null → skipped`, () => {
@@ -1759,13 +1763,6 @@ describe('verdictS9Cut — a cut FIPS-reached node reads retry, never blackliste
   });
 });
 
-// MESH_INTERFACE → Acceptance → "Through a stranger" — each case run as
-// plain `it` against the module's current function reads:
-//   AssertionError: expected 'invalid' to be 'PASS' // Object.is equality
-//   AssertionError: expected 'invalid' to be 'FAIL' // Object.is equality
-//   AssertionError: expected 'invalid' to be 'skipped' // Object.is equality
-// The real check lands under the same lead, under the same case names.
-
 describe('verdictS10StrangerPeers — the stranger lists both Notis nodes among its peers', () => {
   const PUB1 = 'npub1' + 'a'.repeat(58);
   const PUB2 = 'npub1' + 'b'.repeat(58);
@@ -1774,33 +1771,24 @@ describe('verdictS10StrangerPeers — the stranger lists both Notis nodes among 
     pub2Npub: PUB2,
     strangerPeers: [PUB1, PUB2],
   };
-  it.fails('both npubs present among the stranger\'s peers → PASS', () => {
+  it('both npubs present among the stranger\'s peers → PASS', () => {
     expect(verdictS10StrangerPeers(PASS)).toBe('PASS');
   });
   // MESH_INTERFACE → Acceptance → "Through a stranger" — one of the two
   // Notis nodes missing from `fipsctl show peers` breaks the rule.
-  it.fails('pub2 missing from the stranger\'s peers → FAIL', () => {
+  it('pub2 missing from the stranger\'s peers → FAIL', () => {
     expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [PUB1] })).toBe('FAIL');
   });
-  it.fails('pub1 missing from the stranger\'s peers → FAIL', () => {
+  it('pub1 missing from the stranger\'s peers → FAIL', () => {
     expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [PUB2] })).toBe('FAIL');
   });
-  it.fails('strangerPeers empty → FAIL', () => {
+  it('strangerPeers empty → FAIL', () => {
     expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [] })).toBe('FAIL');
   });
-  it.fails('pub1Npub missing → FAIL', () => {
+  it('pub1Npub missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['pub1Npub'];
     expect(verdictS10StrangerPeers(m)).toBe('FAIL');
-  });
-  it.fails('null → skipped', () => {
-    expect(verdictS10StrangerPeers(null)).toBe('skipped');
-  });
-  it.fails('undefined → skipped', () => {
-    expect(verdictS10StrangerPeers(undefined)).toBe('skipped');
-  });
-  it.fails('{} → skipped', () => {
-    expect(verdictS10StrangerPeers({})).toBe('skipped');
   });
 });
 
@@ -1809,36 +1797,27 @@ describe('verdictS10Split — neither Notis node holds a non-FIPS libp2p connect
     pub1Pub2Direct: [],
     pub2Pub1Direct: [],
   };
-  it.fails('both direct address lists empty → PASS', () => {
+  it('both direct address lists empty → PASS', () => {
     expect(verdictS10Split(PASS)).toBe('PASS');
   });
   // MESH_INTERFACE → Acceptance → "Through a stranger" — pub1 still
   // connected to pub2 over a non-FIPS address breaks the split.
-  it.fails('pub1 still holds a direct connection to pub2 → FAIL', () => {
+  it('pub1 still holds a direct connection to pub2 → FAIL', () => {
     expect(verdictS10Split({
       ...PASS,
       pub1Pub2Direct: ['/ip4/11.100.0.12/tcp/9100/p2p/12D3KooWExampleFortyThree'],
     })).toBe('FAIL');
   });
-  it.fails('pub2 still holds a direct connection to pub1 → FAIL', () => {
+  it('pub2 still holds a direct connection to pub1 → FAIL', () => {
     expect(verdictS10Split({
       ...PASS,
       pub2Pub1Direct: ['/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAE/p2p/12D3KooWExampleFortyTwo'],
     })).toBe('FAIL');
   });
-  it.fails('pub1Pub2Direct missing → FAIL', () => {
+  it('pub1Pub2Direct missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['pub1Pub2Direct'];
     expect(verdictS10Split(m)).toBe('FAIL');
-  });
-  it.fails('null → skipped', () => {
-    expect(verdictS10Split(null)).toBe('skipped');
-  });
-  it.fails('undefined → skipped', () => {
-    expect(verdictS10Split(undefined)).toBe('skipped');
-  });
-  it.fails('{} → skipped', () => {
-    expect(verdictS10Split({})).toBe('skipped');
   });
 });
 
@@ -1849,10 +1828,10 @@ describe('verdictS10Through — the other Notis node reads fips via the access n
     accessId: ACCESS,
     otherEntry: { notisId: OTHER, status: 'ok', transport: 'fips', via: ACCESS },
   };
-  it.fails('otherEntry at ok/fips/via=access → PASS', () => {
+  it('otherEntry at ok/fips/via=access → PASS', () => {
     expect(verdictS10Through(PASS)).toBe('PASS');
   });
-  it.fails('trailing is reach, not ranking → PASS', () => {
+  it('trailing is reach, not ranking → PASS', () => {
     expect(verdictS10Through({
       ...PASS,
       otherEntry: { notisId: OTHER, status: 'trailing', transport: 'fips', via: ACCESS },
@@ -1861,37 +1840,28 @@ describe('verdictS10Through — the other Notis node reads fips via the access n
   // MESH_INTERFACE → Acceptance → "Through a stranger" — reading the
   // other node direct rather than fips says the two never lost their
   // own path.
-  it.fails('entry transport is webrtc-direct → FAIL', () => {
+  it('entry transport is webrtc-direct → FAIL', () => {
     expect(verdictS10Through({
       ...PASS,
       otherEntry: { notisId: OTHER, status: 'ok', transport: 'webrtc-direct', via: null },
     })).toBe('FAIL');
   });
-  it.fails('entry status retry → FAIL', () => {
+  it('entry status retry → FAIL', () => {
     expect(verdictS10Through({
       ...PASS,
       otherEntry: { notisId: OTHER, status: 'retry', transport: 'fips', via: ACCESS },
     })).toBe('FAIL');
   });
-  it.fails('entry via names another node → FAIL', () => {
+  it('entry via names another node → FAIL', () => {
     expect(verdictS10Through({
       ...PASS,
       otherEntry: { notisId: OTHER, status: 'ok', transport: 'fips', via: 'c'.repeat(64) },
     })).toBe('FAIL');
   });
-  it.fails('accessId missing → FAIL', () => {
+  it('accessId missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['accessId'];
     expect(verdictS10Through(m)).toBe('FAIL');
-  });
-  it.fails('null → skipped', () => {
-    expect(verdictS10Through(null)).toBe('skipped');
-  });
-  it.fails('undefined → skipped', () => {
-    expect(verdictS10Through(undefined)).toBe('skipped');
-  });
-  it.fails('{} → skipped', () => {
-    expect(verdictS10Through({})).toBe('skipped');
   });
 });
 
@@ -1915,12 +1885,12 @@ describe('verdictS10Probe — probes match byte for byte and the stranger\'s for
     forwardedBefore: 100,
     forwardedAfter: 180,
   };
-  it.fails('probes match and forwarded count rose → PASS', () => {
+  it('probes match and forwarded count rose → PASS', () => {
     expect(verdictS10Probe(PASS)).toBe('PASS');
   });
   // MESH_INTERFACE → Acceptance → "Through a stranger" — a probe's bytes
   // not matching the node's own answer breaks the equality.
-  it.fails('sha256 mismatch → FAIL', () => {
+  it('sha256 mismatch → FAIL', () => {
     expect(verdictS10Probe({
       ...PASS,
       probes: [{
@@ -1931,7 +1901,7 @@ describe('verdictS10Probe — probes match byte for byte and the stranger\'s for
       }],
     })).toBe('FAIL');
   });
-  it.fails('bytes mismatch → FAIL', () => {
+  it('bytes mismatch → FAIL', () => {
     expect(verdictS10Probe({
       ...PASS,
       probes: [{
@@ -1944,27 +1914,18 @@ describe('verdictS10Probe — probes match byte for byte and the stranger\'s for
   });
   // MESH_INTERFACE → Acceptance → "Through a stranger" — the stranger's
   // forwarded count unchanged says the stream did not ride through it.
-  it.fails('forwarded count unchanged → FAIL', () => {
+  it('forwarded count unchanged → FAIL', () => {
     expect(verdictS10Probe({ ...PASS, forwardedBefore: 100, forwardedAfter: 100 })).toBe('FAIL');
   });
-  it.fails('forwarded count went backwards → FAIL', () => {
+  it('forwarded count went backwards → FAIL', () => {
     expect(verdictS10Probe({ ...PASS, forwardedBefore: 200, forwardedAfter: 100 })).toBe('FAIL');
   });
-  it.fails('probes empty → FAIL', () => {
+  it('probes empty → FAIL', () => {
     expect(verdictS10Probe({ ...PASS, probes: [] })).toBe('FAIL');
   });
-  it.fails('forwardedBefore missing → FAIL', () => {
+  it('forwardedBefore missing → FAIL', () => {
     const m: Record<string, unknown> = { ...PASS };
     delete m['forwardedBefore'];
     expect(verdictS10Probe(m)).toBe('FAIL');
-  });
-  it.fails('null → skipped', () => {
-    expect(verdictS10Probe(null)).toBe('skipped');
-  });
-  it.fails('undefined → skipped', () => {
-    expect(verdictS10Probe(undefined)).toBe('skipped');
-  });
-  it.fails('{} → skipped', () => {
-    expect(verdictS10Probe({})).toBe('skipped');
   });
 });

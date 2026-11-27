@@ -843,23 +843,82 @@ export function verdictS9Cut(m) {
 
 // MESH_INTERFACE → Acceptance → "Through a stranger" — the stranger lists
 // both Notis nodes among its peers (`fipsctl show peers`, by each node's
-// npub). The real logic lands under this lead.
-export function verdictS10StrangerPeers(_m) { return 'invalid'; }
+// npub). Scenario 10 step 1: `strangerPeers` holds every npub the stranger
+// returned; both `pub1Npub` and `pub2Npub` are in it. Measurement:
+//   `{ pub1Npub: string, pub2Npub: string, strangerPeers: string[] }`.
+export function verdictS10StrangerPeers(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.pub1Npub !== 'string') return 'FAIL';
+  if (typeof m.pub2Npub !== 'string') return 'FAIL';
+  if (!Array.isArray(m.strangerPeers)) return 'FAIL';
+  if (m.strangerPeers.length === 0) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub1Npub)) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub2Npub)) return 'FAIL';
+  return 'PASS';
+}
 
-// MESH_INTERFACE → Acceptance → "Through a stranger" — the split: neither
-// Notis node holds a non-FIPS libp2p connection to the other, so their
-// one FIPS path runs through the stranger. The real logic lands under
-// this lead.
-export function verdictS10Split(_m) { return 'invalid'; }
+// MESH_INTERFACE → Acceptance → "Through a stranger" — "their only FIPS
+// path is now the stranger": the split cut TCP and WebRTC-direct between
+// the two Notis nodes, so neither reads a `connection:open` to the other
+// whose addr is not a `/fips/` one. Scenario 10 step 2 — the lists are
+// the standing non-FIPS addresses each side has to the other at the end
+// of the wait. Measurement:
+//   `{ pub1Pub2Direct: string[], pub2Pub1Direct: string[] }`.
+export function verdictS10Split(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.pub1Pub2Direct)) return 'FAIL';
+  if (!Array.isArray(m.pub2Pub1Direct)) return 'FAIL';
+  if (m.pub1Pub2Direct.length !== 0) return 'FAIL';
+  if (m.pub2Pub1Direct.length !== 0) return 'FAIL';
+  return 'PASS';
+}
 
-// MESH_INTERFACE → Acceptance → "Through a stranger" — a browser that
-// reaches the one Notis node reads the other over FIPS through it, the
-// other entry's `transport` is `fips` and its `via` names the one. The
-// real logic lands under this lead.
-export function verdictS10Through(_m) { return 'invalid'; }
+// MESH_INTERFACE → Acceptance → "Through a stranger" — "a browser that
+// reaches the one alone reads the other over FIPS through it". Scenario
+// 10 step 3: the other node's entry reads `ok` or `trailing` (a checked
+// answer, ranking not reach), its `transport` is `fips`, and its `via`
+// names the access node. Measurement:
+//   `{ accessId: string,
+//      otherEntry: { notisId, status, transport, via } }`.
+export function verdictS10Through(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.accessId !== 'string') return 'FAIL';
+  const e = m.otherEntry;
+  if (e === null || typeof e !== 'object') return 'FAIL';
+  if (typeof e.notisId !== 'string') return 'FAIL';
+  if (e.status !== 'ok' && e.status !== 'trailing') return 'FAIL';
+  if (e.transport !== 'fips') return 'FAIL';
+  if (e.via !== m.accessId) return 'FAIL';
+  return 'PASS';
+}
 
-// MESH_INTERFACE → Acceptance → "Through a stranger" — the browser's
-// mesh answers equal each node's own HTTP byte for byte, and the stranger's
-// `fipsctl show routing` forwarded count rises across the probe. The real
-// logic lands under this lead.
-export function verdictS10Probe(_m) { return 'invalid'; }
+// MESH_INTERFACE → Acceptance → "Through a stranger" — "its answers equal
+// its direct HTTP answers byte for byte, and the stranger lists both
+// nodes among its peers": scenario 10 step 4 holds the probe bytes equal
+// to the node's own, and reads `fipsctl show routing`'s forwarded count
+// before and after the probe — the count rises, which says the probe's
+// data rode through the stranger. The miner is paused across the probe,
+// so one direct read is enough. Measurement:
+//   `{ probes: Array<{ nodeId, path,
+//        probe: { sha256, bytes },
+//        direct: { sha256, bytes } }>,
+//      forwardedBefore: number, forwardedAfter: number }`.
+export function verdictS10Probe(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.probes) || m.probes.length === 0) return 'FAIL';
+  for (const p of m.probes) {
+    if (p === null || typeof p !== 'object') return 'FAIL';
+    if (typeof p.nodeId !== 'string') return 'FAIL';
+    if (typeof p.path !== 'string') return 'FAIL';
+    if (p.probe === null || typeof p.probe !== 'object') return 'FAIL';
+    if (p.direct === null || typeof p.direct !== 'object') return 'FAIL';
+    if (typeof p.probe.sha256 !== 'string' || typeof p.probe.bytes !== 'number') return 'FAIL';
+    if (typeof p.direct.sha256 !== 'string' || typeof p.direct.bytes !== 'number') return 'FAIL';
+    if (p.probe.sha256 !== p.direct.sha256) return 'FAIL';
+    if (p.probe.bytes !== p.direct.bytes) return 'FAIL';
+  }
+  if (typeof m.forwardedBefore !== 'number') return 'FAIL';
+  if (typeof m.forwardedAfter !== 'number') return 'FAIL';
+  if (m.forwardedAfter <= m.forwardedBefore) return 'FAIL';
+  return 'PASS';
+}
