@@ -135,9 +135,23 @@ removes nothing from the cache by itself.
    when a load generates the state;
 3. mines to the state's starting height;
 4. runs the state's write scripts in order;
-5. reads the manifest's figures from A;
-6. stops the miner, the faucet and A by the processes it launched — A on `SIGTERM`, waited for until it exits;
-7. writes the state into the cache.
+5. moves the faucet's credits into one box (→ "The faucet's credits stand in one box made by the state's last write");
+6. reads the manifest's figures from A;
+7. stops the miner, the faucet and A by the processes it launched — A on `SIGTERM`, waited for until it exits;
+8. writes the state into the cache.
+
+**The faucet's credits stand in one box made by the state's last write.** That write is one faucet grant
+(`/faucet/credits`) to a throwaway key no block reads, waited for until it lands, so the faucet's one box is the grant's
+change, made a block or a few below the state's tip. Devnet's rent (`NODE_INTERFACE → Storage rent is a transition
+requiring no signature`) reaches that box `storageRentPeriodBlocks` after it is made — past every height a block of the
+check asks the faucet at, since each block starts from the state's tip. A grant pooled after the template that collects
+its box is lost to that block (`NODE_INTERFACE → "This node's producer collects at its template, from the boxes no
+pooled transaction spends"`), so a faucet box falling due inside a block would drop that block's grant. **The
+generator reads the faucet's holdings with the manifest's figures and fails the generation unless they are that one
+box.**
+
+> ⚠ **AHEAD OF CODE (2026-11-27).** The generator runs no grant: a state's faucet holds devnet's genesis credit box,
+> made at block 1 and falling due at block 102 — inside a block of the check when the state's tip is near 88.
 
 **A write path that fails fails the generation**, naming the script and its last line. Nothing retries it. Every wait
 a write script holds ends a block interval or two after its write lands, so a script that times out is a failure of
