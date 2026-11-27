@@ -1673,6 +1673,118 @@ describe('s10 (through a stranger)', () => {
   });
 });
 
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the two parsers
+// the scenario feeds verdict measurements from: `fipsctl show peers`
+// stdout → the array of npubs it holds, and a parsed `/mesh/identity`
+// answer → the Notis node's own npub, read from its `/fips/<npub>/p2p/
+// <peer id>` entry in `multiaddrs`. The cases below feed each the real
+// bytes the v0.5.3 release of `jmcorgan/fips` answers (trimmed) and
+// the shape `packages/node/src/routes/mesh-identity.ts` builds.
+describe('s10 — fipsctl show peers → npubs', () => {
+  // Captured on 2026-11-27 from the v0.5.3 release running on loopback
+  // with one peer connected: the outer shape is `{"peers":[{...}]}` and
+  // the peer entry carries `"npub": "npub1..."` as its own top-level
+  // field. The capture is trimmed to the fields a reader expects (the
+  // parser reads `npub` alone).
+  const REAL_PEERS_ONE = JSON.stringify({
+    peers: [
+      {
+        npub: 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7',
+        display_name: 'npub1jd9s...lac7',
+        direction: 'inbound',
+        connectivity: 'connected',
+        transport_type: 'udp',
+        transport_addr: '127.0.0.1:2122',
+        stats: { bytes_recv: 1664, bytes_sent: 1632, packets_recv: 6, packets_sent: 6 },
+      },
+    ],
+  }, null, 2);
+  const REAL_PEERS_NONE = JSON.stringify({ peers: [] }, null, 2);
+
+  it('parses one connected peer\'s npub from the real v0.5.3 answer', () => {
+    expect(s10.parseStrangerPeerNpubs(REAL_PEERS_ONE))
+      .toEqual(['npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7']);
+  });
+  it('an empty peers array answers an empty list', () => {
+    expect(s10.parseStrangerPeerNpubs(REAL_PEERS_NONE)).toEqual([]);
+  });
+  // The parser accepts a Buffer too — `execIn` answers one, and the
+  // scenario hands it straight through without a `toString` of its own.
+  it('accepts a Buffer in place of a string', () => {
+    expect(s10.parseStrangerPeerNpubs(Buffer.from(REAL_PEERS_ONE, 'utf8'))).toHaveLength(1);
+  });
+  it('a two-peer answer answers both npubs in order', () => {
+    const two = JSON.stringify({
+      peers: [
+        { npub: 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3', transport_type: 'udp' },
+        { npub: 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7', transport_type: 'udp' },
+      ],
+    });
+    expect(s10.parseStrangerPeerNpubs(two)).toEqual([
+      'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3',
+      'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7',
+    ]);
+  });
+  it('a malformed JSON answers an empty list rather than throwing', () => {
+    expect(s10.parseStrangerPeerNpubs('not json')).toEqual([]);
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the earlier
+  // defect in s10 read a `fipsNpub` field from `/mesh/identity` that
+  // the route source does not answer. The symmetric defect here would
+  // be reading a differently-named field from `fipsctl show peers`; a
+  // peer entry with an npub at a different key is dropped, not read.
+  it('a peer entry with an npub at another key is dropped', () => {
+    expect(s10.parseStrangerPeerNpubs(JSON.stringify({ peers: [{ display_name: 'npub1foo' }] }))).toEqual([]);
+  });
+});
+
+describe('s10 — /mesh/identity → the Notis node\'s FIPS npub', () => {
+  // NODE_INTERFACE → Mesh identity — the route answers
+  // `{ notisId, peerId, multiaddrs, localAddrs }`; the FIPS npub rides
+  // among `multiaddrs` as `/fips/<npub>/p2p/<peer id>`. The fixture
+  // below is a Notis mesh identity whose multiaddrs list carries the
+  // shape net announces when `FIPS_PUBLIC=on`.
+  const NPUB = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
+  const PEER_ID = '12D3KooWCnwwicBE8ujqkyzjbT4xPyFqggDxJdeNVcBehtt3AHiA';
+  const NOTIS_ID = 'a'.repeat(64);
+  const REAL_IDENTITY = {
+    notisId: NOTIS_ID,
+    peerId: PEER_ID,
+    multiaddrs: [
+      `/ip4/11.100.0.11/tcp/4002/p2p/${PEER_ID}`,
+      `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAE_EXAMPLE_CERTHASH_BYTES______________________/p2p/${PEER_ID}`,
+      `/fips/${NPUB}/p2p/${PEER_ID}`,
+    ],
+    localAddrs: [`/ip4/11.100.0.11/tcp/4002/p2p/${PEER_ID}`],
+  };
+
+  it('reads the npub from the /fips/<npub>/p2p/<peer id> entry', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity(REAL_IDENTITY)).toBe(NPUB);
+  });
+  it('answers null when no multiaddr begins /fips/', () => {
+    const noFips = { ...REAL_IDENTITY, multiaddrs: REAL_IDENTITY.multiaddrs.filter((a) => !a.startsWith('/fips/')) };
+    expect(s10.extractNotisNpubFromMeshIdentity(noFips)).toBeNull();
+  });
+  // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"
+  // — a `/fips/.../p2p-circuit/...` address is refused; the parser
+  // skips it so a private node's relay-ride entry does not land as
+  // the node's own FIPS npub.
+  it('skips a /fips/.../p2p-circuit/... entry', () => {
+    const circuit = { ...REAL_IDENTITY, multiaddrs: [`/fips/${NPUB}/p2p-circuit/p2p/${PEER_ID}`] };
+    expect(s10.extractNotisNpubFromMeshIdentity(circuit)).toBeNull();
+  });
+  it('null identity answers null', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity(null)).toBeNull();
+  });
+  it('missing multiaddrs answers null', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity({ notisId: NOTIS_ID })).toBeNull();
+  });
+  it('ignores an entry whose segment-2 does not begin npub1', () => {
+    const bad = { ...REAL_IDENTITY, multiaddrs: [`/fips/not_an_npub/p2p/${PEER_ID}`] };
+    expect(s10.extractNotisNpubFromMeshIdentity(bad)).toBeNull();
+  });
+});
+
 // MESH_INTERFACE → Acceptance — every nft rule the scenarios would apply
 // passes `nft -c -f` under unshare -rn. s10's argvs ride that gate; the
 // pure check below pins s10's own rulesets to the stage's syntax.

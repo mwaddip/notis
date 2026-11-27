@@ -57,21 +57,26 @@ function decodeOutput(buf) {
 }
 
 /**
+ * `curl -sf <url>` from inside `ns`'s namespace. Returns the body as a
+ * `Buffer` — the raw bytes as curl captured them, with no sha256 or
+ * length computed. Call this where a scenario needs to parse the body
+ * (JSON, text); `readDirect` below answers the hashed shape a probe
+ * reads, and shares this one curl line so the two never drift.
+ */
+export function readBodyDirect(ns, httpUrl, { user, timeoutMs = 10_000 } = {}) {
+  return execIn(ns, ['curl', '-sf', '--max-time', '5', httpUrl], { user, timeoutMs });
+}
+
+/**
  * `curl -sf <url>` from inside `ns`'s namespace. Returns `{ status,
  * bytes, sha256 }` as the probe does — same shape, so a scenario
- * compares the two by equality. `curl -o -` writes the body to stdout;
- * the sha256 is computed by this process over the captured buffer so
- * the comparison is byte for byte.
- *
- * Short-cut: when `curl` answers a non-2xx HTTP the exit is non-zero;
- * this wrapper re-reads the headers over a second curl to recover the
- * status and bytes-length without `-sf`.
+ * compares the two by equality. The body comes from `readBodyDirect`
+ * (one curl call for the bytes); the sha256 is computed over it, and
+ * a second curl reads the HTTP status without the body so a non-2xx
+ * answer is visible beside a `-sf` exit.
  */
 export function readDirect(ns, httpUrl, { user, timeoutMs = 10_000 } = {}) {
-  // One pass that captures headers AND body: `curl -sS -o /dev/stdout
-  // -w '\n---mesh-poc-headers---\n%{http_code}'` — but mixing bodies
-  // with status is fragile; two calls keep each small and clear.
-  const body = execIn(ns, ['curl', '-sf', '--max-time', '5', httpUrl], { user, timeoutMs });
+  const body = readBodyDirect(ns, httpUrl, { user, timeoutMs });
   const status = parseInt(
     execIn(ns, ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '5', httpUrl], { user, timeoutMs })
       .toString('utf8').trim(),

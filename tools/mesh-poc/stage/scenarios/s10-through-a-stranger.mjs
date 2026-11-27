@@ -43,7 +43,7 @@ import { writeStageDefault, writeConfigVariant } from '../lib/scenario-config.mj
 import { withFipsAddresses } from '../lib/config-variants.mjs';
 import { peerIdStringOf } from '../lib/config.mjs';
 import {
-  execIn, readDirect, findPid, signal, signalPid, leafPids, descendantPids,
+  execIn, readDirect, readBodyDirect, findPid, signal, signalPid, leafPids, descendantPids,
 } from '../lib/measure.mjs';
 import { StepRecorder } from '../lib/step-recorder.mjs';
 
@@ -250,9 +250,13 @@ function standingDirectAddrsToPeer(logPath, peerIdString) {
  * Parse `fipsctl show peers` stdout into the array of npubs it holds.
  * The daemon's answer is a JSON object `{ "peers": [...] }` where each
  * peer entry is an object with an `npub` field — the only field this
- * scenario reads, so the parser is kept narrow.
+ * scenario reads, so the parser is kept narrow. Verified against the
+ * v0.5.3 release's own `fipsctl show peers` output with one peer
+ * connected: the entry carries `"npub": "npub1..."` as its own top-
+ * level field, beside `display_name`, `transport_type`, `transport_addr`
+ * and the counter blocks.
  */
-function parseStrangerPeerNpubs(stdout) {
+export function parseStrangerPeerNpubs(stdout) {
   const text = typeof stdout === 'string' ? stdout : stdout.toString('utf8');
   let parsed;
   try { parsed = JSON.parse(text); } catch { return []; }
@@ -265,6 +269,35 @@ function parseStrangerPeerNpubs(stdout) {
     if (typeof n === 'string' && n.startsWith('npub1')) npubs.push(n);
   }
   return npubs;
+}
+
+/**
+ * MESH_INTERFACE → FIPS → "A node announces its FIPS address" — the
+ * node's FIPS address rides among its libp2p multiaddrs as
+ * `/fips/<npub>/p2p/<peer id>`, with no `/p2p-circuit` hop (`FIPS → "A
+ * private node's relay addresses ride IP"` — a `/fips/.../p2p-circuit/...`
+ * address is refused). Read the npub from the first such entry in a
+ * parsed `/mesh/identity` answer (the node has one — its own). Returns
+ * `null` when no entry matches, so the scenario's own caller names the
+ * failure with context.
+ *
+ * NODE_INTERFACE → Mesh identity — the answer carries
+ * `{ notisId, peerId, multiaddrs, localAddrs }` and no `fipsNpub`;
+ * reading one would read `undefined`.
+ */
+export function extractNotisNpubFromMeshIdentity(identity) {
+  if (identity === null || typeof identity !== 'object') return null;
+  const addrs = Array.isArray(identity.multiaddrs) ? identity.multiaddrs : [];
+  for (const a of addrs) {
+    if (typeof a !== 'string') continue;
+    if (!a.startsWith('/fips/')) continue;
+    if (a.includes('/p2p-circuit')) continue;
+    const parts = a.split('/');
+    // ['', 'fips', '<npub>', 'p2p', '<peer id>']
+    const npub = parts[2];
+    if (typeof npub === 'string' && npub.startsWith('npub1')) return npub;
+  }
+  return null;
 }
 
 /**
@@ -331,9 +364,10 @@ export async function run(ctx) {
     throw new Error(`s10: stranger identity.json malformed at ${strangerIdentityPath}`);
   }
 
-  // Each Notis node's own npub, taken from its `/mesh/identity` — the
-  // same path a stage reader would use; the stranger's `fipsctl show
-  // peers` answer names it.
+  // Each Notis node's own npub, taken from the `/fips/<npub>/p2p/<peer
+  // id>` entry in its `/mesh/identity` `multiaddrs` list; the stranger's
+  // `fipsctl show peers` answer names each peer's npub, so the
+  // scenario's step-1 check matches those strings against these.
   const notisNpubOf = (host) => {
     const row = identities[host];
     const addr = row?.addr;
@@ -342,19 +376,17 @@ export async function run(ctx) {
       throw new Error(`s10: identities.json ${host} row has no addr or httpPort`);
     }
     const url = `http://${addr}:${httpPort}/mesh/identity`;
-    const text = readDirect(`notismesh-${host}`, url, { user: ctx.invokingUser, timeoutMs: 8_000 });
-    // readDirect answers `{ status, sha256, bytes, body }`; the body
-    // field holds the raw bytes. Parse as JSON and read fipsNpub — the
-    // node's own `/mesh/identity` answer naming its FIPS key.
+    const buf = readBodyDirect(`notismesh-${host}`, url, { user: ctx.invokingUser, timeoutMs: 8_000 });
     let parsed;
-    try { parsed = JSON.parse(text.body.toString('utf8')); } catch (err) {
+    try { parsed = JSON.parse(buf.toString('utf8')); } catch (err) {
       throw new Error(`s10: ${host} /mesh/identity did not parse as JSON: ${err?.message ?? err}`);
     }
-    const n = parsed?.fipsNpub;
-    if (typeof n !== 'string' || !n.startsWith('npub1')) {
-      throw new Error(`s10: ${host} /mesh/identity did not name a fipsNpub`);
+    const npub = extractNotisNpubFromMeshIdentity(parsed);
+    if (npub === null) {
+      const addrs = Array.isArray(parsed?.multiaddrs) ? parsed.multiaddrs : [];
+      throw new Error(`s10: ${host} /mesh/identity carries no /fips/<npub>/p2p/<peer id> multiaddr; got ${addrs.length} multiaddrs`);
     }
-    return n;
+    return npub;
   };
   const pub1Npub = notisNpubOf(ACCESS_HOST);
   const pub2Npub = notisNpubOf(OTHER_HOST);

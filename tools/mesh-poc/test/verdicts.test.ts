@@ -1764,8 +1764,12 @@ describe('verdictS9Cut — a cut FIPS-reached node reads retry, never blackliste
 });
 
 describe('verdictS10StrangerPeers — the stranger lists both Notis nodes among its peers', () => {
-  const PUB1 = 'npub1' + 'a'.repeat(58);
-  const PUB2 = 'npub1' + 'b'.repeat(58);
+  // Real-shape npubs captured from fipsctl keygen -s against the
+  // v0.5.3 release; `verdictS10StrangerPeers` reads them by equality
+  // against `strangerPeers`, so the bytes match what `fipsctl show
+  // peers` would hand the scenario at runtime.
+  const PUB1 = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
+  const PUB2 = 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7';
   const PASS = {
     pub1Npub: PUB1,
     pub2Npub: PUB2,

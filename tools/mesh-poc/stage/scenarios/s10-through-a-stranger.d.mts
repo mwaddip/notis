@@ -1,5 +1,7 @@
 export declare const NAME: 's10';
 export declare function describe(): string[];
+export declare function parseStrangerPeerNpubs(stdout: string | Buffer): string[];
+export declare function extractNotisNpubFromMeshIdentity(identity: unknown): string | null;
 export declare function s10SplitArgs(topology: unknown, hostA: string, hostB: string): {
   hostA: {
     addTable: string[];

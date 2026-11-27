@@ -8,6 +8,7 @@ export interface PidEntry {
   cwd?: string;
 }
 export declare function execIn(ns: string, argv: string[], opts?: { user?: string; timeoutMs?: number; inputBuffer?: Buffer | null }): Buffer;
+export declare function readBodyDirect(ns: string, httpUrl: string, opts?: { user?: string; timeoutMs?: number }): Buffer;
 export declare function readDirect(ns: string, httpUrl: string, opts?: { user?: string; timeoutMs?: number }): DirectRead;
 export declare function readLineCount(path: string): number;
 export declare function readMtimeMs(path: string): number | null;
