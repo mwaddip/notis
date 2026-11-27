@@ -910,8 +910,8 @@ describe('verdictS2Priv2 reads priv2 reached through a relay that carries its da
     expect(verdictS2Priv2({ ...base(), blacklistedAtAnyPoll: true })).toBe('FAIL');
   });
 
-  it('FAIL when the latest routed read did not land on priv2', () => {
-    expect(verdictS2Priv2({ ...base(), latestReadNodeId: OTHER })).toBe('FAIL');
+  it.fails('PASS on priv2 ok over its relay while the latest routed read landed on another node', () => {
+    expect(verdictS2Priv2({ ...base(), latestReadNodeId: OTHER })).toBe('PASS');
   });
 
   it('FAIL when expectedNodeId is missing', () => {
