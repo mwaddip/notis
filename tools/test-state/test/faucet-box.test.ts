@@ -11,7 +11,7 @@ const FRESH = 'b'.repeat(64);
 const OTHER = 'c'.repeat(64);
 
 describe('judgeFaucetGrantHoldings', () => {
-  it.fails('refuses holdings of the genesis box alone', () => {
+  it('refuses holdings of the genesis box alone', () => {
     const verdict = judgeFaucetGrantHoldings({
       preGrantBoxIds: [GENESIS],
       currentBoxIds: [GENESIS],
@@ -19,7 +19,7 @@ describe('judgeFaucetGrantHoldings', () => {
     expect(verdict.ok).toBe(false);
   });
 
-  it.fails('refuses holdings of two boxes', () => {
+  it('refuses holdings of two boxes', () => {
     const verdict = judgeFaucetGrantHoldings({
       preGrantBoxIds: [GENESIS],
       currentBoxIds: [GENESIS, FRESH],
@@ -27,7 +27,7 @@ describe('judgeFaucetGrantHoldings', () => {
     expect(verdict.ok).toBe(false);
   });
 
-  it.fails('refuses holdings of no box', () => {
+  it('refuses holdings of no box', () => {
     const verdict = judgeFaucetGrantHoldings({
       preGrantBoxIds: [GENESIS],
       currentBoxIds: [],
@@ -35,7 +35,7 @@ describe('judgeFaucetGrantHoldings', () => {
     expect(verdict.ok).toBe(false);
   });
 
-  it.fails('accepts one box absent from the pre-grant set', () => {
+  it('accepts one box absent from the pre-grant set', () => {
     const verdict = judgeFaucetGrantHoldings({
       preGrantBoxIds: [GENESIS, OTHER],
       currentBoxIds: [FRESH],

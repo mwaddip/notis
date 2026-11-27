@@ -16,7 +16,24 @@ export type FaucetGrantHoldingsVerdict =
   | { readonly ok: false; readonly reason: string };
 
 export function judgeFaucetGrantHoldings(
-  _input: FaucetGrantHoldingsInput,
+  input: FaucetGrantHoldingsInput,
 ): FaucetGrantHoldingsVerdict {
-  throw new Error('judgeFaucetGrantHoldings: not implemented');
+  const current = input.currentBoxIds;
+  if (current.length !== 1) {
+    return {
+      ok: false,
+      reason:
+        `the faucet holds ${current.length} credit box(es), not one: [${current.join(', ')}]`,
+    };
+  }
+  const only = current[0]!;
+  const pre = new Set(input.preGrantBoxIds);
+  if (pre.has(only)) {
+    return {
+      ok: false,
+      reason:
+        `the faucet's one credit box ${only} is among the ${pre.size} box(es) it held before the grant`,
+    };
+  }
+  return { ok: true, grantBoxId: only };
 }
