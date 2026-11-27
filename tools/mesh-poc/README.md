@@ -3,7 +3,7 @@
 A browser page reaches a Notis node's HTTP API **by the node's Ed25519 key**, over libp2p, from a
 handful of first-contact nodes and **no DNS name**. The mesh runs inside each devnet `@dagsocial/node` — the
 node answers the mesh endpoint from its own HTTP, byte for byte. The stage runs the whole
-machinery inside Linux network namespaces on one host and the nine scenarios in
+machinery inside Linux network namespaces on one host and the ten scenarios in
 `MESH_INTERFACE → Acceptance` drive it from the browser's side.
 
 ## Threat model
@@ -34,6 +34,7 @@ reaching the inviter by key — are later work; they are not here.
 | 10 | Malformed and invalid proofs blacklist with their evidence; a valid proof of a lighter chain reads `behind`. | `MESH_INTERFACE → The client's node list` |
 | 11 | A node added by the reader by hand is dialled at its private address; a remote node offering a private address is refused. | `MESH_INTERFACE → Discovery → "A node added by hand"` |
 | 12 | A browser whose host routes to one node alone reaches another node by key through it over FIPS; a node reached that way and then cut reads `retry`, never `blacklisted`; a browser with direct paths opens no FIPS link. | `MESH_INTERFACE → Acceptance → "Through one node"` |
+| 13 | Two Notis nodes whose only FIPS path runs through a FIPS node that is no Notis node reach each other over it; the stranger lists both among its peers; the browser reads one through the other over FIPS, its answers byte-for-byte equal to the direct read, with the stranger's forwarded count rising across the probe. | `MESH_INTERFACE → Acceptance → "Through a stranger"` |
 
 **Non-goals** — these are out of scope: multi-hop routing, DMs, node identities on chain and
 vouches, ranking by vouches, a remembered tip, any change to the node, the extension or the
@@ -125,7 +126,7 @@ timeout 10m  pnpm -r build
 timeout  5m  pnpm --filter @dagsocial/mesh-poc page:build
 
 timeout 20m  pnpm --filter @dagsocial/mesh-poc stage:up
-timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s1 s2 s3 s4 s5 s6 s7 s8 s9
+timeout  2h  pnpm --filter @dagsocial/mesh-poc stage:run       # default order: s1 s2 s3 s4 s5 s6 s7 s8 s9 s10
 timeout  1m  pnpm --filter @dagsocial/mesh-poc stage:report
 timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
 ```
@@ -159,8 +160,8 @@ timeout  5m  pnpm --filter @dagsocial/mesh-poc stage:down
   every recorded PID is alive, and prints `stage up: <N> processes, <M> namespaces`. On
   failure it rolls back exactly what it created (SIGTERMs each recorded PID, deletes each
   namespace in reverse order, removes `/etc/netns/notismesh-*`).
-- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all nine,
-  `s1 s2 s3 s4 s5 s6 s7 s8 s9`). Writes `stage/out/scenarios/<name>.json` per scenario:
+- **`stage:run [<name>...]`** runs the named scenarios in the order given (default: all ten,
+  `s1 s2 s3 s4 s5 s6 s7 s8 s9 s10`). Writes `stage/out/scenarios/<name>.json` per scenario:
   `{ scenario, startedAt, endedAt, steps, faults }`, each step `{ name, verdict, measurement,
   timeMs }`. **A step that times out or throws is `FAIL`; the scenario's faults are removed and
   the run goes on. A step that did not run reads `skipped`, never a pass.** Each scenario writes
@@ -208,12 +209,15 @@ stage/out/scenarios/<s>.json      one per scenario stage:run touched
 stage/out/summary.md              stage:report's build
 ```
 
-`stage/cache/` holds the pinned Pebble tarball and the extracted binary. **`stage:down` removes
+`stage/cache/` holds the pinned Pebble tarball and the extracted binary, and the pinned
+`fips-0.5.3-linux-x86_64.tar.gz` for the FIPS daemon the stranger host runs
+(`MESH_INTERFACE → Acceptance → "Through a stranger"`) with its `fips` + `fipsctl` binaries
+alongside. **`stage:down` removes
 only `stage/out/pids.json`** — every other file under `stage/out/` stays, for a reader to pick
 over after a run; the next `stage:up` rotates the whole `stage/out/` directory to
 `stage/out.prev/` (replacing any older `.prev`) at its start.
 
-## The nine scenarios
+## The ten scenarios
 
 Each scenario's step list is `verdicts.mjs`'s rules in order. A `PASS` requires **positive
 evidence**: a vacuous read (no connection, no measurement) is never a pass. A step reads `skipped`
@@ -249,7 +253,7 @@ Two sub-steps, each with its own `config.json` variant written at start.
 | # | Step | Pass condition | What breaks it |
 |---|---|---|---|
 | 1 | `priv1 (endpoint-independent NAT) answers over relayed WebRTC` | priv1's `nodes[]` entry reads `status` ok, trailing or behind (all three say a checked answer came back; `trailing` and `behind` are ranking, not reach), its entry `transport === 'webrtc'` and `path === 'direct'`, the single first-contact address names `/p2p-circuit/webrtc`, and every ICE server is `stun:<ip>:<port>` drawn from the public nodes the client holds (the relay hop among them, since the config carries no `stunServers` key). Measures `expectedNodeId`, `priv1Status`, `priv1Failures`, `transport`, `path`, `firstContactAddrRelayed` (the first-contact address the variant dials), `connectMs`, `iceServers` and `nodeIdInUse`; `nodeIdInUse` is recorded alongside, not a condition. | priv1 at `retry`, `blacklisted` or `new`; entry `transport` not `webrtc`; entry `path` not `direct`; a STUN URL naming a host. |
-| 2 | `priv2 (symmetric NAT) is reached through a relay that carries its data` | priv2's entry reads `status` ok or trailing, its entry `path === 'relay'`, and the latest routed read landed on priv2 (`latestReadNodeId === expectedNodeId`); priv2 is never `blacklisted` at any poll. Measures `expectedNodeId`, `priv2Status`, `priv2Path`, `latestReadNodeId`, `blacklistedAtAnyPoll`. | priv2 at `retry`, `blacklisted` or `behind`; path `direct`; the latest routed read landed on another node. |
+| 2 | `priv2 (symmetric NAT) is reached through a relay that carries its data` | priv2's entry reads `status` ok or trailing, its entry `path === 'relay'`; priv2 is never `blacklisted` at any poll. Measures `expectedNodeId`, `priv2Status`, `priv2Path`, `blacklistedAtAnyPoll`, and `latestReadNodeId` as a recorded fact the verdict does not read (where reads land is `MESH_INTERFACE → Acceptance` 7's). | priv2 at `retry`, `blacklisted` or `behind`; path `direct`. |
 
 **A relay carries data** (`MESH_INTERFACE → NAT → "A relay carries data"`): a node with no direct
 path to a client — a node behind a symmetric NAT, for a client behind a NAT of its own — is
@@ -408,7 +412,7 @@ default with each first-contact node's FIPS address appended last (`withFipsAddr
 | 1 | `direct paths to every node: the client reads each one without opening a FIPS link` | Under no faults, within 60 s the page's `#state` carries `checks >= 1` and `nodeId` non-null; `<pre id="fips-links">` holds `[]` (no `fips-link` event) and no `state.nodes[i].transport` is `'fips'`. Measures `fipsLinkCount`, `entries`. | A `fips-link` event; an entry on `fips`; an empty `entries` set. |
 | 2 | `drop every mesh host but pub1: pub2 reads fips through pub1` | The `s9_drop` nft table in `notismesh-browser` drops every mesh host but pub1's address (lan1 and lan1-peer's 10.103.0.x addresses included, since they share natC's inside bridge with the browser). Within `6 · CHECK_INTERVAL_MS` the page's state reads the other first-contact id as `ok` or `trailing`, entry `transport: 'fips'`, entry `via: <pub1>`. Measures `accessId`, `otherEntries`. | The other id at `retry`, `blacklisted` or another transport; `via` naming another node. |
 | 3 | `probe each node through the page: the mesh's bytes equal the node's own byte for byte` | `miner-steady` is paused (SIGSTOP on its leaf PIDs, SIGCONT in `finally`). For pub1 and the other node, `?probe=<path>&node=<notisId>` reads `/blocks/current` and `/nipopow/proof/24/20` through the page, and the same path reads directly in the node's namespace; every pair's `sha256` and `bytes` match. Measures `probes`. | Any probe mismatch. |
-| 4 | `pub2 cut: pub2 reads retry, never blacklisted` | The `s9_cut` nft table in `notismesh-pub2` drops pub2's inbound webrtc UDP and the mesh and node TCP ports, so pub1's running FIPS link to pub2 falls under the running connection's packet loss. Within `2 · CHECK_INTERVAL_MS + 10 s` pub2's entry reads `retry`, and no poll in the window read it `blacklisted`. Measures `nodeId`, `status`, `blacklistedAtAnyPoll`. | `blacklisted` at any poll; a status other than `retry` at the end. |
+| 4 | `pub2 cut: pub2 reads retry, never blacklisted` | The `s9_cut` nft table in `notismesh-pub2` drops ALL pub2's inbound UDP and the mesh and node TCP ports — the all-UDP rule reaches the stranger-forwarded FIPS path the public mesh carries on pub2's ephemeral port, beside WebRTC-direct's own port — so pub1's every running FIPS path to pub2 falls under the running connection's packet loss. Within `2 · CHECK_INTERVAL_MS + 10 s` pub2's entry reads `retry`, and no poll in the window read it `blacklisted`. Measures `nodeId`, `status`, `blacklistedAtAnyPoll`. | `blacklisted` at any poll; a status other than `retry` at the end. |
 
 **What this holds** (`MESH_INTERFACE → FIPS → "A reader links when a node's every other address
 failed"`, `→ The client's node list → "A FIPS address is ranked last"`): a browser with direct
@@ -420,6 +424,40 @@ and its answers equal what a reader with a direct path would read.
 **What a tester reports even on PASS:** pub2 reaching `blacklisted` at any poll in step 4 — a
 timeout, a refused connection, a dropped link or a non-2xx is `retry`, never permanent
 (`MESH_INTERFACE → The client's node list`).
+
+### s10 — Through a stranger (`MESH_INTERFACE → Acceptance → "Through a stranger"`)
+
+Four sub-steps. The stranger host runs the original FIPS daemon's release (`jmcorgan/fips`
+v0.5.3) beside pub1 and pub2 on the internet bridge; its npub is generated with
+`fipsctl keygen` at `stage:up` and each Notis node takes it through `FIPS_PUBLIC_PEERS`
+(`NODE_INTERFACE → Configuration`). pub1 and pub2 both spawn with `FIPS_PUBLIC=on`,
+`FIPS_PUBLIC_PEERS=<stranger npub>@11.100.0.37:2121` and no `FIPS_UDP_LISTEN`
+(`MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when its operator turns
+it on"`, `→ "A public peer is an npub at a `host:port`"`, `→ "A node may accept public
+links"`). At its start s10 writes the FIPS variant `config.json` (as s9 does) and its
+`finally` writes the default back.
+
+| # | Step | Pass condition | What breaks it |
+|---|---|---|---|
+| 1 | `the stranger lists pub1 and pub2 among its peers` | `fipsctl show peers` on the stranger's control socket answers a JSON object whose `peers[]` holds entries carrying each Notis node's npub (read from each node's `/mesh/identity`). Measures `pub1Npub`, `pub2Npub`, `strangerPeers`. | One of the two npubs missing from the stranger's peer list; the list empty. |
+| 2 | `pub2 reaches no Notis host, and the stranger still lists pub2` | An `s10_split` nft table in pub2's namespace alone — input and output chains at policy `drop`, loopback (so the direct reads s10 makes inside pub2's namespace on `127.0.0.1` still answer) and stranger traffic accepted. pub1's namespace gets nothing; every other Notis host on the stage still peers pub1 and reaches it over libp2p and public FIPS, so the one FIPS path left to pub2 is the stranger's. The scenario dials pub1's and priv1's p2p ports from pub2's namespace with `curl --connect-timeout` (the dropped SYN times out in seconds), and reads `fipsctl show peers` on the stranger — both dials fail AND the stranger lists pub2. Measures `pub2Npub`, `pub2DialsToOther`, `strangerPeers`. | A dial that connected; the stranger's peer list missing pub2; an empty dial list. |
+| 3 | `drop every mesh host but pub1: pub2 reads fips through pub1` | The `s10_drop` nft table in `notismesh-browser` drops every mesh host but pub1's addr. Within `FIPS_LINK_DEAD_MS` + the first four retry waits (5 + 10 + 20 + 40 s) + `2 · CHECK_INTERVAL_MS` (195 s) — pub1's direct link to pub2 ends after 30 s with nothing received, the browser's failed dials to pub2 walk its entry along the client's retry schedule, and two check intervals past that let the check settle — the page's state reads pub2 as `ok`, `trailing` or `behind` (pub2, isolated to the stranger, receives no blocks), entry `transport: 'fips'`, entry `via: pub1`. Measures `accessId`, `otherEntry`. | pub2 at `retry`, `blacklisted` or another transport; `via` naming another node. |
+| 4 | `probe each node through the page: the mesh's bytes equal the node's own byte for byte, the stranger's forwarded count rose` | `miner-steady` is paused (SIGSTOP on its leaf PIDs, SIGCONT in `finally`). The scenario reads the stranger's `fipsctl show routing` `forwarding.forwarded_packets` before and after; it probes pub2's `/blocks/current` and `/nipopow/proof/24/20` through the page and reads each directly in pub2's namespace; every probe pair's `sha256` and `bytes` match, and the forwarded count rose across the probe. Measures `probes`, `forwardedBefore`, `forwardedAfter`. | Any probe mismatch; the stranger's forwarded count unchanged. |
+
+**What this holds** (`MESH_INTERFACE → FIPS → "There is one FIPS mesh"`, `→ "A link rides a
+libp2p connection the two ends already hold"`): once pub1 and pub2 both peer with the
+stranger over UDP, every Notis node linked through it is in one public FIPS mesh and every
+one forwards, so the libp2p stream between pub1 and pub2 rides a TCP/FIPS connection
+carried hop by hop through the stranger. The link is end-to-end authenticated by each
+node's key, so the answers pub1 forwards from pub2 are pub2's own.
+
+**What a tester reports:** the pub1-and-pub2 setup also changes scenarios 1–9 in one way
+that no verdict counts: pub1 and pub2 now hold two paths to each other — libp2p over
+TCP/WebRTC-direct AND FIPS via the stranger — any time both nodes are up. s1–s9's
+verdicts read entries by `status`, `transport` and (where present) `via` on the browser's
+state, or by the fault's own measurement; none of them counts peers or links on pub1's or
+pub2's own side, and the stage default's `config.json` carries no FIPS addresses, so the
+browser never dials FIPS outside s9 and s10.
 
 ## Firefox by hand
 

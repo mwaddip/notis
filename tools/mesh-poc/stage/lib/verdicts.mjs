@@ -168,9 +168,10 @@ export function verdictS2Priv1(m) {
 // node behind the symmetric NAT has no direct path to the browser
 // behind its NAT, so it is reached through the relay with its data
 // relayed; the entry reads `ok` or `trailing`, never `retry` for want
-// of a direct path, never `blacklisted`, and a routed read lands on
-// it. The scenario waits for a routed read to land on priv2 and reads
-// the entry's path and status.
+// of a direct path, never `blacklisted`. The verdict reads priv2's
+// entry status and path and whether priv2 was blacklisted at any poll;
+// where routed reads land is Acceptance 7's, so `latestReadNodeId` is
+// recorded and not read.
 // Measurement:
 //   `{ expectedNodeId, priv2Status, priv2Path, latestReadNodeId,
 //      blacklistedAtAnyPoll }`.
@@ -179,7 +180,6 @@ export function verdictS2Priv2(m) {
   if (typeof m.expectedNodeId !== 'string') return 'FAIL';
   if (m.priv2Status !== 'ok' && m.priv2Status !== 'trailing') return 'FAIL';
   if (m.priv2Path !== 'relay') return 'FAIL';
-  if (m.latestReadNodeId !== m.expectedNodeId) return 'FAIL';
   if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
   return 'PASS';
 }
@@ -838,5 +838,98 @@ export function verdictS9Cut(m) {
   if (typeof m.nodeId !== 'string') return 'FAIL';
   if (m.status !== 'retry') return 'FAIL';
   if (m.blacklistedAtAnyPoll !== false) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the stranger lists
+// both Notis nodes among its peers (`fipsctl show peers`, by each node's
+// npub). Scenario 10 step 1: `strangerPeers` holds every npub the stranger
+// returned; both `pub1Npub` and `pub2Npub` are in it. Measurement:
+//   `{ pub1Npub: string, pub2Npub: string, strangerPeers: string[] }`.
+export function verdictS10StrangerPeers(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.pub1Npub !== 'string') return 'FAIL';
+  if (typeof m.pub2Npub !== 'string') return 'FAIL';
+  if (!Array.isArray(m.strangerPeers)) return 'FAIL';
+  if (m.strangerPeers.length === 0) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub1Npub)) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub2Npub)) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the split
+// isolates pub2 to the stranger: every TCP dial from pub2's namespace
+// to another Notis host's p2p port fails, and the stranger's `fipsctl
+// show peers` answer still lists pub2 among its peers (the one path
+// pub2 holds). A libp2p connection list is the wrong witness: libp2p
+// does not tear down a silent TCP connection within the wait, while
+// FIPS's own heartbeats end the link riding it. Measurement:
+//   `{ pub2Npub: string,
+//      pub2DialsToOther: Array<{ host, addr, port, failed: boolean }>,
+//      strangerPeers: string[] }`.
+export function verdictS10Split(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.pub2Npub !== 'string') return 'FAIL';
+  if (!Array.isArray(m.pub2DialsToOther)) return 'FAIL';
+  if (m.pub2DialsToOther.length === 0) return 'FAIL';
+  for (const d of m.pub2DialsToOther) {
+    if (d === null || typeof d !== 'object') return 'FAIL';
+    if (d.failed !== true) return 'FAIL';
+  }
+  if (!Array.isArray(m.strangerPeers)) return 'FAIL';
+  if (!m.strangerPeers.includes(m.pub2Npub)) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — "a browser that
+// reaches the one alone reads the other over FIPS through it". Scenario
+// 10 step 3: the other node's entry reads `ok`, `trailing` or `behind` (a
+// checked answer, ranking not reach), its `transport` is `fips`, and its `via`
+// names the access node. Measurement:
+//   `{ accessId: string,
+//      otherEntry: { notisId, status, transport, via } }`.
+export function verdictS10Through(m) {
+  if (missing(m)) return 'skipped';
+  if (typeof m.accessId !== 'string') return 'FAIL';
+  const e = m.otherEntry;
+  if (e === null || typeof e !== 'object') return 'FAIL';
+  if (typeof e.notisId !== 'string') return 'FAIL';
+  // pub2, isolated to the stranger, receives no blocks, so a node reached
+  // over FIPS through pub1 may read `behind`; the transport and the `via`
+  // are what the step holds.
+  if (e.status !== 'ok' && e.status !== 'trailing' && e.status !== 'behind') return 'FAIL';
+  if (e.transport !== 'fips') return 'FAIL';
+  if (e.via !== m.accessId) return 'FAIL';
+  return 'PASS';
+}
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — "its answers equal
+// its direct HTTP answers byte for byte, and the stranger lists both
+// nodes among its peers": scenario 10 step 4 holds the probe bytes equal
+// to the node's own, and reads `fipsctl show routing`'s forwarded count
+// before and after the probe — the count rises, which says the probe's
+// data rode through the stranger. The miner is paused across the probe,
+// so one direct read is enough. Measurement:
+//   `{ probes: Array<{ nodeId, path,
+//        probe: { sha256, bytes },
+//        direct: { sha256, bytes } }>,
+//      forwardedBefore: number, forwardedAfter: number }`.
+export function verdictS10Probe(m) {
+  if (missing(m)) return 'skipped';
+  if (!Array.isArray(m.probes) || m.probes.length === 0) return 'FAIL';
+  for (const p of m.probes) {
+    if (p === null || typeof p !== 'object') return 'FAIL';
+    if (typeof p.nodeId !== 'string') return 'FAIL';
+    if (typeof p.path !== 'string') return 'FAIL';
+    if (p.probe === null || typeof p.probe !== 'object') return 'FAIL';
+    if (p.direct === null || typeof p.direct !== 'object') return 'FAIL';
+    if (typeof p.probe.sha256 !== 'string' || typeof p.probe.bytes !== 'number') return 'FAIL';
+    if (typeof p.direct.sha256 !== 'string' || typeof p.direct.bytes !== 'number') return 'FAIL';
+    if (p.probe.sha256 !== p.direct.sha256) return 'FAIL';
+    if (p.probe.bytes !== p.direct.bytes) return 'FAIL';
+  }
+  if (typeof m.forwardedBefore !== 'number') return 'FAIL';
+  if (typeof m.forwardedAfter !== 'number') return 'FAIL';
+  if (m.forwardedAfter <= m.forwardedBefore) return 'FAIL';
   return 'PASS';
 }

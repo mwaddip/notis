@@ -40,6 +40,10 @@ const TEST_KEYS = [
   'MESH_WSS',
   'MESH_ACME_DIRECTORY',
   'MESH_ACME_CHALLENGE_PORT',
+  // NODE_INTERFACE → Configuration — the `FIPS_*` rows.
+  'FIPS_PUBLIC',
+  'FIPS_PUBLIC_PEERS',
+  'FIPS_UDP_LISTEN',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
   //
@@ -1442,6 +1446,203 @@ describe('config', () => {
       process.env['MESH_ACME_DIRECTORY'] = 'https://acme.example.com/directory';
       process.env['MESH_ACME_CHALLENGE_PORT'] = '70000';
       await expect(import('../src/config.js')).rejects.toThrow(/MESH_ACME_CHALLENGE_PORT/);
+    });
+  });
+
+  // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC`, `FIPS_PUBLIC_PEERS`
+  // and `FIPS_UDP_LISTEN` rows. The node reads these on top of `MESH_ROLE`:
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+  // its operator turns it on".
+  describe('20. FIPS_* settings', () => {
+    // Positive control: unset FIPS_PUBLIC reads `off`
+    // (NODE_INTERFACE → Configuration — the FIPS_PUBLIC row, default `off`),
+    // so the mesh holds no fipsPublic.
+    it('no FIPS_PUBLIC → mesh.fipsPublic undefined', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      expect(mesh['fipsPublic']).toBeUndefined();
+    });
+
+    // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+    // its operator turns it on" and "The built-in list is the public test
+    // nodes": FIPS_PUBLIC=on alone opens peering, takes the built-in list
+    // and binds no inbound address.
+    //
+    // Last assertion at the base:
+    //   AssertionError: expected undefined to deeply equal { peers: [ { …(4) }, …(6) ], …(1) }
+    it('FIPS_PUBLIC=on → fipsPublic takes PUBLIC_FIPS_PEERS and listen null', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      const { PUBLIC_FIPS_PEERS } = await import('@dagsocial/net');
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      // Control: the mesh object is present with the role it was given.
+      expect(mesh['role']).toBe('private');
+      expect(mesh['fipsPublic']).toEqual({ peers: PUBLIC_FIPS_PEERS, listen: null });
+    });
+
+    // MESH_INTERFACE → FIPS → "A node may accept public links": FIPS_UDP_LISTEN
+    // names the address the node binds.
+    //
+    // Last assertion at the base:
+    //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
+    it('FIPS_UDP_LISTEN=0.0.0.0:2121 → listen { host, port }', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      process.env['FIPS_UDP_LISTEN'] = '0.0.0.0:2121';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      // Control: the mesh object is present with the role it was given.
+      expect(mesh['role']).toBe('private');
+      expect(mesh['fipsPublic']).toEqual(
+        expect.objectContaining({ listen: { host: '0.0.0.0', port: 2121 } }),
+      );
+    });
+
+    // A bracketed IPv6 host reads as MESH_STUN reads one.
+    //
+    // Last assertion at the base:
+    //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
+    it('FIPS_UDP_LISTEN=[::]:2121 → listen { "::", 2121 }', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      process.env['FIPS_UDP_LISTEN'] = '[::]:2121';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      // Control: the mesh object is present with the role it was given.
+      expect(mesh['role']).toBe('private');
+      expect(mesh['fipsPublic']).toEqual(
+        expect.objectContaining({ listen: { host: '::', port: 2121 } }),
+      );
+    });
+
+    // MESH_INTERFACE → FIPS → "A public peer is an npub at a `host:port`":
+    // the list replaces the built-in default, the default port is 2121, and
+    // a bracketed IPv6 host is read.
+    //
+    // Last assertion at the base:
+    //   AssertionError: expected undefined to deeply equal ObjectContaining{…}
+    it('FIPS_PUBLIC_PEERS replaces the list, defaults port to 2121, reads a bracketed IPv6 host', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      const npub = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
+      process.env['FIPS_PUBLIC_PEERS'] =
+        `${npub}@example.com,${npub}@example.org:3030,${npub}@[2001:db8::1]`;
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      const mesh = (cfg as unknown as Record<string, unknown>)['mesh'] as Record<string, unknown>;
+      // Control: the mesh object is present with the role it was given.
+      expect(mesh['role']).toBe('private');
+      expect(mesh['fipsPublic']).toEqual(
+        expect.objectContaining({
+          peers: [
+            { name: 'example.com', npub, host: 'example.com', port: 2121 },
+            { name: 'example.org', npub, host: 'example.org', port: 3030 },
+            { name: '2001:db8::1', npub, host: '2001:db8::1', port: 2121 },
+          ],
+        }),
+      );
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC` row: anything but
+    // `on` or `off` is refused naming the setting.
+    //
+    // Last assertion at the base:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    it('FIPS_PUBLIC=yes is refused naming FIPS_PUBLIC', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'yes';
+      await expect(import('../src/config.js')).rejects.toThrow(/FIPS_PUBLIC/);
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC_PEERS` row:
+    // refused unless FIPS_PUBLIC=on.
+    //
+    // Last assertion at the base:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    it('FIPS_PUBLIC_PEERS without FIPS_PUBLIC=on is refused naming FIPS_PUBLIC_PEERS', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC_PEERS'] =
+        'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com';
+      await expect(import('../src/config.js')).rejects.toThrow(/FIPS_PUBLIC_PEERS/);
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_UDP_LISTEN` row:
+    // refused unless FIPS_PUBLIC=on.
+    //
+    // Last assertion at the base:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    it('FIPS_UDP_LISTEN without FIPS_PUBLIC=on is refused naming FIPS_UDP_LISTEN', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_UDP_LISTEN'] = '0.0.0.0:2121';
+      await expect(import('../src/config.js')).rejects.toThrow(/FIPS_UDP_LISTEN/);
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC` row: refused without
+    // MESH_ROLE, the refusal naming both settings.
+    //
+    // Last assertion at the base:
+    //   AssertionError: expected null not to be null
+    it('FIPS_PUBLIC=on without MESH_ROLE is refused naming FIPS_PUBLIC and MESH_ROLE', async () => {
+      process.env['FIPS_PUBLIC'] = 'on';
+      const err = await import('../src/config.js').then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(err).not.toBeNull();
+      expect(err!.message).toMatch(/FIPS_PUBLIC/);
+      expect(err!.message).toMatch(/MESH_ROLE/);
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC_PEERS` row:
+    // at most FIPS_PUBLIC_PEERS_MAX (16) entries.
+    //
+    // Last assertion at the base:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    it('17 FIPS_PUBLIC_PEERS entries is refused naming FIPS_PUBLIC_PEERS', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      const npub = 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98';
+      const entries: string[] = [];
+      for (let i = 0; i < 17; i++) entries.push(`${npub}@example${i}.com`);
+      process.env['FIPS_PUBLIC_PEERS'] = entries.join(',');
+      await expect(import('../src/config.js')).rejects.toThrow(/FIPS_PUBLIC_PEERS/);
+    });
+
+    // NODE_INTERFACE → Configuration — the `FIPS_PUBLIC_PEERS` row: an entry
+    // with no `@`, a non-`npub1` key, or a port outside 1..65535 is refused.
+    //
+    // Last assertion at the base, each entry:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    const BAD_PEERS: ReadonlyArray<readonly [string, string]> = [
+      ['no @ in entry', 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98.example.com'],
+      ['a non-npub1 key', 'xpub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com'],
+      ['port 0', 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com:0'],
+      ['port 65536', 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98@example.com:65536'],
+    ];
+    for (const [label, entry] of BAD_PEERS) {
+      it(`FIPS_PUBLIC_PEERS with ${label} is refused naming FIPS_PUBLIC_PEERS`, async () => {
+        process.env['MESH_ROLE'] = 'private';
+        process.env['FIPS_PUBLIC'] = 'on';
+        process.env['FIPS_PUBLIC_PEERS'] = entry;
+        await expect(import('../src/config.js')).rejects.toThrow(/FIPS_PUBLIC_PEERS/);
+      });
+    }
+
+    // A hostname in FIPS_UDP_LISTEN is refused, as MESH_STUN refuses one.
+    //
+    // Last assertion at the base:
+    //   AssertionError: promise resolved "{ …(2), …(1) }" instead of rejecting
+    it('FIPS_UDP_LISTEN=example.com:2121 is refused naming FIPS_UDP_LISTEN', async () => {
+      process.env['MESH_ROLE'] = 'private';
+      process.env['FIPS_PUBLIC'] = 'on';
+      process.env['FIPS_UDP_LISTEN'] = 'example.com:2121';
+      await expect(import('../src/config.js')).rejects.toThrow(/FIPS_UDP_LISTEN/);
     });
   });
 });

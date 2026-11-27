@@ -34,6 +34,10 @@ import {
   verdictS9Through,
   verdictS9Probe,
   verdictS9Cut,
+  verdictS10StrangerPeers,
+  verdictS10Split,
+  verdictS10Through,
+  verdictS10Probe,
 } from '../stage/lib/verdicts.mjs';
 
 describe('skipped — missing measurement', () => {
@@ -69,6 +73,10 @@ describe('skipped — missing measurement', () => {
     ['verdictS9Through', verdictS9Through],
     ['verdictS9Probe', verdictS9Probe],
     ['verdictS9Cut', verdictS9Cut],
+    ['verdictS10StrangerPeers', verdictS10StrangerPeers],
+    ['verdictS10Split', verdictS10Split],
+    ['verdictS10Through', verdictS10Through],
+    ['verdictS10Probe', verdictS10Probe],
   ];
   for (const [name, f] of verdicts) {
     it(`${name}: null → skipped`, () => {
@@ -217,7 +225,7 @@ describe('verdictS2Priv2 — symmetric NAT: reached through a relay that carries
   // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2 —
   // the node behind the symmetric NAT is reached through a relay
   // that carries its data; it reads `ok` or `trailing`, never
-  // `blacklisted`, and a routed read lands on it.
+  // `blacklisted`. Where the latest routed read landed is not read.
   const PASS = {
     expectedNodeId: '1'.repeat(64),
     priv2Status: 'ok',
@@ -225,7 +233,7 @@ describe('verdictS2Priv2 — symmetric NAT: reached through a relay that carries
     latestReadNodeId: '1'.repeat(64),
     blacklistedAtAnyPoll: false,
   };
-  it('ok with path relay and the latest read landing on priv2 → PASS', () => {
+  it('ok with path relay → PASS', () => {
     expect(verdictS2Priv2(PASS)).toBe('PASS');
   });
   it('trailing (one block behind on the tip\'s chain) → PASS', () => {
@@ -240,8 +248,8 @@ describe('verdictS2Priv2 — symmetric NAT: reached through a relay that carries
   it('path direct (data not over the relay) → FAIL', () => {
     expect(verdictS2Priv2({ ...PASS, priv2Path: 'direct' })).toBe('FAIL');
   });
-  it('latest read landed on another node → FAIL', () => {
-    expect(verdictS2Priv2({ ...PASS, latestReadNodeId: '2'.repeat(64) })).toBe('FAIL');
+  it('latest read landed on another node → PASS', () => {
+    expect(verdictS2Priv2({ ...PASS, latestReadNodeId: '2'.repeat(64) })).toBe('PASS');
   });
   it('priv2 blacklisted at an earlier poll → FAIL', () => {
     expect(verdictS2Priv2({ ...PASS, blacklistedAtAnyPoll: true })).toBe('FAIL');
@@ -1752,5 +1760,206 @@ describe('verdictS9Cut — a cut FIPS-reached node reads retry, never blackliste
     const m: Record<string, unknown> = { ...PASS };
     delete m['nodeId'];
     expect(verdictS9Cut(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS10StrangerPeers — the stranger lists both Notis nodes among its peers', () => {
+  // Real-shape npubs captured from fipsctl keygen -s against the
+  // v0.5.3 release; `verdictS10StrangerPeers` reads them by equality
+  // against `strangerPeers`, so the bytes match what `fipsctl show
+  // peers` would hand the scenario at runtime.
+  const PUB1 = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
+  const PUB2 = 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7';
+  const PASS = {
+    pub1Npub: PUB1,
+    pub2Npub: PUB2,
+    strangerPeers: [PUB1, PUB2],
+  };
+  it('both npubs present among the stranger\'s peers → PASS', () => {
+    expect(verdictS10StrangerPeers(PASS)).toBe('PASS');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — one of the two
+  // Notis nodes missing from `fipsctl show peers` breaks the rule.
+  it('pub2 missing from the stranger\'s peers → FAIL', () => {
+    expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [PUB1] })).toBe('FAIL');
+  });
+  it('pub1 missing from the stranger\'s peers → FAIL', () => {
+    expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [PUB2] })).toBe('FAIL');
+  });
+  it('strangerPeers empty → FAIL', () => {
+    expect(verdictS10StrangerPeers({ ...PASS, strangerPeers: [] })).toBe('FAIL');
+  });
+  it('pub1Npub missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['pub1Npub'];
+    expect(verdictS10StrangerPeers(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS10Split — pub2 reaches no Notis host, and the stranger still lists pub2', () => {
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the split
+  // isolates pub2 to the stranger: a TCP dial from pub2's namespace to
+  // every other Notis host's p2p port fails, and the stranger's
+  // `fipsctl show peers` still names pub2 (since pub2↔stranger is the
+  // one path left open).
+  const PUB2 = 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7';
+  const PUB1 = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
+  const PASS = {
+    pub2Npub: PUB2,
+    pub2DialsToOther: [
+      { host: 'pub1', addr: '11.100.0.11', port: 9100, failed: true },
+      { host: 'priv1', addr: '10.101.0.11', port: 9100, failed: true },
+    ],
+    strangerPeers: [PUB1, PUB2],
+  };
+  it('every dial failed and stranger lists pub2 → PASS', () => {
+    expect(verdictS10Split(PASS)).toBe('PASS');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — a dial that
+  // connected says pub2 reached a Notis host directly.
+  it('a dial to pub1 succeeded → FAIL', () => {
+    expect(verdictS10Split({
+      ...PASS,
+      pub2DialsToOther: [
+        { host: 'pub1', addr: '11.100.0.11', port: 9100, failed: false },
+        { host: 'priv1', addr: '10.101.0.11', port: 9100, failed: true },
+      ],
+    })).toBe('FAIL');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — "the stranger
+  // still lists pub2 among its peers": the stranger's answer missing
+  // pub2's npub says pub2's FIPS link to the stranger is gone too.
+  it('the stranger does not list pub2 → FAIL', () => {
+    expect(verdictS10Split({ ...PASS, strangerPeers: [PUB1] })).toBe('FAIL');
+  });
+  it('pub2DialsToOther empty → FAIL (no positive evidence)', () => {
+    expect(verdictS10Split({ ...PASS, pub2DialsToOther: [] })).toBe('FAIL');
+  });
+  it('pub2Npub missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['pub2Npub'];
+    expect(verdictS10Split(m)).toBe('FAIL');
+  });
+  it('strangerPeers missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['strangerPeers'];
+    expect(verdictS10Split(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS10Through — the other Notis node reads fips via the access node', () => {
+  const ACCESS = 'a'.repeat(64);
+  const OTHER = 'b'.repeat(64);
+  const PASS = {
+    accessId: ACCESS,
+    otherEntry: { notisId: OTHER, status: 'ok', transport: 'fips', via: ACCESS },
+  };
+  it('otherEntry at ok/fips/via=access → PASS', () => {
+    expect(verdictS10Through(PASS)).toBe('PASS');
+  });
+  it('trailing is reach, not ranking → PASS', () => {
+    expect(verdictS10Through({
+      ...PASS,
+      otherEntry: { notisId: OTHER, status: 'trailing', transport: 'fips', via: ACCESS },
+    })).toBe('PASS');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — reading the
+  // other node direct rather than fips says the two never lost their
+  // own path.
+  it('entry transport is webrtc-direct → FAIL', () => {
+    expect(verdictS10Through({
+      ...PASS,
+      otherEntry: { notisId: OTHER, status: 'ok', transport: 'webrtc-direct', via: null },
+    })).toBe('FAIL');
+  });
+  // The isolated node receives no blocks, so a node reached over FIPS
+  // through the access node may read `behind`; transport and `via` hold.
+  it('behind over fips via the access node → PASS', () => {
+    expect(verdictS10Through({
+      ...PASS,
+      otherEntry: { notisId: OTHER, status: 'behind', transport: 'fips', via: ACCESS },
+    })).toBe('PASS');
+  });
+  it('entry status retry → FAIL', () => {
+    expect(verdictS10Through({
+      ...PASS,
+      otherEntry: { notisId: OTHER, status: 'retry', transport: 'fips', via: ACCESS },
+    })).toBe('FAIL');
+  });
+  it('entry via names another node → FAIL', () => {
+    expect(verdictS10Through({
+      ...PASS,
+      otherEntry: { notisId: OTHER, status: 'ok', transport: 'fips', via: 'c'.repeat(64) },
+    })).toBe('FAIL');
+  });
+  it('accessId missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['accessId'];
+    expect(verdictS10Through(m)).toBe('FAIL');
+  });
+});
+
+describe('verdictS10Probe — probes match byte for byte and the stranger\'s forwarded count rises', () => {
+  const NODE_ID = 'a'.repeat(64);
+  const PASS = {
+    probes: [
+      {
+        nodeId: NODE_ID,
+        path: '/blocks/current',
+        probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+        direct: { sha256: 'ab'.repeat(32), bytes: 123 },
+      },
+      {
+        nodeId: NODE_ID,
+        path: '/nipopow/proof/24/20',
+        probe: { sha256: 'cd'.repeat(32), bytes: 4567 },
+        direct: { sha256: 'cd'.repeat(32), bytes: 4567 },
+      },
+    ],
+    forwardedBefore: 100,
+    forwardedAfter: 180,
+  };
+  it('probes match and forwarded count rose → PASS', () => {
+    expect(verdictS10Probe(PASS)).toBe('PASS');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — a probe's bytes
+  // not matching the node's own answer breaks the equality.
+  it('sha256 mismatch → FAIL', () => {
+    expect(verdictS10Probe({
+      ...PASS,
+      probes: [{
+        nodeId: NODE_ID,
+        path: '/blocks/current',
+        probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+        direct: { sha256: 'ee'.repeat(32), bytes: 123 },
+      }],
+    })).toBe('FAIL');
+  });
+  it('bytes mismatch → FAIL', () => {
+    expect(verdictS10Probe({
+      ...PASS,
+      probes: [{
+        nodeId: NODE_ID,
+        path: '/blocks/current',
+        probe: { sha256: 'ab'.repeat(32), bytes: 123 },
+        direct: { sha256: 'ab'.repeat(32), bytes: 456 },
+      }],
+    })).toBe('FAIL');
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the stranger's
+  // forwarded count unchanged says the stream did not ride through it.
+  it('forwarded count unchanged → FAIL', () => {
+    expect(verdictS10Probe({ ...PASS, forwardedBefore: 100, forwardedAfter: 100 })).toBe('FAIL');
+  });
+  it('forwarded count went backwards → FAIL', () => {
+    expect(verdictS10Probe({ ...PASS, forwardedBefore: 200, forwardedAfter: 100 })).toBe('FAIL');
+  });
+  it('probes empty → FAIL', () => {
+    expect(verdictS10Probe({ ...PASS, probes: [] })).toBe('FAIL');
+  });
+  it('forwardedBefore missing → FAIL', () => {
+    const m: Record<string, unknown> = { ...PASS };
+    delete m['forwardedBefore'];
+    expect(verdictS10Probe(m)).toBe('FAIL');
   });
 });

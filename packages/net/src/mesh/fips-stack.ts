@@ -15,6 +15,28 @@ import type { Connection, Libp2p } from '@libp2p/interface';
 import { LibP2pLinkTransport } from './fips-link.js';
 import { fipsDatagramEndpoint, fipsTransport } from './fips-transport.js';
 import { registerFipsProtocol } from './fips-addr.js';
+// The concrete UDP transport is in a Node-only module
+// (`fips-udp.ts` holds `import * as dgram from 'node:dgram'`); this
+// file reaches the browser build through `src/browser.ts`' re-export
+// of `createFipsStack`, so it declares the surface it reads as a local
+// interface and names no type from `fips-udp.ts`. The Node caller
+// (`node.ts`) constructs the concrete transport and passes it as
+// `options.udp`; `FipsStack.udp` reads back that same instance.
+import type { Transport } from '@fips/core';
+
+/**
+ * MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+ * when its operator turns it on" — the public-peering transport
+ * the stack carries beside the link transport: a fips-ts `Transport`
+ * that `noteLink(addr, up)` drives, with `listenPort4` / `listenPort6`
+ * for the caller's bound-address readback.
+ */
+export interface UdpFipsLikeTransport extends Transport {
+  readonly type: 'udp';
+  noteLink(addr: string, up: boolean): void;
+  listenPort4(): number | null;
+  listenPort6(): number | null;
+}
 import {
   FIPS_LINK_HINT_TIMEOUT_MS,
   FIPS_SERVICE_PORT,
@@ -36,6 +58,12 @@ export interface FipsStack {
   readonly link: LibP2pLinkTransport;
   readonly endpoint: FipsTcpEndpoint;
   readonly transport: ReturnType<typeof fipsTransport>;
+  /**
+   * MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+   * when its operator turns it on" — the public-peering UDP transport
+   * when `createFipsStack` was given a `udp` option, `null` otherwise.
+   */
+  readonly udp: UdpFipsLikeTransport | null;
   attach(libp2p: Libp2p): Promise<void>;
   stop(): Promise<void>;
 }
@@ -54,6 +82,16 @@ export interface CreateFipsStackOptions {
   readonly dial: boolean;
   readonly linkOutbound: boolean;
   readonly maxConnections?: number;
+  /**
+   * MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+   * when its operator turns it on" — public FIPS peering over UDP.
+   * Set, the stack's `FipsNode` runs `[link, udp]` and reads each UDP
+   * link's state off the node's `peer` events; absent, the stack runs
+   * the link transport alone. The caller constructs the instance:
+   * `fips-udp.ts` holds Node's `dgram`/`dns`, which `src/browser.ts`
+   * cannot carry.
+   */
+  readonly udp?: UdpFipsLikeTransport;
 }
 
 /**
@@ -79,9 +117,14 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
     retryCapMs: RETRY_CAP_MS,
     random: Math.random,
   });
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+  // when its operator turns it on" — the UDP transport runs beside the
+  // link transport when the caller hands one in.
+  const udp: UdpFipsLikeTransport | null = options.udp ?? null;
+  const transports = udp !== null ? [link, udp] : [link];
   const node = new FipsNode({
     identity: options.identity,
-    transports: [link],
+    transports,
     forwarding: options.forwarding,
   });
   nodeRef = node;
@@ -122,6 +165,13 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
     peerUnsub = node.on('peer', (data) => {
       const ev = data as PeerEvent;
       if (ev.state === 'connected') link.linkUp(ev.remotePubkey);
+      // MESH_INTERFACE → FIPS → "A public peer is an npub at a
+      // `host:port`" — the UDP transport reads each link's state
+      // off the node's own peer events, so the configured peer's
+      // retry count ends when its link comes up.
+      if (udp !== null && ev.remoteAddr.transport === 'udp') {
+        udp.noteLink(ev.remoteAddr.addr, ev.state === 'connected');
+      }
     });
     await node.start();
     pollTimer = setInterval(() => {
@@ -169,6 +219,7 @@ export function createFipsStack(options: CreateFipsStackOptions): FipsStack {
     link,
     endpoint,
     transport,
+    udp,
     attach,
     stop,
   };

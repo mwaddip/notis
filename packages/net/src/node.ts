@@ -118,13 +118,14 @@ import {
   effectiveAnnounce,
 } from './mesh/libp2p-options.js';
 import { startRelayRetry, type RelayRetry } from './mesh/relay-retry.js';
-import { RETRY_BASE_MS, RETRY_CAP_MS } from './mesh/constants.js';
+import { FIPS_PUBLIC_INBOUND_MAX, RETRY_BASE_MS, RETRY_CAP_MS } from './mesh/constants.js';
 import {
   notisIdFromPeerId,
   localAddrsFor,
 } from './mesh/identity.js';
 import { loadFipsKey } from './mesh/fips-key.js';
 import { createFipsStack, type FipsStack } from './mesh/fips-stack.js';
+import { UdpFipsTransport } from './mesh/fips-udp.js';
 import { npubOf } from './mesh/fips-identity.js';
 import { fipsMultiaddr } from './mesh/fips-addr.js';
 import { acmeSource, type CertificateSource, type IpCertificate } from './mesh/acme.js';
@@ -908,6 +909,22 @@ export class NetNode {
         wssInitialCert = await initialCertificate(wssOptions);
       }
       const fipsIdentity = await loadFipsKey(mesh.stateDir);
+      // MESH_INTERFACE → FIPS → "A node peers with the public FIPS
+      // mesh when its operator turns it on" — `fipsPublic` has the
+      // stack open a UDP transport beside the link transport. `listen`
+      // null holds no stranger link (inboundMax = 0); a listen address
+      // opens the public cap at `FIPS_PUBLIC_INBOUND_MAX`. The
+      // transport is constructed here, in the Node module, because
+      // `fips-stack.ts` reaches the browser build (`src/browser.ts`)
+      // and `fips-udp.ts` holds `node:dgram` at the top.
+      const fipsPublic = mesh.fipsPublic;
+      const udpTransport = fipsPublic !== undefined
+        ? new UdpFipsTransport({
+            peers: fipsPublic.peers,
+            listen: fipsPublic.listen,
+            inboundMax: fipsPublic.listen === null ? 0 : FIPS_PUBLIC_INBOUND_MAX,
+          })
+        : undefined;
       fipsStack = createFipsStack({
         identity: fipsIdentity,
         forwarding: true,
@@ -915,6 +932,7 @@ export class NetNode {
         dial: false,
         linkOutbound: true,
         maxConnections: connectionCeiling,
+        ...(udpTransport !== undefined ? { udp: udpTransport } : {}),
       });
       this.fipsStack = fipsStack;
     }

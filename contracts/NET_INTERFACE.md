@@ -1435,13 +1435,22 @@ persists"`). `meshIdentity()` answers the node's mesh identity — its Notis spe
 announces and its local WebRTC-direct addresses — once they are announced, `null` with no mesh; `onMeshAddresses`
 reports each change of the announced set.
 
-**A mesh node runs a FIPS stack** (`MESH_INTERFACE → FIPS`): a fips-ts `FipsNode` whose one transport carries FIPS link
-packets on libp2p streams, a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a libp2p transport over its streams. The
+**A mesh node runs a FIPS stack** (`MESH_INTERFACE → FIPS`): a fips-ts `FipsNode` whose link transport carries FIPS link
+packets on libp2p streams — beside a UDP transport where the node peers (→ "A mesh node with `fipsPublic` peers over
+UDP") — a fips-tcp endpoint on `FIPS_SERVICE_PORT`, and a libp2p transport over its streams. The
 stack is built before `createLibp2p`, its transport among the transports and `/fips` among the listen addresses, and
 attached after it — the link protocol's handler and the links over the connections the node dials; `stop` stops it.
 `start` reads the node's FIPS key from the mesh state directory with `loadFipsKey(stateDir)` and builds the stack with
 forwarding on, its transport listening and dialling nothing, its listener reporting the node's FIPS address, which the
 node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are `net`'s exports:
+
+**A mesh node with `fipsPublic` peers over UDP** (`MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+its operator turns it on"`): `MeshConfig.fipsPublic` — `{ peers, listen }`, absent with peering off — has `start` build
+a `UdpFipsTransport`, holding `FIPS_PUBLIC_INBOUND_MAX` links it did not dial where `listen` names an address and none
+where it is `null`, and hand it to the stack, which runs it beside the link transport and tells it each UDP link's state
+from the `FipsNode`'s `peer` events. The transport is built in the node's own module, never in the stack's: the stack
+reaches `./browser`, and the transport holds Node's `dgram`. `assertMeshConfig` refuses an empty list, a list past
+`FIPS_PUBLIC_PEERS_MAX`, a bad npub and a port outside 1–65535 with `MeshConfigError`.
 
 - `createFipsStack({ identity, forwarding, network, dial, linkOutbound, maxConnections? })` answers the `FipsStack` —
   `{ identity, link, endpoint, transport, attach(libp2p), stop() }`; with `linkOutbound` it opens a link over each
@@ -1458,7 +1467,17 @@ node announces; `fipsAddress()` answers it, `null` with no mesh. The pieces are 
 - `FIPS_PROTOCOL_NAME`, `registerFipsProtocol()`, `fipsMultiaddr(xOnly, peerId)`, `parseFipsMultiaddr(ma)` and
   `isFipsMultiaddr(ma)` — the FIPS address;
 - `npubOf(identity)` and `dialKeyHex(xOnly)` — a FIPS key's npub, and the `02‖x` a dial addresses it by;
-- `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone.
+- `loadFipsKey(stateDir)` — the key file's one reader, at the root entry alone;
+- `createFipsStack`'s `udp?: UdpFipsLikeTransport` — a fips-ts `Transport` of `type` `udp` with
+  `noteLink(addr, up)` and its bound ports, built by the caller — runs it beside the link transport, and `FipsStack.udp`
+  answers it, `null` without one;
+- `UdpFipsTransport` and its options `{ listen, peers, inboundMax, resolve?, random? }` — fips-ts's
+  transport over UDP, `type` `udp`, `mtu` `FIPS_LINK_MTU`, a peer
+  addressed `<ipv4>:<port>` or `[<ipv6>]:<port>`, its configured peers dialled through `discover()`, `noteLink(addr,
+  up)` told each link's state;
+- `PublicFipsPeer` — `{ name, npub, host, port }` — `PUBLIC_FIPS_PEERS`, the built-in list, and
+  `FIPS_UDP_DEFAULT_PORT`, `FIPS_PUBLIC_PEERS_MAX` and `FIPS_PUBLIC_INBOUND_MAX`, at the root entry alone — never
+  `./browser`.
 
 ---
 

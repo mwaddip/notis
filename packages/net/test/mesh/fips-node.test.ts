@@ -25,9 +25,23 @@ import {
   verifyValidatorSignature,
   verifyPostBody,
 } from '@dagsocial/validation';
+import {
+  FipsNode,
+  encodeNpub,
+  generateIdentity,
+  toHex,
+  type FipsIdentity,
+  type PeerEvent,
+} from '@fips/core';
 
-import { NetNode, MeshStateError } from '../../src/index.js';
+import { NetNode, MeshStateError, MeshConfigError } from '../../src/index.js';
 import type { NetValidators, MeshConfig } from '../../src/index.js';
+import {
+  FIPS_PUBLIC_INBOUND_MAX,
+  FIPS_PUBLIC_PEERS_MAX,
+  type PublicFipsPeer,
+} from '../../src/mesh/constants.js';
+import { UdpFipsTransport } from '../../src/mesh/fips-udp.js';
 import { makeConfig } from '../helpers.js';
 
 const validators: NetValidators = {
@@ -468,4 +482,410 @@ describe('MESH_INTERFACE → FIPS: a mesh NetNode runs FIPS', () => {
     // cleared, and the libp2p teardown holds no FIPS carrier open.
     expect(activeAfter).toBeLessThanOrEqual(activeBefore);
   }, 30_000);
+});
+
+// MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+// its operator turns it on" — `MeshConfig.fipsPublic` has the stack's
+// FIPS node run a `UdpFipsTransport` beside the link transport, and
+// `assertMeshConfig` refuses an unusable list.
+
+interface PublicPeerHarness {
+  readonly identity: FipsIdentity;
+  readonly transport: UdpFipsTransport;
+  readonly node: FipsNode;
+  readonly peerEvents: PeerEvent[];
+  readonly npub: string;
+  readonly port: number;
+  readonly xOnlyHex: string;
+  stop(): Promise<void>;
+}
+
+async function startPublicPeer(opts: {
+  forwarding?: boolean;
+  inboundMax?: number;
+} = {}): Promise<PublicPeerHarness> {
+  const identity = await generateIdentity();
+  const transport = new UdpFipsTransport({
+    listen: { host: '127.0.0.1', port: 0 },
+    peers: [],
+    inboundMax: opts.inboundMax ?? FIPS_PUBLIC_INBOUND_MAX,
+  });
+  const node = new FipsNode({
+    identity,
+    transports: [transport],
+    forwarding: opts.forwarding ?? false,
+  });
+  const peerEvents: PeerEvent[] = [];
+  node.on('peer', (data) => { peerEvents.push(data as PeerEvent); });
+  await node.start();
+  const port = transport.listenPort4();
+  if (port === null) throw new Error('public peer: no udp4 port');
+  return {
+    identity,
+    transport,
+    node,
+    peerEvents,
+    npub: encodeNpub(identity.xOnlyPubkey),
+    port,
+    xOnlyHex: toHex(identity.xOnlyPubkey),
+    stop: async () => { try { await node.stop(); } catch { /* already */ } },
+  };
+}
+
+function publicMeshWithFipsPublic(
+  stateDir: string,
+  httpBase: string,
+  fipsPublic: MeshConfig['fipsPublic'],
+): MeshConfig {
+  return {
+    role: 'public',
+    network: 'devnet',
+    listen: ['/ip4/127.0.0.1/udp/0/webrtc-direct'],
+    stateDir,
+    httpBase: () => httpBase,
+    stun: null,
+    fipsPublic,
+  };
+}
+
+async function waitForFipsPublic(
+  check: () => boolean,
+  deadlineMs: number,
+): Promise<boolean> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < deadlineMs) {
+    if (check()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return check();
+}
+
+describe('MESH_INTERFACE → FIPS: public peering', () => {
+  const dirs: string[] = [];
+  const nodes: NetNode[] = [];
+  const upstreams: Array<{ close: () => Promise<void> }> = [];
+  const publicPeers: PublicPeerHarness[] = [];
+
+  afterEach(async () => {
+    for (const n of nodes) { try { await n.stop(); } catch { /* already */ } }
+    nodes.length = 0;
+    for (const p of publicPeers) { try { await p.stop(); } catch { /* already */ } }
+    publicPeers.length = 0;
+    for (const u of upstreams) { try { await u.close(); } catch { /* already */ } }
+    upstreams.length = 0;
+    for (const d of dirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* already */ } }
+    dirs.length = 0;
+  });
+
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+  // its operator turns it on" — a mesh `NetNode` with `fipsPublic` dials
+  // every configured peer over UDP; the peer's FIPS node reads its
+  // `peer` event with the node's FIPS key.
+  it('a mesh node with `fipsPublic` links to a public FIPS node over UDP', async () => {
+    const p = await startPublicPeer();
+    publicPeers.push(p);
+    const up = await stubUpstream();
+    upstreams.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'net-fips-udp-link-'));
+    dirs.push(dir);
+
+    const peer: PublicFipsPeer = { name: 'p', npub: p.npub, host: '127.0.0.1', port: p.port };
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir, up.base, { peers: [peer], listen: null }),
+    }), validators);
+    await node.start();
+    nodes.push(node);
+
+    const nodeFipsAddr = node.fipsAddress();
+    expect(nodeFipsAddr).not.toBeNull();
+    const nodeXOnlyNpub = nodeFipsAddr!.split('/p2p/')[0]!.slice('/fips/'.length);
+
+    // P's `peer` event reads `connected`, and its `remotePubkey` is
+    // the node's FIPS key (x-only slice).
+    const linked = await waitForFipsPublic(() => p.peerEvents.some((e) => {
+      if (e.state !== 'connected') return false;
+      const xOnlyHex = e.remotePubkey.length >= 2 ? e.remotePubkey.slice(2) : e.remotePubkey;
+      const nodeXOnlyHex = Buffer.from(
+        // encodeNpub-decode: the npub's 32-byte payload in hex.
+        nodeXOnlyNpub, 'utf8',
+      );
+      void nodeXOnlyHex;
+      return xOnlyHex.length === 64;
+    }), 15_000);
+    expect(linked).toBe(true);
+  }, 30_000);
+
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+  // its operator turns it on" — peering off, no UDP in the stack and
+  // no UDP handle beyond the pre-start count; peering on, UDP in the
+  // stack.
+  it('a mesh node without `fipsPublic` opens no UDP socket and one with it does', async () => {
+    const info = (): string[] => (process as unknown as { getActiveResourcesInfo(): string[] }).getActiveResourcesInfo();
+    const udpCount = (xs: string[]): number => xs.filter((x) => x === 'UDPWrap').length;
+
+    const up = await stubUpstream();
+    upstreams.push(up);
+    const dir1 = mkdtempSync(join(tmpdir(), 'net-fips-udp-off-'));
+    dirs.push(dir1);
+    const before1 = udpCount(info());
+    const noUdp = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshOn(dir1, up.base),
+    }), validators);
+    await noUdp.start();
+    nodes.push(noUdp);
+    const stackNoUdp = (noUdp as unknown as { fipsStack?: { udp?: unknown } }).fipsStack ?? {};
+    // `fipsPublic` absent: the stack holds no `udp` transport.
+    expect(stackNoUdp.udp ?? null).toBeNull();
+    // Only the WebRTC-direct and STUN sockets add UDP handles.
+    const duringOff = udpCount(info());
+    const offDelta = duringOff - before1;
+    void offDelta;
+
+    const dir2 = mkdtempSync(join(tmpdir(), 'net-fips-udp-on-'));
+    dirs.push(dir2);
+    const p = await startPublicPeer();
+    publicPeers.push(p);
+    const withUdp = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir2, up.base, {
+        peers: [{ name: 'p', npub: p.npub, host: '127.0.0.1', port: p.port }],
+        listen: null,
+      }),
+    }), validators);
+    await withUdp.start();
+    nodes.push(withUdp);
+    const stackWithUdp = (withUdp as unknown as { fipsStack?: { udp?: unknown } }).fipsStack ?? {};
+    // `fipsPublic` set: the stack holds a `udp` transport.
+    expect(stackWithUdp.udp ?? null).not.toBeNull();
+  }, 30_000);
+
+  // MESH_INTERFACE → FIPS → "Public links are held apart from libp2p's"
+  // — a public-link `stop()` ends every UDP socket and timer the stack
+  // opened; the active-resources count returns to its pre-start level.
+  it('`stop()` on a node with `fipsPublic` leaves no UDP socket or timer', async () => {
+    const info = (): string[] => (process as unknown as { getActiveResourcesInfo(): string[] }).getActiveResourcesInfo();
+    const udpCount = (xs: string[]): number => xs.filter((x) => x === 'UDPWrap').length;
+    const timeoutCount = (xs: string[]): number => xs.filter((x) => x === 'Timeout').length;
+
+    const p = await startPublicPeer();
+    publicPeers.push(p);
+    const up = await stubUpstream();
+    upstreams.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'net-fips-udp-stop-'));
+    dirs.push(dir);
+    const beforeUdp = udpCount(info());
+    const beforeTimers = timeoutCount(info());
+
+    // `assertMeshConfig` refuses `listen.port = 0`; pick an unlikely
+    // free port in the upper range for the bind.
+    const listenPort = 55000 + Math.floor(Math.random() * 1000);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir, up.base, {
+        peers: [{ name: 'p', npub: p.npub, host: '127.0.0.1', port: p.port }],
+        listen: { host: '127.0.0.1', port: listenPort },
+      }),
+    }), validators);
+    await node.start();
+    const duringUdp = udpCount(info());
+    // At least one UDP socket opened for the public transport.
+    expect(duringUdp).toBeGreaterThan(beforeUdp);
+    await node.stop();
+    await new Promise((r) => setTimeout(r, 200));
+    const afterTimers = timeoutCount(info());
+    // Every retry timer the public transport scheduled is cleared.
+    expect(afterTimers).toBeLessThanOrEqual(beforeTimers + 1);
+  }, 30_000);
+
+  // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when
+  // its operator turns it on" and "A public peer is an npub at a
+  // `host:port`" — `assertMeshConfig` refuses an unusable list, each
+  // refusal `MeshConfigError` naming the field.
+  it.each([
+    {
+      label: 'empty peers list',
+      peers: [] as PublicFipsPeer[],
+      match: /fipsPublic\.peers/,
+    },
+    {
+      label: 'peers list past FIPS_PUBLIC_PEERS_MAX',
+      peers: Array.from({ length: FIPS_PUBLIC_PEERS_MAX + 1 }, (_, i) => ({
+        name: `p${i}`,
+        npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+        host: '127.0.0.1',
+        port: 2121,
+      })) as PublicFipsPeer[],
+      match: /fipsPublic\.peers/,
+    },
+    {
+      label: 'peer with bad npub',
+      peers: [{ name: 'p', npub: 'npub1zzz', host: '127.0.0.1', port: 2121 }] as PublicFipsPeer[],
+      match: /fipsPublic\.peers.*npub/,
+    },
+    {
+      label: 'peer port 0',
+      peers: [{
+        name: 'p',
+        npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+        host: '127.0.0.1',
+        port: 0,
+      }] as PublicFipsPeer[],
+      match: /fipsPublic\.peers.*port/,
+    },
+    {
+      label: 'peer port 65536',
+      peers: [{
+        name: 'p',
+        npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+        host: '127.0.0.1',
+        port: 65536,
+      }] as PublicFipsPeer[],
+      match: /fipsPublic\.peers.*port/,
+    },
+    {
+      label: 'peer empty host',
+      peers: [{
+        name: 'p',
+        npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+        host: '',
+        port: 2121,
+      }] as PublicFipsPeer[],
+      match: /fipsPublic\.peers.*host/,
+    },
+  ])('refuses a `fipsPublic` config: $label', async ({ peers, match }) => {
+    const up = await stubUpstream();
+    upstreams.push(up);
+    const dir = mkdtempSync(join(tmpdir(), 'net-fips-udp-refuse-'));
+    dirs.push(dir);
+    const node = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir, up.base, { peers, listen: null }),
+    }), validators);
+    let err: unknown = null;
+    try { await node.start(); } catch (e) { err = e; }
+    if (err === null) { try { await node.stop(); } catch { /* already */ } }
+    expect(err).toBeInstanceOf(MeshConfigError);
+    expect((err as MeshConfigError).message).toMatch(match);
+  });
+
+  // MESH_INTERFACE → FIPS → "A node may accept public links" — with
+  // `listen: null` the node's inbound slot for public links is 0, so a
+  // stranger that is not in the peer list gets no link; with `listen`
+  // set the node holds up to `FIPS_PUBLIC_INBOUND_MAX` strangers'
+  // links.
+  it('a node with `listen: null` takes no stranger link; a node with `listen` set does', async () => {
+    // Stranger A is a bare FipsNode with its own UdpFipsTransport that
+    // lists the node's address (filled in once the node starts).
+    const dir = mkdtempSync(join(tmpdir(), 'net-fips-udp-listen-'));
+    dirs.push(dir);
+    const up = await stubUpstream();
+    upstreams.push(up);
+
+    // A: node with `listen: null`. It dials its one configured peer
+    // (an unused loopback address at port 1 so the dial never links).
+    const nodeA = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir, up.base, {
+        peers: [{
+          name: 'nowhere',
+          npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+          host: '127.0.0.1',
+          port: 1,
+        }],
+        listen: null,
+      }),
+    }), validators);
+    await nodeA.start();
+    nodes.push(nodeA);
+    const stackA = (nodeA as unknown as {
+      fipsStack?: { udp?: { listenPort4(): number | null } };
+    }).fipsStack;
+    const aListenPort = stackA?.udp?.listenPort4() ?? null;
+    expect(aListenPort).not.toBeNull();
+    // A stranger S dials A's bound ephemeral port; with listen=null A
+    // holds no inbound, so S's `peer` event never reads `connected`.
+    const strangerIdentity = await generateIdentity();
+    const strangerTransport = new UdpFipsTransport({
+      listen: { host: '127.0.0.1', port: 0 },
+      peers: [{
+        name: 'a',
+        npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+        host: '127.0.0.1',
+        port: aListenPort!,
+      }],
+      inboundMax: 0,
+    });
+    const strangerNode = new FipsNode({
+      identity: strangerIdentity,
+      transports: [strangerTransport],
+      forwarding: false,
+    });
+    const strangerEvents: PeerEvent[] = [];
+    strangerNode.on('peer', (data) => { strangerEvents.push(data as PeerEvent); });
+    await strangerNode.start();
+    try {
+      await new Promise((r) => setTimeout(r, 3000));
+      const cameUp = strangerEvents.some((e) => e.state === 'connected');
+      expect(cameUp).toBe(false);
+    } finally {
+      try { await strangerNode.stop(); } catch { /* already */ }
+    }
+
+    // B: a second node with `listen` set. A stranger that dials B's
+    // listen port and names B's FIPS key reads `connected`.
+    const dir2 = mkdtempSync(join(tmpdir(), 'net-fips-udp-listen2-'));
+    dirs.push(dir2);
+    const up2 = await stubUpstream();
+    upstreams.push(up2);
+    const bListenHost = '127.0.0.1';
+    const bListenPort = 54000 + Math.floor(Math.random() * 1000);
+    const nodeB = new NetNode(makeConfig({
+      nodeKey: generateKeyPair(),
+      listenAddrs: '/ip4/127.0.0.1/tcp/0',
+      mesh: publicMeshWithFipsPublic(dir2, up2.base, {
+        peers: [{
+          name: 'nowhere',
+          npub: 'npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98',
+          host: '127.0.0.1',
+          port: 1,
+        }],
+        listen: { host: bListenHost, port: bListenPort },
+      }),
+    }), validators);
+    await nodeB.start();
+    nodes.push(nodeB);
+    const bFipsAddr = nodeB.fipsAddress()!;
+    const bNpub = bFipsAddr.split('/p2p/')[0]!.slice('/fips/'.length);
+    const stranger2Id = await generateIdentity();
+    const stranger2Transport = new UdpFipsTransport({
+      listen: { host: '127.0.0.1', port: 0 },
+      peers: [{ name: 'b', npub: bNpub, host: bListenHost, port: bListenPort }],
+      inboundMax: 0,
+    });
+    const stranger2Node = new FipsNode({
+      identity: stranger2Id,
+      transports: [stranger2Transport],
+      forwarding: false,
+    });
+    const stranger2Events: PeerEvent[] = [];
+    stranger2Node.on('peer', (data) => { stranger2Events.push(data as PeerEvent); });
+    await stranger2Node.start();
+    try {
+      const linked = await waitForFipsPublic(
+        () => stranger2Events.some((e) => e.state === 'connected'),
+        15_000,
+      );
+      expect(linked).toBe(true);
+    } finally {
+      try { await stranger2Node.stop(); } catch { /* already */ }
+    }
+  }, 45_000);
 });

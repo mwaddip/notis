@@ -26,6 +26,7 @@ import * as s6 from './scenarios/s6-hostile.mjs';
 import * as s7 from './scenarios/s7-reach-and-load.mjs';
 import * as s8 from './scenarios/s8-prove-once.mjs';
 import * as s9 from './scenarios/s9-through-one-node.mjs';
+import * as s10 from './scenarios/s10-through-a-stranger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(HERE);
@@ -45,6 +46,7 @@ const SCENARIOS = {
   s7,
   s8,
   s9,
+  s10,
 };
 
 function parseArgs(argv) {

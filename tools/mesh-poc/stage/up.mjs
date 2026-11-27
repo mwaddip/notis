@@ -670,6 +670,75 @@ function bytesToHex(bytes) {
 }
 
 // -----------------------------------------------------------------------
+// Phase 4b: the FIPS daemon (jmcorgan/fips v0.5.3) the stage runs as a
+// stranger beside the Notis mesh — fetch, verify, extract, keygen.
+// (MESH_INTERFACE → Acceptance → "Through a stranger")
+// -----------------------------------------------------------------------
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the original FIPS
+// daemon's release. The archive the stage cache holds matches the pinned
+// SHA from the release's `checksums-linux.txt`; its inner directory holds
+// the `fips` daemon and the `fipsctl` CLI alongside its default fips.yaml.
+const FIPS_VERSION = '0.5.3';
+const FIPS_URL = `https://github.com/jmcorgan/fips/releases/download/v${FIPS_VERSION}/fips-${FIPS_VERSION}-linux-x86_64.tar.gz`;
+const FIPS_SHA256 = 'fd22c75ab4a7a4334dfe9a0a5535fabdf6cfffcbecdcd795ea16ea44f25d6970';
+const FIPS_INNER_DIR = `fips-${FIPS_VERSION}-linux-x86_64`;
+
+const strangerHost = topology.hosts.stranger;
+const strangerCfg = { npub: null, sockPath: null, fipsctlBin: null, binaryPath: null };
+let strangerDir = null;
+let strangerRunDir = null;
+let strangerYamlPath = null;
+
+if (strangerHost !== undefined) {
+  strangerDir = join(OUT_DIR, 'stranger');
+  strangerRunDir = join(strangerDir, 'rundir');
+  strangerYamlPath = join(strangerDir, 'fips.yaml');
+  const strangerPubPath = join(strangerDir, 'fips.pub');
+  const strangerSockPath = join(strangerRunDir, 'fips', 'control.sock');
+  const strangerArchive = join(CACHE_DIR, `fips-${FIPS_VERSION}-linux-x86_64.tar.gz`);
+  const strangerInnerDir = join(CACHE_DIR, FIPS_INNER_DIR);
+  const fipsBin = join(strangerInnerDir, 'fips');
+  const fipsctlBin = join(strangerInnerDir, 'fipsctl');
+  strangerCfg.binaryPath = fipsBin;
+  strangerCfg.fipsctlBin = fipsctlBin;
+  strangerCfg.sockPath = strangerSockPath;
+
+  // Fetch, verify, extract — same shape as Pebble. The daemon's tarball
+  // records `fips` and `fipsctl` as mode 0755 already (the release's
+  // `tar tvzf` shows `-rwxr-xr-x`), so no chmod step is needed.
+  log.shell('sh', ['-c', `test -f ${strangerArchive} || curl -L ${FIPS_URL} -o ${strangerArchive}`]);
+  log.shell('sh', ['-c', `echo "${FIPS_SHA256}  ${strangerArchive}" | sha256sum --check`]);
+  log.shell('sh', ['-c', `test -x ${fipsBin} || tar xzf ${strangerArchive} -C ${CACHE_DIR}`]);
+
+  // The stranger's own directory holds its fips.key (0600) and fips.pub
+  // (0644). fipsctl keygen -d writes both under the directory; the
+  // daemon starts with `persistent: true` and its cwd set to `strangerDir`
+  // so it reads the same key file. The daemon's npub landing here — before
+  // Phase 7 spawns pub1 or pub2 — is what lets each Notis node take it
+  // through FIPS_PUBLIC_PEERS at spawn time.
+  log.shell('mkdir', ['-p', strangerDir]);
+  log.shell('sh', ['-c', `test -f ${strangerPubPath} || ${fipsctlBin} keygen -d ${strangerDir}`]);
+
+  if (dryRun) {
+    // A dry-run hands the Notis spawns a placeholder npub; the real
+    // keygen writes one when exec mode runs.
+    strangerCfg.npub = 'npub1' + 'q'.repeat(58);
+  } else {
+    if (!existsSync(strangerPubPath)) {
+      throw new Error(`stranger: fips.pub missing at ${strangerPubPath} after keygen`);
+    }
+    const line = readFileSync(strangerPubPath, 'utf8').trim();
+    // The release's fipsctl writes one line of the shape `npub1...`
+    // into fips.pub. Validate the shape before passing it to Notis.
+    if (!/^npub1[0-9a-z]+$/.test(line)) {
+      throw new Error(`stranger: fips.pub does not hold an npub1 line, got ${JSON.stringify(line.slice(0, 40))}`);
+    }
+    strangerCfg.npub = line;
+  }
+}
+
+// -----------------------------------------------------------------------
 // Phase 5: Pebble
 // -----------------------------------------------------------------------
 
@@ -754,6 +823,81 @@ if (dnsLogHost) {
     DNS_LOG_BIND: dnsLogHost.addr,
     DNS_LOG_PORT: String(dnsLogHost.dnsPort),
   }).concat([dnsLogScript]), { description: 'dns-log', logPath: logPathFor('dns-log') });
+}
+
+// -----------------------------------------------------------------------
+// Phase 6b: the FIPS daemon (MESH_INTERFACE → Acceptance → "Through a
+// stranger") — write fips.yaml, start the daemon inside its namespace,
+// wait for its control socket to answer.
+// -----------------------------------------------------------------------
+
+if (strangerHost !== undefined) {
+  // The daemon reads its persistent identity (fips.key) from the directory
+  // holding its yaml. TUN and DNS are off; a UDP transport binds the
+  // stranger's stage addr on the pinned port; no TCP, no rendezvous, no
+  // peers. (MESH_INTERFACE → FIPS → "The FIPS packages are pinned by
+  // release tarball" names the libp2p side; the daemon runs its own
+  // release, with the same wire.)
+  const yamlBody = [
+    '# MESH_INTERFACE → Acceptance → "Through a stranger"',
+    'node:',
+    '  identity:',
+    '    persistent: true',
+    'tun:',
+    '  enabled: false',
+    'dns:',
+    '  enabled: false',
+    'transports:',
+    '  udp:',
+    `    bind_addr: "${strangerHost.addr}:${strangerHost.fips.udpPort}"`,
+    '    accept_connections: true',
+    'peers: []',
+    '',
+  ].join('\n');
+  const yamlPlan = `[plan] write ${strangerYamlPath}`;
+  log.records.push(yamlPlan);
+  if (dryRun) {
+    process.stdout.write(yamlPlan + '\n');
+  } else {
+    writeFileSync(strangerYamlPath, yamlBody);
+    mkdirSync(strangerRunDir, { recursive: true });
+  }
+
+  // Start the daemon inside notismesh-stranger as the invoking user. The
+  // daemon writes its control socket under `$XDG_RUNTIME_DIR/fips/`; a
+  // run-directory beside the yaml keeps everything the daemon leaves on
+  // disk inside the stage's own tree. RUST_LOG=debug mirrors the yaml's
+  // `log_level: debug` request so the identity line and transport settings
+  // land in the log.
+  log.spawn(userWrap(nsOf('stranger'), {
+    XDG_RUNTIME_DIR: strangerRunDir,
+    RUST_LOG: 'debug',
+  }, strangerCfg.binaryPath).concat([
+    '-c', strangerYamlPath,
+  ]), { description: 'fips:stranger', logPath: logPathFor('fips:stranger') });
+
+  recordWait(`fips:stranger answers fipsctl -s ${strangerCfg.sockPath} show status`);
+  if (!dryRun) {
+    await waitWithTail(
+      'fips:stranger control socket',
+      () => {
+        execIn(nsOf('stranger'), [strangerCfg.fipsctlBin, '-s', strangerCfg.sockPath, 'show', 'status'], { timeoutMs: 8_000 });
+        return true;
+      },
+      logPathFor('fips:stranger'),
+      { timeoutMs: 30_000, pollMs: 1_000 },
+    );
+    // Write the scenario's handle to the daemon — one file under
+    // `stage/out/stranger/`, picked up at scenario start.
+    writeFileSync(
+      join(strangerDir, 'identity.json'),
+      JSON.stringify({
+        npub: strangerCfg.npub,
+        sockPath: strangerCfg.sockPath,
+        fipsctlBin: strangerCfg.fipsctlBin,
+      }, null, 2),
+    );
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -924,6 +1068,17 @@ function spawnNotisForHost(name, host) {
       // CA alone through its TLS store; its ACME HTTPS to Pebble verifies
       // against the CA that signed Pebble's TLS.
       notisEnv.NODE_EXTRA_CA_CERTS = stageCaPath;
+    }
+    // MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh
+    // when its operator turns it on", → "A public peer is an npub at a
+    // `host:port`", → "A node may accept public links": pub1 and pub2
+    // are the two Notis nodes whose only FIPS path between each other
+    // under scenario 10's split runs through the stranger daemon. Each
+    // dials the stranger with FIPS_PUBLIC=on; neither accepts public
+    // links (no FIPS_UDP_LISTEN), so neither opens a UDP listener.
+    if ((name === 'pub1' || name === 'pub2') && strangerHost !== undefined && strangerCfg.npub !== null) {
+      notisEnv.FIPS_PUBLIC = 'on';
+      notisEnv.FIPS_PUBLIC_PEERS = `${strangerCfg.npub}@${strangerHost.addr}:${strangerHost.fips.udpPort}`;
     }
   }
 

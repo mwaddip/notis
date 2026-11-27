@@ -1,0 +1,201 @@
+diff --git a/dist/node/FipsNode.js b/dist/node/FipsNode.js
+index a8916ec..2fd3b0b 100644
+--- a/dist/node/FipsNode.js
++++ b/dist/node/FipsNode.js
+@@ -15,6 +15,10 @@ import { PeerAdmission } from "./PeerAdmission.js";
+ const defaultRandom = { bytes: (n) => randomBytes(n) };
+ const FMP_HANDSHAKE_RESEND_MS = 1_000;
+ const FMP_HEARTBEAT_INTERVAL_MS = 5_000;
++// MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++// — @dagsocial/net's FIPS_LINK_DEAD_MS; the patch holds the literal because
++// it cannot import a workspace package.
++const FIPS_LINK_DEAD_MS = 30_000;
+ export class FipsNode {
+     identity;
+     forwarding;
+@@ -640,6 +644,25 @@ export class FipsNode {
+                 this.emit("error", { err: err, where: "send Heartbeat" });
+             }
+         }));
++        // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++        // — sweep established peers whose last authenticated packet is older
++        // than FIPS_LINK_DEAD_MS, through the same path a transport-level
++        // disconnect takes; emit peer disconnected, clear every map the peer
++        // sits in, and leave no timer. The near end's transport.close(addr)
++        // tells the carrier the link is dead (libp2p aborts its stream and
++        // the opener's retry runs over the still-held connection; UDP's
++        // retry runs when the stack's listener hears peer disconnected).
++        for (const peer of [...this.peers.values()]) {
++            if (peer.link.state !== "established")
++                continue;
++            if ((nowMs - peer.lastAuthActivityMs) < FIPS_LINK_DEAD_MS)
++                continue;
++            try {
++                await peer.transport.close?.(peer.remoteAddr);
++            }
++            catch { /* already closed */ }
++            this.onTransportConn(peer.transport, { remoteAddr: peer.remoteAddr, state: "disconnected" });
++        }
+     }
+ }
+ function sessionEventNodeHex(remote) {
+diff --git a/dist/node/FipsRouting.js b/dist/node/FipsRouting.js
+index b6fe47b..494b12d 100644
+--- a/dist/node/FipsRouting.js
++++ b/dist/node/FipsRouting.js
+@@ -303,6 +303,10 @@ export class FipsRouting {
+         }));
+     }
+     async ensureFirstContactRoute(target, targetHex, targetPubkey) {
++        // MESH_INTERFACE → FIPS → "A stopped FIPS node starts no lookup"
++        // — the predicate and message fips-ts's own route resolution uses.
++        if (!this.cfg.isStarted())
++            throw new Error("FIPS node stopped");
+         const existing = this.originLookups.get(targetHex);
+         if (existing) {
+             await existing.promise;
+diff --git a/dist/node/FmpTransportPacketProcessor.js b/dist/node/FmpTransportPacketProcessor.js
+index 38779a5..6c8c3d6 100644
+--- a/dist/node/FmpTransportPacketProcessor.js
++++ b/dist/node/FmpTransportPacketProcessor.js
+@@ -128,6 +128,9 @@
+             replacedHandshake.resolve();
+         }
+         if (!wasEstablished) {
++            // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++            // — a link carries a stamp from the moment it is established.
++            peer.lastAuthActivityMs = Date.now();
+             this.cfg.emitPeer(peerEvent(peer, "connected"));
+             this.replayPendingLookupsAfterEstablishment(peer, replySent);
+         }
+@@ -300,8 +303,12 @@
+             this.cfg.peers.set(transportAddressKey(peer.remoteAddr), peer);
+             this.cfg.logger.info("FMP peer restart detected", peer.pubkeyHex);
+         }
+-        if (!wasEstablished)
++        if (!wasEstablished) {
++            // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++            // — a link carries a stamp from the moment it is established.
++            peer.lastAuthActivityMs = Date.now();
+             void this.confirmOutgoingHandshake(peer, remoteAddr);
++        }
+         this.cfg.logger.debug("fips msg2 handled", remoteAddr.transport, remoteAddr.addr);
+     }
+     async confirmOutgoingHandshake(peer, remoteAddr) {
+@@ -409,6 +416,12 @@
+         const { peer, link, promotePending } = match;
+         this.cfg.assertPeerAllowed?.(peer.pubkey);
+         const { msgType, payload } = receiveFmpLinkPacket(peer, link, packet, this.cfg.emitError);
++        // MESH_INTERFACE → FIPS → "A FIPS link that carries nothing for FIPS_LINK_DEAD_MS ends"
++        // — anything authenticated the far end sends on the link resets
++        // the stamp FipsNode's heartbeat-tick sweep reads; stamp after
++        // decryptIncoming (inside receiveFmpLinkPacket), so a spoofed
++        // packet cannot keep a dead link alive.
++        peer.lastAuthActivityMs = Date.now();
+         if (peer.link === link)
+             peer.outgoingHandshake?.confirmCarrier?.();
+         if (promotePending) {
+diff --git a/dist/node/FspSessionManager.js b/dist/node/FspSessionManager.js
+index a333563..168fa5e 100644
+--- a/dist/node/FspSessionManager.js
++++ b/dist/node/FspSessionManager.js
+@@ -10,6 +10,10 @@ import { encodeNpub } from "../identity/nip19.js";
+ import { compareNodeAddr, deriveNodeAddr, nodeAddrToHex } from "../nodeaddr/index.js";
+ import { peerNodeAddr, sameCompressedIdentity } from "./PeerState.js";
+ const FSP_REKEY_DRAIN_MS = 45_000;
++// MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++// — @dagsocial/net's FIPS_SESSION_IDLE_MS; the patch holds the literal because
++// it cannot import a workspace package.
++const FIPS_SESSION_IDLE_MS = 90_000;
+ const MAX_MISSING_SESSION_RECOVERIES = 64;
+ const MISSING_SESSION_RETRY_MS = 15_000;
+ const FSP_DEFAULT_PATH_MTU = 1_200;
+@@ -97,10 +101,16 @@ export class FspSessionManager {
+     async sendDatagram(args) {
+         const session = await this.ensureSession(args.dst);
+         const data = { srcPort: args.srcPort ?? 0, dstPort: args.dstPort, payload: args.payload };
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — outbound application data resets the idle counter.
++        session.lastApplicationActivityMs = Date.now();
+         await this.sendEncryptedFrame(session, (flags) => session.fsp.encryptDatagram(data, flags), { routeNeutral: !!decodeFspExtensionCapabilities(data) });
+     }
+     async sendEndpointData(args) {
+         const session = await this.ensureSession(args.dst);
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — outbound application data resets the idle counter.
++        session.lastApplicationActivityMs = Date.now();
+         await this.sendSessionMessage(session, FSP_MSG_ENDPOINT_DATA, args.payload);
+     }
+     sendSessionMessage(session, msgType, payload, options = {}) {
+@@ -139,6 +149,24 @@ export class FspSessionManager {
+     async sendReceiverReports() {
+         if (this.reportsSending)
+             return;
++        // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++        // — the 1 Hz report timer also sweeps established sessions whose
++        // last application datagram is older than FIPS_SESSION_IDLE_MS, and
++        // ends each one through the same removal path a restarted peer takes.
++        const nowMs = Date.now();
++        for (const [nodeHex, session] of [...this.sessions]) {
++            if (session.fsp.state !== "established")
++                continue;
++            if (nowMs - (session.lastApplicationActivityMs ?? nowMs) < FIPS_SESSION_IDLE_MS)
++                continue;
++            this.closeSessionHandles(session);
++            this.sessions.delete(nodeHex);
++            this.cfg.emitSession({
++                remotePubkey: session.remotePubkeyHex ?? nodeHex,
++                state: "closed",
++                ...(session.fsp.peerId && { peerId: session.fsp.peerId }),
++            });
++        }
+         if (this.sessions.size === 0) {
+             this.syncReportTimer();
+             return;
+@@ -332,10 +360,16 @@ export class FspSessionManager {
+             session.extensions ??= new FspExtensions();
+             if (await session.extensions.receive(result.data, (payload) => this.sendExtension(session, payload)))
+                 return;
++            // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++            // — inbound application data resets the idle counter.
++            session.lastApplicationActivityMs = Date.now();
+             await this.deliverDatagram(srcHex, peerId, result.data);
+             return;
+         }
+         if (result.msgType === FSP_MSG_ENDPOINT_DATA && result.endpointData) {
++            // MESH_INTERFACE → FIPS → "A FIPS session that carries no application data for FIPS_SESSION_IDLE_MS ends"
++            // — inbound application data resets the idle counter.
++            session.lastApplicationActivityMs = Date.now();
+             this.cfg.emitEndpointData({ peerId, src: srcHex, dst: this.localPubkeyHex, payload: result.endpointData });
+         }
+     }
+@@ -430,6 +464,7 @@ export class FspSessionManager {
+                 remoteNodeHex: srcNodeHex,
+                 fsp: next.fsp,
+                 currentKBit: false,
++                lastApplicationActivityMs: Date.now(),
+             };
+             this.sessions.set(srcNodeHex, session);
+             this.syncReportTimer();
+@@ -535,6 +570,12 @@ export class FspSessionManager {
+         if (cached && cached.fsp.state === "established") {
+             if (cached.remotePubkey)
+                 this.cfg.assertPeerAllowed?.(cached.remotePubkey);
++            // MESH_INTERFACE → FIPS → "A send to a key with no route waits for one"
++            // — a standing session with no usable route runs the same first-contact
++            // lookup before it is returned.
++            if (!this.cfg.routing.hasUsableRoute(cached.remoteNodeHex)) {
++                await this.cfg.routing.ensureFirstContactRoute(cached.remoteNodeAddr, cached.remoteNodeHex, cached.remotePubkey);
++            }
+             return cached;
+         }
+         const remotePubkey = fromHex(remotePubkeyHex);
+@@ -575,7 +616,7 @@ export class FspSessionManager {
+             localEpoch: this.localEpoch,
+             strictClient: this.cfg.strictClient,
+         });
+-        const session = { remoteNodeAddr, remoteNodeHex, remotePubkeyHex, remotePubkey, fsp, currentKBit: false };
++        const session = { remoteNodeAddr, remoteNodeHex, remotePubkeyHex, remotePubkey, fsp, currentKBit: false, lastApplicationActivityMs: Date.now() };
+         this.sessions.set(remoteNodeHex, session);
+         this.syncReportTimer();
+         this.indexSession(session, remotePubkeyHex);

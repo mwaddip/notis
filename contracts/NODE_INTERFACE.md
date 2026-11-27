@@ -5808,6 +5808,9 @@ its actual reach.
 | `MESH_WSS` | `operational` | `""` | `<ip>:<port>` of a `public` node's opt-in secure WebSocket (`MESH_INTERFACE → The IP certificate`); requires `MESH_ACME_DIRECTORY` |
 | `MESH_ACME_DIRECTORY` | `operational` | `""` | The ACME directory URL the IP certificate is obtained from |
 | `MESH_ACME_CHALLENGE_PORT` | `operational` | `80` | The port the node answers the `http-01` challenge on — behind the operator's own server where that server holds port 80 |
+| `FIPS_PUBLIC` | `operational` | `off` | `on` or `off`; `on` links the mesh node to the public FIPS mesh (`MESH_INTERFACE → FIPS → "A node peers with the public FIPS mesh when its operator turns it on"`); refused without `MESH_ROLE` |
+| `FIPS_PUBLIC_PEERS` | `operational` | the built-in list (`MESH_INTERFACE → FIPS → "The built-in list is the public test nodes"`) | Comma-separated `<npub>@<host>[:<port>]`, the port `FIPS_UDP_DEFAULT_PORT` where none is named and a bracketed IPv6 host as `MESH_STUN` reads one; replaces the built-in list; at most `FIPS_PUBLIC_PEERS_MAX` entries; refused unless `FIPS_PUBLIC=on` |
+| `FIPS_UDP_LISTEN` | `operational` | `""` | `<ip>:<port>` or `[<ip6>]:<port>` the node accepts public FIPS links on (`MESH_INTERFACE → FIPS → "A node may accept public links"`); unset, it links with no address it did not dial; refused unless `FIPS_PUBLIC=on` |
 
 **The key file is named for the store.** Nodes whose stores share a directory — a mesh of test nodes, `node-1.db`
 beside `node-2.db` — hold a key each with no setting of their own, and a wipe that removes the store's files,
@@ -5947,6 +5950,11 @@ takes is one an operator can take by hand, and the documentation names each.
    `PORT`; port 80 at any other address is never redirected — and the node's WebRTC-direct UDP port, and rejects the
    rest; and it rejects every packet forwarded from `uap0` with an ICMP unreachable, should anything turn forwarding
    on.
+
+   **The box routes no IP; its node carries FIPS.** A device on the access point reaches every Notis node over FIPS
+   through the box's node, and any node on the public FIPS mesh once the mesh peers with it (`MESH_INTERFACE → FIPS →
+   "A node peers with the public FIPS mesh when its operator turns it on"`) — the internet only through someone else's
+   FIPS exit node, never through the box, which is no exit.
 8. **The node restarts** on its new `node.env`.
 
 **The tool's record.** Every change `setup` makes — the uplink profile's band as it was, `node.env` as it was, each file

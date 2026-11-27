@@ -28,8 +28,8 @@ describe('stage:run --dry-run', () => {
     }
   }
 
-  const EXPECTED_ORDER = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9'];
-  it('exits 0 and prints the nine scenarios in order, s1 to s9', () => {
+  const EXPECTED_ORDER = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10'];
+  it('exits 0 and prints the ten scenarios in order, s1 to s10', () => {
     runDryOnce();
     expect(status).toBe(0);
     for (const name of EXPECTED_ORDER) {
@@ -98,7 +98,7 @@ describe('stage:run --dry-run', () => {
   // JSON under `stage/out/scenarios/`.
   it('the dry-run complete marker is in the output', () => {
     runDryOnce();
-    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 9 scenario\(s\)/);
+    expect(out, 'dry-run complete marker').toMatch(/\[dry-run complete\] 10 scenario\(s\)/);
   }, 30_000);
 });
 

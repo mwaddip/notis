@@ -23,11 +23,15 @@
 //      `/nipopow/proof/24/20` through the page and read each
 //      directly inside its own namespace. `verdictS9Probe` holds
 //      the mesh's bytes equal to the node's own.
-//   4. Cut pub2 by firewalling its p2p ports in its own namespace
-//      (the `s9_cut` nft table in `notismesh-pub2`): pub1's link to
-//      pub2 drops under the running connection's packet loss, and
-//      pub2's entry moves to `retry`, never `blacklisted`. Restore
-//      pub2 in the step's own `finally`; the outer `finally` runs
+//   4. Cut pub2 by firewalling ALL its inbound UDP and the mesh and
+//      notis TCP ports in its own namespace (the `s9_cut` nft table
+//      in `notismesh-pub2`): pub1's every live path to pub2 drops
+//      under the running connection's packet loss — WebRTC-direct,
+//      mesh TCP, notis p2p TCP and the stranger-forwarded FIPS UDP
+//      the public mesh carries on pub2's ephemeral port
+//      (`MESH_INTERFACE → Acceptance → "Through a stranger"`) — and
+//      pub2's entry moves to `retry`, never `blacklisted`. The step's
+//      own `finally` undoes the cut; the outer `finally` runs
 //      `log.removeAll()` as a backstop.
 //
 // The stage default's first-contact set is pub1 + pub2 (`stage/up.mjs`
@@ -118,11 +122,13 @@ export function s9ThroughOneNodeArgs(topology, accessHost) {
 
 /**
  * MESH_INTERFACE → Acceptance 9 — the nft argvs the cut applies and
- * removes inside `notismesh-pub2`. Dropping the inbound webrtc UDP
- * and the mesh/notis TCP ports breaks pub1's live connection to
- * pub2 (nftables' default input hook has no `ct state established
- * accept`, so an existing flow's packets drop too). The table's
- * deletion cascades.
+ * removes inside `notismesh-pub2`. Dropping ALL inbound UDP and the
+ * mesh/notis TCP ports breaks pub1's every live path to pub2
+ * (nftables' default input hook has no `ct state established
+ * accept`, so an existing flow's packets drop too; the all-UDP rule
+ * reaches the stranger-forwarded path the public FIPS mesh carries
+ * on pub2's ephemeral port — see `MESH_INTERFACE → Acceptance →
+ * "Through a stranger"`). The table's deletion cascades.
  */
 export function s9CutArgs(topology, host) {
   if (typeof host !== 'string' || host === '') {
@@ -145,6 +151,7 @@ export function s9CutArgs(topology, host) {
     dropWebrtc: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', CUT_TABLE, 'in', 'udp', 'dport', webrtcPort, 'drop'],
     dropMeshTcp: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', CUT_TABLE, 'in', 'tcp', 'dport', tcpPort, 'drop'],
     dropNotisTcp: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', CUT_TABLE, 'in', 'tcp', 'dport', notisPort, 'drop'],
+    dropAllUdp: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'add', 'rule', 'ip', CUT_TABLE, 'in', 'meta', 'l4proto', 'udp', 'drop'],
     deleteTable: ['sudo', 'ip', 'netns', 'exec', ns, 'nft', 'delete', 'table', 'ip', CUT_TABLE],
   };
 }
@@ -173,6 +180,7 @@ export function applyFaults(log, topology) {
   log.apply(`${CUT_HOST}-cut-drop-webrtc`, c.dropWebrtc, null);
   log.apply(`${CUT_HOST}-cut-drop-mesh-tcp`, c.dropMeshTcp, null);
   log.apply(`${CUT_HOST}-cut-drop-notis-tcp`, c.dropNotisTcp, null);
+  log.apply(`${CUT_HOST}-cut-drop-all-udp`, c.dropAllUdp, null);
   // MESH_INTERFACE → Acceptance 9 — the probe window pauses
   // `miner-steady` so `/blocks/current` and the proof route do not
   // move between the probe and the direct read. The dry-run names
@@ -400,6 +408,7 @@ export async function run(ctx) {
       log.apply(`${CUT_HOST}-cut-drop-webrtc`, cutArgs.dropWebrtc, null);
       log.apply(`${CUT_HOST}-cut-drop-mesh-tcp`, cutArgs.dropMeshTcp, null);
       log.apply(`${CUT_HOST}-cut-drop-notis-tcp`, cutArgs.dropNotisTcp, null);
+      log.apply(`${CUT_HOST}-cut-drop-all-udp`, cutArgs.dropAllUdp, null);
       // The predicate watches every poll's reading of cutId; a
       // `blacklisted` reading at any poll is kept so the verdict
       // reads FAIL on it.

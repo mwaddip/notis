@@ -11,7 +11,8 @@ runs. The client is a reader in the nodes' own block gossip, under `net`'s rules
 mesh is the extension's first path"`) — and `@dagsocial/mesh-poc` holds the page, the stage and the client's cases on
 Node.js (→ Place in the workspace); what the stage has to show is → Acceptance.
 
-It carries Notis's own traffic and nothing else: no exit to the wider network, no IP tunnel.
+It carries Notis's own traffic, and the FIPS traffic it forwards for the public FIPS mesh (→ FIPS); never IP: no exit
+to the internet, no IP tunnel.
 
 ## Place in the workspace
 
@@ -346,7 +347,8 @@ any transport (→ Transports → "Every link is authenticated by the key it was
 
 **A link rides a libp2p connection the two ends already hold.** Two Notis nodes link over FIPS on a stream of the
 protocol `/notis/<network>/fips-link/1.0.0` on a connection between them, relayed or direct; a relayed connection
-carries data with no limit (→ NAT → "A relay carries data"). FIPS opens no socket and no port of its own. **A node
+carries data with no limit (→ NAT → "A relay carries data"). A link between Notis nodes opens no socket and no port
+of its own. **A node
 opens a link over each connection it dialled to a Notis peer**, and answers a link stream on any connection, a reader's
 included; a connection carries one link stream at once.
 
@@ -366,6 +368,45 @@ later frame is one FIPS packet. A stream that names no key within `FIPS_LINK_HIN
 not a valid compressed secp256k1 key, or a frame over the cap is closed, and the connection stays. The stream rides a
 connection libp2p authenticated to both libp2p keys, so the key a side names is bound to that side by the connection
 itself; a key the far end's FIPS handshake does not prove fails that handshake, and no link forms.
+
+**A node peers with the public FIPS mesh when its operator turns it on.** With `FIPS_PUBLIC=on`
+(`NODE_INTERFACE → Configuration`) a mesh node's FIPS node runs a second transport — FIPS over UDP, one FIPS packet per
+datagram, the link protocol the original FIPS daemon speaks — beside the libp2p link transport, and links to each public
+FIPS node in its list: the built-in list, or the operator's `FIPS_PUBLIC_PEERS` in its place, at most
+`FIPS_PUBLIC_PEERS_MAX`. Off — the default — the node opens no UDP socket for FIPS and links to no public node. **There
+is one FIPS mesh**: once a Notis node peers, every Notis node linked to it is in the public mesh and every one forwards
+(→ "Every mesh node is a FIPS node"), so a Notis node carries strangers' FIPS traffic where the mesh's routing sends it,
+whether or not it peers itself. The setting decides which nodes link to public nodes, not which nodes are in the mesh.
+
+**A public peer is an npub at a `host:port`.** The node resolves the host through ordinary DNS — the client's rule
+against a DNS lookup does not bind a node — and dials the first address it answers, an IPv4 one before an IPv6 one; a
+UDP address is `<ipv4>:<port>` or `[<ipv6>]:<port>`. A peer it holds no link to is dialled again after a wait drawn as
+a node's retry is (→ The client's node list → "Retry"), the count of failures in a row ending when its link comes up; a
+host that does not resolve, or an address that answers nothing, delays no other peer and is tried again on the same
+schedule. FIPS's handshake proves the npub: an address answering for another key never links.
+
+**A node may accept public links.** With `FIPS_UDP_LISTEN` set the node binds that address and links with any FIPS node
+that dials it, FIPS's handshake naming the dialler's key; unset, it binds an ephemeral port for its own dials and links
+with no address it did not dial. It takes at most `FIPS_PUBLIC_INBOUND_MAX` addresses it did not dial, a handshake
+still under way counting as one: a datagram from a new address past the cap is dropped, an address whose link is not up
+within twice `FIPS_LINK_HINT_TIMEOUT_MS` of its first datagram is let go, and a held link is never closed to make room.
+
+**Public links are held apart from libp2p's.** A link over UDP takes no libp2p connection slot, no Notis peer's place
+and no reader's budget (→ Block gossip → "A node's readers are its router's direct peers"), and a Notis link over
+libp2p counts against none of the public links' bounds.
+
+**The built-in list is the public test nodes** the FIPS project keeps for new nodes and integration testing, each
+accepting a link from any npub (measured 2026-11-26: all seven linked from one node within 0.2 s):
+
+| Name | npub | Address |
+|---|---|---|
+| `test-us01` | `npub1qmc3cvfz0yu2hx96nq3gp55zdan2qclealn7xshgr448d3nh6lks7zel98` | `test-us01.fips.network:2121` |
+| `test-us02` | `npub10yffd020a4ag8zcy75f9pruq3rnghvvhd5hphl9s62zgp35s560qrksp9u` | `test-us02.fips.network:2121` |
+| `test-us03` | `npub136yqae6na688fs75g95ppps3lxe07fvxefj77938zf47uhm6074sxw8ctm` | `test-us03.fips.network:2121` |
+| `test-us04` | `npub1gd7ye2qp2lphhzx75fynnjzaxx4dqanddecet0wtt5ss5ek8h9ps62wdkf` | `test-us04.fips.network:2121` |
+| `test-de01` | `npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8` | `test-de01.fips.network:2121` |
+| `test-es01` | `npub17lpmzulpc98d8ff727k6e98atxn3phzupzsqqwe54ytduym747ws4tw5zm` | `test-es01.fips.network:2121` |
+| `test-uk01` | `npub1u0z26dc4qeneu5rvwvmpfhtwh3522ed6rlgxr9jarrfnjrc6ew4qxjysrs` | `test-uk01.fips.network:2121` |
 
 **A node's FIPS key persists.** It is `fips.key` in the mesh state directory (`NODE_INTERFACE → Configuration → "The
 mesh state directory is named for the store"`): 32 raw bytes, mode `0600`, written exclusively at first start and never
@@ -434,6 +475,20 @@ it holds a standing session's the same way (→ "The FIPS packages are pinned by
 its endpoint closes — fails at once, as fips-ts's route resolution does on a node that is not started, so a node's or a
 reader's stop waits on no route.
 
+**A FIPS link that carries nothing for `FIPS_LINK_DEAD_MS` ends**, over libp2p and over UDP alike, as the original FIPS
+daemon ends one: its `node.link_dead_timeout_secs` is 30 s by default and never less. Anything authenticated the far end
+sends on the link counts — its heartbeats, every 5 s from fips-ts and every 10 s from the original, keep a live link
+well inside the bound. A link that ends so is a link that ended (→ "A key holds one link, and the libp2p peer that named
+it holds the key"): the end that opened a Notis link opens it again, a public peer is dialled again on its retry
+schedule (→ "A public peer is an npub at a `host:port`"), and routing takes the paths that remain.
+
+**A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends**, at a node and at a reader alike,
+as the original FIPS daemon ends one: measured 2026-11-26, the daemon removed a session idle for 90 s and dropped every
+later message on it as one for an unknown session, while the fips-ts end kept sending on it. Application data is what
+a node's applications send or receive on the session — a datagram to or from a service port, or endpoint data — in
+either direction; the session's own reports, rekeys and control messages are not. Both ends of a session with an
+original let it go together, and the next datagram opens a fresh session.
+
 **The FIPS packages are pinned by release tarball.** `@fips/core` (fips-ts) and `@fips/tcp` (fips-tcp) are
 `@dagsocial/net`'s, each named by its GitHub release tarball's URL, the lockfile holding its integrity. A change Notis
 makes to either is a patch under `patches/`, as the libp2p patches are (→ Place in the workspace), written by hand:
@@ -448,6 +503,11 @@ makes to either is a patch under `patches/`, as the libp2p patches are (→ Plac
 | `FIPS_TCP_POLL_MS` | `50` | 50 ms between polls of a TCP/FIPS endpoint — a quarter of fips-tcp's 200 ms least retransmission timeout; data moves as it arrives |
 | `FIPS_TCP_SEND_BUFFER_BYTES` | `65_536` | 64 KiB of a TCP/FIPS stream's unsent data — fips-tcp's receive window; measured 2026-11-19, the rate is the same at 64 KiB, 256 KiB and 1 MiB |
 | `FIPS_TCP_CONNECTIONS_PER_PEER` | `2` | TCP/FIPS connections one peer holds to a node — a reader's one, and one overlapping its replacement |
+| `FIPS_UDP_DEFAULT_PORT` | `2121` | the port of a `FIPS_PUBLIC_PEERS` entry that names none, and of every built-in peer — FIPS's own UDP port |
+| `FIPS_PUBLIC_PEERS_MAX` | `16` | the most public peers a node dials, built-in or the operator's — room to double the built-in list's seven |
+| `FIPS_PUBLIC_INBOUND_MAX` | `256` | public links a node holds that it did not dial — measured 2026-11-26 on one forwarding node, 256 idle links held 7.3 MiB of heap and 512 held 13.1 MiB; half the 512 a 16 MiB budget allows, since a stranger's link carries a fuller filter and forwarded traffic the measured idle links did not |
+| `FIPS_LINK_DEAD_MS` | `30_000` | 30 s with nothing received ends a FIPS link — the original FIPS daemon's `node.link_dead_timeout_secs` default and floor; six of fips-ts's 5 s heartbeats, three of the original's 10 s ones |
+| `FIPS_SESSION_IDLE_MS` | `90_000` | 90 s with no application data ends a FIPS session — the original FIPS daemon's session idle timeout, so a session with one ends at both ends together |
 | `FIPS_READER_LINKS_MAX` | `1` | the links a reader holds — one, so the node a FIPS connection was routed through is the node its link rides |
 
 These are local bounds and cadences, outside the constants register as the mesh's others are (`CONSTANTS → Scope`).
@@ -689,7 +749,7 @@ behind NAT cannot hold one.
 A stage on one machine runs the mesh end to end, its page on the client `@dagsocial/web` holds: public nodes, a node behind an endpoint-independent NAT and
 one behind a symmetric NAT, a browser behind NAT, a node on the browser's own network, an ACME test server, and hostile
 nodes — each host one devnet `@dagsocial/node` run with a mesh role, a hostile host's lie outside the node it runs.
-The mesh holds when every step of the nine scenarios passes on what it measured; a step that did not run reads
+The mesh holds when every step of the ten scenarios passes on what it measured; a step that did not run reads
 `skipped`, never a pass.
 
 1. **No name, no hosted page.** The client reads a node's API by key from its first-contact nodes alone, over WebRTC-direct, with the
@@ -733,6 +793,10 @@ The mesh holds when every step of the nine scenarios passes on what it measured;
    node by key through it over FIPS: its check reads both, the other reads `fips` through the one, and its answers
    equal its direct HTTP answers byte for byte; a node reached that way and then cut reads `retry`, never
    `blacklisted`; a browser with direct paths to every node opens no FIPS link.
+10. **Through a stranger.** Two Notis nodes whose only FIPS path runs through a FIPS node that is no Notis node — the
+    original FIPS daemon's release — reach each other over it: a browser that reaches the one alone reads the other over
+    FIPS through it, its answers equal its direct HTTP answers byte for byte, and the stranger lists both nodes among its
+    peers.
 
 **Browsers.** Chromium and Firefox on default settings; Safari cannot run on the stage's machine and is recorded as
 untested. The mesh holds only where WebRTC-direct connects on defaults in both.

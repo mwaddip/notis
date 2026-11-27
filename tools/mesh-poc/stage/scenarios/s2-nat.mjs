@@ -6,7 +6,7 @@
 // `retry` for want of a direct path, never `blacklisted`."
 //
 // Two sub-steps, each writing its own `config.json` variant:
-//   priv1 (endpoint-independent NAT) — the single first-contact node is priv1 by
+//   priv1 (endpoint-independent NAT) — the first-contact node is priv1 by
 //     its `/p2p-circuit/webrtc/p2p/<priv1>` address through a public
 //     node's WebRTC-direct address. The config carries no
 //     `stunServers` — the client derives its ICE list from the public
@@ -18,10 +18,12 @@
 //     non-null entry transport, and records
 //     `{ expectedNodeId, priv1Status, priv1Failures, transport, path,
 //        firstContactAddrRelayed, connectMs, iceServers, nodeIdInUse }`.
-//   priv2 (symmetric NAT) — the single first-contact node is priv2 by BOTH its
+//   priv2 (symmetric NAT) — the first-contact node is priv2 by BOTH its
 //     `/p2p-circuit/webrtc` and plain `/p2p-circuit` relayed
-//     addresses. The step waits for a routed read to land on priv2
-//     and records `{ expectedNodeId, priv2Status, priv2Path,
+//     addresses; the client also remembers step 1's nodes
+//     (MESH_INTERFACE → What the client remembers), so routed reads
+//     may land on either. The step waits for priv2's own entry to read
+//     `ok` or `trailing` and records `{ expectedNodeId, priv2Status, priv2Path,
 //     latestReadNodeId, blacklistedAtAnyPoll }`.
 //
 // No stage faults; the NAT is topology. The scenario's `finally`
@@ -144,16 +146,19 @@ export async function run(ctx) {
         });
         writeConfigVariant(ctx.outDir, variant);
         const expectedNodeId = priv2Row.notisId;
-        // MESH_INTERFACE → NAT → "A relay carries data" / Acceptance 2
-        // — hold ONE page open across the whole window
+        // MESH_INTERFACE → Acceptance 2: "It reaches the node behind the
+        // symmetric NAT through a relay, its data relayed: that node
+        // reads `ok` or `trailing`, never `retry` for want of a direct
+        // path, never `blacklisted`." The step holds exactly that claim
+        // for priv2's entry; where routed reads land is Acceptance 7's.
+        // MESH_INTERFACE → NAT → "A relay carries data" — hold ONE page open across the whole window
         // (`cdp.mjs eval` would open a fresh target per call and
         // reset the client). The expression updates an in-page
         // accumulator `window.__s2priv2` with
         // `blacklistedAtAnyPoll` across polls, parses `#state`, and
         // returns `JSON.stringify({ state, acc })`. The predicate
-        // stops polling when the latest routed read landed on priv2
-        // (`state.nodeId === expected`) with priv2's entry status
-        // ok or trailing and priv2 is not blacklisted at this poll.
+        // stops polling when priv2's entry status is ok or trailing
+        // and priv2 is not blacklisted at this poll.
         const expression = `(function () {
           const el = document.getElementById('state');
           const text = el ? el.textContent : null;
@@ -177,7 +182,6 @@ export async function run(ctx) {
             var entry = o.state.nodes.find(function (n) { return n && n.notisId === expected; });
             if (!entry) return false;
             if (entry.status !== 'ok' && entry.status !== 'trailing') return false;
-            if (o.state.nodeId !== expected) return false;
             return true;
           } catch (_e) { return false; }`;
         const matched = await cdpPoll(ctx, browserUrl, expression, predicateBody,

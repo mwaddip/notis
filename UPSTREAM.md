@@ -5,7 +5,7 @@ Notis carries a few changes to its dependencies as local patches — pnpm's `pat
 "The FIPS packages are pinned by release tarball"`, and held by a case against the patched package. This file names
 where each change stands upstream. A patch leaves the tree when a release of its package carries the change.
 
-**Status read 2026-11-26.** Upstream moves without a commit here, so a status is as of its reading;
+**Status read 2026-11-27.** Upstream moves without a commit here, so a status is as of its reading;
 `gh pr view <n> -R <repo>` answers the current one.
 
 ## libp2p/js-libp2p
@@ -30,7 +30,7 @@ where each change stands upstream. A patch leaves the tree when a release of its
 
 | Pull request | Change | Patch | Status |
 |---|---|---|---|
-| [#2](https://github.com/mmalmi/fips-ts/pull/2) | An established FSP session whose route is gone — its carrier link made again, the forwarder's tree announcement not yet landed — takes the route lookup a new session takes, instead of failing at once with `no route`; and a stopped node starts no route lookup | `@fips/core@0.0.57` | open, no review |
+| [#2](https://github.com/mmalmi/fips-ts/pull/2) | An established FSP session whose route is gone — its carrier link made again, the forwarder's tree announcement not yet landed — takes the route lookup a new session takes, instead of failing at once with `no route`; and a stopped node starts no route lookup | `@fips/core@0.0.61` — on 0.0.61 the standing-session check sits on `ensureSession`'s per-key session cache | open, no review |
 
 ## murat-dogan/node-datachannel
 
@@ -40,6 +40,12 @@ where each change stands upstream. A patch leaves the tree when a release of its
 
 ## Carried, not submitted
 
+- `@fips/core@0.0.61` — an established FSP session that carries no application data for 90 s ends, as the original FIPS
+  daemon ends one, so both ends of a session with it let the session go together (`contracts/MESH_INTERFACE.md` → FIPS →
+  "A FIPS session that carries no application data for `FIPS_SESSION_IDLE_MS` ends").
+- `@fips/core@0.0.61` — a link that receives nothing for 30 s ends, as the original FIPS daemon ends one, so routing leaves
+  a far end that went silent (`contracts/MESH_INTERFACE.md` → FIPS → "A FIPS link that carries nothing for
+  `FIPS_LINK_DEAD_MS` ends").
 - `libp2p@3.5.1` — the connection manager holds each address to a bound on its inbound connections still upgrading,
   and the upgrader releases an address's count when an upgrade ends (`contracts/NET_INTERFACE.md → Readers → "An
   address upgrades at most four inbound connections at once, each within five seconds"`).

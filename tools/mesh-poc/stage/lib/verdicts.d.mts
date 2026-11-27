@@ -30,3 +30,7 @@ export function verdictS9NoLink(m: unknown): Verdict;
 export function verdictS9Through(m: unknown): Verdict;
 export function verdictS9Probe(m: unknown): Verdict;
 export function verdictS9Cut(m: unknown): Verdict;
+export function verdictS10StrangerPeers(m: unknown): Verdict;
+export function verdictS10Split(m: unknown): Verdict;
+export function verdictS10Through(m: unknown): Verdict;
+export function verdictS10Probe(m: unknown): Verdict;

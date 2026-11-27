@@ -612,11 +612,13 @@ describe('stage up --dry-run', () => {
     const spawnLines = out.split('\n').filter((l) => l.startsWith('[spawn:'));
     expect(spawnLines.length, 'at least one spawn line').toBeGreaterThan(0);
     for (const line of spawnLines) {
-      // Chromium and Pebble are external binaries, not Node — they still
-      // pass through the `sudo -u <user> -- env` wrap, but the final
-      // executable is their own absolute path.
+      // Chromium, Pebble and the stranger FIPS daemon are external
+      // binaries, not Node — they still pass through the `sudo -u
+      // <user> -- env` wrap, but the final executable is their own
+      // absolute path.
       expect(line, line).toMatch(new RegExp(`sudo -u ${user} --`));
       if (line.startsWith('[spawn:chromium]') || line.startsWith('[spawn:pebble]')) continue;
+      if (line.startsWith('[spawn:fips:')) continue;
       expect(line, `spawn must name an absolute Node 24 binary: ${line}`).toContain(nodeAbs);
     }
   }, 30_000);

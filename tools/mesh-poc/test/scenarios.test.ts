@@ -17,6 +17,7 @@ import * as s6 from '../stage/scenarios/s6-hostile.mjs';
 import * as s7 from '../stage/scenarios/s7-reach-and-load.mjs';
 import * as s8 from '../stage/scenarios/s8-prove-once.mjs';
 import * as s9 from '../stage/scenarios/s9-through-one-node.mjs';
+import * as s10 from '../stage/scenarios/s10-through-a-stranger.mjs';
 
 const TOPOLOGY = {
   network: 'devnet',
@@ -1452,18 +1453,25 @@ describe('s9 (through one node)', () => {
     expect(() => s9.s9ThroughOneNodeArgs(TOPO_S9, '')).toThrow(/accessHost/);
   });
 
-  // MESH_INTERFACE → Acceptance 9 — the cut drops the inbound mesh
-  // and node ports on pub2's own namespace so pub1's running link
-  // falls (nftables' default input hook has no `ct state established
-  // accept`, so an existing flow's packets drop too).
-  it('s9CutArgs for pub2 builds a table + input chain + three drops on its mesh and node ports', () => {
+  // MESH_INTERFACE → Acceptance 9 — the cut drops ALL inbound UDP on
+  // pub2's own namespace (the all-UDP rule covers the stranger-
+  // forwarded path too, which the public FIPS mesh carries on a
+  // flow whose port is not WebRTC-direct's) plus the mesh and node
+  // TCP ports (nftables' default input hook has no `ct state
+  // established accept`, so an existing flow's packets drop too).
+  it('s9CutArgs for pub2 builds a table + input chain + an all-UDP drop beside the WebRTC and mesh and node port drops', () => {
     const c = s9.s9CutArgs(TOPO_S9, 'pub2');
-    for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.deleteTable]) {
+    for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.dropAllUdp, c.deleteTable]) {
       expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
     }
     expect(c.dropWebrtc.join(' ')).toContain('udp dport 4001 drop');
     expect(c.dropMeshTcp.join(' ')).toContain('tcp dport 4002 drop');
     expect(c.dropNotisTcp.join(' ')).toContain('tcp dport 9100 drop');
+    // MESH_INTERFACE → Acceptance → "Through a stranger" — the all-UDP
+    // drop rule names no port, so the stranger-forwarded UDP on pub2's
+    // ephemeral port is dropped beside WebRTC-direct's own port.
+    expect(c.dropAllUdp.join(' ')).toContain('udp drop');
+    expect(c.dropAllUdp.join(' ')).not.toContain('dport');
     expect(c.deleteTable.join(' ')).toContain('nft delete table ip s9_cut');
   });
 
@@ -1519,6 +1527,326 @@ describe("s9 — the nft argvs pass nft -c under unshare -rn", () => {
       writeFileSync(dropFile, dropRules);
       writeFileSync(cutFile, cutRules);
       for (const file of [dropFile, cutFile]) {
+        const r = spawnSync('unshare', ['-rn', 'nft', '-c', '-f', file], { encoding: 'utf8', timeout: 10_000 });
+        if (r.status !== 0) {
+          throw new Error(`nft -c refused ${file}: ${(r.stderr || r.stdout || '').trim()}`);
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('s10 (through a stranger)', () => {
+  const TOPO_S10 = {
+    network: 'devnet',
+    hosts: {
+      browser: { role: 'browser', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.11' },
+      pub1: {
+        role: 'public', nat: 'none', addr: '11.100.0.11',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+      },
+      pub2: {
+        role: 'public', nat: 'none', addr: '11.100.0.12',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+      },
+      'hostile-malformed': {
+        role: 'hostile', nat: 'none', addr: '11.100.0.31',
+        mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+      },
+      lan1: {
+        role: 'private', nat: 'endpoint-independent', parent: 'natC', addr: '10.103.0.21',
+        mesh: { role: 'private', webrtcPort: 4001, tcpPort: 4002 },
+        node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+      },
+      stranger: {
+        role: 'stranger', nat: 'none', addr: '11.100.0.37',
+        fips: { udpPort: 2121 },
+      },
+    },
+  };
+
+  it('describe() lists four steps: stranger peers, the split, through, probes', () => {
+    const names = s10.describe();
+    expect(names.length).toBe(4);
+    expect(names[0]).toMatch(/stranger lists pub1 and pub2/);
+    expect(names[1]).toMatch(/pub2 reaches no Notis host/);
+    expect(names[2]).toMatch(/pub2 reads fips through pub1/);
+    expect(names[3]).toMatch(/forwarded count rose/);
+  });
+
+  it('run({dryRun:true}) returns four skipped steps and records the pub2 split and browser drop faults', async () => {
+    const r = await s10.run({ dryRun: true, topology: TOPO_S10 });
+    expect(r.scenario).toBe('s10');
+    expect(r.steps.length).toBe(4);
+    for (const step of r.steps) {
+      expect(step.verdict, step.name).toBe('skipped');
+    }
+    // Two nft tables added: pub2's split, browser's drop; two
+    // deleted. pub1's namespace gets no fault.
+    const addTables = r.faults.filter((f: string) => / nft add table ip s10_(split|drop)/.test(f));
+    const delTables = r.faults.filter((f: string) => / nft delete table ip s10_(split|drop)/.test(f));
+    expect(addTables.length, 'two tables added: pub2-split, browser-drop').toBe(2);
+    expect(delTables.length, 'two tables removed').toBe(2);
+    // pub1's namespace has no s10 fault at all.
+    const pub1Faults = r.faults.filter((f: string) => / notismesh-pub1 nft /.test(f));
+    expect(pub1Faults, `no fault in notismesh-pub1: ${pub1Faults.join('\n')}`).toEqual([]);
+    // The probe window pauses miner-steady and resumes it.
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause') && f.includes('STOP')),
+      'STOP record present').toBe(true);
+    expect(r.faults.some((f: string) => f.includes('miner-steady-pause') && f.includes('CONT')),
+      'CONT record present').toBe(true);
+  });
+
+  // MESH_INTERFACE → FIPS → "A node announces its FIPS address" — the
+  // stage default lists each public node's WebRTC-direct and secure
+  // WebSocket addresses alone; s10 appends each first-contact node's
+  // FIPS address through `withFipsAddresses`, written via
+  // `writeConfigVariant`, so the browser drop in step 3 leaves FIPS
+  // the one path to pub2. The dry-run records that intent.
+  it('run({dryRun:true}) records the FIPS variant it would write through writeConfigVariant', async () => {
+    const r = await s10.run({ dryRun: true, topology: TOPO_S10 });
+    expect(r.faults.some((f: string) =>
+      f.includes('config:s10:write-variant')
+      && f.includes('writeConfigVariant')
+      && f.includes('withFipsAddresses')
+    ), 'FIPS variant write record present').toBe(true);
+  });
+
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the split
+  // isolates pub2 to the stranger: its namespace gets two chains at
+  // policy drop plus accepts for loopback and stranger traffic. pub1's
+  // namespace gets nothing (the stage left as-is reaches pub2 only
+  // through the stranger's FIPS forwarding).
+  it('s10SplitArgs for pub2 + stranger builds one table in pub2\'s namespace alone, accepting lo and stranger', () => {
+    const s = s10.s10SplitArgs(TOPO_S10, 'pub2', 'stranger');
+    for (const argv of [s.addTable, s.addChainIn, s.addChainOut, s.acceptLoIn, s.acceptLoOut, s.acceptStrangerIn, s.acceptStrangerOut, s.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
+    }
+    expect(s.addTable.join(' ')).toContain('nft add table ip s10_split');
+    expect(s.addChainIn.join(' ')).toContain('hook input');
+    expect(s.addChainIn.join(' ')).toContain('policy drop');
+    expect(s.addChainOut.join(' ')).toContain('hook output');
+    expect(s.addChainOut.join(' ')).toContain('policy drop');
+    // Loopback accepts let the direct reads s10 makes inside pub2's
+    // namespace answer (the kernel routes `127.0.0.1` via `lo`).
+    expect(s.acceptLoIn.join(' ')).toContain('iifname lo accept');
+    expect(s.acceptLoOut.join(' ')).toContain('oifname lo accept');
+    // The stranger's addr is explicitly accepted in and out — the one
+    // UDP flow the split leaves open.
+    expect(s.acceptStrangerIn.join(' ')).toContain('ip saddr 11.100.0.37 accept');
+    expect(s.acceptStrangerOut.join(' ')).toContain('ip daddr 11.100.0.37 accept');
+    expect(s.deleteTable.join(' ')).toContain('nft delete table ip s10_split');
+    // No rule names pub1's addr — pub1's namespace gets no nft from
+    // s10; whatever pub1 reaches reaches it as before.
+    const whole = [
+      ...s.acceptLoIn, ...s.acceptLoOut,
+      ...s.acceptStrangerIn, ...s.acceptStrangerOut,
+    ].join(' ');
+    expect(whole).not.toContain('11.100.0.11');
+  });
+
+  it('s10SplitArgs refuses an empty isolatedHost', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, '', 'stranger')).toThrow(/isolatedHost/);
+  });
+  it('s10SplitArgs refuses a strangerHost not in the topology', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, 'pub2', 'nowhere')).toThrow(/addr/);
+  });
+  it('s10SplitArgs refuses an isolatedHost with no mesh entry', () => {
+    expect(() => s10.s10SplitArgs(TOPO_S10, 'stranger', 'stranger')).toThrow(/mesh/);
+  });
+
+  it('s10BrowserDropArgs with pub1 the access host drops every other mesh host, lan1 included, stranger not', () => {
+    const a = s10.s10BrowserDropArgs(TOPO_S10, 'pub1');
+    for (const argv of [a.addTable, a.addChain, a.deleteTable]) {
+      expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-browser']);
+    }
+    const names = a.drops.map((d) => d.name).sort();
+    expect(names).toEqual(['hostile-malformed', 'lan1', 'pub2']);
+    const line = a.drops.map((d) => d.argv.join(' ')).join('\n');
+    expect(line).toMatch(/ip daddr 11\.100\.0\.12 drop/);
+    expect(line).toMatch(/ip daddr 11\.100\.0\.31 drop/);
+    expect(line).toMatch(/ip daddr 10\.103\.0\.21 drop/);
+    // pub1 is NOT dropped — it is the access host.
+    expect(line).not.toContain('11.100.0.11');
+    // The stranger is not a mesh host (no `mesh` entry), so it is not
+    // in the drop table at all. Its UDP link to pub1 is what carries
+    // scenario 10's FIPS path.
+    expect(line).not.toContain('11.100.0.37');
+    expect(a.deleteTable.join(' ')).toContain('nft delete table ip s10_drop');
+  });
+
+  it('s10BrowserDropArgs refuses an empty accessHost', () => {
+    expect(() => s10.s10BrowserDropArgs(TOPO_S10, '')).toThrow(/accessHost/);
+  });
+});
+
+// MESH_INTERFACE → Acceptance → "Through a stranger" — the two parsers
+// the scenario feeds verdict measurements from: `fipsctl show peers`
+// stdout → the array of npubs it holds, and a parsed `/mesh/identity`
+// answer → the Notis node's own npub, read from its `/fips/<npub>/p2p/
+// <peer id>` entry in `multiaddrs`. The cases below feed each the real
+// bytes the v0.5.3 release of `jmcorgan/fips` answers (trimmed) and
+// the shape `packages/node/src/routes/mesh-identity.ts` builds.
+describe('s10 — fipsctl show peers → npubs', () => {
+  // Captured on 2026-11-27 from the v0.5.3 release running on loopback
+  // with one peer connected: the outer shape is `{"peers":[{...}]}` and
+  // the peer entry carries `"npub": "npub1..."` as its own top-level
+  // field. The capture is trimmed to the fields a reader expects (the
+  // parser reads `npub` alone).
+  const REAL_PEERS_ONE = JSON.stringify({
+    peers: [
+      {
+        npub: 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7',
+        display_name: 'npub1jd9s...lac7',
+        direction: 'inbound',
+        connectivity: 'connected',
+        transport_type: 'udp',
+        transport_addr: '127.0.0.1:2122',
+        stats: { bytes_recv: 1664, bytes_sent: 1632, packets_recv: 6, packets_sent: 6 },
+      },
+    ],
+  }, null, 2);
+  const REAL_PEERS_NONE = JSON.stringify({ peers: [] }, null, 2);
+
+  it('parses one connected peer\'s npub from the real v0.5.3 answer', () => {
+    expect(s10.parseStrangerPeerNpubs(REAL_PEERS_ONE))
+      .toEqual(['npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7']);
+  });
+  it('an empty peers array answers an empty list', () => {
+    expect(s10.parseStrangerPeerNpubs(REAL_PEERS_NONE)).toEqual([]);
+  });
+  // The parser accepts a Buffer too — `execIn` answers one, and the
+  // scenario hands it straight through without a `toString` of its own.
+  it('accepts a Buffer in place of a string', () => {
+    expect(s10.parseStrangerPeerNpubs(Buffer.from(REAL_PEERS_ONE, 'utf8'))).toHaveLength(1);
+  });
+  it('a two-peer answer answers both npubs in order', () => {
+    const two = JSON.stringify({
+      peers: [
+        { npub: 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3', transport_type: 'udp' },
+        { npub: 'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7', transport_type: 'udp' },
+      ],
+    });
+    expect(s10.parseStrangerPeerNpubs(two)).toEqual([
+      'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3',
+      'npub1jd9sa2ng26n7ap0nxay8udunnmqc4mhpm5ag69p227s88445xyrq3alac7',
+    ]);
+  });
+  it('a malformed JSON answers an empty list rather than throwing', () => {
+    expect(s10.parseStrangerPeerNpubs('not json')).toEqual([]);
+  });
+  // MESH_INTERFACE → Acceptance → "Through a stranger" — the earlier
+  // defect in s10 read a `fipsNpub` field from `/mesh/identity` that
+  // the route source does not answer. The symmetric defect here would
+  // be reading a differently-named field from `fipsctl show peers`; a
+  // peer entry with an npub at a different key is dropped, not read.
+  it('a peer entry with an npub at another key is dropped', () => {
+    expect(s10.parseStrangerPeerNpubs(JSON.stringify({ peers: [{ display_name: 'npub1foo' }] }))).toEqual([]);
+  });
+});
+
+describe('s10 — /mesh/identity → the Notis node\'s FIPS npub', () => {
+  // NODE_INTERFACE → Mesh identity — the route answers
+  // `{ notisId, peerId, multiaddrs, localAddrs }`; the FIPS npub rides
+  // among `multiaddrs` as `/fips/<npub>/p2p/<peer id>`. The fixture
+  // below is a Notis mesh identity whose multiaddrs list carries the
+  // shape net announces when `FIPS_PUBLIC=on`.
+  const NPUB = 'npub1q9dsvnhv82atxp03ykxq437qf9pa6wu9v7pjkznzsfwkse88zfyqtyxjv3';
+  const PEER_ID = '12D3KooWCnwwicBE8ujqkyzjbT4xPyFqggDxJdeNVcBehtt3AHiA';
+  const NOTIS_ID = 'a'.repeat(64);
+  const REAL_IDENTITY = {
+    notisId: NOTIS_ID,
+    peerId: PEER_ID,
+    multiaddrs: [
+      `/ip4/11.100.0.11/tcp/4002/p2p/${PEER_ID}`,
+      `/ip4/11.100.0.11/udp/4001/webrtc-direct/certhash/uEiAE_EXAMPLE_CERTHASH_BYTES______________________/p2p/${PEER_ID}`,
+      `/fips/${NPUB}/p2p/${PEER_ID}`,
+    ],
+    localAddrs: [`/ip4/11.100.0.11/tcp/4002/p2p/${PEER_ID}`],
+  };
+
+  it('reads the npub from the /fips/<npub>/p2p/<peer id> entry', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity(REAL_IDENTITY)).toBe(NPUB);
+  });
+  it('answers null when no multiaddr begins /fips/', () => {
+    const noFips = { ...REAL_IDENTITY, multiaddrs: REAL_IDENTITY.multiaddrs.filter((a) => !a.startsWith('/fips/')) };
+    expect(s10.extractNotisNpubFromMeshIdentity(noFips)).toBeNull();
+  });
+  // MESH_INTERFACE → FIPS → "A private node's relay addresses ride IP"
+  // — a `/fips/.../p2p-circuit/...` address is refused; the parser
+  // skips it so a private node's relay-ride entry does not land as
+  // the node's own FIPS npub.
+  it('skips a /fips/.../p2p-circuit/... entry', () => {
+    const circuit = { ...REAL_IDENTITY, multiaddrs: [`/fips/${NPUB}/p2p-circuit/p2p/${PEER_ID}`] };
+    expect(s10.extractNotisNpubFromMeshIdentity(circuit)).toBeNull();
+  });
+  it('null identity answers null', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity(null)).toBeNull();
+  });
+  it('missing multiaddrs answers null', () => {
+    expect(s10.extractNotisNpubFromMeshIdentity({ notisId: NOTIS_ID })).toBeNull();
+  });
+  it('ignores an entry whose segment-2 does not begin npub1', () => {
+    const bad = { ...REAL_IDENTITY, multiaddrs: [`/fips/not_an_npub/p2p/${PEER_ID}`] };
+    expect(s10.extractNotisNpubFromMeshIdentity(bad)).toBeNull();
+  });
+});
+
+// MESH_INTERFACE → Acceptance — every nft rule the scenarios would apply
+// passes `nft -c -f` under unshare -rn. s10's argvs ride that gate; the
+// pure check below pins s10's own rulesets to the stage's syntax.
+describe("s10 — the nft argvs pass nft -c under unshare -rn", () => {
+  it('s10SplitArgs + s10BrowserDropArgs builds rules nft -c accepts', () => {
+    const { spawnSync } = require('node:child_process');
+    const { mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+    const { tmpdir } = require('node:os');
+    const path = require('node:path');
+    const preflight = spawnSync('unshare', ['-rn', 'true'], { encoding: 'utf8', timeout: 5_000 });
+    if (preflight.status !== 0) {
+      process.stdout.write('[skip] s10 nft case: unshare -rn is not available\n');
+      expect(true).toBe(true);
+      return;
+    }
+    const topology = {
+      hosts: {
+        browser: { role: 'browser', parent: 'natC', addr: '10.103.0.11' },
+        pub1: {
+          role: 'public', addr: '11.100.0.11',
+          mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+          node: { httpPort: 3100, p2pPort: 9100, role: 'miner' },
+        },
+        pub2: {
+          role: 'public', addr: '11.100.0.12',
+          mesh: { role: 'public', webrtcPort: 4001, tcpPort: 4002 },
+          node: { httpPort: 3100, p2pPort: 9100, role: 'server' },
+        },
+        stranger: {
+          role: 'stranger', addr: '11.100.0.37',
+          fips: { udpPort: 2121 },
+        },
+      },
+    };
+    const split = s10.s10SplitArgs(topology, 'pub2', 'stranger');
+    const drop = s10.s10BrowserDropArgs(topology, 'pub1');
+    const stripToRule = (argv: string[]): string => argv.slice(6).join(' ');
+    const splitRules = [
+      split.addTable, split.addChainIn, split.addChainOut,
+      split.acceptLoIn, split.acceptLoOut,
+      split.acceptStrangerIn, split.acceptStrangerOut,
+    ].map(stripToRule).join('\n') + '\n';
+    const dropRules = [drop.addTable, drop.addChain, ...drop.drops.map((d) => d.argv)].map(stripToRule).join('\n') + '\n';
+    const dir = mkdtempSync(path.join(tmpdir(), 's10-nft-'));
+    try {
+      const splitFile = path.join(dir, 's10-pub2-split.nft');
+      const dropFile = path.join(dir, 's10-browser-drop.nft');
+      writeFileSync(splitFile, splitRules);
+      writeFileSync(dropFile, dropRules);
+      for (const file of [splitFile, dropFile]) {
         const r = spawnSync('unshare', ['-rn', 'nft', '-c', '-f', file], { encoding: 'utf8', timeout: 10_000 });
         if (r.status !== 0) {
           throw new Error(`nft -c refused ${file}: ${(r.stderr || r.stdout || '').trim()}`);
