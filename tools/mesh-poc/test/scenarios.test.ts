@@ -1459,10 +1459,7 @@ describe('s9 (through one node)', () => {
   // flow whose port is not WebRTC-direct's) plus the mesh and node
   // TCP ports (nftables' default input hook has no `ct state
   // established accept`, so an existing flow's packets drop too).
-  // Run as plain `it` against s9CutArgs before the widening:
-  //   TypeError: Cannot read properties of undefined (reading 'slice')
-  //    ❯ test/scenarios.test.ts:1467:19
-  it.fails('s9CutArgs for pub2 builds a table + input chain + an all-UDP drop beside the WebRTC and mesh and node port drops', () => {
+  it('s9CutArgs for pub2 builds a table + input chain + an all-UDP drop beside the WebRTC and mesh and node port drops', () => {
     const c = s9.s9CutArgs(TOPO_S9, 'pub2');
     for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.dropAllUdp, c.deleteTable]) {
       expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);

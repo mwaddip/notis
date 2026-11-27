@@ -12,6 +12,7 @@ export declare function s9CutArgs(topology: unknown, host: string): {
   dropWebrtc: string[];
   dropMeshTcp: string[];
   dropNotisTcp: string[];
+  dropAllUdp: string[];
   deleteTable: string[];
 };
 export declare function applyFaults(log: unknown, topology: unknown): void;
