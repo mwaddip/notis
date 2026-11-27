@@ -150,9 +150,6 @@ pooled transaction spends"`), so a faucet box falling due inside a block would d
 generator reads the faucet's holdings with the manifest's figures and fails the generation unless they are that one
 box.**
 
-> ⚠ **AHEAD OF CODE (2026-11-27).** The generator runs no grant: a state's faucet holds devnet's genesis credit box,
-> made at block 1 and falling due at block 102 — inside a block of the check when the state's tip is near 88.
-
 **A write path that fails fails the generation**, naming the script and its last line. Nothing retries it. Every wait
 a write script holds ends a block interval or two after its write lands, so a script that times out is a failure of
 that path or of the stack, and a retry would hide which one. **So does a store left unfinished**: a missing store or
