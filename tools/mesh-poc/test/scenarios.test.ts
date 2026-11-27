@@ -1453,18 +1453,28 @@ describe('s9 (through one node)', () => {
     expect(() => s9.s9ThroughOneNodeArgs(TOPO_S9, '')).toThrow(/accessHost/);
   });
 
-  // MESH_INTERFACE → Acceptance 9 — the cut drops the inbound mesh
-  // and node ports on pub2's own namespace so pub1's running link
-  // falls (nftables' default input hook has no `ct state established
-  // accept`, so an existing flow's packets drop too).
-  it('s9CutArgs for pub2 builds a table + input chain + three drops on its mesh and node ports', () => {
+  // MESH_INTERFACE → Acceptance 9 — the cut drops ALL inbound UDP on
+  // pub2's own namespace (the all-UDP rule covers the stranger-
+  // forwarded path too, which the public FIPS mesh carries on a
+  // flow whose port is not WebRTC-direct's) plus the mesh and node
+  // TCP ports (nftables' default input hook has no `ct state
+  // established accept`, so an existing flow's packets drop too).
+  // Run as plain `it` against s9CutArgs before the widening:
+  //   TypeError: Cannot read properties of undefined (reading 'slice')
+  //    ❯ test/scenarios.test.ts:1467:19
+  it.fails('s9CutArgs for pub2 builds a table + input chain + an all-UDP drop beside the WebRTC and mesh and node port drops', () => {
     const c = s9.s9CutArgs(TOPO_S9, 'pub2');
-    for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.deleteTable]) {
+    for (const argv of [c.addTable, c.addChain, c.dropWebrtc, c.dropMeshTcp, c.dropNotisTcp, c.dropAllUdp, c.deleteTable]) {
       expect(argv.slice(0, 5)).toEqual(['sudo', 'ip', 'netns', 'exec', 'notismesh-pub2']);
     }
     expect(c.dropWebrtc.join(' ')).toContain('udp dport 4001 drop');
     expect(c.dropMeshTcp.join(' ')).toContain('tcp dport 4002 drop');
     expect(c.dropNotisTcp.join(' ')).toContain('tcp dport 9100 drop');
+    // MESH_INTERFACE → Acceptance → "Through a stranger" — the all-UDP
+    // drop rule names no port, so the stranger-forwarded UDP on pub2's
+    // ephemeral port is dropped beside WebRTC-direct's own port.
+    expect(c.dropAllUdp.join(' ')).toContain('udp drop');
+    expect(c.dropAllUdp.join(' ')).not.toContain('dport');
     expect(c.deleteTable.join(' ')).toContain('nft delete table ip s9_cut');
   });
 
